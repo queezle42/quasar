@@ -1,45 +1,40 @@
 module Qd.Observable (
-  Observable,
+  Observable(..),
   IsObservable(..),
   subscribe',
-  SubscriptionHandle,
-  unsubscribe,
+  SubscriptionHandle(..),
   Callback,
   ObservableState,
   ObservableMessage,
   MessageReason(..),
-
-  BasicObservable(..),
-  Freshness(..),
+  BasicObservable,
   mkBasicObservable,
-  staleBasicObservable,
+  setBasicObservable,
   updateBasicObservable,
 ) where
 
 import Control.Concurrent.MVar
 import Control.Monad.Fix (mfix)
+import Data.Binary (Binary)
 import qualified Data.HashMap.Strict as HM
-import Data.Time.Clock (UTCTime, getCurrentTime)
 import Data.Unique
+import GHC.Generics (Generic)
 
-data Freshness = Fresh | Stale
-  deriving (Eq, Show)
 data MessageReason = Current | Update
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic)
+instance Binary MessageReason
 
-type ObservableState v = Maybe (v, Freshness, UTCTime)
+type ObservableState v = Maybe v
 type ObservableMessage v = (MessageReason, ObservableState v)
 
 mapObservableState :: Monad m => (a -> m b) -> ObservableState a -> m (ObservableState b)
 mapObservableState _ Nothing = return Nothing
-mapObservableState f (Just (v, fr, t)) = Just . (, fr, t) <$> f v
+mapObservableState f (Just v) = Just <$> f v
 
 mapObservableMessage :: Monad m => (a -> m b) -> ObservableMessage a -> m (ObservableMessage b)
 mapObservableMessage f (r, s) = (r, ) <$> mapObservableState f s
 
-newtype SubscriptionHandle = SubscriptionHandle (IO ())
-unsubscribe :: SubscriptionHandle -> IO ()
-unsubscribe (SubscriptionHandle unsubscribeAction) = unsubscribeAction
+newtype SubscriptionHandle = SubscriptionHandle { unsubscribe :: IO () }
 
 class IsObservable v o | o -> v where
   getValue :: o -> IO (ObservableState v)
@@ -62,6 +57,13 @@ instance IsObservable v (Observable v) where
 instance Functor Observable where
   fmap f = mapObservable (return . f)
 
+data MappedObservable b = forall a o. IsObservable a o => MappedObservable (a -> IO b) o
+instance IsObservable v (MappedObservable v) where
+  getValue (MappedObservable f observable) = mapObservableState f =<< getValue observable
+  subscribe (MappedObservable f observable) callback = subscribe observable (callback <=< mapObservableMessage f)
+  mapObservable f1 (MappedObservable f2 upstream) = Observable $ MappedObservable (f1 <=< f2) upstream
+
+
 newtype BasicObservable v = BasicObservable (MVar (ObservableState v, HM.HashMap Unique (Callback v)))
 instance IsObservable v (BasicObservable v) where
   getValue (BasicObservable mvar) = fst <$> readMVar mvar
@@ -78,26 +80,18 @@ instance IsObservable v (BasicObservable v) where
 
 mkBasicObservable :: Maybe v -> IO (BasicObservable v)
 mkBasicObservable defaultValue = do
-  now <- getCurrentTime
-  BasicObservable <$> newMVar ((, Fresh, now) <$> defaultValue, HM.empty)
+  BasicObservable <$> newMVar (defaultValue, HM.empty)
 
-staleBasicObservable :: BasicObservable v -> IO ()
-staleBasicObservable (BasicObservable mvar) = do
-  modifyMVar_ mvar $ \(oldState, subscribers) -> do
-    let newState = (\(v, _, t) -> (v, Stale, t)) <$> oldState
+setBasicObservable :: BasicObservable v -> v -> IO ()
+setBasicObservable (BasicObservable mvar) value = do
+  modifyMVar_ mvar $ \(_, subscribers) -> do
+    let newState = Just value
     mapM_ (\callback -> callback (Update, newState)) subscribers
     return (newState, subscribers)
 
-updateBasicObservable :: forall v. BasicObservable v -> Maybe v -> IO ()
-updateBasicObservable (BasicObservable mvar) value = do
-  now <- getCurrentTime
-  let newState = (, Fresh, now) <$> value
-  modifyMVar_ mvar $ \(state, subscribers) -> do
-    mapM_ (\callback -> callback (Update, state)) subscribers
+updateBasicObservable :: BasicObservable v -> (v -> v) -> IO ()
+updateBasicObservable (BasicObservable mvar) f =
+  modifyMVar_ mvar $ \(oldState, subscribers) -> do
+    let newState = (\v -> f v) <$> oldState
+    mapM_ (\callback -> callback (Update, newState)) subscribers
     return (newState, subscribers)
-
-data MappedObservable b = forall a o. IsObservable a o => MappedObservable (a -> IO b) o
-instance IsObservable v (MappedObservable v) where
-  getValue (MappedObservable f observable) = mapObservableState f =<< getValue observable
-  subscribe (MappedObservable f observable) callback = subscribe observable (callback <=< mapObservableMessage f)
-  mapObservable f1 (MappedObservable f2 upstream) = Observable $ MappedObservable (f1 <=< f2) upstream
