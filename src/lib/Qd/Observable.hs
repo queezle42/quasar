@@ -1,5 +1,5 @@
 module Qd.Observable (
-  Observable(..),
+  SomeObservable(..),
   IsObservable(..),
   subscribe',
   SubscriptionHandle(..),
@@ -39,29 +39,29 @@ newtype SubscriptionHandle = SubscriptionHandle { unsubscribe :: IO () }
 class IsObservable v o | o -> v where
   getValue :: o -> IO (ObservableState v)
   subscribe :: o -> (ObservableMessage v -> IO ()) -> IO SubscriptionHandle
-  mapObservable :: (v -> IO a) -> o -> Observable a
-  mapObservable f = Observable . MappedObservable f
+  mapObservable :: (v -> IO a) -> o -> SomeObservable a
+  mapObservable f = SomeObservable . MappedObservable f
 
 subscribe' :: IsObservable v o => o -> (SubscriptionHandle -> ObservableMessage v -> IO ()) -> IO SubscriptionHandle
 subscribe' observable callback = mfix $ \subscription -> subscribe observable (callback subscription)
 
 type Callback v = ObservableMessage v -> IO ()
 
--- | Wraps IsObservable in a concrete type
-data Observable v = forall o. IsObservable v o => Observable o
-instance IsObservable v (Observable v) where
-  getValue (Observable o) = getValue o
-  subscribe (Observable o) = subscribe o
-  mapObservable f (Observable o) = mapObservable f o
+-- | Existential quantification wrapper for the Observable type class.
+data SomeObservable v = forall o. IsObservable v o => SomeObservable o
+instance IsObservable v (SomeObservable v) where
+  getValue (SomeObservable o) = getValue o
+  subscribe (SomeObservable o) = subscribe o
+  mapObservable f (SomeObservable o) = mapObservable f o
 
-instance Functor Observable where
+instance Functor SomeObservable where
   fmap f = mapObservable (return . f)
 
 data MappedObservable b = forall a o. IsObservable a o => MappedObservable (a -> IO b) o
 instance IsObservable v (MappedObservable v) where
   getValue (MappedObservable f observable) = mapObservableState f =<< getValue observable
   subscribe (MappedObservable f observable) callback = subscribe observable (callback <=< mapObservableMessage f)
-  mapObservable f1 (MappedObservable f2 upstream) = Observable $ MappedObservable (f1 <=< f2) upstream
+  mapObservable f1 (MappedObservable f2 upstream) = SomeObservable $ MappedObservable (f1 <=< f2) upstream
 
 
 newtype BasicObservable v = BasicObservable (MVar (ObservableState v, HM.HashMap Unique (Callback v)))
