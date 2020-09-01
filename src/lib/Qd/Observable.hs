@@ -1,3 +1,5 @@
+{-# LANGUAGE UndecidableInstances #-}
+
 module Qd.Observable (
   SomeObservable(..),
   Observable(..),
@@ -11,6 +13,7 @@ module Qd.Observable (
   mkBasicObservable,
   setBasicObservable,
   updateBasicObservable,
+  joinObservable,
 ) where
 
 import Control.Concurrent.MVar
@@ -95,3 +98,34 @@ updateBasicObservable (BasicObservable mvar) f =
     let newState = (\v -> f v) <$> oldState
     mapM_ (\callback -> callback (Update, newState)) subscribers
     return (newState, subscribers)
+
+newtype JoinedObservable o = JoinedObservable o
+instance forall o i v. (Observable i o, Observable v i) => Observable v (JoinedObservable o) where 
+  getValue :: JoinedObservable o -> IO (ObservableState v)
+  getValue (JoinedObservable outer) = do
+    state <- getValue outer
+    case state of
+      Just inner -> getValue inner
+      Nothing -> return Nothing
+  subscribe :: (JoinedObservable o) -> (ObservableMessage v -> IO ()) -> IO SubscriptionHandle
+  subscribe (JoinedObservable outer) handler = do
+    innerSubscriptionMVar <- newMVar dummySubscription
+    outerSubscription <- subscribe outer (outerHandler innerSubscriptionMVar)
+    return $ SubscriptionHandle{unsubscribe = unsubscribe' outerSubscription}
+      where
+        dummySubscription = SubscriptionHandle { unsubscribe = return () }
+        outerHandler innerSubscriptionMVar = outerHandler'
+          where
+            outerHandler' (_, Just inner) = do
+              unsubscribe =<< takeMVar innerSubscriptionMVar
+              innerSubscription <- subscribe inner handler
+              putMVar innerSubscriptionMVar innerSubscription
+            outerHandler' (reason, Nothing) = do
+              unsubscribe =<< takeMVar innerSubscriptionMVar
+              handler (reason, Nothing)
+              putMVar innerSubscriptionMVar dummySubscription
+        unsubscribe' outerSubscription = do
+          unsubscribe outerSubscription
+
+joinObservable :: (Observable i o, Observable v i) => o -> SomeObservable v
+joinObservable outer = SomeObservable $ JoinedObservable outer
