@@ -12,7 +12,7 @@ module Qd.Observable.ObservableMap (
 import Qd.Observable
 
 import Control.Concurrent.MVar
-import Control.Monad.State.Lazy
+import Data.Bifunctor
 import Data.Hashable (Hashable)
 import qualified Data.HashMap.Strict as HM
 import Data.Unique
@@ -25,15 +25,19 @@ data ObservableValue v = ObservableValue {
   subscribers :: (HM.HashMap Unique (ObservableMessage v -> IO ()))
 }
 
+newtype GetT s m r = GetT {
+  runGetT :: m (r, s)
+}
+instance Functor m => Functor (GetT s m) where
+  fmap :: (a -> b) -> (GetT s m) a -> (GetT s m) b
+  fmap fn = GetT . fmap (first fn) . runGetT
+  
+
 modifyValue :: forall k v a. (Eq k, Hashable k) => (ObservableValue v -> IO (ObservableValue v, a)) -> k -> ObservableMap k v -> IO a
-modifyValue f k (ObservableMap mvar) = modifyMVar mvar $ \hashmap -> runStateT (HM.alterF update k hashmap) impossibleCodePath
+modifyValue f k (ObservableMap mvar) = modifyMVar mvar $ \hashmap -> runGetT (HM.alterF update k hashmap)
   where
-    update :: Maybe (ObservableValue v) -> StateT a IO (Maybe (ObservableValue v))
-    update mov = do
-      let ov = fromMaybe emptyObservableValue mov
-      (ov', ret) <- liftIO $ f ov
-      put ret
-      return $ toMaybe ov'
+    update :: Maybe (ObservableValue v) -> GetT a IO (Maybe (ObservableValue v))
+    update = fmap toMaybe . (GetT . f) . fromMaybe emptyObservableValue
     emptyObservableValue :: ObservableValue v
     emptyObservableValue = ObservableValue Nothing HM.empty
     toMaybe :: ObservableValue v -> Maybe (ObservableValue v)
@@ -41,15 +45,7 @@ modifyValue f k (ObservableMap mvar) = modifyMVar mvar $ \hashmap -> runStateT (
     toMaybe ov = Just ov
 
 modifyValue_ :: forall k v. (Eq k, Hashable k) => (ObservableValue v -> IO (ObservableValue v)) -> k -> ObservableMap k v -> IO ()
-modifyValue_ f k (ObservableMap mvar) = modifyMVar_ mvar $ HM.alterF update k
-  where
-    update :: Maybe (ObservableValue v) -> IO (Maybe (ObservableValue v))
-    update = fmap toMaybe . f . fromMaybe emptyObservableValue
-    emptyObservableValue :: ObservableValue v
-    emptyObservableValue = ObservableValue Nothing HM.empty
-    toMaybe :: ObservableValue v -> Maybe (ObservableValue v)
-    toMaybe (ObservableValue Nothing (HM.null -> True)) = Nothing
-    toMaybe ov = Just ov
+modifyValue_ f = modifyValue (fmap (,()) . f)
 
 modifySubscribers :: (HM.HashMap Unique (ObservableMessage v -> IO ()) -> HM.HashMap Unique (ObservableMessage v -> IO ())) -> ObservableValue v -> ObservableValue v
 modifySubscribers f ov@ObservableValue{subscribers} = ov{subscribers=f subscribers}
