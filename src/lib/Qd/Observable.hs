@@ -5,13 +5,13 @@ module Qd.Observable (
   Observable(..),
   subscribe',
   SubscriptionHandle(..),
-  Callback,
   RegistrationHandle(..),
+  ObservableCallback,
   ObservableState,
   ObservableMessage,
   MessageReason(..),
   BasicObservable,
-  mkBasicObservable,
+  createBasicObservable,
   setBasicObservable,
   updateBasicObservable,
   joinObservable,
@@ -52,7 +52,7 @@ class Observable v o | o -> v where
 subscribe' :: Observable v o => o -> (SubscriptionHandle -> ObservableMessage v -> IO ()) -> IO SubscriptionHandle
 subscribe' observable callback = mfix $ \subscription -> subscribe observable (callback subscription)
 
-type Callback v = ObservableMessage v -> IO ()
+type ObservableCallback v = ObservableMessage v -> IO ()
 
 
 -- | Existential quantification wrapper for the Observable type class.
@@ -74,7 +74,7 @@ instance Observable v (MappedObservable v) where
   mapObservable f1 (MappedObservable f2 upstream) = SomeObservable $ MappedObservable (f1 <=< f2) upstream
 
 
-newtype BasicObservable v = BasicObservable (MVar (ObservableState v, HM.HashMap Unique (Callback v)))
+newtype BasicObservable v = BasicObservable (MVar (ObservableState v, HM.HashMap Unique (ObservableCallback v)))
 instance Observable v (BasicObservable v) where
   getValue (BasicObservable mvar) = fst <$> readMVar mvar
   subscribe (BasicObservable mvar) callback = do
@@ -88,16 +88,15 @@ instance Observable v (BasicObservable v) where
       unsubscribe' :: Unique -> IO ()
       unsubscribe' key = modifyMVar_ mvar $ \(state, subscribers) -> return (state, HM.delete key subscribers)
 
-mkBasicObservable :: Maybe v -> IO (BasicObservable v)
-mkBasicObservable defaultValue = do
+createBasicObservable :: Maybe v -> IO (BasicObservable v)
+createBasicObservable defaultValue = do
   BasicObservable <$> newMVar (defaultValue, HM.empty)
 
-setBasicObservable :: BasicObservable v -> v -> IO ()
+setBasicObservable :: BasicObservable v -> ObservableState v -> IO ()
 setBasicObservable (BasicObservable mvar) value = do
   modifyMVar_ mvar $ \(_, subscribers) -> do
-    let newState = Just value
-    mapM_ (\callback -> callback (Update, newState)) subscribers
-    return (newState, subscribers)
+    mapM_ (\callback -> callback (Update, value)) subscribers
+    return (value, subscribers)
 
 updateBasicObservable :: BasicObservable v -> (v -> v) -> IO ()
 updateBasicObservable (BasicObservable mvar) f =
