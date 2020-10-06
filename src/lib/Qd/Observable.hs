@@ -6,6 +6,7 @@ module Qd.Observable (
   subscribe',
   SubscriptionHandle(..),
   Callback,
+  RegistrationHandle(..),
   ObservableState,
   ObservableMessage,
   MessageReason(..),
@@ -34,6 +35,7 @@ mapObservableMessage :: Monad m => (Maybe a -> m (Maybe b)) -> ObservableMessage
 mapObservableMessage f (r, s) = (r, ) <$> f s
 
 newtype SubscriptionHandle = SubscriptionHandle { unsubscribe :: IO () }
+newtype RegistrationHandle = RegistrationHandle { deregister :: IO () }
 
 class Observable v o | o -> v where
   getValue :: o -> IO (ObservableState v)
