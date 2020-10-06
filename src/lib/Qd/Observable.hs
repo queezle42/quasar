@@ -54,6 +54,14 @@ subscribe' observable callback = mfix $ \subscription -> subscribe observable (c
 
 type ObservableCallback v = ObservableMessage v -> IO ()
 
+instance Observable v o => Observable v (IO o) where
+  getValue :: IO o -> IO (ObservableState v)
+  getValue getObservable = getValue =<< getObservable
+  subscribe :: IO o -> (ObservableMessage v -> IO ()) -> IO SubscriptionHandle
+  subscribe getObservable callback = do
+    observable <- getObservable
+    subscribe observable callback
+
 
 -- | Existential quantification wrapper for the Observable type class.
 data SomeObservable v = forall o. Observable v o => SomeObservable o
