@@ -15,6 +15,7 @@ module Qd.Observable (
   setBasicObservable,
   updateBasicObservable,
   joinObservable,
+  joinObservableWith,
   FnObservable(..),
 ) where
 
@@ -142,7 +143,13 @@ instance forall o i v. (Observable i o, Observable v i) => Observable v (JoinedO
           unsubscribe outerSubscription
 
 joinObservable :: (Observable i o, Observable v i) => o -> SomeObservable v
-joinObservable outer = SomeObservable $ JoinedObservable outer
+joinObservable = SomeObservable . JoinedObservable
+
+joinObservableWith :: forall a o v i. (Observable a o, Observable v i) => (a -> i) -> o -> SomeObservable v
+joinObservableWith transform = SomeObservable . JoinedObservable . MappedObservable mapFn
+  where
+    mapFn :: ObservableState a -> IO (ObservableState i)
+    mapFn = return . fmap transform
 
 data FnObservable v = FnObservable {
   getValueFn :: IO (ObservableState v),
