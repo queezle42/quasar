@@ -22,7 +22,6 @@ import Control.Monad.Fix (mfix)
 import Data.Binary (Binary)
 import qualified Data.HashMap.Strict as HM
 import Data.Unique
-import GHC.Generics (Generic)
 
 data MessageReason = Current | Update
   deriving (Eq, Show, Generic)
