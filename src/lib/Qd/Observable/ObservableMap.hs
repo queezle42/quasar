@@ -10,10 +10,9 @@ module Qd.Observable.ObservableMap (
 ) where
 
 import Qd.Observable
+import Qd.Utils.GetT
 
 import Control.Concurrent.MVar
-import Data.Bifunctor
-import Data.Hashable (Hashable)
 import qualified Data.HashMap.Strict as HM
 import Data.Unique
 import Prelude hiding (lookup, lookupDelete)
@@ -24,14 +23,6 @@ data ObservableValue v = ObservableValue {
   value :: Maybe v,
   subscribers :: (HM.HashMap Unique (ObservableMessage v -> IO ()))
 }
-
-newtype GetT s m r = GetT {
-  runGetT :: m (r, s)
-}
-instance Functor m => Functor (GetT s m) where
-  fmap :: (a -> b) -> (GetT s m) a -> (GetT s m) b
-  fmap fn = GetT . fmap (first fn) . runGetT
-  
 
 modifyValue :: forall k v a. (Eq k, Hashable k) => (ObservableValue v -> IO (ObservableValue v, a)) -> k -> ObservableMap k v -> IO a
 modifyValue f k (ObservableMap mvar) = modifyMVar mvar $ \hashmap -> runGetT (HM.alterF update k hashmap)
