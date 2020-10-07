@@ -6,6 +6,7 @@ module Qd.Observable (
   subscribe',
   SubscriptionHandle(..),
   RegistrationHandle(..),
+  Disposable(..),
   ObservableCallback,
   ObservableState,
   ObservableMessage,
@@ -37,6 +38,13 @@ mapObservableMessage f (r, s) = (r, ) <$> f s
 
 newtype SubscriptionHandle = SubscriptionHandle { unsubscribe :: IO () }
 newtype RegistrationHandle = RegistrationHandle { deregister :: IO () }
+
+class Disposable a where
+  dispose :: a -> IO ()
+instance Disposable SubscriptionHandle where
+  dispose = unsubscribe
+instance Disposable RegistrationHandle where
+  dispose = deregister
 
 class Observable v o | o -> v where
   getValue :: o -> IO (ObservableState v)
