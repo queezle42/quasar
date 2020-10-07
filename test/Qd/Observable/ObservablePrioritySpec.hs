@@ -1,0 +1,43 @@
+module Qd.Observable.ObservablePrioritySpec where
+
+import Qd.Observable
+import Qd.Observable.ObservablePriority (ObservablePriority)
+import qualified Qd.Observable.ObservablePriority as OP
+
+import Control.Monad (void)
+import Data.IORef
+import Test.Hspec
+
+spec :: Spec
+spec = do
+  describe "ObservablePriority" $ parallel $ do
+    it "can be created" $ do
+      void $ OP.create
+    specify "getValue returns the value with the highest priority" $ do
+      (op :: ObservablePriority Int String) <- OP.create
+      p2 <- OP.insertValue op 2 "p2"
+      getValue op `shouldReturn` (Just "p2")
+      p1 <- OP.insertValue op 1 "p1"
+      getValue op `shouldReturn` (Just "p2")
+      deregister p2
+      getValue op `shouldReturn` (Just "p1")
+      deregister p1
+      getValue op `shouldReturn` (Nothing)
+    it "sends updates when its value changes" $ do
+      result <- newIORef []
+      let mostRecentShouldBe = (head <$> readIORef result `shouldReturn`)
+
+      (op :: ObservablePriority Int String) <- OP.create
+      _s <- subscribe op (modifyIORef result . (:))
+      readIORef result `shouldReturn` ([(Current, Nothing)])
+      p2 <- OP.insertValue op 2 "p2"
+
+      mostRecentShouldBe (Update, Just "p2")
+      p1 <- OP.insertValue op 1 "p1"
+      mostRecentShouldBe (Update, Just "p2")
+      deregister p2
+      mostRecentShouldBe (Update, Just "p1")
+      deregister p1
+      mostRecentShouldBe (Update, Nothing)
+
+      length <$> readIORef result `shouldReturn` 4
