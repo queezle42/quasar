@@ -15,7 +15,7 @@ module Qd.Observable (
   BasicObservable,
   createBasicObservable,
   setBasicObservable,
-  updateBasicObservable,
+  modifyBasicObservable,
   joinObservable,
   joinObservableWith,
   FnObservable(..),
@@ -124,8 +124,8 @@ setBasicObservable (BasicObservable mvar) value = do
     mapM_ (\callback -> callback (Update, value)) subscribers
     return (value, subscribers)
 
-updateBasicObservable :: BasicObservable v -> (v -> v) -> IO ()
-updateBasicObservable (BasicObservable mvar) f =
+modifyBasicObservable :: BasicObservable v -> (v -> v) -> IO ()
+modifyBasicObservable (BasicObservable mvar) f =
   modifyMVar_ mvar $ \(oldState, subscribers) -> do
     let newState = (\v -> f v) <$> oldState
     mapM_ (\callback -> callback (Update, newState)) subscribers
