@@ -6,6 +6,7 @@ module Qd.Observable (
   subscribe',
   SubscriptionHandle(..),
   RegistrationHandle(..),
+  Settable(..),
   Disposable(..),
   ObservableCallback,
   ObservableState,
@@ -72,6 +73,10 @@ instance Observable v o => Observable v (IO o) where
     subscribe observable callback
 
 
+class Settable v a where
+  setValue :: a -> v -> IO ()
+
+
 -- | Existential quantification wrapper for the Observable type class.
 data SomeObservable v = forall o. Observable v o => SomeObservable o
 instance Observable v (SomeObservable v) where
@@ -104,6 +109,10 @@ instance Observable v (BasicObservable v) where
     where
       unsubscribe' :: Unique -> IO ()
       unsubscribe' key = modifyMVar_ mvar $ \(state, subscribers) -> return (state, HM.delete key subscribers)
+
+instance Settable v (BasicObservable v) where
+  setValue basicObservable = setBasicObservable basicObservable . Just
+
 
 createBasicObservable :: Maybe v -> IO (BasicObservable v)
 createBasicObservable defaultValue = do
