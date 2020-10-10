@@ -46,7 +46,9 @@ instance Disposable SubscriptionHandle where
   dispose = unsubscribe
 instance Disposable RegistrationHandle where
   dispose = deregister
-
+instance Disposable a => Disposable (Maybe a) where
+  dispose = mapM_ dispose
+  
 class Observable v o | o -> v where
   getValue :: o -> IO (ObservableState v)
   subscribe :: o -> (ObservableMessage v -> IO ()) -> IO SubscriptionHandle
