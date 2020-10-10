@@ -17,7 +17,7 @@ module Qd.Observable (
   setBasicObservable,
   modifyBasicObservable,
   joinObservable,
-  joinObservableWith,
+  joinObservableEither,
   FnObservable(..),
 ) where
 
@@ -52,14 +52,14 @@ instance Disposable a => Disposable (Maybe a) where
 class Observable v o | o -> v where
   getValue :: o -> IO (ObservableState v)
   subscribe :: o -> (ObservableMessage v -> IO ()) -> IO SubscriptionHandle
-  mapObservable :: (ObservableState v -> IO (ObservableState a)) -> o -> SomeObservable a
-  mapObservable f = SomeObservable . MappedObservable f
-  mapObservable' :: forall a. (v -> IO a) -> o -> SomeObservable a
-  mapObservable' f = mapObservable wrapped
-    where
-      wrapped :: (ObservableState v -> IO (ObservableState a))
-      wrapped Nothing = return Nothing
-      wrapped (Just v) = Just <$> f v
+  mapObservable :: (ObservableState v -> ObservableState a) -> o -> SomeObservable a
+  mapObservable f = mapObservableM (return . f)
+  mapObservable' :: (v -> a) -> o -> SomeObservable a
+  mapObservable' f = mapObservable (fmap f)
+  mapObservableM :: (ObservableState v -> IO (ObservableState a)) -> o -> SomeObservable a
+  mapObservableM f = SomeObservable . MappedObservable f
+  mapObservableM' :: forall a. (v -> IO a) -> o -> SomeObservable a
+  mapObservableM' f = mapObservableM $ mapM f
 
 subscribe' :: Observable v o => o -> (SubscriptionHandle -> ObservableMessage v -> IO ()) -> IO SubscriptionHandle
 subscribe' observable callback = mfix $ \subscription -> subscribe observable (callback subscription)
@@ -85,17 +85,18 @@ instance Observable v (SomeObservable v) where
   getValue (SomeObservable o) = getValue o
   subscribe (SomeObservable o) = subscribe o
   mapObservable f (SomeObservable o) = mapObservable f o
-  mapObservable' f (SomeObservable o) = mapObservable' f o
+  mapObservableM f (SomeObservable o) = mapObservableM f o
+  mapObservableM' f (SomeObservable o) = mapObservableM' f o
 
 instance Functor SomeObservable where
-  fmap f = mapObservable' (return . f)
+  fmap f = mapObservable' f
 
 
 data MappedObservable b = forall a o. Observable a o => MappedObservable (ObservableState a -> IO (ObservableState b)) o
 instance Observable v (MappedObservable v) where
   getValue (MappedObservable f observable) = f =<< getValue observable
   subscribe (MappedObservable f observable) callback = subscribe observable (callback <=< mapObservableMessage f)
-  mapObservable f1 (MappedObservable f2 upstream) = SomeObservable $ MappedObservable (f1 <=< f2) upstream
+  mapObservableM f1 (MappedObservable f2 upstream) = SomeObservable $ MappedObservable (f1 <=< f2) upstream
 
 
 newtype BasicObservable v = BasicObservable (MVar (ObservableState v, HM.HashMap Unique (ObservableCallback v)))
@@ -145,7 +146,7 @@ instance forall o i v. (Observable i o, Observable v i) => Observable v (JoinedO
   subscribe (JoinedObservable outer) handler = do
     innerSubscriptionMVar <- newMVar dummySubscription
     outerSubscription <- subscribe outer (outerHandler innerSubscriptionMVar)
-    return $ SubscriptionHandle{unsubscribe = unsubscribe' outerSubscription}
+    return $ SubscriptionHandle{unsubscribe = unsubscribe outerSubscription}
       where
         dummySubscription = SubscriptionHandle { unsubscribe = return () }
         outerHandler innerSubscriptionMVar = outerHandler'
@@ -158,17 +159,45 @@ instance forall o i v. (Observable i o, Observable v i) => Observable v (JoinedO
               unsubscribe =<< takeMVar innerSubscriptionMVar
               handler (reason, Nothing)
               putMVar innerSubscriptionMVar dummySubscription
-        unsubscribe' outerSubscription = do
-          unsubscribe outerSubscription
 
 joinObservable :: (Observable i o, Observable v i) => o -> SomeObservable v
 joinObservable = SomeObservable . JoinedObservable
 
-joinObservableWith :: forall a o v i. (Observable a o, Observable v i) => (a -> i) -> o -> SomeObservable v
-joinObservableWith transform = SomeObservable . JoinedObservable . MappedObservable mapFn
-  where
-    mapFn :: ObservableState a -> IO (ObservableState i)
-    mapFn = return . fmap transform
+
+newtype JoinedObservableEither o = JoinedObservableEither o
+instance forall e o i v. (Observable (Either e i) o, Observable v i) => Observable (Either e v) (JoinedObservableEither o) where 
+  getValue :: JoinedObservableEither o -> IO (ObservableState (Either e v))
+  getValue (JoinedObservableEither outer) = do
+    state <- getValue outer
+    case state of
+      Just (Right inner) -> Right <$$> getValue inner
+      Just (Left ex) -> return $ Just $ Left ex
+      Nothing -> return Nothing
+  subscribe :: (JoinedObservableEither o) -> (ObservableMessage (Either e v) -> IO ()) -> IO SubscriptionHandle
+  subscribe (JoinedObservableEither outer) handler = do
+    innerSubscriptionMVar <- newMVar dummySubscription
+    outerSubscription <- subscribe outer (outerHandler innerSubscriptionMVar)
+    return $ SubscriptionHandle{unsubscribe = unsubscribe outerSubscription}
+      where
+        dummySubscription = SubscriptionHandle { unsubscribe = return () }
+        outerHandler innerSubscriptionMVar = outerHandler'
+          where
+            outerHandler' (_, Just (Right inner)) = do
+              unsubscribe =<< takeMVar innerSubscriptionMVar
+              innerSubscription <- subscribe inner (handler . fmap (fmap Right))
+              putMVar innerSubscriptionMVar innerSubscription
+            outerHandler' (reason, Just (Left ex)) = do
+              unsubscribe =<< takeMVar innerSubscriptionMVar
+              handler (reason, Just (Left ex))
+              putMVar innerSubscriptionMVar dummySubscription
+            outerHandler' (reason, Nothing) = do
+              unsubscribe =<< takeMVar innerSubscriptionMVar
+              handler (reason, Nothing)
+              putMVar innerSubscriptionMVar dummySubscription
+
+
+joinObservableEither :: (Observable (Either e i) o, Observable v i) => o -> SomeObservable (Either e v)
+joinObservableEither = SomeObservable . JoinedObservableEither
 
 data FnObservable v = FnObservable {
   getValueFn :: IO (ObservableState v),
@@ -177,7 +206,7 @@ data FnObservable v = FnObservable {
 instance Observable v (FnObservable v) where
   getValue o = getValueFn o
   subscribe o = subscribeFn o
-  mapObservable f FnObservable{getValueFn, subscribeFn} = SomeObservable $ FnObservable {
+  mapObservableM f FnObservable{getValueFn, subscribeFn} = SomeObservable $ FnObservable {
     getValueFn = getValueFn >>= f,
     subscribeFn = \listener -> subscribeFn (mapObservableMessage f >=> listener)
   }
