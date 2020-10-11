@@ -12,10 +12,10 @@ module Qd.Observable (
   ObservableState,
   ObservableMessage,
   MessageReason(..),
-  BasicObservable,
-  createBasicObservable,
-  setBasicObservable,
-  modifyBasicObservable,
+  ObservableVar,
+  newObservableVar,
+  setObservableVar,
+  modifyObservableVar,
   joinObservable,
   joinObservableEither,
   FnObservable(..),
@@ -99,10 +99,10 @@ instance Observable v (MappedObservable v) where
   mapObservableM f1 (MappedObservable f2 upstream) = SomeObservable $ MappedObservable (f1 <=< f2) upstream
 
 
-newtype BasicObservable v = BasicObservable (MVar (ObservableState v, HM.HashMap Unique (ObservableCallback v)))
-instance Observable v (BasicObservable v) where
-  getValue (BasicObservable mvar) = fst <$> readMVar mvar
-  subscribe (BasicObservable mvar) callback = do
+newtype ObservableVar v = ObservableVar (MVar (ObservableState v, HM.HashMap Unique (ObservableCallback v)))
+instance Observable v (ObservableVar v) where
+  getValue (ObservableVar mvar) = fst <$> readMVar mvar
+  subscribe (ObservableVar mvar) callback = do
     key <- newUnique
     modifyMVar_ mvar $ \(state, subscribers) -> do
       -- Call listener
@@ -113,22 +113,22 @@ instance Observable v (BasicObservable v) where
       unsubscribe' :: Unique -> IO ()
       unsubscribe' key = modifyMVar_ mvar $ \(state, subscribers) -> return (state, HM.delete key subscribers)
 
-instance Settable v (BasicObservable v) where
-  setValue basicObservable = setBasicObservable basicObservable . Just
+instance Settable v (ObservableVar v) where
+  setValue basicObservable = setObservableVar basicObservable . Just
 
 
-createBasicObservable :: Maybe v -> IO (BasicObservable v)
-createBasicObservable defaultValue = do
-  BasicObservable <$> newMVar (defaultValue, HM.empty)
+newObservableVar :: Maybe v -> IO (ObservableVar v)
+newObservableVar defaultValue = do
+  ObservableVar <$> newMVar (defaultValue, HM.empty)
 
-setBasicObservable :: BasicObservable v -> ObservableState v -> IO ()
-setBasicObservable (BasicObservable mvar) value = do
+setObservableVar :: ObservableVar v -> ObservableState v -> IO ()
+setObservableVar (ObservableVar mvar) value = do
   modifyMVar_ mvar $ \(_, subscribers) -> do
     mapM_ (\callback -> callback (Update, value)) subscribers
     return (value, subscribers)
 
-modifyBasicObservable :: BasicObservable v -> (v -> v) -> IO ()
-modifyBasicObservable (BasicObservable mvar) f =
+modifyObservableVar :: ObservableVar v -> (v -> v) -> IO ()
+modifyObservableVar (ObservableVar mvar) f =
   modifyMVar_ mvar $ \(oldState, subscribers) -> do
     let newState = (\v -> f v) <$> oldState
     mapM_ (\callback -> callback (Update, newState)) subscribers
