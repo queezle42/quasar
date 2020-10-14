@@ -57,7 +57,7 @@ currentValue Internals{current} = (\(_, _, value) -> value) <$> current
 
 -- | Insert a value with an assigned priority into the data structure. If the priority is higher than the current highest priority the value will become the current value (and will be sent to subscribers). Otherwise the value will be stored and will only become the current value when all values with a higher priority and all values with the same priority that have been inserted earlier have been removed.
 -- Returns an `RegistrationHandle` that can be used to remove the value from the data structure.
-insertValue :: forall p v. (Eq v, Ord p, Hashable p) => ObservablePriority p v -> p -> v -> IO RegistrationHandle
+insertValue :: forall p v. (Ord p, Hashable p) => ObservablePriority p v -> p -> v -> IO RegistrationHandle
 insertValue (ObservablePriority mvar) priority value = modifyMVar mvar $ \internals -> do
   key <- newUnique
   newInternals <- insertValue' key internals

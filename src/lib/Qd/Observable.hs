@@ -121,8 +121,8 @@ instance Settable v (ObservableVar v) where
 
 
 newObservableVar :: Maybe v -> IO (ObservableVar v)
-newObservableVar defaultValue = do
-  ObservableVar <$> newMVar (defaultValue, HM.empty)
+newObservableVar initialValue = do
+  ObservableVar <$> newMVar (initialValue, HM.empty)
 
 setObservableVar :: ObservableVar v -> ObservableState v -> IO ()
 setObservableVar (ObservableVar mvar) value = do
