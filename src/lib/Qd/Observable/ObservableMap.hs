@@ -47,7 +47,7 @@ create = ObservableMap <$> newMVar HM.empty
 observeKey :: forall k v. (Eq k, Hashable k) => k -> ObservableMap k v -> SomeObservable v
 observeKey key om@(ObservableMap mvar) = SomeObservable FnObservable{getValueFn, subscribeFn}
   where
-    getValueFn :: IO (ObservableState v)
+    getValueFn :: IO (Maybe v)
     getValueFn = (value <=< HM.lookup key) <$> readMVar mvar
     subscribeFn :: ((ObservableMessage v -> IO ()) -> IO SubscriptionHandle)
     subscribeFn callback = do
