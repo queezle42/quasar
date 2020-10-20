@@ -19,6 +19,7 @@ module Qd.Observable (
   joinObservableEither,
   mergeObservable,
   mergeObservable',
+  constObservable,
   FnObservable(..),
 ) where
 
@@ -247,6 +248,17 @@ instance Observable v (FnObservable v) where
     getValueFn = getValueFn >>= f,
     subscribeFn = \listener -> subscribeFn (mapObservableMessage f >=> listener)
   }
+
+
+newtype ConstObservable a = ConstObservable (Maybe a)
+instance Observable a (ConstObservable a) where
+  getValue (ConstObservable x) = return x
+  subscribe (ConstObservable x) callback = do
+    callback (Current, x)
+    return $ SubscriptionHandle { unsubscribe = return () }
+-- | Create an observable that contains a constant value.
+constObservable :: Maybe a -> SomeObservable a
+constObservable = SomeObservable . ConstObservable
 
 
 -- TODO implement
