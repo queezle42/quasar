@@ -21,7 +21,7 @@ newtype ObservableMap k v = ObservableMap (MVar (HM.HashMap k (ObservableValue v
 
 data ObservableValue v = ObservableValue {
   value :: Maybe v,
-  subscribers :: (HM.HashMap Unique (ObservableMessage v -> IO ()))
+  subscribers :: (HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ()))
 }
 
 modifyValue :: forall k v a. (Eq k, Hashable k) => (ObservableValue v -> IO (ObservableValue v, a)) -> k -> ObservableMap k v -> IO a
@@ -38,18 +38,18 @@ modifyValue f k (ObservableMap mvar) = modifyMVar mvar $ \hashmap -> runGetT (HM
 modifyValue_ :: forall k v. (Eq k, Hashable k) => (ObservableValue v -> IO (ObservableValue v)) -> k -> ObservableMap k v -> IO ()
 modifyValue_ f = modifyValue (fmap (,()) . f)
 
-modifySubscribers :: (HM.HashMap Unique (ObservableMessage v -> IO ()) -> HM.HashMap Unique (ObservableMessage v -> IO ())) -> ObservableValue v -> ObservableValue v
+modifySubscribers :: (HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ()) -> HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ())) -> ObservableValue v -> ObservableValue v
 modifySubscribers f ov@ObservableValue{subscribers} = ov{subscribers=f subscribers}
 
 create :: IO (ObservableMap k v)
 create = ObservableMap <$> newMVar HM.empty
 
-observeKey :: forall k v. (Eq k, Hashable k) => k -> ObservableMap k v -> SomeObservable v
+observeKey :: forall k v. (Eq k, Hashable k) => k -> ObservableMap k v -> SomeObservable (Maybe v)
 observeKey key om@(ObservableMap mvar) = SomeObservable FnObservable{getValueFn, subscribeFn}
   where
     getValueFn :: IO (Maybe v)
     getValueFn = (value <=< HM.lookup key) <$> readMVar mvar
-    subscribeFn :: ((ObservableMessage v -> IO ()) -> IO SubscriptionHandle)
+    subscribeFn :: ((ObservableMessage (Maybe v) -> IO ()) -> IO SubscriptionHandle)
     subscribeFn callback = do
       subscriptionKey <- newUnique
       modifyValue_ (subscribeFn' subscriptionKey) key om

@@ -15,41 +15,41 @@ mergeObservableSpec :: Spec
 mergeObservableSpec = do
   describe "mergeObservable" $ parallel $ do
     it "merges correctly using getValue" $ do
-      a <- newObservableVar Nothing
-      b <- newObservableVar Nothing
+      a <- newObservableVar ""
+      b <- newObservableVar ""
 
-      let mergedObservable = mergeObservable (\v0 v1 -> Just (v0, v1)) a b
-      let latestShouldBe = (getValue mergedObservable `shouldReturn`) . Just
+      let mergedObservable = mergeObservable (\v0 v1 -> (v0, v1)) a b
+      let latestShouldBe = (getValue mergedObservable `shouldReturn`)
 
       testSequence a b latestShouldBe
 
     it "merges correctly using subscribe" $ do
-      a <- newObservableVar Nothing
-      b <- newObservableVar Nothing
+      a <- newObservableVar ""
+      b <- newObservableVar ""
 
-      let mergedObservable = mergeObservable (\v0 v1 -> Just (v0, v1)) a b
-      (latestRef :: IORef (Maybe (Maybe String, Maybe String))) <- newIORef Nothing
+      let mergedObservable = mergeObservable (\v0 v1 -> (v0, v1)) a b
+      (latestRef :: IORef (String, String)) <- newIORef ("", "")
       void $ subscribe mergedObservable (writeIORef latestRef . snd)
-      let latestShouldBe = ((readIORef latestRef) `shouldReturn`) . Just
+      let latestShouldBe = ((readIORef latestRef) `shouldReturn`)
 
       testSequence a b latestShouldBe
   where
-    testSequence :: ObservableVar String -> ObservableVar String -> ((Maybe String, Maybe String) -> IO ()) -> IO ()
+    testSequence :: ObservableVar String -> ObservableVar String -> ((String, String) -> IO ()) -> IO ()
     testSequence a b latestShouldBe = do
-      latestShouldBe (Nothing, Nothing)
+      latestShouldBe ("", "")
 
       setValue a "a0"
-      latestShouldBe (Just "a0", Nothing)
+      latestShouldBe ("a0", "")
 
       setValue b "b0"
-      latestShouldBe (Just "a0", Just "b0")
+      latestShouldBe ("a0", "b0")
 
       setValue a "a1"
-      latestShouldBe (Just "a1", Just "b0")
+      latestShouldBe ("a1", "b0")
 
       setValue b "b1"
-      latestShouldBe (Just "a1", Just "b1")
+      latestShouldBe ("a1", "b1")
 
       -- No change
       setValue a "a1"
-      latestShouldBe (Just "a1", Just "b1")
+      latestShouldBe ("a1", "b1")

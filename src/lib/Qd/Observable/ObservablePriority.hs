@@ -19,7 +19,7 @@ type Entry v = (Unique, v)
 -- | Mutable data structure that stores values of type "v" with an assiciated priority "p". The `Observable` instance can be used to get or observe the value with the highest priority.
 data ObservablePriority p v = ObservablePriority (MVar (Internals p v))
 
-instance Observable v (ObservablePriority p v) where
+instance Observable (Maybe v) (ObservablePriority p v) where
   getValue (ObservablePriority mvar) = getValueFromInternals <$> readMVar mvar 
     where
       getValueFromInternals :: Internals p v -> Maybe v
@@ -41,7 +41,7 @@ type PriorityMap p v = HM.HashMap p (NonEmpty (Entry v))
 data Internals p v = Internals {
   priorityMap :: PriorityMap p v,
   current :: Maybe (Unique, p, v),
-  subscribers :: HM.HashMap Unique (ObservableCallback v)
+  subscribers :: HM.HashMap Unique (ObservableCallback (Maybe v))
 }
 
 -- | Create a new `ObservablePriority` data structure.
