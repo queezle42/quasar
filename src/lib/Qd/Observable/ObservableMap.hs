@@ -10,12 +10,12 @@ module Qd.Observable.ObservableMap (
 ) where
 
 import Qd.Observable
+import Qd.Prelude hiding (lookup, lookupDelete)
 import Qd.Utils.GetT
 
 import Control.Concurrent.MVar
 import qualified Data.HashMap.Strict as HM
 import Data.Unique
-import Prelude hiding (lookup, lookupDelete)
 
 newtype ObservableMap k v = ObservableMap (MVar (HM.HashMap k (ObservableValue v)))
 

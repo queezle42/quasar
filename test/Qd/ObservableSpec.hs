@@ -1,11 +1,12 @@
 module Qd.ObservableSpec where
 
-import Test.Hspec
-
 import Qd.Observable
 
 import Control.Monad (void)
 import Data.IORef
+import Prelude
+import Test.Hspec
+
 
 spec :: Spec
 spec = do

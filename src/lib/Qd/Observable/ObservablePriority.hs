@@ -5,6 +5,7 @@ module Qd.Observable.ObservablePriority (
 ) where
 
 import Qd.Observable
+import Qd.Prelude
 
 import Control.Concurrent.MVar
 import qualified Data.HashMap.Strict as HM

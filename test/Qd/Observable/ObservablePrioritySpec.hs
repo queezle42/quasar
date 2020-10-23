@@ -6,7 +6,9 @@ import qualified Qd.Observable.ObservablePriority as OP
 
 import Control.Monad (void)
 import Data.IORef
+import Prelude
 import Test.Hspec
+
 
 spec :: Spec
 spec = do

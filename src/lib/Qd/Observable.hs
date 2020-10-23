@@ -25,6 +25,8 @@ module Qd.Observable (
   FnObservable(..),
 ) where
 
+import Qd.Prelude
+
 import Control.Concurrent.MVar
 import Control.Monad.Fix (mfix)
 import Data.Binary (Binary)
