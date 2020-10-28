@@ -142,7 +142,7 @@ instance forall o i v. (Observable i o, Observable v i) => Observable v (JoinedO
   subscribe (JoinedObservable outer) callback = do
     innerSubscriptionMVar <- newMVar dummySubscription
     outerSubscription <- subscribe outer (outerCallback innerSubscriptionMVar)
-    return $ SubscriptionHandle{unsubscribe = unsubscribe outerSubscription}
+    return $ SubscriptionHandle{unsubscribe = unsubscribe outerSubscription >> readMVar innerSubscriptionMVar >>= dispose}
       where
         dummySubscription = SubscriptionHandle { unsubscribe = return () }
         outerCallback innerSubscriptionMVar = outerSubscription'
@@ -168,7 +168,7 @@ instance forall o i v. (Observable (Maybe i) o, Observable v i) => Observable (M
   subscribe (JoinedObservableMaybe outer) callback = do
     innerSubscriptionMVar <- newMVar dummySubscription
     outerSubscription <- subscribe outer (outerHandler innerSubscriptionMVar)
-    return $ SubscriptionHandle{unsubscribe = unsubscribe outerSubscription}
+    return $ SubscriptionHandle{unsubscribe = unsubscribe outerSubscription >> readMVar innerSubscriptionMVar >>= dispose}
       where
         dummySubscription = SubscriptionHandle { unsubscribe = return () }
         outerHandler innerSubscriptionMVar = outerSubscription'
@@ -201,7 +201,7 @@ instance forall e o i v. (Observable (Either e i) o, Observable v i) => Observab
   subscribe (JoinedObservableEither outer) callback = do
     innerSubscriptionMVar <- newMVar dummySubscription
     outerSubscription <- subscribe outer (outerHandler innerSubscriptionMVar)
-    return $ SubscriptionHandle{unsubscribe = unsubscribe outerSubscription}
+    return $ SubscriptionHandle{unsubscribe = unsubscribe outerSubscription >> readMVar innerSubscriptionMVar >>= dispose}
       where
         dummySubscription = SubscriptionHandle { unsubscribe = return () }
         outerHandler innerSubscriptionMVar = outerSubscription'
