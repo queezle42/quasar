@@ -120,4 +120,4 @@ insertValue (ObservablePriority mvar) priority value = modifyMVar mvar $ \intern
 
 
 notifySubscribers :: forall p v. Internals p v -> IO ()
-notifySubscribers Internals{subscribers, current} = mapM_ (\callback -> callback (Update, (\(_, _, value) -> value) <$> current)) subscribers
+notifySubscribers Internals{subscribers, current} = forM_ subscribers (\callback -> callback (Update, (\(_, _, value) -> value) <$> current))
