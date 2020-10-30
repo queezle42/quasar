@@ -3,6 +3,7 @@
 module Qd.Observable (
   SomeObservable(..),
   Observable(..),
+  getValueE,
   subscribe',
   SubscriptionHandle(..),
   RegistrationHandle(..),
@@ -28,6 +29,7 @@ module Qd.Observable (
 import Qd.Prelude
 
 import Control.Concurrent.MVar
+import Control.Exception (Exception)
 import Control.Monad.Fix (mfix)
 import Data.Binary (Binary)
 import qualified Data.HashMap.Strict as HM
@@ -62,6 +64,10 @@ class Observable v o | o -> v where
   mapObservable f = mapObservableM (return . f)
   mapObservableM :: (v -> IO a) -> o -> SomeObservable a
   mapObservableM f = SomeObservable . MappedObservable f
+
+-- | Variant of `getValue` that throws exceptions instead of returning them.
+getValueE :: (Exception e, Observable (Either e v) o) => o -> IO v
+getValueE = either throw return <=< getValue
 
 -- | A variant of `subscribe` that passes the `SubscriptionHandle` to the callback.
 subscribe' :: Observable v o => o -> (SubscriptionHandle -> ObservableMessage v -> IO ()) -> IO SubscriptionHandle
