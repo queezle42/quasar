@@ -59,11 +59,16 @@ instance Disposable a => Disposable (Maybe a) where
   
 class Observable v o | o -> v where
   getValue :: o -> IO v
+  getValue = getValue . toSomeObservable
   subscribe :: o -> (ObservableMessage v -> IO ()) -> IO SubscriptionHandle
+  subscribe = subscribe . toSomeObservable
+  toSomeObservable :: o -> SomeObservable v
+  toSomeObservable = SomeObservable
   mapObservable :: (v -> a) -> o -> SomeObservable a
   mapObservable f = mapObservableM (return . f)
   mapObservableM :: (v -> IO a) -> o -> SomeObservable a
   mapObservableM f = SomeObservable . MappedObservable f
+  {-# MINIMAL (getValue, subscribe) | toSomeObservable #-}
 
 -- | Variant of `getValue` that throws exceptions instead of returning them.
 getValueE :: (Exception e, Observable (Either e v) o) => o -> IO v
