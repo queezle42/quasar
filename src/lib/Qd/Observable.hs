@@ -56,7 +56,7 @@ instance Disposable RegistrationHandle where
   dispose = deregister
 instance Disposable a => Disposable (Maybe a) where
   dispose = mapM_ dispose
-  
+
 class Observable v o | o -> v where
   getValue :: o -> IO v
   getValue = getValue . toSomeObservable
