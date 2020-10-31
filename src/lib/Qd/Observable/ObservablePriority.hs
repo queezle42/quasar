@@ -20,12 +20,13 @@ type Entry v = (Unique, v)
 -- | Mutable data structure that stores values of type "v" with an assiciated priority "p". The `Observable` instance can be used to get or observe the value with the highest priority.
 data ObservablePriority p v = ObservablePriority (MVar (Internals p v))
 
-instance Observable (Maybe v) (ObservablePriority p v) where
-  getValue (ObservablePriority mvar) = getValueFromInternals <$> readMVar mvar 
+instance Gettable (Maybe v) (ObservablePriority p v) where
+  getValue (ObservablePriority mvar) = getValueFromInternals <$> readMVar mvar
     where
       getValueFromInternals :: Internals p v -> Maybe v
       getValueFromInternals Internals{current=Nothing} = Nothing
       getValueFromInternals Internals{current=Just (_, _, value)} = Just value
+instance Observable (Maybe v) (ObservablePriority p v) where
   subscribe (ObservablePriority mvar) callback = do
     key <- newUnique
     modifyMVar_ mvar $ \internals@Internals{subscribers} -> do

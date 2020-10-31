@@ -2,6 +2,7 @@
 
 module Qd.Observable (
   SomeObservable(..),
+  Gettable(..),
   Observable(..),
   getValueE,
   subscribe',
@@ -57,9 +58,12 @@ instance Disposable RegistrationHandle where
 instance Disposable a => Disposable (Maybe a) where
   dispose = mapM_ dispose
 
-class Observable v o | o -> v where
-  getValue :: o -> IO v
-  getValue = getValue . toSomeObservable
+
+class Gettable v a | a -> v where
+  getValue :: a -> IO v
+
+
+class Gettable v o => Observable v o | o -> v where
   subscribe :: o -> (ObservableMessage v -> IO ()) -> IO SubscriptionHandle
   subscribe = subscribe . toSomeObservable
   toSomeObservable :: o -> SomeObservable v
@@ -68,7 +72,7 @@ class Observable v o | o -> v where
   mapObservable f = mapObservableM (return . f)
   mapObservableM :: (v -> IO a) -> o -> SomeObservable a
   mapObservableM f = SomeObservable . MappedObservable f
-  {-# MINIMAL (getValue, subscribe) | toSomeObservable #-}
+  {-# MINIMAL subscribe | toSomeObservable #-}
 
 -- | Variant of `getValue` that throws exceptions instead of returning them.
 getValueE :: (Exception e, Observable (Either e v) o) => o -> IO v
@@ -80,9 +84,11 @@ subscribe' observable callback = mfix $ \subscription -> subscribe observable (c
 
 type ObservableCallback v = ObservableMessage v -> IO ()
 
-instance Observable v o => Observable v (IO o) where
+
+instance Gettable v o => Gettable v (IO o) where
   getValue :: IO o -> IO v
-  getValue getObservable = getValue =<< getObservable
+  getValue getGettable = getValue =<< getGettable
+instance Observable v o => Observable v (IO o) where
   subscribe :: IO o -> (ObservableMessage v -> IO ()) -> IO SubscriptionHandle
   subscribe getObservable callback = do
     observable <- getObservable
@@ -95,9 +101,11 @@ class Settable v a | a -> v where
 
 -- | Existential quantification wrapper for the Observable type class.
 data SomeObservable v = forall o. Observable v o => SomeObservable o
-instance Observable v (SomeObservable v) where
+instance Gettable v (SomeObservable v) where
   getValue (SomeObservable o) = getValue o
+instance Observable v (SomeObservable v) where
   subscribe (SomeObservable o) = subscribe o
+  toSomeObservable = id
   mapObservable f (SomeObservable o) = mapObservable f o
   mapObservableM f (SomeObservable o) = mapObservableM f o
 
@@ -106,15 +114,17 @@ instance Functor SomeObservable where
 
 
 data MappedObservable b = forall a o. Observable a o => MappedObservable (a -> IO b) o
-instance Observable v (MappedObservable v) where
+instance Gettable v (MappedObservable v) where
   getValue (MappedObservable f observable) = f =<< getValue observable
+instance Observable v (MappedObservable v) where
   subscribe (MappedObservable f observable) callback = subscribe observable (callback <=< mapObservableMessage f)
   mapObservableM f1 (MappedObservable f2 upstream) = SomeObservable $ MappedObservable (f1 <=< f2) upstream
 
 
 newtype ObservableVar v = ObservableVar (MVar (v, HM.HashMap Unique (ObservableCallback v)))
-instance Observable v (ObservableVar v) where
+instance Gettable v (ObservableVar v) where
   getValue (ObservableVar mvar) = fst <$> readMVar mvar
+instance Observable v (ObservableVar v) where
   subscribe (ObservableVar mvar) callback = do
     key <- newUnique
     modifyMVar_ mvar $ \(state, subscribers) -> do
@@ -146,9 +156,10 @@ modifyObservableVar (ObservableVar mvar) f =
 
 
 newtype JoinedObservable o = JoinedObservable o
-instance forall o i v. (Observable i o, Observable v i) => Observable v (JoinedObservable o) where 
+instance forall o i v. (Gettable i o, Gettable v i) => Gettable v (JoinedObservable o) where
   getValue :: JoinedObservable o -> IO v
   getValue (JoinedObservable outer) = getValue =<< getValue outer
+instance forall o i v. (Observable i o, Observable v i) => Observable v (JoinedObservable o) where
   subscribe :: (JoinedObservable o) -> (ObservableMessage v -> IO ()) -> IO SubscriptionHandle
   subscribe (JoinedObservable outer) callback = do
     innerSubscriptionMVar <- newMVar dummySubscription
@@ -168,13 +179,14 @@ joinObservable = SomeObservable . JoinedObservable
 
 
 newtype JoinedObservableMaybe o = JoinedObservableMaybe o
-instance forall o i v. (Observable (Maybe i) o, Observable v i) => Observable (Maybe v) (JoinedObservableMaybe o) where 
+instance forall o i v. (Gettable (Maybe i) o, Gettable v i) => Gettable (Maybe v) (JoinedObservableMaybe o) where
   getValue :: JoinedObservableMaybe o -> IO (Maybe v)
   getValue (JoinedObservableMaybe outer) = do
     state <- getValue outer
     case state of
       Just inner -> Just <$> getValue inner
       Nothing -> return Nothing
+instance forall o i v. (Observable (Maybe i) o, Observable v i) => Observable (Maybe v) (JoinedObservableMaybe o) where
   subscribe :: (JoinedObservableMaybe o) -> (ObservableMessage (Maybe v) -> IO ()) -> IO SubscriptionHandle
   subscribe (JoinedObservableMaybe outer) callback = do
     innerSubscriptionMVar <- newMVar dummySubscription
@@ -201,13 +213,14 @@ joinObservableMaybe' :: (Observable (Maybe i) o, Observable (Maybe v) i) => o ->
 joinObservableMaybe' = fmap join . joinObservableMaybe
 
 newtype JoinedObservableEither o = JoinedObservableEither o
-instance forall e o i v. (Observable (Either e i) o, Observable v i) => Observable (Either e v) (JoinedObservableEither o) where 
+instance forall e o i v. (Gettable (Either e i) o, Gettable v i) => Gettable (Either e v) (JoinedObservableEither o) where
   getValue :: JoinedObservableEither o -> IO (Either e v)
   getValue (JoinedObservableEither outer) = do
     state <- getValue outer
     case state of
       Right inner -> Right <$> getValue inner
       Left ex -> return $ Left ex
+instance forall e o i v. (Observable (Either e i) o, Observable v i) => Observable (Either e v) (JoinedObservableEither o) where
   subscribe :: (JoinedObservableEither o) -> (ObservableMessage (Either e v) -> IO ()) -> IO SubscriptionHandle
   subscribe (JoinedObservableEither outer) callback = do
     innerSubscriptionMVar <- newMVar dummySubscription
@@ -235,11 +248,12 @@ joinObservableEither' = mapObservable join . JoinedObservableEither
 
 
 data MergedObservable o0 v0 o1 v1 r = MergedObservable (v0 -> v1 -> r) o0 o1
-instance forall o0 v0 o1 v1 r. (Observable v0 o0, Observable v1 o1) => Observable r (MergedObservable o0 v0 o1 v1 r) where
+instance forall o0 v0 o1 v1 r. (Gettable v0 o0, Gettable v1 o1) => Gettable r (MergedObservable o0 v0 o1 v1 r) where
   getValue (MergedObservable merge obs0 obs1) = do
     x0 <- getValue obs0
     x1 <- getValue obs1
     return $ merge x0 x1
+instance forall o0 v0 o1 v1 r. (Observable v0 o0, Observable v1 o1) => Observable r (MergedObservable o0 v0 o1 v1 r) where
   subscribe (MergedObservable merge obs0 obs1) callback = do
     currentValuesTupleRef <- newIORef (Nothing, Nothing)
     sub0 <- subscribe obs0 (mergeCallback currentValuesTupleRef . fmap Left)
@@ -260,7 +274,7 @@ instance forall o0 v0 o1 v1 r. (Observable v0 o0, Observable v1 o1) => Observabl
 
 
 -- | Merge two observables using a given merge function. Whenever the value of one of the inputs changes, the resulting observable updates according to the merge function.
--- 
+--
 -- There is no caching involed, every subscriber effectively subscribes to both input observables.
 mergeObservable :: (Observable v0 o0, Observable v1 o1) => (v0 -> v1 -> r) -> o0 -> o1 -> SomeObservable r
 mergeObservable merge x y = SomeObservable $ MergedObservable merge x y
@@ -275,8 +289,9 @@ data FnObservable v = FnObservable {
   getValueFn :: IO v,
   subscribeFn :: (ObservableMessage v -> IO ()) -> IO SubscriptionHandle
 }
-instance Observable v (FnObservable v) where
+instance Gettable v (FnObservable v) where
   getValue o = getValueFn o
+instance Observable v (FnObservable v) where
   subscribe o = subscribeFn o
   mapObservableM f FnObservable{getValueFn, subscribeFn} = SomeObservable $ FnObservable {
     getValueFn = getValueFn >>= f,
@@ -285,8 +300,9 @@ instance Observable v (FnObservable v) where
 
 
 newtype ConstObservable a = ConstObservable a
-instance Observable a (ConstObservable a) where
+instance Gettable a (ConstObservable a) where
   getValue (ConstObservable x) = return x
+instance Observable a (ConstObservable a) where
   subscribe (ConstObservable x) callback = do
     callback (Current, x)
     return $ SubscriptionHandle { unsubscribe = return () }
