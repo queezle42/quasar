@@ -2,7 +2,7 @@
 
 module Qd.Observable.ObservableHashMap (
   ObservableHashMap,
-  create,
+  new,
   observeKey,
   insert,
   delete,
@@ -10,78 +10,155 @@ module Qd.Observable.ObservableHashMap (
 ) where
 
 import Qd.Observable
+import Qd.Observable.Delta
 import Qd.Prelude hiding (lookup, lookupDelete)
 import Qd.Utils.GetT
 
 import Control.Concurrent.MVar
 import qualified Data.HashMap.Strict as HM
+import Data.Maybe (isJust)
 import Data.Unique
+import Language.Haskell.TH.Syntax (mkName, nameBase)
+import Lens.Micro.Platform
 
-newtype ObservableHashMap k v = ObservableHashMap (MVar (HM.HashMap k (ObservableValue v)))
 
-data ObservableValue v = ObservableValue {
-  value :: Maybe v,
-  subscribers :: (HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ()))
+newtype ObservableHashMap k v = ObservableHashMap (MVar (Handle k v))
+data Handle k v = Handle {
+  keyHandles :: HM.HashMap k (KeyHandle v),
+  subscribers :: HM.HashMap Unique (ObservableMessage (HM.HashMap k v) -> IO ()),
+  deltaSubscribers :: HM.HashMap Unique (Delta k v -> IO ())
 }
 
-modifyValue :: forall k v a. (Eq k, Hashable k) => (ObservableValue v -> IO (ObservableValue v, a)) -> k -> ObservableHashMap k v -> IO a
-modifyValue f k (ObservableHashMap mvar) = modifyMVar mvar $ \hashmap -> runGetT (HM.alterF update k hashmap)
+data KeyHandle v = KeyHandle {
+  value :: Maybe v,
+  keySubscribers :: (HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ()))
+}
+
+makeLensesWith (lensField .~ (\_ _ -> pure . TopName . mkName . ("_" <>) . nameBase) $ lensRules) ''Handle
+makeLensesWith (lensField .~ (\_ _ -> pure . TopName . mkName . ("_" <>) . nameBase) $ lensRules) ''KeyHandle
+
+instance Gettable (HM.HashMap k v) (ObservableHashMap k v) where
+  getValue (ObservableHashMap mvar) = HM.mapMaybe value . keyHandles <$> readMVar mvar
+instance Observable (HM.HashMap k v) (ObservableHashMap k v) where
+  subscribe ohm callback = modifyHandle update ohm
+    where
+      update :: Handle k v -> IO (Handle k v, SubscriptionHandle)
+      update handle = do
+        callback (Current, toHashMap handle)
+        unique <- newUnique
+        let handle' = handle & set (_subscribers . at unique) (Just callback)
+        return (handle', SubscriptionHandle $ unsubscribe unique)
+      unsubscribe :: Unique -> IO ()
+      unsubscribe unique = modifyHandle_ (return . set (_subscribers . at unique) Nothing) ohm
+
+instance DeltaObservable k v (ObservableHashMap k v) where
+  subscribeDelta ohm callback = modifyHandle update ohm
+    where
+      update :: Handle k v -> IO (Handle k v, SubscriptionHandle)
+      update handle = do
+        callback (Reset $ toHashMap handle)
+        unique <- newUnique
+        let handle' = handle & set (_deltaSubscribers . at unique) (Just callback)
+        return (handle', SubscriptionHandle $ unsubscribe unique)
+      unsubscribe :: Unique -> IO ()
+      unsubscribe unique = modifyHandle_ (return . set (_deltaSubscribers . at unique) Nothing) ohm
+
+-- TODO
+--subscribeAbstraction :: SomeIndexedLens -> (a -> v) -> (IO (a, r) -> IO r) -> (v -> IO ()) -> IO r
+--subscribeAbstraction setter getCurrent modifyMVar callback = modify $ do
+
+
+toHashMap :: Handle k v -> HM.HashMap k v
+toHashMap = HM.mapMaybe value . keyHandles
+
+modifyHandle :: (Handle k v -> IO (Handle k v, a)) -> ObservableHashMap k v -> IO a
+modifyHandle f (ObservableHashMap mvar) = modifyMVar mvar f
+
+modifyHandle_ :: (Handle k v -> IO (Handle k v)) -> ObservableHashMap k v -> IO ()
+modifyHandle_ f = modifyHandle (fmap (,()) . f)
+
+modifyKeyHandle :: (Eq k, Hashable k) => (KeyHandle v -> IO (KeyHandle v, a)) -> k -> ObservableHashMap k v -> IO a
+modifyKeyHandle f k = modifyHandle (updateKeyHandle f k)
+
+modifyKeyHandle_ :: forall k v. (Eq k, Hashable k) => (KeyHandle v -> IO (KeyHandle v)) -> k -> ObservableHashMap k v -> IO ()
+modifyKeyHandle_ f = modifyKeyHandle (fmap (,()) . f)
+
+updateKeyHandle :: forall k v a. (Eq k, Hashable k) => (KeyHandle v -> IO (KeyHandle v, a)) -> k -> Handle k v -> IO (Handle k v, a)
+updateKeyHandle f k = runGetT . (_keyHandles (HM.alterF updateMaybe k))
   where
-    update :: Maybe (ObservableValue v) -> GetT a IO (Maybe (ObservableValue v))
-    update = fmap toMaybe . (GetT . f) . fromMaybe emptyObservableValue
-    emptyObservableValue :: ObservableValue v
-    emptyObservableValue = ObservableValue Nothing HM.empty
-    toMaybe :: ObservableValue v -> Maybe (ObservableValue v)
-    toMaybe (ObservableValue Nothing (HM.null -> True)) = Nothing
-    toMaybe ov = Just ov
+    updateMaybe :: Maybe (KeyHandle v) -> GetT a IO (Maybe (KeyHandle v))
+    updateMaybe = fmap toMaybe . (GetT . f) . fromMaybe emptyKeyHandle
+    emptyKeyHandle :: KeyHandle v
+    emptyKeyHandle = KeyHandle Nothing HM.empty
+    toMaybe :: KeyHandle v -> Maybe (KeyHandle v)
+    toMaybe (KeyHandle Nothing (HM.null -> True)) = Nothing
+    toMaybe keyHandle = Just keyHandle
 
-modifyValue_ :: forall k v. (Eq k, Hashable k) => (ObservableValue v -> IO (ObservableValue v)) -> k -> ObservableHashMap k v -> IO ()
-modifyValue_ f = modifyValue (fmap (,()) . f)
+modifyKeyHandleNotifying :: (Eq k, Hashable k) => (KeyHandle v -> IO (KeyHandle v, (Maybe (Delta k v), a))) -> k -> ObservableHashMap k v -> IO a
+modifyKeyHandleNotifying f k = modifyHandle $ \handle -> do
+  (newHandle, (delta, result)) <- updateKeyHandle f k handle
+  notifySubscribers newHandle delta
+  return (newHandle, result)
 
-modifySubscribers :: (HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ()) -> HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ())) -> ObservableValue v -> ObservableValue v
-modifySubscribers f ov@ObservableValue{subscribers} = ov{subscribers=f subscribers}
+modifyKeyHandleNotifying_ :: (Eq k, Hashable k) => (KeyHandle v -> IO (KeyHandle v, Maybe (Delta k v))) -> k -> ObservableHashMap k v -> IO ()
+modifyKeyHandleNotifying_ f k = modifyHandle_ $ \handle -> do
+  (newHandle, delta) <- updateKeyHandle f k handle
+  notifySubscribers newHandle delta
+  return newHandle
 
-create :: IO (ObservableHashMap k v)
-create = ObservableHashMap <$> newMVar HM.empty
+notifySubscribers :: Handle k v -> Maybe (Delta k v) -> IO ()
+notifySubscribers _ Nothing = return ()
+notifySubscribers handle@Handle{deltaSubscribers, subscribers} (Just delta) = do
+  mapM_ ($ delta) $ HM.elems deltaSubscribers
+  mapM_ ($ (Update, toHashMap handle)) $ HM.elems subscribers
+
+modifyKeySubscribers :: (HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ()) -> HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ())) -> KeyHandle v -> KeyHandle v
+modifyKeySubscribers f = over _keySubscribers f
+
+new :: IO (ObservableHashMap k v)
+new = ObservableHashMap <$> newMVar Handle{keyHandles=HM.empty, subscribers=HM.empty, deltaSubscribers=HM.empty}
 
 observeKey :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> SomeObservable (Maybe v)
-observeKey key om@(ObservableHashMap mvar) = SomeObservable FnObservable{getValueFn, subscribeFn}
+observeKey key ohm@(ObservableHashMap mvar) = SomeObservable FnObservable{getValueFn, subscribeFn}
   where
     getValueFn :: IO (Maybe v)
-    getValueFn = (value <=< HM.lookup key) <$> readMVar mvar
+    getValueFn = join . preview (_keyHandles . at key . _Just . _value) <$> readMVar mvar
     subscribeFn :: ((ObservableMessage (Maybe v) -> IO ()) -> IO SubscriptionHandle)
     subscribeFn callback = do
       subscriptionKey <- newUnique
-      modifyValue_ (subscribeFn' subscriptionKey) key om
+      modifyKeyHandle_ (subscribeFn' subscriptionKey) key ohm
       return $ SubscriptionHandle $ unsubscribe subscriptionKey
       where
-        subscribeFn' :: Unique -> ObservableValue v -> IO (ObservableValue v)
-        subscribeFn' subKey ov@ObservableValue{value} = do
+        subscribeFn' :: Unique -> KeyHandle v -> IO (KeyHandle v)
+        subscribeFn' subKey keyHandle@KeyHandle{value} = do
           callback (Current, value)
-          return $ modifySubscribers (HM.insert subKey callback) ov
+          return $ modifyKeySubscribers (HM.insert subKey callback) keyHandle
         unsubscribe :: Unique -> IO ()
-        unsubscribe subKey = modifyValue_ (return . modifySubscribers (HM.delete subKey)) key om
+        unsubscribe subKey = modifyKeyHandle_ (return . modifyKeySubscribers (HM.delete subKey)) key ohm
 
 insert :: forall k v. (Eq k, Hashable k) => k -> v -> ObservableHashMap k v -> IO ()
-insert key value = modifyValue_ fn key
+insert key value = modifyKeyHandleNotifying_ fn key
   where
-    fn :: ObservableValue v -> IO (ObservableValue v)
-    fn ov@ObservableValue{subscribers} = do
-      mapM_ ($ (Update, Just value)) $ HM.elems subscribers
-      return ov{value=Just value}
+    fn :: KeyHandle v -> IO (KeyHandle v, Maybe (Delta k v))
+    fn keyHandle@KeyHandle{value=oldValue, keySubscribers} = do
+      mapM_ ($ (Update, Just value)) $ HM.elems keySubscribers
+      let delta = if isJust oldValue then Change key value else Add key value
+      return (keyHandle{value=Just value}, Just delta)
 
 delete :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> IO ()
-delete = modifyValue_ fn
+delete key = modifyKeyHandleNotifying_ fn key
   where
-    fn :: ObservableValue v -> IO (ObservableValue v)
-    fn ov@ObservableValue{subscribers} = do
-      mapM_ ($ (Update, Nothing)) $ HM.elems subscribers
-      return ov{value=Nothing}
+    fn :: KeyHandle v -> IO (KeyHandle v, Maybe (Delta k v))
+    fn keyHandle@KeyHandle{value=oldValue, keySubscribers} = do
+      mapM_ ($ (Update, Nothing)) $ HM.elems keySubscribers
+      let delta = if isJust oldValue then Just (Remove key) else Nothing
+      return (keyHandle{value=Nothing}, delta)
 
 lookupDelete :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> IO (Maybe v)
-lookupDelete = modifyValue fn
+lookupDelete key = modifyKeyHandleNotifying fn key
   where
-    fn :: ObservableValue v -> IO (ObservableValue v, Maybe v)
-    fn ov@ObservableValue{value=oldValue, subscribers} = do
-      mapM_ ($ (Update, Nothing)) $ HM.elems subscribers
-      return (ov{value=Nothing}, oldValue)
+    fn :: KeyHandle v -> IO (KeyHandle v, (Maybe (Delta k v), Maybe v))
+    fn keyHandle@KeyHandle{value=oldValue, keySubscribers} = do
+      mapM_ ($ (Update, Nothing)) $ HM.elems keySubscribers
+      let delta = if isJust oldValue then Just (Remove key) else Nothing
+      return (keyHandle{value=Nothing}, (delta, oldValue))
