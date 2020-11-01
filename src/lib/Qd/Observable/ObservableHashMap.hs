@@ -1,7 +1,7 @@
 {-# LANGUAGE ViewPatterns #-}
 
-module Qd.Observable.ObservableMap (
-  ObservableMap,
+module Qd.Observable.ObservableHashMap (
+  ObservableHashMap,
   create,
   observeKey,
   insert,
@@ -17,15 +17,15 @@ import Control.Concurrent.MVar
 import qualified Data.HashMap.Strict as HM
 import Data.Unique
 
-newtype ObservableMap k v = ObservableMap (MVar (HM.HashMap k (ObservableValue v)))
+newtype ObservableHashMap k v = ObservableHashMap (MVar (HM.HashMap k (ObservableValue v)))
 
 data ObservableValue v = ObservableValue {
   value :: Maybe v,
   subscribers :: (HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ()))
 }
 
-modifyValue :: forall k v a. (Eq k, Hashable k) => (ObservableValue v -> IO (ObservableValue v, a)) -> k -> ObservableMap k v -> IO a
-modifyValue f k (ObservableMap mvar) = modifyMVar mvar $ \hashmap -> runGetT (HM.alterF update k hashmap)
+modifyValue :: forall k v a. (Eq k, Hashable k) => (ObservableValue v -> IO (ObservableValue v, a)) -> k -> ObservableHashMap k v -> IO a
+modifyValue f k (ObservableHashMap mvar) = modifyMVar mvar $ \hashmap -> runGetT (HM.alterF update k hashmap)
   where
     update :: Maybe (ObservableValue v) -> GetT a IO (Maybe (ObservableValue v))
     update = fmap toMaybe . (GetT . f) . fromMaybe emptyObservableValue
@@ -35,17 +35,17 @@ modifyValue f k (ObservableMap mvar) = modifyMVar mvar $ \hashmap -> runGetT (HM
     toMaybe (ObservableValue Nothing (HM.null -> True)) = Nothing
     toMaybe ov = Just ov
 
-modifyValue_ :: forall k v. (Eq k, Hashable k) => (ObservableValue v -> IO (ObservableValue v)) -> k -> ObservableMap k v -> IO ()
+modifyValue_ :: forall k v. (Eq k, Hashable k) => (ObservableValue v -> IO (ObservableValue v)) -> k -> ObservableHashMap k v -> IO ()
 modifyValue_ f = modifyValue (fmap (,()) . f)
 
 modifySubscribers :: (HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ()) -> HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ())) -> ObservableValue v -> ObservableValue v
 modifySubscribers f ov@ObservableValue{subscribers} = ov{subscribers=f subscribers}
 
-create :: IO (ObservableMap k v)
-create = ObservableMap <$> newMVar HM.empty
+create :: IO (ObservableHashMap k v)
+create = ObservableHashMap <$> newMVar HM.empty
 
-observeKey :: forall k v. (Eq k, Hashable k) => k -> ObservableMap k v -> SomeObservable (Maybe v)
-observeKey key om@(ObservableMap mvar) = SomeObservable FnObservable{getValueFn, subscribeFn}
+observeKey :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> SomeObservable (Maybe v)
+observeKey key om@(ObservableHashMap mvar) = SomeObservable FnObservable{getValueFn, subscribeFn}
   where
     getValueFn :: IO (Maybe v)
     getValueFn = (value <=< HM.lookup key) <$> readMVar mvar
@@ -62,7 +62,7 @@ observeKey key om@(ObservableMap mvar) = SomeObservable FnObservable{getValueFn,
         unsubscribe :: Unique -> IO ()
         unsubscribe subKey = modifyValue_ (return . modifySubscribers (HM.delete subKey)) key om
 
-insert :: forall k v. (Eq k, Hashable k) => k -> v -> ObservableMap k v -> IO ()
+insert :: forall k v. (Eq k, Hashable k) => k -> v -> ObservableHashMap k v -> IO ()
 insert key value = modifyValue_ fn key
   where
     fn :: ObservableValue v -> IO (ObservableValue v)
@@ -70,7 +70,7 @@ insert key value = modifyValue_ fn key
       mapM_ ($ (Update, Just value)) $ HM.elems subscribers
       return ov{value=Just value}
 
-delete :: forall k v. (Eq k, Hashable k) => k -> ObservableMap k v -> IO ()
+delete :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> IO ()
 delete = modifyValue_ fn
   where
     fn :: ObservableValue v -> IO (ObservableValue v)
@@ -78,7 +78,7 @@ delete = modifyValue_ fn
       mapM_ ($ (Update, Nothing)) $ HM.elems subscribers
       return ov{value=Nothing}
 
-lookupDelete :: forall k v. (Eq k, Hashable k) => k -> ObservableMap k v -> IO (Maybe v)
+lookupDelete :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> IO (Maybe v)
 lookupDelete = modifyValue fn
   where
     fn :: ObservableValue v -> IO (ObservableValue v, Maybe v)
