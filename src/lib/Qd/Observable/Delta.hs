@@ -10,6 +10,11 @@ import Data.IORef
 
 data Delta k v = Reset (HM.HashMap k v) | Add k v | Change k v | Remove k
   deriving (Eq, Show, Generic)
+instance Functor (Delta k) where
+  fmap f (Reset state) = Reset (f <$> state)
+  fmap f (Add key value) = Add key (f value)
+  fmap f (Change key value) = Add key (f value)
+  fmap _ (Remove key) = Remove key
 instance (Binary k, Binary v) => Binary (Delta k v) where
   get = undefined
   put = undefined
@@ -33,3 +38,23 @@ observeHashMapDefaultImpl o callback = do
     applyDelta (Add key value) = HM.insert key value
     applyDelta (Change key value) = HM.insert key value
     applyDelta (Remove key) = HM.delete key
+
+
+data SomeDeltaObservable k v = forall o. DeltaObservable k v o => SomeDeltaObservable o
+instance Gettable (HM.HashMap k v) (SomeDeltaObservable k v) where
+  getValue (SomeDeltaObservable o) = getValue o
+instance Observable (HM.HashMap k v) (SomeDeltaObservable k v) where
+  subscribe (SomeDeltaObservable o) = subscribe o
+instance DeltaObservable k v (SomeDeltaObservable k v) where
+  subscribeDelta (SomeDeltaObservable o) = subscribeDelta o
+instance Functor (SomeDeltaObservable k) where
+  fmap f (SomeDeltaObservable o) = SomeDeltaObservable $ MappedDeltaObservable f o
+
+
+data MappedDeltaObservable k b = forall a o. DeltaObservable k a o => MappedDeltaObservable (a -> b) o
+instance Gettable (HM.HashMap k b) (MappedDeltaObservable k b) where
+  getValue (MappedDeltaObservable f o) = f <$$> getValue o
+instance Observable (HM.HashMap k b) (MappedDeltaObservable k b) where
+  subscribe (MappedDeltaObservable f o) callback = subscribe o (callback . fmap (fmap f))
+instance DeltaObservable k b (MappedDeltaObservable k b) where
+  subscribeDelta (MappedDeltaObservable f o) callback = subscribeDelta o (callback . fmap f)
