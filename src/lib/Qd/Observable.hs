@@ -267,8 +267,6 @@ instance forall o0 v0 o1 v1 r. (Observable v0 o0, Observable v1 o1) => Observabl
       updateTuple :: Either v0 v1 -> (Maybe v0, Maybe v1) -> (Maybe v0, Maybe v1)
       updateTuple (Left l) (_, r) = (Just l, r)
       updateTuple (Right r) (l, _) = (l, Just r)
-      dup :: a -> (a, a)
-      dup x = (x, x)
 
 
 -- | Merge two observables using a given merge function. Whenever the value of one of the inputs changes, the resulting observable updates according to the merge function.
