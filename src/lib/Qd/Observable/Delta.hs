@@ -8,13 +8,12 @@ import qualified Data.HashMap.Strict as HM
 import Data.Binary (Binary(..))
 import Data.IORef
 
-data Delta k v = Reset (HM.HashMap k v) | Add k v | Change k v | Remove k
+data Delta k v = Reset (HM.HashMap k v) | Insert k v | Delete k
   deriving (Eq, Show, Generic)
 instance Functor (Delta k) where
   fmap f (Reset state) = Reset (f <$> state)
-  fmap f (Add key value) = Add key (f value)
-  fmap f (Change key value) = Add key (f value)
-  fmap _ (Remove key) = Remove key
+  fmap f (Insert key value) = Insert key (f value)
+  fmap _ (Delete key) = Delete key
 instance (Binary k, Binary v) => Binary (Delta k v) where
   get = undefined
   put = undefined
@@ -32,12 +31,11 @@ observeHashMapDefaultImpl o callback = do
   subscribeDelta o (deltaCallback hashMapRef)
   where
     deltaCallback :: IORef (HM.HashMap k v) -> Delta k v -> IO ()
-    deltaCallback hashMapRef delta = callback =<< atomicModifyIORef' hashMapRef ((\x->(x,x)) . (applyDelta delta))
+    deltaCallback hashMapRef delta = callback =<< atomicModifyIORef' hashMapRef (dup . (applyDelta delta))
     applyDelta :: Delta k v -> HM.HashMap k v -> HM.HashMap k v
     applyDelta (Reset state) = const state
-    applyDelta (Add key value) = HM.insert key value
-    applyDelta (Change key value) = HM.insert key value
-    applyDelta (Remove key) = HM.delete key
+    applyDelta (Insert key value) = HM.insert key value
+    applyDelta (Delete key) = HM.delete key
 
 
 data SomeDeltaObservable k v = forall o. DeltaObservable k v o => SomeDeltaObservable o

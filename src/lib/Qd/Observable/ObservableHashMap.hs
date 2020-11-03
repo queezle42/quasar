@@ -140,10 +140,9 @@ insert :: forall k v. (Eq k, Hashable k) => k -> v -> ObservableHashMap k v -> I
 insert key value = modifyKeyHandleNotifying_ fn key
   where
     fn :: KeyHandle v -> IO (KeyHandle v, Maybe (Delta k v))
-    fn keyHandle@KeyHandle{value=oldValue, keySubscribers} = do
+    fn keyHandle@KeyHandle{keySubscribers} = do
       mapM_ ($ (Update, Just value)) $ HM.elems keySubscribers
-      let delta = if isJust oldValue then Change key value else Add key value
-      return (keyHandle{value=Just value}, Just delta)
+      return (keyHandle{value=Just value}, Just (Insert key value))
 
 delete :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> IO ()
 delete key = modifyKeyHandleNotifying_ fn key
@@ -151,7 +150,7 @@ delete key = modifyKeyHandleNotifying_ fn key
     fn :: KeyHandle v -> IO (KeyHandle v, Maybe (Delta k v))
     fn keyHandle@KeyHandle{value=oldValue, keySubscribers} = do
       mapM_ ($ (Update, Nothing)) $ HM.elems keySubscribers
-      let delta = if isJust oldValue then Just (Remove key) else Nothing
+      let delta = if isJust oldValue then Just (Delete key) else Nothing
       return (keyHandle{value=Nothing}, delta)
 
 lookupDelete :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> IO (Maybe v)
@@ -160,5 +159,5 @@ lookupDelete key = modifyKeyHandleNotifying fn key
     fn :: KeyHandle v -> IO (KeyHandle v, (Maybe (Delta k v), Maybe v))
     fn keyHandle@KeyHandle{value=oldValue, keySubscribers} = do
       mapM_ ($ (Update, Nothing)) $ HM.elems keySubscribers
-      let delta = if isJust oldValue then Just (Remove key) else Nothing
+      let delta = if isJust oldValue then Just (Delete key) else Nothing
       return (keyHandle{value=Nothing}, (delta, oldValue))

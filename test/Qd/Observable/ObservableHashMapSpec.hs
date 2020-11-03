@@ -52,26 +52,26 @@ spec = parallel $ do
 
       lastDeltaShouldBe $ Reset HM.empty
       OM.insert "key" "value" om
-      lastDeltaShouldBe $ Add "key" "value"
+      lastDeltaShouldBe $ Insert "key" "value"
       OM.insert "key" "changed" om
-      lastDeltaShouldBe $ Change "key" "changed"
+      lastDeltaShouldBe $ Insert "key" "changed"
       OM.insert "key2" "value2" om
-      lastDeltaShouldBe $ Add "key2" "value2"
+      lastDeltaShouldBe $ Insert "key2" "value2"
 
       dispose subscriptionHandle
-      lastDeltaShouldBe $ Add "key2" "value2"
+      lastDeltaShouldBe $ Insert "key2" "value2"
 
       OM.insert "key3" "value3" om
-      lastDeltaShouldBe $ Add "key2" "value2"
+      lastDeltaShouldBe $ Insert "key2" "value2"
 
       void $ subscribeDelta om $ writeIORef lastDelta
       lastDeltaShouldBe $ Reset $ HM.fromList [("key", "changed"), ("key2", "value2"), ("key3", "value3")]
 
       OM.delete "key2" om
-      lastDeltaShouldBe $ Remove "key2"
+      lastDeltaShouldBe $ Delete "key2"
 
       OM.lookupDelete "key" om `shouldReturn` Just "changed"
-      lastDeltaShouldBe $ Remove "key"
+      lastDeltaShouldBe $ Delete "key"
 
       getValue om `shouldReturn` HM.singleton "key3" "value3"
 
