@@ -7,6 +7,7 @@ import Conduit
 import qualified Data.HashMap.Strict as HM
 import Data.Binary (Binary(..))
 import Data.IORef
+import Data.Word (Word8)
 
 data Delta k v = Reset (HM.HashMap k v) | Insert k v | Delete k
   deriving (Eq, Show, Generic)
@@ -14,9 +15,17 @@ instance Functor (Delta k) where
   fmap f (Reset state) = Reset (f <$> state)
   fmap f (Insert key value) = Insert key (f value)
   fmap _ (Delete key) = Delete key
-instance (Binary k, Binary v) => Binary (Delta k v) where
-  get = undefined
-  put = undefined
+instance (Eq k, Hashable k, Binary k, Binary v) => Binary (Delta k v) where
+  get = do
+    (tag :: Word8) <- get
+    case tag of
+      0 -> Reset . HM.fromList <$> get
+      1 -> Insert <$> get <*> get
+      2 -> Delete <$> get
+      _ -> fail "Invalid tag"
+  put (Reset hashmap) = put (0 :: Word8) >> put (HM.toList hashmap)
+  put (Insert key value) = put (1 :: Word8) >> put key >> put value
+  put (Delete key) = put (2 :: Word8) >> put key
 
 class Observable (HM.HashMap k v) o => DeltaObservable k v o | o -> k, o -> v where
   subscribeDelta :: o -> (Delta k v -> IO ()) -> IO SubscriptionHandle
