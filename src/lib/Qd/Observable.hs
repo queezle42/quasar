@@ -111,6 +111,15 @@ instance Observable v (SomeObservable v) where
 
 instance Functor SomeObservable where
   fmap f = mapObservable f
+  x <$ _ = constObservable x
+instance Applicative SomeObservable where
+  pure = constObservable
+  liftA2 = mergeObservable
+  _ *> x = x
+  x <* _ = x
+instance Monad SomeObservable where
+  x >>= y = joinObservable $ y <$> x
+  _ >> x = x
 
 
 data MappedObservable b = forall a o. Observable a o => MappedObservable (a -> IO b) o
