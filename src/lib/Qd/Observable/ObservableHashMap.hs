@@ -13,7 +13,7 @@ module Qd.Observable.ObservableHashMap (
 import Qd.Observable
 import Qd.Observable.Delta
 import Qd.Prelude hiding (lookup, lookupDelete)
-import Qd.Utils.GetT
+import Qd.Utils.ExtraT
 
 import Control.Concurrent.MVar
 import qualified Data.HashMap.Strict as HM
@@ -85,10 +85,10 @@ modifyKeyHandle_ :: forall k v. (Eq k, Hashable k) => (KeyHandle v -> IO (KeyHan
 modifyKeyHandle_ f = modifyKeyHandle (fmap (,()) . f)
 
 updateKeyHandle :: forall k v a. (Eq k, Hashable k) => (KeyHandle v -> IO (KeyHandle v, a)) -> k -> Handle k v -> IO (Handle k v, a)
-updateKeyHandle f k = runGetT . (_keyHandles (HM.alterF updateMaybe k))
+updateKeyHandle f k = runExtraT . (_keyHandles (HM.alterF updateMaybe k))
   where
-    updateMaybe :: Maybe (KeyHandle v) -> GetT a IO (Maybe (KeyHandle v))
-    updateMaybe = fmap toMaybe . (GetT . f) . fromMaybe emptyKeyHandle
+    updateMaybe :: Maybe (KeyHandle v) -> ExtraT a IO (Maybe (KeyHandle v))
+    updateMaybe = fmap toMaybe . (ExtraT . f) . fromMaybe emptyKeyHandle
     emptyKeyHandle :: KeyHandle v
     emptyKeyHandle = KeyHandle Nothing HM.empty
     toMaybe :: KeyHandle v -> Maybe (KeyHandle v)
