@@ -15,7 +15,9 @@ module Qd.Observable (
   MessageReason(..),
   ObservableVar,
   newObservableVar,
+  withObservableVar,
   modifyObservableVar,
+  modifyObservableVar_,
   joinObservable,
   joinObservableMaybe,
   joinObservableMaybe',
@@ -145,12 +147,22 @@ newObservableVar initialValue = do
   ObservableVar <$> newMVar (initialValue, HM.empty)
 
 
-modifyObservableVar :: ObservableVar v -> (v -> v) -> IO ()
+modifyObservableVar :: ObservableVar v -> (v -> IO (v, a)) -> IO a
 modifyObservableVar (ObservableVar mvar) f =
+  modifyMVar mvar $ \(oldState, subscribers) -> do
+    (newState, result) <- f oldState
+    mapM_ (\callback -> callback (Update, newState)) subscribers
+    return ((newState, subscribers), result)
+
+modifyObservableVar_ :: ObservableVar v -> (v -> IO v) -> IO ()
+modifyObservableVar_ (ObservableVar mvar) f =
   modifyMVar_ mvar $ \(oldState, subscribers) -> do
-    let newState = f oldState
+    newState <- f oldState
     mapM_ (\callback -> callback (Update, newState)) subscribers
     return (newState, subscribers)
+
+withObservableVar :: ObservableVar a -> (a -> IO b) -> IO b
+withObservableVar (ObservableVar mvar) f = withMVar mvar (f . fst)
 
 
 newtype JoinedObservable o = JoinedObservable o

@@ -6,6 +6,7 @@ module Qd.Observable.ObservableHashMap (
   observeKey,
   insert,
   delete,
+  lookup,
   lookupDelete,
 ) where
 
@@ -152,6 +153,11 @@ delete key = modifyKeyHandleNotifying_ fn key
       mapM_ ($ (Update, Nothing)) $ HM.elems keySubscribers
       let delta = if isJust oldValue then Just (Delete key) else Nothing
       return (keyHandle{value=Nothing}, delta)
+
+lookup :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> IO (Maybe v)
+lookup key (ObservableHashMap mvar) = do
+  Handle{keyHandles} <- readMVar mvar
+  return $ join $ value <$> HM.lookup key keyHandles
 
 lookupDelete :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> IO (Maybe v)
 lookupDelete key = modifyKeyHandleNotifying fn key
