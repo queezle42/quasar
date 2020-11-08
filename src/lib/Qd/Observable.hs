@@ -4,7 +4,7 @@ module Qd.Observable (
   SomeObservable(..),
   Gettable(..),
   Observable(..),
-  getValueE,
+  unsafeGetValue,
   subscribe',
   SubscriptionHandle(..),
   RegistrationHandle(..),
@@ -75,8 +75,8 @@ class Gettable v o => Observable v o | o -> v where
   mapObservableM f = SomeObservable . MappedObservable f
 
 -- | Variant of `getValue` that throws exceptions instead of returning them.
-getValueE :: (Exception e, Observable (Either e v) o) => o -> IO v
-getValueE = either throw return <=< getValue
+unsafeGetValue :: (Exception e, Observable (Either e v) o) => o -> IO v
+unsafeGetValue = either throw return <=< getValue
 
 -- | A variant of `subscribe` that passes the `SubscriptionHandle` to the callback.
 subscribe' :: Observable v o => o -> (SubscriptionHandle -> ObservableMessage v -> IO ()) -> IO SubscriptionHandle
