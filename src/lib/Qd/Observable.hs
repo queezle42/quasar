@@ -18,6 +18,7 @@ module Qd.Observable (
   withObservableVar,
   modifyObservableVar,
   modifyObservableVar_,
+  bindObservable,
   joinObservable,
   joinObservableMaybe,
   joinObservableMaybe',
@@ -33,7 +34,7 @@ import Qd.Prelude
 
 import Control.Concurrent.MVar
 import Control.Exception (Exception)
-import Control.Monad.Fix (mfix)
+import Control.Monad.Except
 import Data.Binary (Binary)
 import qualified Data.HashMap.Strict as HM
 import Data.IORef
@@ -118,7 +119,7 @@ instance Applicative SomeObservable where
   _ *> x = x
   x <* _ = x
 instance Monad SomeObservable where
-  x >>= y = joinObservable $ y <$> x
+  (>>=) = bindObservable
   _ >> x = x
 
 
@@ -172,6 +173,11 @@ modifyObservableVar_ (ObservableVar mvar) f =
 
 withObservableVar :: ObservableVar a -> (a -> IO b) -> IO b
 withObservableVar (ObservableVar mvar) f = withMVar mvar (f . fst)
+
+
+
+bindObservable :: (Observable a ma, Observable b mb) => ma -> (a -> mb) -> SomeObservable b
+bindObservable x fy = joinObservable $ mapObservable fy x
 
 
 newtype JoinedObservable o = JoinedObservable o
@@ -231,39 +237,12 @@ joinObservableMaybe = SomeObservable . JoinedObservableMaybe
 joinObservableMaybe' :: (Observable (Maybe i) o, Observable (Maybe v) i) => o -> SomeObservable (Maybe v)
 joinObservableMaybe' = fmap join . joinObservableMaybe
 
-newtype JoinedObservableEither o = JoinedObservableEither o
-instance forall e o i v. (Gettable (Either e i) o, Gettable v i) => Gettable (Either e v) (JoinedObservableEither o) where
-  getValue :: JoinedObservableEither o -> IO (Either e v)
-  getValue (JoinedObservableEither outer) = do
-    state <- getValue outer
-    case state of
-      Right inner -> Right <$> getValue inner
-      Left ex -> return $ Left ex
-instance forall e o i v. (Observable (Either e i) o, Observable v i) => Observable (Either e v) (JoinedObservableEither o) where
-  subscribe :: (JoinedObservableEither o) -> (ObservableMessage (Either e v) -> IO ()) -> IO SubscriptionHandle
-  subscribe (JoinedObservableEither outer) callback = do
-    innerSubscriptionMVar <- newMVar dummySubscription
-    outerSubscription <- subscribe outer (outerHandler innerSubscriptionMVar)
-    return $ SubscriptionHandle{unsubscribe = unsubscribe outerSubscription >> readMVar innerSubscriptionMVar >>= dispose}
-      where
-        dummySubscription = SubscriptionHandle { unsubscribe = return () }
-        outerHandler innerSubscriptionMVar = outerSubscription'
-          where
-            outerSubscription' (_, Right inner) = do
-              unsubscribe =<< takeMVar innerSubscriptionMVar
-              innerSubscription <- subscribe inner (callback . fmap Right)
-              putMVar innerSubscriptionMVar innerSubscription
-            outerSubscription' (reason, Left ex) = do
-              unsubscribe =<< takeMVar innerSubscriptionMVar
-              callback (reason, Left ex)
-              putMVar innerSubscriptionMVar dummySubscription
-
 
 joinObservableEither :: (Observable (Either e i) o, Observable v i) => o -> SomeObservable (Either e v)
-joinObservableEither = SomeObservable . JoinedObservableEither
+joinObservableEither = runExceptT . join . fmap (ExceptT . fmap Right . toSomeObservable) . ExceptT . toSomeObservable
 
 joinObservableEither' :: (Observable (Either e i) o, Observable (Either e v) i) => o -> SomeObservable (Either e v)
-joinObservableEither' = mapObservable join . JoinedObservableEither
+joinObservableEither' = runExceptT . join . fmap (ExceptT . toSomeObservable) . ExceptT . toSomeObservable
 
 
 data MergedObservable o0 v0 o1 v1 r = MergedObservable (v0 -> v1 -> r) o0 o1
