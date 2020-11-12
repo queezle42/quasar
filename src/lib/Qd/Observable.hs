@@ -35,6 +35,7 @@ import Qd.Prelude
 import Control.Concurrent.MVar
 import Control.Exception (Exception)
 import Control.Monad.Except
+import Control.Monad.Trans.Maybe
 import Data.Binary (Binary)
 import qualified Data.HashMap.Strict as HM
 import Data.IORef
@@ -203,39 +204,11 @@ joinObservable :: (Observable i o, Observable v i) => o -> SomeObservable v
 joinObservable = SomeObservable . JoinedObservable
 
 
-newtype JoinedObservableMaybe o = JoinedObservableMaybe o
-instance forall o i v. (Gettable (Maybe i) o, Gettable v i) => Gettable (Maybe v) (JoinedObservableMaybe o) where
-  getValue :: JoinedObservableMaybe o -> IO (Maybe v)
-  getValue (JoinedObservableMaybe outer) = do
-    state <- getValue outer
-    case state of
-      Just inner -> Just <$> getValue inner
-      Nothing -> return Nothing
-instance forall o i v. (Observable (Maybe i) o, Observable v i) => Observable (Maybe v) (JoinedObservableMaybe o) where
-  subscribe :: (JoinedObservableMaybe o) -> (ObservableMessage (Maybe v) -> IO ()) -> IO SubscriptionHandle
-  subscribe (JoinedObservableMaybe outer) callback = do
-    innerSubscriptionMVar <- newMVar dummySubscription
-    outerSubscription <- subscribe outer (outerHandler innerSubscriptionMVar)
-    return $ SubscriptionHandle{unsubscribe = unsubscribe outerSubscription >> readMVar innerSubscriptionMVar >>= dispose}
-      where
-        dummySubscription = SubscriptionHandle { unsubscribe = return () }
-        outerHandler innerSubscriptionMVar = outerSubscription'
-          where
-            outerSubscription' (_, Just inner) = do
-              unsubscribe =<< takeMVar innerSubscriptionMVar
-              innerSubscription <- subscribe inner (callback . fmap Just)
-              putMVar innerSubscriptionMVar innerSubscription
-            outerSubscription' (reason, Nothing) = do
-              unsubscribe =<< takeMVar innerSubscriptionMVar
-              callback (reason, Nothing)
-              putMVar innerSubscriptionMVar dummySubscription
-
-
 joinObservableMaybe :: forall o i v. (Observable (Maybe i) o, Observable v i) => o -> SomeObservable (Maybe v)
-joinObservableMaybe = SomeObservable . JoinedObservableMaybe
+joinObservableMaybe = runMaybeT . join . fmap (MaybeT . fmap Just . toSomeObservable) . MaybeT . toSomeObservable
 
 joinObservableMaybe' :: (Observable (Maybe i) o, Observable (Maybe v) i) => o -> SomeObservable (Maybe v)
-joinObservableMaybe' = fmap join . joinObservableMaybe
+joinObservableMaybe' = runMaybeT . join . fmap (MaybeT . toSomeObservable) . MaybeT . toSomeObservable
 
 
 joinObservableEither :: (Observable (Either e i) o, Observable v i) => o -> SomeObservable (Either e v)
