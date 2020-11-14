@@ -38,9 +38,9 @@ data KeyHandle v = KeyHandle {
 makeLensesWith (lensField .~ (\_ _ -> pure . TopName . mkName . ("_" <>) . nameBase) $ lensRules) ''Handle
 makeLensesWith (lensField .~ (\_ _ -> pure . TopName . mkName . ("_" <>) . nameBase) $ lensRules) ''KeyHandle
 
-instance Gettable (HM.HashMap k v) (ObservableHashMap k v) where
+instance IsGettable (HM.HashMap k v) (ObservableHashMap k v) where
   getValue (ObservableHashMap mvar) = HM.mapMaybe value . keyHandles <$> readMVar mvar
-instance Observable (HM.HashMap k v) (ObservableHashMap k v) where
+instance IsObservable (HM.HashMap k v) (ObservableHashMap k v) where
   subscribe ohm callback = modifyHandle update ohm
     where
       update :: Handle k v -> IO (Handle k v, SubscriptionHandle)
@@ -52,7 +52,7 @@ instance Observable (HM.HashMap k v) (ObservableHashMap k v) where
       unsubscribe :: Unique -> IO ()
       unsubscribe unique = modifyHandle_ (return . set (_subscribers . at unique) Nothing) ohm
 
-instance DeltaObservable k v (ObservableHashMap k v) where
+instance IsDeltaObservable k v (ObservableHashMap k v) where
   subscribeDelta ohm callback = modifyHandle update ohm
     where
       update :: Handle k v -> IO (Handle k v, SubscriptionHandle)
@@ -119,8 +119,8 @@ modifyKeySubscribers f = over _keySubscribers f
 new :: IO (ObservableHashMap k v)
 new = ObservableHashMap <$> newMVar Handle{keyHandles=HM.empty, subscribers=HM.empty, deltaSubscribers=HM.empty}
 
-observeKey :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> SomeObservable (Maybe v)
-observeKey key ohm@(ObservableHashMap mvar) = SomeObservable FnObservable{getValueFn, subscribeFn}
+observeKey :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> Observable (Maybe v)
+observeKey key ohm@(ObservableHashMap mvar) = Observable FnObservable{getValueFn, subscribeFn}
   where
     getValueFn :: IO (Maybe v)
     getValueFn = join . preview (_keyHandles . at key . _Just . _value) <$> readMVar mvar

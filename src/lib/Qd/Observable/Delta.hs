@@ -27,13 +27,13 @@ instance (Eq k, Hashable k, Binary k, Binary v) => Binary (Delta k v) where
   put (Insert key value) = put (1 :: Word8) >> put key >> put value
   put (Delete key) = put (2 :: Word8) >> put key
 
-class Observable (HM.HashMap k v) o => DeltaObservable k v o | o -> k, o -> v where
+class IsObservable (HM.HashMap k v) o => IsDeltaObservable k v o | o -> k, o -> v where
   subscribeDelta :: o -> (Delta k v -> IO ()) -> IO SubscriptionHandle
   --subscribeDeltaC :: o -> ConduitT () (Delta k v) IO ()
   --subscribeDeltaC = undefined
   --{-# MINIMAL subscribeDelta | subscribeDeltaC #-}
 
-observeHashMapDefaultImpl :: forall k v o. (Eq k, Hashable k) => DeltaObservable k v o => o -> (HM.HashMap k v -> IO ()) -> IO SubscriptionHandle
+observeHashMapDefaultImpl :: forall k v o. (Eq k, Hashable k) => IsDeltaObservable k v o => o -> (HM.HashMap k v -> IO ()) -> IO SubscriptionHandle
 observeHashMapDefaultImpl o callback = do
   hashMapRef <- newIORef HM.empty
   subscribeDelta o (deltaCallback hashMapRef)
@@ -46,21 +46,21 @@ observeHashMapDefaultImpl o callback = do
     applyDelta (Delete key) = HM.delete key
 
 
-data SomeDeltaObservable k v = forall o. DeltaObservable k v o => SomeDeltaObservable o
-instance Gettable (HM.HashMap k v) (SomeDeltaObservable k v) where
-  getValue (SomeDeltaObservable o) = getValue o
-instance Observable (HM.HashMap k v) (SomeDeltaObservable k v) where
-  subscribe (SomeDeltaObservable o) = subscribe o
-instance DeltaObservable k v (SomeDeltaObservable k v) where
-  subscribeDelta (SomeDeltaObservable o) = subscribeDelta o
-instance Functor (SomeDeltaObservable k) where
-  fmap f (SomeDeltaObservable o) = SomeDeltaObservable $ MappedDeltaObservable f o
+data DeltaObservable k v = forall o. IsDeltaObservable k v o => DeltaObservable o
+instance IsGettable (HM.HashMap k v) (DeltaObservable k v) where
+  getValue (DeltaObservable o) = getValue o
+instance IsObservable (HM.HashMap k v) (DeltaObservable k v) where
+  subscribe (DeltaObservable o) = subscribe o
+instance IsDeltaObservable k v (DeltaObservable k v) where
+  subscribeDelta (DeltaObservable o) = subscribeDelta o
+instance Functor (DeltaObservable k) where
+  fmap f (DeltaObservable o) = DeltaObservable $ MappedDeltaObservable f o
 
 
-data MappedDeltaObservable k b = forall a o. DeltaObservable k a o => MappedDeltaObservable (a -> b) o
-instance Gettable (HM.HashMap k b) (MappedDeltaObservable k b) where
+data MappedDeltaObservable k b = forall a o. IsDeltaObservable k a o => MappedDeltaObservable (a -> b) o
+instance IsGettable (HM.HashMap k b) (MappedDeltaObservable k b) where
   getValue (MappedDeltaObservable f o) = f <$$> getValue o
-instance Observable (HM.HashMap k b) (MappedDeltaObservable k b) where
+instance IsObservable (HM.HashMap k b) (MappedDeltaObservable k b) where
   subscribe (MappedDeltaObservable f o) callback = subscribe o (callback . fmap (fmap f))
-instance DeltaObservable k b (MappedDeltaObservable k b) where
+instance IsDeltaObservable k b (MappedDeltaObservable k b) where
   subscribeDelta (MappedDeltaObservable f o) callback = subscribeDelta o (callback . fmap f)
