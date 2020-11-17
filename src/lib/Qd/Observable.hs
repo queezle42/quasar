@@ -28,6 +28,7 @@ module Qd.Observable (
   mergeObservableMaybe,
   constObservable,
   FnObservable(..),
+  waitFor,
 ) where
 
 import Qd.Prelude
@@ -40,6 +41,13 @@ import Data.Binary (Binary)
 import qualified Data.HashMap.Strict as HM
 import Data.IORef
 import Data.Unique
+
+waitFor :: ((a -> IO ()) -> IO ()) -> IO a
+waitFor action = do
+  result <- newEmptyMVar
+  action (putMVar result)
+  takeMVar result
+
 
 data MessageReason = Current | Update
   deriving (Eq, Show, Generic)
@@ -65,7 +73,10 @@ instance IsDisposable a => IsDisposable (Maybe a) where
 
 class IsGettable v a | a -> v where
   getValue :: a -> IO v
-
+  getValue = waitFor . getValue'
+  getValue' :: a -> (v -> IO ()) -> IO ()
+  getValue' gettable callback = getValue gettable >>= callback
+  {-# MINIMAL getValue | getValue' #-}
 
 class IsGettable v o => IsObservable v o | o -> v where
   subscribe :: o -> (ObservableMessage v -> IO ()) -> IO SubscriptionHandle
@@ -75,6 +86,9 @@ class IsGettable v o => IsObservable v o | o -> v where
   mapObservable f = mapObservableM (return . f)
   mapObservableM :: (v -> IO a) -> o -> Observable a
   mapObservableM f = Observable . MappedObservable f
+
+instance IsGettable a ((a -> IO ()) -> IO ()) where
+  getValue' = id
 
 -- | Variant of `getValue` that throws exceptions instead of returning them.
 unsafeGetValue :: (Exception e, IsObservable (Either e v) o) => o -> IO v
