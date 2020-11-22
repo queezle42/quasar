@@ -48,9 +48,11 @@ instance IsObservable (HM.HashMap k v) (ObservableHashMap k v) where
         callback (Current, toHashMap handle)
         unique <- newUnique
         let handle' = handle & set (_subscribers . at unique) (Just callback)
-        return (handle', SubscriptionHandle $ unsubscribe unique)
-      unsubscribe :: Unique -> IO ()
-      unsubscribe unique = modifyHandle_ (return . set (_subscribers . at unique) Nothing) ohm
+        return (handle', FunctionDisposable $ unsubscribe unique)
+      unsubscribe :: Unique -> IO () -> IO ()
+      unsubscribe unique unsubscribedCallback = do
+        modifyHandle_ (return . set (_subscribers . at unique) Nothing) ohm
+        unsubscribedCallback
 
 instance IsDeltaObservable k v (ObservableHashMap k v) where
   subscribeDelta ohm callback = modifyHandle update ohm
@@ -60,13 +62,11 @@ instance IsDeltaObservable k v (ObservableHashMap k v) where
         callback (Reset $ toHashMap handle)
         unique <- newUnique
         let handle' = handle & set (_deltaSubscribers . at unique) (Just callback)
-        return (handle', SubscriptionHandle $ unsubscribe unique)
-      unsubscribe :: Unique -> IO ()
-      unsubscribe unique = modifyHandle_ (return . set (_deltaSubscribers . at unique) Nothing) ohm
-
--- TODO
---subscribeAbstraction :: SomeIndexedLens -> (a -> v) -> (IO (a, r) -> IO r) -> (v -> IO ()) -> IO r
---subscribeAbstraction setter getCurrent modifyMVar callback = modify $ do
+        return (handle', FunctionDisposable $ unsubscribe unique)
+      unsubscribe :: Unique -> IO () -> IO ()
+      unsubscribe unique unsubscribedCallback = do
+        modifyHandle_ (return . set (_deltaSubscribers . at unique) Nothing) ohm
+        unsubscribedCallback
 
 
 toHashMap :: Handle k v -> HM.HashMap k v
@@ -128,14 +128,16 @@ observeKey key ohm@(ObservableHashMap mvar) = Observable FnObservable{getValueFn
     subscribeFn callback = do
       subscriptionKey <- newUnique
       modifyKeyHandle_ (subscribeFn' subscriptionKey) key ohm
-      return $ SubscriptionHandle $ unsubscribe subscriptionKey
+      return $ FunctionDisposable $ unsubscribe subscriptionKey
       where
         subscribeFn' :: Unique -> KeyHandle v -> IO (KeyHandle v)
         subscribeFn' subKey keyHandle@KeyHandle{value} = do
           callback (Current, value)
           return $ modifyKeySubscribers (HM.insert subKey callback) keyHandle
-        unsubscribe :: Unique -> IO ()
-        unsubscribe subKey = modifyKeyHandle_ (return . modifyKeySubscribers (HM.delete subKey)) key ohm
+        unsubscribe :: Unique -> IO () -> IO ()
+        unsubscribe subKey unsubscribedCallback = do
+          modifyKeyHandle_ (return . modifyKeySubscribers (HM.delete subKey)) key ohm
+          unsubscribedCallback
 
 insert :: forall k v. (Eq k, Hashable k) => k -> v -> ObservableHashMap k v -> IO ()
 insert key value = modifyKeyHandleNotifying_ fn key

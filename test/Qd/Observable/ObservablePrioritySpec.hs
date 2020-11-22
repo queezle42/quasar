@@ -21,9 +21,9 @@ spec = do
       getValue op `shouldReturn` (Just "p2")
       p1 <- OP.insertValue op 1 "p1"
       getValue op `shouldReturn` (Just "p2")
-      deregister p2
+      dispose p2
       getValue op `shouldReturn` (Just "p1")
-      deregister p1
+      dispose p1
       getValue op `shouldReturn` (Nothing)
     it "sends updates when its value changes" $ do
       result <- newIORef []
@@ -37,9 +37,9 @@ spec = do
       mostRecentShouldBe (Update, Just "p2")
       p1 <- OP.insertValue op 1 "p1"
       mostRecentShouldBe (Update, Just "p2")
-      deregister p2
+      dispose p2
       mostRecentShouldBe (Update, Just "p1")
-      deregister p1
+      dispose p1
       mostRecentShouldBe (Update, Nothing)
 
       length <$> readIORef result `shouldReturn` 4

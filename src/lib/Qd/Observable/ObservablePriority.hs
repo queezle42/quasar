@@ -33,10 +33,12 @@ instance IsObservable (Maybe v) (ObservablePriority p v) where
       -- Call listener
       callback (Current, currentValue internals)
       return internals{subscribers = HM.insert key callback subscribers}
-    return $ SubscriptionHandle $ unsubscribe' key
+    return $ FunctionDisposable (unsubscribe key)
     where
-      unsubscribe' :: Unique -> IO ()
-      unsubscribe' key = modifyMVar_ mvar $ \internals@Internals{subscribers} -> return internals{subscribers=HM.delete key subscribers}
+      unsubscribe :: Unique -> IO () -> IO ()
+      unsubscribe key disposeCallback = do
+        modifyMVar_ mvar $ \internals@Internals{subscribers} -> return internals{subscribers=HM.delete key subscribers}
+        disposeCallback
 
 type PriorityMap p v = HM.HashMap p (NonEmpty (Entry v))
 
@@ -63,7 +65,7 @@ insertValue :: forall p v. (Ord p, Hashable p) => ObservablePriority p v -> p ->
 insertValue (ObservablePriority mvar) priority value = modifyMVar mvar $ \internals -> do
   key <- newUnique
   newInternals <- insertValue' key internals
-  return (newInternals, RegistrationHandle {deregister=removeValue key})
+  return (newInternals, FunctionDisposable (\callback -> removeValue key >> callback))
   where
     insertValue' :: Unique -> Internals p v -> IO (Internals p v)
     insertValue' key internals@Internals{priorityMap, current}
