@@ -43,7 +43,7 @@ instance IsGettable (HM.HashMap k v) (ObservableHashMap k v) where
 instance IsObservable (HM.HashMap k v) (ObservableHashMap k v) where
   subscribe ohm callback = modifyHandle update ohm
     where
-      update :: Handle k v -> IO (Handle k v, SubscriptionHandle)
+      update :: Handle k v -> IO (Handle k v, Disposable)
       update handle = do
         callback (Current, toHashMap handle)
         unique <- newUnique
@@ -57,7 +57,7 @@ instance IsObservable (HM.HashMap k v) (ObservableHashMap k v) where
 instance IsDeltaObservable k v (ObservableHashMap k v) where
   subscribeDelta ohm callback = modifyHandle update ohm
     where
-      update :: Handle k v -> IO (Handle k v, SubscriptionHandle)
+      update :: Handle k v -> IO (Handle k v, Disposable)
       update handle = do
         callback (Reset $ toHashMap handle)
         unique <- newUnique
@@ -124,7 +124,7 @@ observeKey key ohm@(ObservableHashMap mvar) = Observable FnObservable{getValueFn
   where
     getValueFn :: IO (Maybe v)
     getValueFn = join . preview (_keyHandles . at key . _Just . _value) <$> readMVar mvar
-    subscribeFn :: ((ObservableMessage (Maybe v) -> IO ()) -> IO SubscriptionHandle)
+    subscribeFn :: ((ObservableMessage (Maybe v) -> IO ()) -> IO Disposable)
     subscribeFn callback = do
       subscriptionKey <- newUnique
       modifyKeyHandle_ (subscribeFn' subscriptionKey) key ohm

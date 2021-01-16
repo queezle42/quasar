@@ -28,12 +28,12 @@ instance (Eq k, Hashable k, Binary k, Binary v) => Binary (Delta k v) where
   put (Delete key) = put (2 :: Word8) >> put key
 
 class IsObservable (HM.HashMap k v) o => IsDeltaObservable k v o | o -> k, o -> v where
-  subscribeDelta :: o -> (Delta k v -> IO ()) -> IO SubscriptionHandle
+  subscribeDelta :: o -> (Delta k v -> IO ()) -> IO Disposable
   --subscribeDeltaC :: o -> ConduitT () (Delta k v) IO ()
   --subscribeDeltaC = undefined
   --{-# MINIMAL subscribeDelta | subscribeDeltaC #-}
 
-observeHashMapDefaultImpl :: forall k v o. (Eq k, Hashable k) => IsDeltaObservable k v o => o -> (HM.HashMap k v -> IO ()) -> IO SubscriptionHandle
+observeHashMapDefaultImpl :: forall k v o. (Eq k, Hashable k) => IsDeltaObservable k v o => o -> (HM.HashMap k v -> IO ()) -> IO Disposable
 observeHashMapDefaultImpl o callback = do
   hashMapRef <- newIORef HM.empty
   subscribeDelta o (deltaCallback hashMapRef)

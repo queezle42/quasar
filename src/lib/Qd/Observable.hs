@@ -6,8 +6,6 @@ module Qd.Observable (
   IsObservable(..),
   unsafeGetValue,
   subscribe',
-  SubscriptionHandle,
-  RegistrationHandle,
   IsSettable(..),
   Disposable(..),
   IsDisposable(..),
@@ -68,9 +66,6 @@ type ObservableMessage v = (MessageReason, v)
 mapObservableMessage :: Monad m => (a -> m b) -> ObservableMessage a -> m (ObservableMessage b)
 mapObservableMessage f (r, s) = (r, ) <$> f s
 
-type SubscriptionHandle = Disposable
-type RegistrationHandle = Disposable
-
 data Disposable
   = forall a. IsDisposable a => SomeDisposable a
   | FunctionDisposable (IO () -> IO ())
@@ -126,7 +121,7 @@ class IsGettable v a | a -> v where
   {-# MINIMAL getValue | getValue' #-}
 
 class IsGettable v o => IsObservable v o | o -> v where
-  subscribe :: o -> (ObservableMessage v -> IO ()) -> IO SubscriptionHandle
+  subscribe :: o -> (ObservableMessage v -> IO ()) -> IO Disposable
   toObservable :: o -> Observable v
   toObservable = Observable
   mapObservable :: (v -> a) -> o -> Observable a
@@ -141,8 +136,8 @@ instance IsGettable a ((a -> IO ()) -> IO ()) where
 unsafeGetValue :: (Exception e, IsObservable (Either e v) o) => o -> IO v
 unsafeGetValue = either throw return <=< getValue
 
--- | A variant of `subscribe` that passes the `SubscriptionHandle` to the callback.
-subscribe' :: IsObservable v o => o -> (SubscriptionHandle -> ObservableMessage v -> IO ()) -> IO SubscriptionHandle
+-- | A variant of `subscribe` that passes the `Disposable` to the callback.
+subscribe' :: IsObservable v o => o -> (Disposable -> ObservableMessage v -> IO ()) -> IO Disposable
 subscribe' observable callback = mfix $ \subscription -> subscribe observable (callback subscription)
 
 type ObservableCallback v = ObservableMessage v -> IO ()
@@ -152,7 +147,7 @@ instance IsGettable v o => IsGettable v (IO o) where
   getValue :: IO o -> IO v
   getValue getGettable = getValue =<< getGettable
 instance IsObservable v o => IsObservable v (IO o) where
-  subscribe :: IO o -> (ObservableMessage v -> IO ()) -> IO SubscriptionHandle
+  subscribe :: IO o -> (ObservableMessage v -> IO ()) -> IO Disposable
   subscribe getObservable callback = do
     observable <- getObservable
     subscribe observable callback
@@ -249,7 +244,7 @@ instance forall o i v. (IsGettable i o, IsGettable v i) => IsGettable v (JoinedO
   getValue :: JoinedObservable o -> IO v
   getValue (JoinedObservable outer) = getValue =<< getValue outer
 instance forall o i v. (IsObservable i o, IsObservable v i) => IsObservable v (JoinedObservable o) where
-  subscribe :: (JoinedObservable o) -> (ObservableMessage v -> IO ()) -> IO SubscriptionHandle
+  subscribe :: (JoinedObservable o) -> (ObservableMessage v -> IO ()) -> IO Disposable
   subscribe (JoinedObservable outer) callback = do
     innerSubscriptionMVar <- newMVar DummyDisposable
     outerSubscription <- subscribe outer (outerCallback innerSubscriptionMVar)
@@ -319,7 +314,7 @@ mergeObservableMaybe merge x y = Observable $ MergedObservable (liftA2 merge) x 
 -- | Data type that can be used as an implementation for the `IsObservable` interface that works by directly providing functions for `getValue` and `subscribe`.
 data FnObservable v = FnObservable {
   getValueFn :: IO v,
-  subscribeFn :: (ObservableMessage v -> IO ()) -> IO SubscriptionHandle
+  subscribeFn :: (ObservableMessage v -> IO ()) -> IO Disposable
 }
 instance IsGettable v (FnObservable v) where
   getValue o = getValueFn o
