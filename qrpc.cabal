@@ -1,0 +1,69 @@
+cabal-version: 3.0
+
+name: qrpc
+version: 0.1.0.0
+category: Protocol, Network, Networking, Network API
+description: RPC library with support for pipelining, reverse calls and data streams.
+author: Jens Nolte
+maintainer: Jens Nolte
+copyright: 2021 Jens Nolte
+license: BSD-2-Clause
+license-file: LICENSE
+build-type: Simple
+extra-source-files:
+  README.md
+
+source-repository head
+  type: git
+  location: https://git.c3pb.de/jens/qrpc.git
+
+common shared-properties
+  default-extensions:
+    BangPatterns
+    DataKinds
+    DefaultSignatures
+    DeriveAnyClass
+    DeriveGeneric
+    DerivingStrategies
+    DuplicateRecordFields
+    ExistentialQuantification
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    GeneralizedNewtypeDeriving
+    InstanceSigs
+    LambdaCase
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedStrings
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TemplateHaskell
+    TupleSections
+    TypeFamilies
+    TypeOperators
+  build-depends:
+    base >=4.7 && <5,
+  default-language: Haskell2010
+  ghc-options: -fwarn-unused-do-bind -fwarn-tabs -Wall -Wincomplete-uni-patterns -Wpartial-fields
+
+common shared-executable-properties
+  import: shared-properties
+  ghc-options: -fwarn-unused-do-bind -fwarn-tabs -Wall -Wincomplete-uni-patterns -Wpartial-fields -threaded -rtsopts "-with-rtsopts=-N -I0"
+
+library
+  import: shared-properties
+  exposed-modules:
+  hs-source-dirs:
+    src
+
+test-suite qrpc-test
+  import: shared-executable-properties
+  type: exitcode-stdio-1.0
+  build-depends:
+    qrpc
+  main-is: Spec.hs
+  hs-source-dirs:
+    test
