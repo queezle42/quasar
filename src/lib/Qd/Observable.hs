@@ -177,7 +177,6 @@ instance Applicative Observable where
   x <* _ = x
 instance Monad Observable where
   (>>=) = bindObservable
-  _ >> x = x
 
 
 data MappedObservable b = forall a o. IsObservable a o => MappedObservable (a -> IO b) o
