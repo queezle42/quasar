@@ -77,6 +77,5 @@ test-suite qrpc-test
   main-is: Spec.hs
   other-modules:
     Network.RpcSpec
-    Network.RpcSpec.ExampleApi
   hs-source-dirs:
     test
