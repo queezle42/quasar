@@ -46,6 +46,13 @@ common shared-properties
     TypeOperators
   build-depends:
     base >=4.7 && <5,
+    binary,
+    bytestring,
+    microlens,
+    microlens-mtl,
+    microlens-th,
+    mtl,
+    template-haskell,
   default-language: Haskell2010
   ghc-options: -fwarn-unused-do-bind -fwarn-tabs -Wall -Wincomplete-uni-patterns -Wpartial-fields
 
@@ -56,6 +63,8 @@ common shared-executable-properties
 library
   import: shared-properties
   exposed-modules:
+    Network.Rpc
+    Network.Rpc.Utils
   hs-source-dirs:
     src
 
@@ -63,7 +72,11 @@ test-suite qrpc-test
   import: shared-executable-properties
   type: exitcode-stdio-1.0
   build-depends:
+    hspec,
     qrpc
   main-is: Spec.hs
+  other-modules:
+    Network.RpcSpec
+    Network.RpcSpec.ExampleApi
   hs-source-dirs:
     test
