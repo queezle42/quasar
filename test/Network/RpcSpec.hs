@@ -43,7 +43,7 @@ exampleProtocolImpl = ExampleProtocolImpl {
 spec :: Spec
 spec = describe "DummyClient" $ parallel $ do
   it "works" $ do
-    let client = DummyClient @ExampleProtocol exampleProtocolImpl
+    (client, _server) <- newDummyClientServer @ExampleProtocol exampleProtocolImpl
     fixedHandler42 client 5 `shouldReturn` False
     fixedHandler42 client 42 `shouldReturn` True
     fixedHandlerInc client 41 `shouldReturn` 42

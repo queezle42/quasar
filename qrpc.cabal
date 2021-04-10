@@ -19,6 +19,7 @@ source-repository head
 
 common shared-properties
   default-extensions:
+    AllowAmbiguousTypes
     BangPatterns
     DataKinds
     DefaultSignatures
@@ -44,17 +45,31 @@ common shared-properties
     TupleSections
     TypeFamilies
     TypeOperators
+    -- Required for the record-dot-preprocessor plugin
+    DuplicateRecordFields
+    TypeApplications
+    FlexibleContexts
+    DataKinds
+    MultiParamTypeClasses
+    TypeSynonymInstances
+    FlexibleInstances
+    UndecidableInstances
+    GADTs
   build-depends:
     base >=4.7 && <5,
+    async,
     binary,
     bytestring,
-    microlens,
-    microlens-mtl,
-    microlens-th,
+    hashable,
     mtl,
+    network,
     template-haskell,
+    unordered-containers,
+    -- required for record-dot-preprocessor
+    record-dot-preprocessor,
+    record-hasfield,
   default-language: Haskell2010
-  ghc-options: -fwarn-unused-do-bind -fwarn-tabs -Wall -Wincomplete-uni-patterns -Wpartial-fields
+  ghc-options: -fwarn-unused-do-bind -fwarn-tabs -Wall -Wincomplete-uni-patterns -Wpartial-fields -fplugin=RecordDotPreprocessor
 
 common shared-executable-properties
   import: shared-properties
@@ -64,7 +79,6 @@ library
   import: shared-properties
   exposed-modules:
     Network.Rpc
-    Network.Rpc.Utils
   hs-source-dirs:
     src
 
