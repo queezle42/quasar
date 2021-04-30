@@ -32,6 +32,7 @@ $(do
   mconcat <$> sequence [makeProtocol api, makeClient api, makeServer api]
  )
 
+
 exampleProtocolImpl :: ExampleProtocolImpl
 exampleProtocolImpl = ExampleProtocolImpl {
   multiArgsImpl = \one two three -> return (one + two, not three),
@@ -43,10 +44,10 @@ exampleProtocolImpl = ExampleProtocolImpl {
 spec :: Spec
 spec = describe "DummyClient" $ parallel $ do
   it "works" $ do
-    (client, _server) <- newDummyClientServer @ExampleProtocol exampleProtocolImpl
-    fixedHandler42 client 5 `shouldReturn` False
-    fixedHandler42 client 42 `shouldReturn` True
-    fixedHandlerInc client 41 `shouldReturn` 42
-    multiArgs client 10 3 False `shouldReturn` (13, True)
-    noResponse client 1337
-    noNothing client
+    withDummyClientServer @ExampleProtocol exampleProtocolImpl $ \client -> do
+      fixedHandler42 client 5 `shouldReturn` False
+      fixedHandler42 client 42 `shouldReturn` True
+      fixedHandlerInc client 41 `shouldReturn` 42
+      multiArgs client 10 3 False `shouldReturn` (13, True)
+      noResponse client 1337
+      noNothing client

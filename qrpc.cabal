@@ -64,6 +64,7 @@ common shared-properties
     mtl,
     network,
     template-haskell,
+    unix,
     unordered-containers,
     -- required for record-dot-preprocessor
     record-dot-preprocessor,

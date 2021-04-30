@@ -1,20 +1,23 @@
 module Network.Rpc where
 
-import Control.Concurrent.Async (Async, AsyncCancelled, async, cancel)
-import Control.Exception (Exception(..), SomeException, Handler(..), catches, throwIO)
-import Control.Monad ((<=<), when)
+import Control.Concurrent (threadDelay, forkFinally, myThreadId, throwTo)
+import Control.Concurrent.Async (Async, async, cancel, link, waitCatch, withAsync)
+import Control.Exception (Exception(..), SomeException, MaskingState(Unmasked), bracket, bracketOnError, catch, finally, throwIO, bracketOnError, onException, getMaskingState)
+import Control.Monad ((>=>), when, unless, forever, forM_)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State (State, StateT, execState, execStateT, get, put)
 import qualified Control.Monad.State as State
 import Control.Concurrent.MVar
+import Data.Bifunctor (second)
 import Data.Binary (Binary, encode, decodeOrFail)
 import qualified Data.Binary as Binary
 import Data.Binary.Get (Decoder(..), runGetIncremental, pushChunk)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
-import Data.Functor ((<&>))
+import Data.Either (isLeft, fromLeft)
 import Data.Hashable (Hashable)
 import qualified Data.HashMap.Strict as HM
+import Data.List (intercalate)
 import Data.Maybe (isNothing)
 import Data.Word
 import Language.Haskell.TH
@@ -23,8 +26,10 @@ import qualified Network.Socket as Socket
 import qualified Network.Socket.ByteString as Socket
 import qualified Network.Socket.ByteString.Lazy as SocketL
 import Prelude
+import GHC.IO (unsafeUnmask)
 import GHC.Generics
 import System.IO (hPutStrLn, stderr)
+import System.Posix.Files (getFileStatus, isSocket)
 
 -- * Rpc api definition
 
@@ -245,7 +250,7 @@ instance IsSocketConnection Socket.Socket where
   toSocketConnection sock = SocketConnection {
     send=SocketL.sendAll sock,
     receive=Socket.recv sock 4096,
-    close=Socket.close sock
+    close=Socket.gracefulClose sock 2000
   }
 
 class (Binary (ProtocolRequest p), Binary (ProtocolResponse p)) => RpcProtocol p where
@@ -267,6 +272,7 @@ data MetaProtocolMessage
   | ProtocolError String
   deriving (Binary, Generic, Show)
 
+-- TODO rename Meta to "Management" or "Multiplexer"
 -- | Low level network protocol message header type
 data MetaProtocolMessageHeader = CreateChannel
   deriving (Binary, Generic, Show)
@@ -276,7 +282,7 @@ newtype MessageHeaderResult = CreateChannelHeaderResult Channel
 
 data MetaProtocolWorker = MetaProtocolWorker {
   stateMVar :: MVar MetaProtocolWorkerState,
-  receiveTask :: Async ()
+  killReceiverMVar :: MVar (IO ())
 }
 data MetaProtocolWorkerState = MetaProtocolWorkerState {
   socketConnection :: Maybe SocketConnection,
@@ -294,64 +300,68 @@ data ConnectionIsClosed = ConnectionIsClosed
   deriving Show
 instance Exception ConnectionIsClosed
 
-newMetaProtocolWorker :: SocketConnection -> IO Channel
-newMetaProtocolWorker connection = do
+runMetaProtocol :: (Channel -> IO ()) -> SocketConnection -> IO ()
+runMetaProtocol channelSetupHook connection = do
+  -- Running in masked state, this thread (running the receive-function) cannot be interrupted when closing the connection
+  maskingState <- getMaskingState
+  when (maskingState /= Unmasked) (fail "'runMetaProtocol' cannot run in masked thread state.")
+
+  threadId <- myThreadId
+  killReceiverMVar <- newMVar $ throwTo threadId ConnectionIsClosed
+  let disarmKillReciver = modifyMVar_ killReceiverMVar $ \_ -> pure (pure ())
+
   stateMVar <- newMVar $ MetaProtocolWorkerState {
     socketConnection = Just connection,
     channels = HM.empty,
     sendChannel = 0,
     receiveChannel = 0
   }
-  -- The worker needs to contain the task, but the task needs the worker, so it's passed via MVar
-  workerMVar <- newEmptyMVar
-  receiveTask <- async (receiveThread =<< readMVar workerMVar)
   let worker = MetaProtocolWorker {
-    receiveTask,
-    stateMVar
+    stateMVar,
+    killReceiverMVar
   }
-  putMVar workerMVar worker
-  newChannel worker 0
+  (((channelSetupHook =<< newChannel worker 0) >> metaProtocolReceive worker)
+    `finally` (disarmKillReciver >> metaConnectionClose worker))
+      `catch` (\(_ex :: ConnectionIsClosed) -> return ())
+
+metaProtocolReceive :: MetaProtocolWorker -> IO ()
+metaProtocolReceive worker = receiveThreadLoop metaDecoder
   where
-    receiveThread :: MetaProtocolWorker -> IO ()
-    receiveThread worker = catches (receiveThreadLoop metaDecoder) [
-      Handler (\(_ex :: ConnectionIsClosed) -> return ()),
-      Handler (\(_ex :: AsyncCancelled) -> return ()),
-      Handler (\(_ex :: SomeException) -> undefined)
-      ]
+    metaDecoder :: Decoder MetaProtocolMessage
+    metaDecoder = runGetIncremental Binary.get
+    receiveThreadLoop :: Decoder MetaProtocolMessage -> IO a
+    receiveThreadLoop (Fail _ _ errMsg) = reportProtocolError worker ("Failed to parse protocol message: " <> errMsg)
+    receiveThreadLoop (Partial feedFn) = receiveThreadLoop . feedFn . Just =<< receiveThrowing
+    receiveThreadLoop (Done leftovers _ msg) = do
+      newLeftovers <- execStateT (handleMetaMessage msg) leftovers
+      receiveThreadLoop (pushChunk metaDecoder newLeftovers)
+    handleMetaMessage :: MetaProtocolMessage -> StateT BS.ByteString IO ()
+    handleMetaMessage (ChannelMessage headers len) = do
+      workerState <- liftIO $ readMVar worker.stateMVar
+      case HM.lookup workerState.receiveChannel workerState.channels of
+        Just channel -> do
+          -- StateT currently contains leftovers
+          (rawMsg, leftovers) <- liftIO . readRawMessage . BSL.fromStrict =<< get
+          -- Data is received in chunks but messages have a defined length, so leftovers are put back into StateT
+          put $ BSL.toStrict leftovers
+          headerResults <- liftIO $ sequence (processHeader <$> headers)
+          -- Critical section: don't interrupt downstream callbacks
+          liftIO $ withMVar worker.killReceiverMVar $ \_ -> channelHandleMessage channel headerResults rawMsg
+        Nothing -> liftIO $ reportProtocolError worker ("Received message on invalid channel: " <> show workerState.receiveChannel)
       where
-        metaDecoder :: Decoder MetaProtocolMessage
-        metaDecoder = runGetIncremental Binary.get
-        receiveThreadLoop :: Decoder MetaProtocolMessage -> IO a
-        receiveThreadLoop (Fail _ _ errMsg) = reportProtocolError worker ("Failed to parse protocol message: " <> errMsg)
-        receiveThreadLoop (Partial feedFn) = receiveThreadLoop . feedFn . Just =<< receiveThrowing
-        receiveThreadLoop (Done leftovers _ msg) = do
-          newLeftovers <- execStateT (handleMetaMessage msg) leftovers
-          receiveThreadLoop (pushChunk metaDecoder newLeftovers)
-        handleMetaMessage :: MetaProtocolMessage -> StateT BS.ByteString IO ()
-        handleMetaMessage (ChannelMessage headers len) = do
-          workerState <- liftIO $ readMVar worker.stateMVar
-          case HM.lookup workerState.receiveChannel workerState.channels of
-            Just channel -> do
-              -- StateT currently contains leftovers
-              (rawMsg, leftovers) <- liftIO . readRawMessage . BSL.fromStrict =<< get
-              -- Data is received in chunks but messages have a defined length, so leftovers are put back into StateT
-              put $ BSL.toStrict leftovers
-              headerResults <- liftIO $ sequence (processHeader <$> headers)
-              liftIO $ channelHandleMessage channel headerResults rawMsg
-            Nothing -> liftIO $ reportProtocolError worker ("Received message on invalid channel: " <> show workerState.receiveChannel)
-          where
-            readRawMessage :: BSL.ByteString -> IO (BSL.ByteString, BSL.ByteString)
-            readRawMessage x
-              | fromIntegral (BSL.length x) >= len = return $ BSL.splitAt (fromIntegral len) x
-              | otherwise = readRawMessage . BSL.append x . BSL.fromStrict =<< receiveThrowing
-            processHeader :: MetaProtocolMessageHeader -> IO MessageHeaderResult
-            processHeader CreateChannel = undefined
-        handleMetaMessage (SwitchChannel channelId) = liftIO $ modifyMVar_ worker.stateMVar $ \state -> return state{receiveChannel=channelId}
-        handleMetaMessage x = liftIO $ print x >> undefined -- Unhandled meta message
-        receiveThrowing :: IO BS.ByteString
-        receiveThrowing = readMVar worker.stateMVar <&> (.socketConnection) >>= \case
-          Just connection -> connection.receive
-          Nothing -> throwIO ConnectionIsClosed
+        readRawMessage :: BSL.ByteString -> IO (BSL.ByteString, BSL.ByteString)
+        readRawMessage x
+          | fromIntegral (BSL.length x) >= len = return $ BSL.splitAt (fromIntegral len) x
+          | otherwise = readRawMessage . BSL.append x . BSL.fromStrict =<< receiveThrowing
+        processHeader :: MetaProtocolMessageHeader -> IO MessageHeaderResult
+        processHeader CreateChannel = undefined
+    handleMetaMessage (SwitchChannel channelId) = liftIO $ modifyMVar_ worker.stateMVar $ \state -> return state{receiveChannel=channelId}
+    handleMetaMessage x = liftIO $ print x >> undefined -- Unhandled meta message
+    receiveThrowing :: IO BS.ByteString
+    receiveThrowing = do
+      state <- readMVar worker.stateMVar
+      maybe (throwIO ConnectionIsClosed) (.receive) state.socketConnection
+
 
 metaSend :: MetaProtocolWorker -> MetaProtocolMessage -> IO ()
 metaSend worker msg = withMVar worker.stateMVar $ \state -> metaStateSend state msg
@@ -376,20 +386,29 @@ metaSendChannelMessage worker channelId msg headers = do
     return state{sendChannel=channelId}
   where
     prepareHeader :: MessageHeader -> IO MetaProtocolMessageHeader
-    prepareHeader (CreateChannelHeader newChannelCallback) = undefined
+    prepareHeader (CreateChannelHeader _newChannelCallback) = undefined
 
 
 metaChannelClose :: MetaProtocolWorker -> ChannelId -> IO ()
-metaChannelClose = undefined
+metaChannelClose worker channelId =
+  if channelId == 0
+    then metaClose worker
+    else undefined
 
 metaClose :: MetaProtocolWorker -> IO ()
 metaClose worker = do
+  metaConnectionClose worker
+  modifyMVar_ worker.killReceiverMVar $ \killReceiver -> do
+    killReceiver
+    pure (pure ())
+
+metaConnectionClose :: MetaProtocolWorker -> IO ()
+metaConnectionClose worker = do
   modifyMVar_ worker.stateMVar $ \state -> do
     case state.socketConnection of
       Just connection -> connection.close
       Nothing -> return ()
     return state{socketConnection = Nothing}
-  cancel worker.receiveTask
 
 
 reportProtocolError :: HasMetaProtocolWorker a => a -> String -> IO b
@@ -428,6 +447,7 @@ data ChannelReceiveState = ChannelReceiveState {
 }
 type ChannelMessageHandler = MessageId -> [MessageHeaderResult] -> BSL.ByteString -> IO ()
 
+-- Should not be exported
 newChannel :: MetaProtocolWorker -> ChannelId -> IO Channel
 newChannel worker channelId = do
   sendStateMVar <- newMVar ChannelSendState {
@@ -444,7 +464,6 @@ newChannel worker channelId = do
     sendStateMVar,
     receiveStateMVar
   }
-  -- TODO verify that channelId is not already used (only required if newChannel is exported)
   modifyMVar_ worker.stateMVar $ \state -> return state{channels = HM.insert channelId channel state.channels}
   return channel
 channelSend :: Channel -> BSL.ByteString -> [MessageHeader] -> (MessageId -> IO ()) -> IO ()
@@ -456,7 +475,7 @@ channelSend channel msg headers callback = do
 channelSend_ :: Channel -> BSL.ByteString -> [MessageHeader] -> IO ()
 channelSend_ channel msg headers = channelSend channel msg headers (const (return ()))
 channelClose :: Channel -> IO ()
-channelClose = undefined
+channelClose channel = metaChannelClose channel.worker channel.channelId
 channelHandleMessage :: Channel -> [MessageHeaderResult] -> BSL.ByteString -> IO ()
 channelHandleMessage channel headers msg = modifyMVar_ channel.receiveStateMVar $ \state -> do
   state.handler state.nextMessageId headers msg
@@ -507,7 +526,7 @@ clientHandleChannelMessage client _msgId headers msg = case decodeOrFail msg of
   Right ("", _, resp) -> clientHandleResponse resp
   Right (leftovers, _, _) -> reportProtocolError client ("Response parser returned unexpected leftovers: " <> show (BSL.length leftovers))
   where
-    clientHandleResponse :: (ProtocolResponseWrapper p) -> IO ()
+    clientHandleResponse :: ProtocolResponseWrapper p -> IO ()
     clientHandleResponse (requestId, resp) = do
       callback <- modifyMVar client.stateMVar $ \state -> do
         let (callbacks, mCallback) = lookupDelete requestId state.callbacks
@@ -516,47 +535,109 @@ clientHandleChannelMessage client _msgId headers msg = case decodeOrFail msg of
           Nothing -> reportProtocolError client ("Received response with invalid request id " <> show requestId)
       callback resp
 
+clientClose :: Client p -> IO ()
+clientClose client = channelClose client.channel
 
-data Server p = (RpcProtocol p, HasProtocolImpl p) => Server {
-  channel :: Channel,
-  protocolImpl :: ProtocolImpl p
-}
-instance HasMetaProtocolWorker (Server p) where
-  getMetaProtocolWorker = (.channel.worker)
-serverHandleChannelMessage :: forall p. (RpcProtocol p, HasProtocolImpl p) => Server p -> MessageId -> [MessageHeaderResult] -> BSL.ByteString -> IO ()
-serverHandleChannelMessage server msgId headers msg = case decodeOrFail msg of
-    Left (_, _, errMsg) -> reportProtocolError server errMsg
+
+serverHandleChannelMessage :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Channel -> MessageId -> [MessageHeaderResult] -> BSL.ByteString -> IO ()
+serverHandleChannelMessage protocolImpl channel msgId headers msg = case decodeOrFail msg of
+    Left (_, _, errMsg) -> reportProtocolError channel errMsg
     Right ("", _, req) -> serverHandleChannelRequest req
-    Right (leftovers, _, _) -> reportProtocolError server ("Request parser returned unexpected leftovers: " <> show (BSL.length leftovers))
+    Right (leftovers, _, _) -> reportProtocolError channel ("Request parser returned unexpected leftovers: " <> show (BSL.length leftovers))
   where
     serverHandleChannelRequest :: ProtocolRequest p -> IO ()
-    serverHandleChannelRequest req = handleMessage @p server.protocolImpl req >>= maybe (return ()) serverSendResponse
+    serverHandleChannelRequest req = handleMessage @p protocolImpl req >>= maybe (return ()) serverSendResponse
     serverSendResponse :: ProtocolResponse p -> IO ()
-    serverSendResponse response = channelSend_ server.channel (encode wrappedResponse) []
+    serverSendResponse response = channelSend_ channel (encode wrappedResponse) []
       where
         wrappedResponse :: ProtocolResponseWrapper p
         wrappedResponse = (msgId, response)
+
+registerChannelServerHandler :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Channel -> IO ()
+registerChannelServerHandler protocolImpl channel = channelSetHandler channel (serverHandleChannelMessage @p protocolImpl channel)
 
 data Future a
 data Sink a
 data Source a
 
+
 -- ** Running client and server
 
-runServerTCP :: RpcProtocol p => ProtocolImpl p -> IO (Server p)
-runServerTCP = undefined
+newtype ConnectionFailed = ConnectionFailed [(Socket.AddrInfo, SomeException)]
+  deriving (Show)
+instance Exception ConnectionFailed where
+  displayException (ConnectionFailed attemts) = "Connection attempts failed:\n" <> intercalate "\n" (map (\(addr, err) -> show (Socket.addrAddress addr) <> ": " <> displayException err) attemts)
 
-runServerUnix :: RpcProtocol p => ProtocolImpl p -> IO (Server p)
-runServerUnix = undefined
+withClientTCP :: RpcProtocol p => Socket.HostName -> Socket.ServiceName -> (Client p -> IO a) -> IO a
+withClientTCP host port = bracket (newClientTCP host port) clientClose
 
-runClientTCP :: forall p. RpcProtocol p => IO (Client p)
-runClientTCP = undefined
+newClientTCP :: forall p. RpcProtocol p => Socket.HostName -> Socket.ServiceName -> IO (Client p)
+newClientTCP host port = do
+  -- 'getAddrInfo' either returns a non-empty list or throws an exception
+  (best:others) <- Socket.getAddrInfo (Just hints) (Just host) (Just port)
 
-runClientUnix :: RpcProtocol p => FilePath -> IO (Client p)
-runClientUnix = undefined
+  connectTasksMVar <- newMVar []
+  sockMVar <- newEmptyMVar
+  let
+    spawnConnectTask :: Socket.AddrInfo -> IO ()
+    spawnConnectTask = \addr -> modifyMVar_ connectTasksMVar $ \old -> (:old) . (addr,) <$> connectTask addr
+    -- Race more connections (a missed TCP SYN will result in 3s wait before a retransmission; IPv6 might be broken)
+    -- Inspired by a similar implementation in browsers
+    raceConnections :: IO ()
+    raceConnections = do
+      spawnConnectTask best
+      threadDelay 200000
+      -- Give the "best" address another try, in case the TCP SYN gets dropped
+      spawnConnectTask best
+      threadDelay 100000
+      -- Try to connect to all other resolved addresses to prevent waiting for e.g. a long IPv6 connection timeout
+      forM_ others spawnConnectTask
+      -- Wait for all tasks to complete, throw an exception if all connections failed
+      connectTasks <- readMVar connectTasksMVar
+      (results :: [(Socket.AddrInfo, Either SomeException ())]) <- mapM (\(addr, task) -> (addr,) <$> waitCatch task) connectTasks
+      when (all (isLeft . snd) results) (throwIO (ConnectionFailed (reverse (map (second (fromLeft undefined)) results))))
+    connectTask :: Socket.AddrInfo -> IO (Async ())
+    connectTask addr = async $ do
+      sock <- connect addr
+      isFirst <- tryPutMVar sockMVar sock
+      unless isFirst $ Socket.close sock
 
-newClient :: (IsSocketConnection a, RpcProtocol p) => a -> IO (Client p)
-newClient = newChannelClient <=< newMetaProtocolWorker . toSocketConnection
+  -- The 'raceConnections'-async is 'link'ed to this thread, so 'readMVar' is interrupted when all connection attempts fail
+  sock <-
+    (withAsync (unsafeUnmask raceConnections) (link >=> const (readMVar sockMVar))
+      `finally` (mapM_ (cancel . snd) =<< readMVar connectTasksMVar))
+        `onException` (mapM_ Socket.close =<< tryTakeMVar sockMVar)
+    -- As soon as we have an open connection, stop spawning more connections
+  newClient sock
+  where
+    hints :: Socket.AddrInfo
+    hints = Socket.defaultHints { Socket.addrFlags = [Socket.AI_ADDRCONFIG], Socket.addrSocketType = Socket.Stream }
+    connect :: Socket.AddrInfo -> IO Socket.Socket
+    connect addr = bracketOnError (Socket.openSocket addr) Socket.close $ \sock -> do
+      Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
+      Socket.connect sock $ Socket.addrAddress addr
+      return sock
+
+withClientUnix :: RpcProtocol p => FilePath -> (Client p -> IO a) -> IO a
+withClientUnix socketPath = bracket (newClientUnix socketPath) clientClose
+
+newClientUnix :: RpcProtocol p => FilePath -> IO (Client p)
+newClientUnix socketPath = bracketOnError (Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol) Socket.close $ \sock -> do
+  Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
+  Socket.connect sock $ Socket.SockAddrUnix socketPath
+  newClient sock
+
+
+withClient :: forall p a b. (IsSocketConnection a, RpcProtocol p) => a -> (Client p -> IO b) -> IO b
+withClient x = bracket (newClient x) clientClose
+
+newClient :: forall p a. (IsSocketConnection a, RpcProtocol p) => a -> IO (Client p)
+newClient x = do
+  clientMVar <- newEmptyMVar
+  -- 'runMetaProtcol' needs to be interruptible (so it can terminate when it is closed), so 'unsafeUnmask' is used to ensure that this function also works when used in 'bracket'
+  link =<< async (unsafeUnmask (runMetaProtocol (newChannelClient >=> putMVar clientMVar) (toSocketConnection x)))
+  takeMVar clientMVar
+
 
 newChannelClient :: RpcProtocol p => Channel -> IO (Client p)
 newChannelClient channel = do
@@ -568,26 +649,62 @@ newChannelClient channel = do
   channelSetHandler channel (clientHandleChannelMessage client)
   return client
 
-newServer :: (IsSocketConnection a, RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> a -> IO (Server p)
-newServer protocolImpl = newChannelServer protocolImpl <=< newMetaProtocolWorker . toSocketConnection
+listenTCP :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Maybe Socket.HostName -> Socket.ServiceName -> IO ()
+listenTCP protocolImpl mhost port = do
+  addr <- resolve
+  bracket (open addr) Socket.close (listenOnBoundSocket @p protocolImpl)
+  where
+    resolve :: IO Socket.AddrInfo
+    resolve = do
+      let hints = Socket.defaultHints {Socket.addrFlags=[Socket.AI_PASSIVE], Socket.addrSocketType=Socket.Stream}
+      (addr:_) <- Socket.getAddrInfo (Just hints) mhost (Just port)
+      return addr
+    open :: Socket.AddrInfo -> IO Socket.Socket
+    open addr = bracketOnError (Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol) Socket.close $ \sock -> do
+      Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
+      Socket.bind sock (Socket.addrAddress addr)
+      return sock
 
-newChannelServer :: (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Channel -> IO (Server p)
-newChannelServer protocolImpl channel = do
-  let server = Server {
-    channel,
-    protocolImpl
-  }
-  channelSetHandler channel (serverHandleChannelMessage server)
-  return server
+listenUnix :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> FilePath -> IO ()
+listenUnix protocolImpl socketPath = bracket create Socket.close (listenOnBoundSocket @p protocolImpl)
+  where
+    create :: IO Socket.Socket
+    create = do
+      fileStatus <- getFileStatus socketPath
+      let socketExists = isSocket fileStatus
+      when socketExists (fail "Socket already exists")
+      bracketOnError (Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol) Socket.close $ \sock -> do
+        Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
+        Socket.bind sock (Socket.SockAddrUnix socketPath)
+        return sock
+
+-- | Listen and accept connections on an already bound socket.
+listenOnBoundSocket :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Socket.Socket -> IO ()
+listenOnBoundSocket protocolImpl sock = do
+  Socket.listen sock 1024
+  forever $ do
+    (conn, _sockAddr) <- Socket.accept sock
+    forkFinally (runServerHandler @p protocolImpl conn) (socketFinalization conn)
+  where
+    socketFinalization :: Socket.Socket -> Either SomeException () -> IO ()
+    socketFinalization conn (Left _err) = do
+      -- TODO: log error
+      --logStderr $ "Client connection closed with error " <> show err
+      Socket.gracefulClose conn 2000
+    socketFinalization conn (Right ()) = do
+      Socket.gracefulClose conn 2000
+
+runServerHandler :: forall p a. (RpcProtocol p, HasProtocolImpl p, IsSocketConnection a) => ProtocolImpl p -> a -> IO ()
+runServerHandler protocolImpl = runMetaProtocol (registerChannelServerHandler @p protocolImpl) . toSocketConnection
 
 -- ** Test implementation
 
-newDummyClientServer :: (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> IO (Client p, Server p)
-newDummyClientServer impl = do
+withDummyClientServer :: forall p a. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> (Client p -> IO a) -> IO a
+withDummyClientServer impl runClientHook = do
   (clientSocket, serverSocket) <- newDummySocketPair
-  client <- newClient clientSocket
-  server <- newServer impl serverSocket
-  return (client, server)
+  withAsync (runServerHandler @p impl serverSocket) $ \serverTask -> do
+    link serverTask
+    withClient clientSocket runClientHook
 
 newDummySocketPair :: IO (SocketConnection, SocketConnection)
 newDummySocketPair = do
@@ -699,3 +816,9 @@ lookupDelete key m = State.runState fn Nothing
   where
     fn :: State.State (Maybe v) (HM.HashMap k v)
     fn = HM.alterF (\c -> State.put c >> return Nothing) key m
+
+withAsyncLinked :: IO a -> (Async a -> IO b) -> IO b
+withAsyncLinked inner outer = withAsync inner $ \task -> link task >> outer task
+
+withAsyncLinked_ :: IO a -> IO b -> IO b
+withAsyncLinked_ x = withAsyncLinked x . const
