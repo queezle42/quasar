@@ -8,13 +8,11 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State (State, StateT, execState, execStateT, get, put)
 import qualified Control.Monad.State as State
 import Control.Concurrent.MVar
-import Data.Bifunctor (second)
 import Data.Binary (Binary, encode, decodeOrFail)
 import qualified Data.Binary as Binary
 import Data.Binary.Get (Decoder(..), runGetIncremental, pushChunk)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
-import Data.Either (isLeft, fromLeft)
 import Data.Hashable (Hashable)
 import qualified Data.HashMap.Strict as HM
 import Data.List (intercalate)
@@ -594,8 +592,12 @@ newClientTCP host port = do
       forM_ others spawnConnectTask
       -- Wait for all tasks to complete, throw an exception if all connections failed
       connectTasks <- readMVar connectTasksMVar
-      (results :: [(Socket.AddrInfo, Either SomeException ())]) <- mapM (\(addr, task) -> (addr,) <$> waitCatch task) connectTasks
-      when (all (isLeft . snd) results) (throwIO (ConnectionFailed (reverse (map (second (fromLeft undefined)) results))))
+      results <- mapM (\(addr, task) -> (addr,) <$> waitCatch task) connectTasks
+      forM_ (collect results) (throwIO . ConnectionFailed . reverse)
+    collect :: [(Socket.AddrInfo, Either SomeException ())] -> Maybe [(Socket.AddrInfo, SomeException)]
+    collect ((_, Right ()):_) = Nothing
+    collect ((addr, Left ex):xs) = ((addr, ex):) <$> collect xs
+    collect [] = Just []
     connectTask :: Socket.AddrInfo -> IO (Async ())
     connectTask addr = async $ do
       sock <- connect addr
