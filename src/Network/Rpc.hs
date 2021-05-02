@@ -82,7 +82,7 @@ makeProtocol :: RpcApi -> Q [Dec]
 makeProtocol api@RpcApi{functions} = sequence [protocolDec, protocolInstanceDec, messageDec, responseDec]
   where
     protocolDec :: Q Dec
-    protocolDec = dataD (return []) (protocolTypeName api) [] Nothing [] []
+    protocolDec = dataD (pure []) (protocolTypeName api) [] Nothing [] []
 
     protocolInstanceDec :: Q Dec
     protocolInstanceDec = instanceD (cxt []) (appT (conT ''RpcProtocol) (protocolType api)) [
@@ -91,7 +91,7 @@ makeProtocol api@RpcApi{functions} = sequence [protocolDec, protocolInstanceDec,
       ]
 
     messageDec :: Q Dec
-    messageDec = dataD (return []) (requestTypeName api) [] Nothing (messageCon <$> functions) serializableTypeDerivClauses
+    messageDec = dataD (pure []) (requestTypeName api) [] Nothing (messageCon <$> functions) serializableTypeDerivClauses
       where
         messageCon :: RpcFunction -> Q Con
         messageCon fun = normalC (requestFunctionCtorName api fun) (messageConVar <$> fun.arguments)
@@ -100,7 +100,7 @@ makeProtocol api@RpcApi{functions} = sequence [protocolDec, protocolInstanceDec,
             messageConVar (RpcArgument _name ty) = defaultBangType ty
 
     responseDec :: Q Dec
-    responseDec = dataD (return []) (responseTypeName api) [] Nothing (responseCon <$> filter hasResult functions) serializableTypeDerivClauses
+    responseDec = dataD (pure []) (responseTypeName api) [] Nothing (responseCon <$> filter hasResult functions) serializableTypeDerivClauses
       where
         responseCon :: RpcFunction -> Q Con
         responseCon fun = normalC (responseFunctionCtorName api fun) [defaultBangType (resultTupleType fun)]
@@ -129,7 +129,7 @@ makeClient api@RpcApi{functions} = do
           funArgTypes <- functionArgumentTypes fun
           clientType <- [t|Client $(protocolType api)|]
           sequence [
-            sigD funName (buildFunctionType (return ([clientType] <> funArgTypes)) [t|IO $(buildTupleType (functionResultTypes fun))|]),
+            sigD funName (buildFunctionType (pure ([clientType] <> funArgTypes)) [t|IO $(buildTupleType (functionResultTypes fun))|]),
             funD funName [clause ([varP clientVarName] <> varPats) body []]
             ]
           where
@@ -160,7 +160,7 @@ makeClient api@RpcApi{functions} = do
                 valid :: Q Match
                 valid = do
                   result <- newName "result"
-                  match (conP (responseFunctionCtorName api fun) [varP result]) (normalB [|return $(varE result)|]) []
+                  match (conP (responseFunctionCtorName api fun) [varP result]) (normalB [|pure $(varE result)|]) []
                 invalid :: Q Match
                 invalid = match wildP (normalB [|reportProtocolError $clientE "TODO"|]) []
 
@@ -174,7 +174,7 @@ makeServer :: RpcApi -> Q [Dec]
 makeServer api@RpcApi{functions} = sequence [handlerRecordDec, logicInstanceDec]
   where
     handlerRecordDec :: Q Dec
-    handlerRecordDec = dataD (return []) (implTypeName api) [] Nothing [recC (implTypeName api) (handlerRecordField <$> functionsWithoutBuiltinHandler)] []
+    handlerRecordDec = dataD (pure []) (implTypeName api) [] Nothing [recC (implTypeName api) (handlerRecordField <$> functionsWithoutBuiltinHandler)] []
     functionsWithoutBuiltinHandler :: [RpcFunction]
     functionsWithoutBuiltinHandler = filter (isNothing . fixedHandler) functions
     handlerRecordField :: RpcFunction -> Q VarBangType
@@ -320,7 +320,7 @@ runMetaProtocol channelSetupHook connection = do
   }
   (((channelSetupHook =<< newChannel worker 0) >> metaProtocolReceive worker)
     `finally` (disarmKillReciver >> metaConnectionClose worker))
-      `catch` (\(_ex :: ConnectionIsClosed) -> return ())
+      `catch` (\(_ex :: ConnectionIsClosed) -> pure ())
 
 metaProtocolReceive :: MetaProtocolWorker -> IO ()
 metaProtocolReceive worker = receiveThreadLoop metaDecoder
@@ -375,7 +375,7 @@ metaProtocolReceive worker = receiveThreadLoop metaDecoder
         finalizeDecoder :: BS.ByteString -> Decoder (IO ()) -> IO (IO (), BS.ByteString)
         finalizeDecoder _ (Fail _ _ err) = failedToParseMessage err
         finalizeDecoder _ (Partial _) = failedToTerminate
-        finalizeDecoder leftovers (Done "" _ result) = return (result, leftovers)
+        finalizeDecoder leftovers (Done "" _ result) = pure (result, leftovers)
         finalizeDecoder _ (Done _ bytesRead _) = failedToConsumeAllInput (fromIntegral bytesRead)
         failedToParseMessage :: String -> IO a
         failedToParseMessage err = reportProtocolError worker ("Failed to parse message on channel " <> show channel.channelId <> ": " <> err)
@@ -411,7 +411,7 @@ metaSendChannelMessage worker channelId msg headers = do
     headerMessages <- sequence (prepareHeader <$> headers)
     metaStateSend state (ChannelMessage headerMessages (fromIntegral (BSL.length msg)))
     metaStateSendRaw state msg
-    return state{sendChannel=channelId}
+    pure state{sendChannel=channelId}
   where
     prepareHeader :: MessageHeader -> IO MetaProtocolMessageHeader
     prepareHeader (CreateChannelHeader _newChannelCallback) = undefined
@@ -435,8 +435,8 @@ metaConnectionClose worker = do
   modifyMVar_ worker.stateMVar $ \state -> do
     case state.socketConnection of
       Just connection -> connection.close
-      Nothing -> return ()
-    return state{socketConnection = Nothing}
+      Nothing -> pure ()
+    pure state{socketConnection = Nothing}
 
 
 reportProtocolError :: HasMetaProtocolWorker a => a -> String -> IO b
@@ -444,7 +444,7 @@ reportProtocolError hasWorker message = do
   let worker = getMetaProtocolWorker hasWorker
   modifyMVar_ worker.stateMVar $ \state -> do
     metaStateSend state $ ProtocolError message
-    return state
+    pure state
   -- TODO custom error type, close connection
   undefined
 
@@ -454,7 +454,7 @@ reportLocalError hasWorker message = do
   let worker = getMetaProtocolWorker hasWorker
   modifyMVar_ worker.stateMVar $ \state -> do
     metaStateSend state $ ProtocolError "Internal server error"
-    return state
+    pure state
   -- TODO custom error type, close connection
   undefined
 
@@ -505,25 +505,25 @@ newChannel worker channelId = do
     sendStateMVar,
     receiveStateMVar
   }
-  modifyMVar_ worker.stateMVar $ \state -> return state{channels = HM.insert channelId channel state.channels}
-  return channel
+  modifyMVar_ worker.stateMVar $ \state -> pure state{channels = HM.insert channelId channel state.channels}
+  pure channel
 channelSend :: Channel -> BSL.ByteString -> [MessageHeader] -> (MessageId -> IO ()) -> IO ()
 channelSend channel msg headers callback = do
   modifyMVar_ channel.sendStateMVar $ \state -> do
     callback state.nextMessageId
     metaSendChannelMessage channel.worker channel.channelId msg headers
-    return state{nextMessageId = state.nextMessageId + 1}
+    pure state{nextMessageId = state.nextMessageId + 1}
 channelSend_ :: Channel -> BSL.ByteString -> [MessageHeader] -> IO ()
-channelSend_ channel msg headers = channelSend channel msg headers (const (return ()))
+channelSend_ channel msg headers = channelSend channel msg headers (const (pure ()))
 channelClose :: Channel -> IO ()
 channelClose channel = metaChannelClose channel.worker channel.channelId
 channelStartHandleMessage :: Channel -> [MessageHeaderResult] -> IO (Decoder (IO ()))
 channelStartHandleMessage channel headers = do
   (msgId, handler) <- modifyMVar channel.receiveStateMVar $ \state ->
-    return (state{nextMessageId = state.nextMessageId + 1}, (state.nextMessageId, state.handler))
-  return (handler msgId headers)
+    pure (state{nextMessageId = state.nextMessageId + 1}, (state.nextMessageId, state.handler))
+  pure (handler msgId headers)
 channelSetHandler :: Channel -> ChannelMessageHandler -> IO ()
-channelSetHandler channel handler = modifyMVar_ channel.receiveStateMVar $ \state -> return state{handler}
+channelSetHandler channel handler = modifyMVar_ channel.receiveStateMVar $ \state -> pure state{handler}
 
 
 class RpcProtocol p => HasProtocolImpl p where
@@ -552,7 +552,7 @@ clientRequestBlocking client req = do
   resultMVar <- newEmptyMVar
   channelSend client.channel (encode req) [] $ \msgId ->
     modifyMVar_ client.stateMVar $
-      \state -> return state{callbacks = HM.insert msgId (requestCompletedCallback resultMVar msgId) state.callbacks}
+      \state -> pure state{callbacks = HM.insert msgId (requestCompletedCallback resultMVar msgId) state.callbacks}
   -- Block on resultMVar until the request completes
   -- TODO: Future-based variant
   takeMVar resultMVar
@@ -560,20 +560,20 @@ clientRequestBlocking client req = do
     requestCompletedCallback :: MVar (ProtocolResponse p) -> MessageId -> ProtocolResponse p -> IO ()
     requestCompletedCallback resultMVar msgId response = do
       -- Remove callback
-      modifyMVar_ client.stateMVar $ \state -> return state{callbacks = HM.delete msgId state.callbacks}
+      modifyMVar_ client.stateMVar $ \state -> pure state{callbacks = HM.delete msgId state.callbacks}
       putMVar resultMVar response
 clientHandleChannelMessage :: forall p. (RpcProtocol p) => Client p -> MessageId -> [MessageHeaderResult] -> BSL.ByteString -> IO ()
 clientHandleChannelMessage client _msgId headers msg = case decodeOrFail msg of
   Left (_, _, errMsg) -> reportProtocolError client errMsg
   Right ("", _, resp) -> clientHandleResponse resp
-  Right (leftovers, _, _) -> reportProtocolError client ("Response parser returned unexpected leftovers: " <> show (BSL.length leftovers))
+  Right (leftovers, _, _) -> reportProtocolError client ("Response parser pureed unexpected leftovers: " <> show (BSL.length leftovers))
   where
     clientHandleResponse :: ProtocolResponseWrapper p -> IO ()
     clientHandleResponse (requestId, resp) = do
       callback <- modifyMVar client.stateMVar $ \state -> do
         let (callbacks, mCallback) = lookupDelete requestId state.callbacks
         case mCallback of
-          Just callback -> return (state{callbacks}, callback)
+          Just callback -> pure (state{callbacks}, callback)
           Nothing -> reportProtocolError client ("Received response with invalid request id " <> show requestId)
       callback resp
 
@@ -585,10 +585,10 @@ serverHandleChannelMessage :: forall p. (RpcProtocol p, HasProtocolImpl p) => Pr
 serverHandleChannelMessage protocolImpl channel msgId headers msg = case decodeOrFail msg of
     Left (_, _, errMsg) -> reportProtocolError channel errMsg
     Right ("", _, req) -> serverHandleChannelRequest req
-    Right (leftovers, _, _) -> reportProtocolError channel ("Request parser returned unexpected leftovers: " <> show (BSL.length leftovers))
+    Right (leftovers, _, _) -> reportProtocolError channel ("Request parser pureed unexpected leftovers: " <> show (BSL.length leftovers))
   where
     serverHandleChannelRequest :: ProtocolRequest p -> IO ()
-    serverHandleChannelRequest req = handleMessage @p protocolImpl req >>= maybe (return ()) serverSendResponse
+    serverHandleChannelRequest req = handleMessage @p protocolImpl req >>= maybe (pure ()) serverSendResponse
     serverSendResponse :: ProtocolResponse p -> IO ()
     serverSendResponse response = channelSend_ channel (encode wrappedResponse) []
       where
@@ -611,7 +611,7 @@ withClientTCP host port = bracket (newClientTCP host port) clientClose
 
 newClientTCP :: forall p. RpcProtocol p => Socket.HostName -> Socket.ServiceName -> IO (Client p)
 newClientTCP host port = do
-  -- 'getAddrInfo' either returns a non-empty list or throws an exception
+  -- 'getAddrInfo' either pures a non-empty list or throws an exception
   (best:others) <- Socket.getAddrInfo (Just hints) (Just host) (Just port)
 
   connectTasksMVar <- newMVar []
@@ -658,7 +658,7 @@ newClientTCP host port = do
     connect addr = bracketOnError (Socket.openSocket addr) Socket.close $ \sock -> do
       Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
       Socket.connect sock $ Socket.addrAddress addr
-      return sock
+      pure sock
 
 withClientUnix :: RpcProtocol p => FilePath -> (Client p -> IO a) -> IO a
 withClientUnix socketPath = bracket (newClientUnix socketPath) clientClose
@@ -689,7 +689,7 @@ newChannelClient channel = do
     stateMVar
   }
   channelSetHandler channel (simpleMessageHandler (clientHandleChannelMessage client))
-  return client
+  pure client
 
 listenTCP :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Maybe Socket.HostName -> Socket.ServiceName -> IO ()
 listenTCP protocolImpl mhost port = do
@@ -700,12 +700,12 @@ listenTCP protocolImpl mhost port = do
     resolve = do
       let hints = Socket.defaultHints {Socket.addrFlags=[Socket.AI_PASSIVE], Socket.addrSocketType=Socket.Stream}
       (addr:_) <- Socket.getAddrInfo (Just hints) mhost (Just port)
-      return addr
+      pure addr
     open :: Socket.AddrInfo -> IO Socket.Socket
     open addr = bracketOnError (Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol) Socket.close $ \sock -> do
       Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
       Socket.bind sock (Socket.addrAddress addr)
-      return sock
+      pure sock
 
 listenUnix :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> FilePath -> IO ()
 listenUnix protocolImpl socketPath = bracket create Socket.close (listenOnBoundSocket @p protocolImpl)
@@ -718,7 +718,7 @@ listenUnix protocolImpl socketPath = bracket create Socket.close (listenOnBoundS
       bracketOnError (Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol) Socket.close $ \sock -> do
         Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
         Socket.bind sock (Socket.SockAddrUnix socketPath)
-        return sock
+        pure sock
 
 -- | Listen and accept connections on an already bound socket.
 listenOnBoundSocket :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Socket.Socket -> IO ()
@@ -755,14 +755,14 @@ newDummySocketPair = do
   let x = SocketConnection {
     send=putMVar upstream . BSL.toStrict,
     receive=takeMVar downstream,
-    close=return ()
+    close=pure ()
   }
   let y = SocketConnection {
     send=putMVar downstream . BSL.toStrict,
     receive=takeMVar upstream,
-    close=return ()
+    close=pure ()
   }
-  return (x, y)
+  pure (x, y)
 
 
 -- * Internal
@@ -829,16 +829,16 @@ buildTupleType fields = buildTupleType' =<< fields
     buildTupleType' :: [Type] -> Q Type
     buildTupleType' [] = tupleT 0
     buildTupleType' [single] = pure single
-    buildTupleType' fs = return $ go (TupleT (length fs)) fs
+    buildTupleType' fs = pure $ go (TupleT (length fs)) fs
     go :: Type -> [Type] -> Type
     go t [] = t
     go t (f:fs) = go (AppT t f) fs
 
 buildFunctionType :: Q [Type] -> Q Type -> Q Type
-buildFunctionType argTypes returnType = go =<< argTypes
+buildFunctionType argTypes pureType = go =<< argTypes
   where
     go :: [Type] -> Q Type
-    go [] = returnType
+    go [] = pureType
     go (t:ts) = pure t `funT` go ts
 
 defaultBangType  :: Q Type -> Q BangType
@@ -857,7 +857,7 @@ lookupDelete :: forall k v. (Eq k, Hashable k) => k -> HM.HashMap k v -> (HM.Has
 lookupDelete key m = State.runState fn Nothing
   where
     fn :: State.State (Maybe v) (HM.HashMap k v)
-    fn = HM.alterF (\c -> State.put c >> return Nothing) key m
+    fn = HM.alterF (\c -> State.put c >> pure Nothing) key m
 
 withAsyncLinked :: IO a -> (Async a -> IO b) -> IO b
 withAsyncLinked inner outer = withAsync inner $ \task -> link task >> outer task

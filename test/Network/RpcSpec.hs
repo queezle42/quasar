@@ -12,11 +12,11 @@ $(do
         rpcFunction "fixedHandler42" $ do
           addArgument "arg" [t|Int|]
           addResult "result" [t|Bool|]
-          setFixedHandler [| return . (== 42) |],
+          setFixedHandler [| pure . (== 42) |],
         rpcFunction "fixedHandlerInc" $ do
           addArgument "arg" [t|Int|]
           addResult "result" [t|Int|]
-          setFixedHandler [| return . (+ 1) |],
+          setFixedHandler [| pure . (+ 1) |],
         rpcFunction "multiArgs" $ do
           addArgument "one" [t|Int|]
           addArgument "two" [t|Int|]
@@ -27,18 +27,17 @@ $(do
           addResult "result" [t|Int|],
         rpcFunction "noResponse" $ do
           addArgument "arg" [t|Int|],
-        rpcFunction "noNothing" $ return ()
+        rpcFunction "noNothing" $ pure ()
         ]
   mconcat <$> sequence [makeProtocol api, makeClient api, makeServer api]
  )
 
-
 exampleProtocolImpl :: ExampleProtocolImpl
 exampleProtocolImpl = ExampleProtocolImpl {
-  multiArgsImpl = \one two three -> return (one + two, not three),
-  noArgsImpl = return 42,
-  noResponseImpl = \_foo -> return (),
-  noNothingImpl = return ()
+  multiArgsImpl = \one two three -> pure (one + two, not three),
+  noArgsImpl = pure 42,
+  noResponseImpl = \_foo -> pure (),
+  noNothingImpl = pure ()
 }
 
 spec :: Spec
