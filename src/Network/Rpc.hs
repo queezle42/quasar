@@ -263,58 +263,57 @@ type ChannelId = Word64
 type MessageId = Word64
 type MessageLength = Word64
 -- | Low level network protocol type
-data MetaProtocolMessage
-  = ChannelMessage [MetaProtocolMessageHeader] MessageLength
+data MultiplexerProtocolMessage
+  = ChannelMessage [MultiplexerProtocolMessageHeader] MessageLength
   | SwitchChannel ChannelId
   | CloseChannel
   | ProtocolError String
   deriving (Binary, Generic, Show)
 
--- TODO rename Meta to "Management" or "Multiplexer"
 -- | Low level network protocol message header type
-data MetaProtocolMessageHeader = CreateChannel
+data MultiplexerProtocolMessageHeader = CreateChannel
   deriving (Binary, Generic, Show)
 
 newtype MessageHeader = CreateChannelHeader (ChannelId -> IO ())
 newtype MessageHeaderResult = CreateChannelHeaderResult Channel
 
-data MetaProtocolWorker = MetaProtocolWorker {
-  stateMVar :: MVar MetaProtocolWorkerState,
+data MultiplexerProtocolWorker = MultiplexerProtocolWorker {
+  stateMVar :: MVar MultiplexerProtocolWorkerState,
   killReceiverMVar :: MVar (IO ())
 }
-data MetaProtocolWorkerState = MetaProtocolWorkerState {
+data MultiplexerProtocolWorkerState = MultiplexerProtocolWorkerState {
   socketConnection :: Maybe SocketConnection,
   channels :: HM.HashMap ChannelId Channel,
   sendChannel :: ChannelId,
   receiveChannel :: ChannelId
 }
 
-class HasMetaProtocolWorker a where
-  getMetaProtocolWorker :: a -> MetaProtocolWorker
-instance HasMetaProtocolWorker MetaProtocolWorker where
-  getMetaProtocolWorker = id
+class HasMultiplexerProtocolWorker a where
+  getMultiplexerProtocolWorker :: a -> MultiplexerProtocolWorker
+instance HasMultiplexerProtocolWorker MultiplexerProtocolWorker where
+  getMultiplexerProtocolWorker = id
 
 data ConnectionIsClosed = ConnectionIsClosed
   deriving Show
 instance Exception ConnectionIsClosed
 
-runMetaProtocol :: (Channel -> IO ()) -> SocketConnection -> IO ()
-runMetaProtocol channelSetupHook connection = do
+runMultiplexerProtocol :: (Channel -> IO ()) -> SocketConnection -> IO ()
+runMultiplexerProtocol channelSetupHook connection = do
   -- Running in masked state, this thread (running the receive-function) cannot be interrupted when closing the connection
   maskingState <- getMaskingState
-  when (maskingState /= Unmasked) (fail "'runMetaProtocol' cannot run in masked thread state.")
+  when (maskingState /= Unmasked) (fail "'runMultiplexerProtocol' cannot run in masked thread state.")
 
   threadId <- myThreadId
   killReceiverMVar <- newMVar $ throwTo threadId ConnectionIsClosed
   let disarmKillReciver = modifyMVar_ killReceiverMVar $ \_ -> pure (pure ())
 
-  stateMVar <- newMVar $ MetaProtocolWorkerState {
+  stateMVar <- newMVar $ MultiplexerProtocolWorkerState {
     socketConnection = Just connection,
     channels = HM.empty,
     sendChannel = 0,
     receiveChannel = 0
   }
-  let worker = MetaProtocolWorker {
+  let worker = MultiplexerProtocolWorker {
     stateMVar,
     killReceiverMVar
   }
@@ -322,19 +321,19 @@ runMetaProtocol channelSetupHook connection = do
     `finally` (disarmKillReciver >> metaConnectionClose worker))
       `catch` (\(_ex :: ConnectionIsClosed) -> pure ())
 
-metaProtocolReceive :: MetaProtocolWorker -> IO ()
+metaProtocolReceive :: MultiplexerProtocolWorker -> IO ()
 metaProtocolReceive worker = receiveThreadLoop metaDecoder
   where
-    metaDecoder :: Decoder MetaProtocolMessage
+    metaDecoder :: Decoder MultiplexerProtocolMessage
     metaDecoder = runGetIncremental Binary.get
-    receiveThreadLoop :: Decoder MetaProtocolMessage -> IO a
+    receiveThreadLoop :: Decoder MultiplexerProtocolMessage -> IO a
     receiveThreadLoop (Fail _ _ errMsg) = reportProtocolError worker ("Failed to parse protocol message: " <> errMsg)
     receiveThreadLoop (Partial feedFn) = receiveThreadLoop . feedFn . Just =<< receiveThrowing
     receiveThreadLoop (Done leftovers _ msg) = do
-      newLeftovers <- execStateT (handleMetaMessage msg) leftovers
+      newLeftovers <- execStateT (handleMultiplexerMessage msg) leftovers
       receiveThreadLoop (pushChunk metaDecoder newLeftovers)
-    handleMetaMessage :: MetaProtocolMessage -> StateT BS.ByteString IO ()
-    handleMetaMessage (ChannelMessage headers len) = do
+    handleMultiplexerMessage :: MultiplexerProtocolMessage -> StateT BS.ByteString IO ()
+    handleMultiplexerMessage (ChannelMessage headers len) = do
       workerState <- liftIO $ readMVar worker.stateMVar
       case HM.lookup workerState.receiveChannel workerState.channels of
         Just channel -> handleChannelMessage channel headers len
@@ -342,7 +341,7 @@ metaProtocolReceive worker = receiveThreadLoop metaDecoder
     handleMultiplexerMessage (SwitchChannel channelId) = liftIO $ modifyMVar_ worker.stateMVar $ \state -> pure state{receiveChannel=channelId}
     handleMultiplexerMessage x = liftIO $ print x >> undefined -- Unhandled meta message
 
-    handleChannelMessage :: Channel -> [MetaProtocolMessageHeader] -> MessageLength -> StateT BS.ByteString IO ()
+    handleChannelMessage :: Channel -> [MultiplexerProtocolMessageHeader] -> MessageLength -> StateT BS.ByteString IO ()
     handleChannelMessage channel headers len = do
       headerResults <- liftIO $ sequence (processHeader <$> headers)
       decoder <- liftIO $ channelStartHandleMessage channel headerResults
@@ -383,7 +382,7 @@ metaProtocolReceive worker = receiveThreadLoop metaDecoder
         failedToConsumeAllInput bytesRead = reportProtocolError worker ("Decoder for channel " <> show channel.channelId <> " failed to consume all input (" <> show (len - bytesRead) <> " bytes left)")
         failedToTerminate :: IO a
         failedToTerminate = reportLocalError worker ("Decoder on channel " <> show channel.channelId <> " failed to terminate after end-of-input")
-        processHeader :: MetaProtocolMessageHeader -> IO MessageHeaderResult
+        processHeader :: MultiplexerProtocolMessageHeader -> IO MessageHeaderResult
         processHeader CreateChannel = undefined
     receiveThrowing :: IO BS.ByteString
     receiveThrowing = do
@@ -391,17 +390,17 @@ metaProtocolReceive worker = receiveThreadLoop metaDecoder
       maybe (throwIO ConnectionIsClosed) (.receive) state.socketConnection
 
 
-metaSend :: MetaProtocolWorker -> MetaProtocolMessage -> IO ()
+metaSend :: MultiplexerProtocolWorker -> MultiplexerProtocolMessage -> IO ()
 metaSend worker msg = withMVar worker.stateMVar $ \state -> metaStateSend state msg
 
-metaStateSend :: MetaProtocolWorkerState -> MetaProtocolMessage -> IO ()
+metaStateSend :: MultiplexerProtocolWorkerState -> MultiplexerProtocolMessage -> IO ()
 metaStateSend state = metaStateSendRaw state . encode
 
-metaStateSendRaw :: MetaProtocolWorkerState -> BSL.ByteString -> IO ()
-metaStateSendRaw MetaProtocolWorkerState{socketConnection=Just connection} rawMsg = connection.send rawMsg
-metaStateSendRaw MetaProtocolWorkerState{socketConnection=Nothing} _ = undefined
+metaStateSendRaw :: MultiplexerProtocolWorkerState -> BSL.ByteString -> IO ()
+metaStateSendRaw MultiplexerProtocolWorkerState{socketConnection=Just connection} rawMsg = connection.send rawMsg
+metaStateSendRaw MultiplexerProtocolWorkerState{socketConnection=Nothing} _ = undefined
 
-metaSendChannelMessage :: MetaProtocolWorker -> ChannelId -> BSL.ByteString -> [MessageHeader] -> IO ()
+metaSendChannelMessage :: MultiplexerProtocolWorker -> ChannelId -> BSL.ByteString -> [MessageHeader] -> IO ()
 metaSendChannelMessage worker channelId msg headers = do
   -- Sending a channel message consists of multiple low-level send operations, so the MVar is held during the operation
   modifyMVar_ worker.stateMVar $ \state -> do
@@ -413,24 +412,24 @@ metaSendChannelMessage worker channelId msg headers = do
     metaStateSendRaw state msg
     pure state{sendChannel=channelId}
   where
-    prepareHeader :: MessageHeader -> IO MetaProtocolMessageHeader
+    prepareHeader :: MessageHeader -> IO MultiplexerProtocolMessageHeader
     prepareHeader (CreateChannelHeader _newChannelCallback) = undefined
 
 
-metaChannelClose :: MetaProtocolWorker -> ChannelId -> IO ()
+metaChannelClose :: MultiplexerProtocolWorker -> ChannelId -> IO ()
 metaChannelClose worker channelId =
   if channelId == 0
     then metaClose worker
     else undefined
 
-metaClose :: MetaProtocolWorker -> IO ()
+metaClose :: MultiplexerProtocolWorker -> IO ()
 metaClose worker = do
   metaConnectionClose worker
   modifyMVar_ worker.killReceiverMVar $ \killReceiver -> do
     killReceiver
     pure (pure ())
 
-metaConnectionClose :: MetaProtocolWorker -> IO ()
+metaConnectionClose :: MultiplexerProtocolWorker -> IO ()
 metaConnectionClose worker = do
   modifyMVar_ worker.stateMVar $ \state -> do
     case state.socketConnection of
@@ -439,19 +438,19 @@ metaConnectionClose worker = do
     pure state{socketConnection = Nothing}
 
 
-reportProtocolError :: HasMetaProtocolWorker a => a -> String -> IO b
+reportProtocolError :: HasMultiplexerProtocolWorker a => a -> String -> IO b
 reportProtocolError hasWorker message = do
-  let worker = getMetaProtocolWorker hasWorker
+  let worker = getMultiplexerProtocolWorker hasWorker
   modifyMVar_ worker.stateMVar $ \state -> do
     metaStateSend state $ ProtocolError message
     pure state
   -- TODO custom error type, close connection
   undefined
 
-reportLocalError :: HasMetaProtocolWorker a => a -> String -> IO b
+reportLocalError :: HasMultiplexerProtocolWorker a => a -> String -> IO b
 reportLocalError hasWorker message = do
   hPutStrLn stderr message
-  let worker = getMetaProtocolWorker hasWorker
+  let worker = getMultiplexerProtocolWorker hasWorker
   modifyMVar_ worker.stateMVar $ \state -> do
     metaStateSend state $ ProtocolError "Internal server error"
     pure state
@@ -460,12 +459,12 @@ reportLocalError hasWorker message = do
 
 data Channel = Channel {
   channelId :: ChannelId,
-  worker :: MetaProtocolWorker,
+  worker :: MultiplexerProtocolWorker,
   sendStateMVar :: MVar ChannelSendState,
   receiveStateMVar :: MVar ChannelReceiveState
 }
-instance HasMetaProtocolWorker Channel where
-  getMetaProtocolWorker = (.worker)
+instance HasMultiplexerProtocolWorker Channel where
+  getMultiplexerProtocolWorker = (.worker)
 newtype ChannelSendState = ChannelSendState {
   nextMessageId :: MessageId
 }
@@ -489,7 +488,7 @@ simpleMessageHandler handler msgId headers = decoder ""
 
 
 -- Should not be exported
-newChannel :: MetaProtocolWorker -> ChannelId -> IO Channel
+newChannel :: MultiplexerProtocolWorker -> ChannelId -> IO Channel
 newChannel worker channelId = do
   sendStateMVar <- newMVar ChannelSendState {
     nextMessageId = 0
@@ -535,8 +534,8 @@ data Client p = Client {
   channel :: Channel,
   stateMVar :: MVar (ClientState p)
 }
-instance HasMetaProtocolWorker (Client p) where
-  getMetaProtocolWorker = (.channel.worker)
+instance HasMultiplexerProtocolWorker (Client p) where
+  getMultiplexerProtocolWorker = (.channel.worker)
 newtype ClientState p = ClientState {
   callbacks :: HM.HashMap MessageId (ProtocolResponse p -> IO ())
 }
@@ -676,8 +675,8 @@ withClient x = bracket (newClient x) clientClose
 newClient :: forall p a. (IsSocketConnection a, RpcProtocol p) => a -> IO (Client p)
 newClient x = do
   clientMVar <- newEmptyMVar
-  -- 'runMetaProtcol' needs to be interruptible (so it can terminate when it is closed), so 'unsafeUnmask' is used to ensure that this function also works when used in 'bracket'
-  link =<< async (unsafeUnmask (runMetaProtocol (newChannelClient >=> putMVar clientMVar) (toSocketConnection x)))
+  -- 'runMultiplexerProtcol' needs to be interruptible (so it can terminate when it is closed), so 'unsafeUnmask' is used to ensure that this function also works when used in 'bracket'
+  link =<< async (unsafeUnmask (runMultiplexerProtocol (newChannelClient >=> putMVar clientMVar) (toSocketConnection x)))
   takeMVar clientMVar
 
 
@@ -737,7 +736,7 @@ listenOnBoundSocket protocolImpl sock = do
       Socket.gracefulClose conn 2000
 
 runServerHandler :: forall p a. (RpcProtocol p, HasProtocolImpl p, IsSocketConnection a) => ProtocolImpl p -> a -> IO ()
-runServerHandler protocolImpl = runMetaProtocol (registerChannelServerHandler @p protocolImpl) . toSocketConnection
+runServerHandler protocolImpl = runMultiplexerProtocol (registerChannelServerHandler @p protocolImpl) . toSocketConnection
 
 -- ** Test implementation
 
