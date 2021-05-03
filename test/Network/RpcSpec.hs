@@ -7,29 +7,27 @@ import Prelude
 import Network.Rpc
 import Test.Hspec
 
-$(do
-  let api = rpcApi "Example" [
-        rpcFunction "fixedHandler42" $ do
-          addArgument "arg" [t|Int|]
-          addResult "result" [t|Bool|]
-          setFixedHandler [| pure . (== 42) |],
-        rpcFunction "fixedHandlerInc" $ do
-          addArgument "arg" [t|Int|]
-          addResult "result" [t|Int|]
-          setFixedHandler [| pure . (+ 1) |],
-        rpcFunction "multiArgs" $ do
-          addArgument "one" [t|Int|]
-          addArgument "two" [t|Int|]
-          addArgument "three" [t|Bool|]
-          addResult "result" [t|Int|]
-          addResult "result2" [t|Bool|],
-        rpcFunction "noArgs" $ do
-          addResult "result" [t|Int|],
-        rpcFunction "noResponse" $ do
-          addArgument "arg" [t|Int|],
-        rpcFunction "noNothing" $ pure ()
-        ]
-  mconcat <$> sequence [makeProtocol api, makeClient api, makeServer api]
+$(makeRpc $ rpcApi "Example" [
+    rpcFunction "fixedHandler42" $ do
+      addArgument "arg" [t|Int|]
+      addResult "result" [t|Bool|]
+      setFixedHandler [| pure . (== 42) |],
+    rpcFunction "fixedHandlerInc" $ do
+      addArgument "arg" [t|Int|]
+      addResult "result" [t|Int|]
+      setFixedHandler [| pure . (+ 1) |],
+    rpcFunction "multiArgs" $ do
+      addArgument "one" [t|Int|]
+      addArgument "two" [t|Int|]
+      addArgument "three" [t|Bool|]
+      addResult "result" [t|Int|]
+      addResult "result2" [t|Bool|],
+    rpcFunction "noArgs" $ do
+      addResult "result" [t|Int|],
+    rpcFunction "noResponse" $ do
+      addArgument "arg" [t|Int|],
+    rpcFunction "noNothing" $ pure ()
+    ]
  )
 
 exampleProtocolImpl :: ExampleProtocolImpl

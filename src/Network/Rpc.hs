@@ -78,6 +78,11 @@ setFixedHandler handler = State.modify (\fun -> fun{fixedHandler = Just handler}
 
 -- * Template Haskell rpc protocol generator
 
+
+-- | Generates rpc protocol types, rpc client and rpc server
+makeRpc :: RpcApi -> Q [Dec]
+makeRpc api = mconcat <$> sequence [makeProtocol api, makeClient api, makeServer api]
+
 makeProtocol :: RpcApi -> Q [Dec]
 makeProtocol api@RpcApi{functions} = sequence [protocolDec, protocolInstanceDec, messageDec, responseDec]
   where
