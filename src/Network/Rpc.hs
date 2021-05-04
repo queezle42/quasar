@@ -659,7 +659,7 @@ newClientTCP host port = do
     hints :: Socket.AddrInfo
     hints = Socket.defaultHints { Socket.addrFlags = [Socket.AI_ADDRCONFIG], Socket.addrSocketType = Socket.Stream }
     connect :: Socket.AddrInfo -> IO Socket.Socket
-    connect addr = bracketOnError (Socket.openSocket addr) Socket.close $ \sock -> do
+    connect addr = bracketOnError (openSocket addr) Socket.close $ \sock -> do
       Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
       Socket.connect sock $ Socket.addrAddress addr
       pure sock
@@ -868,3 +868,8 @@ withAsyncLinked inner outer = withAsync inner $ \task -> link task >> outer task
 
 withAsyncLinked_ :: IO a -> IO b -> IO b
 withAsyncLinked_ x = withAsyncLinked x . const
+
+
+-- | Reimplementation of 'openSocket' from the 'network'-package, which got introduced in version 3.1.2.0. Should be removed later.
+openSocket :: Socket.AddrInfo -> IO Socket.Socket
+openSocket addr = Socket.socket (Socket.addrFamily addr) (Socket.addrSocketType addr) (Socket.addrProtocol addr)
