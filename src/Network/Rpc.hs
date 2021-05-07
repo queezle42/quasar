@@ -631,7 +631,7 @@ newClientTCP host port = do
     raceConnections = do
       spawnConnectTask best
       threadDelay 200000
-      -- Give the "best" address another try, in case the TCP SYN gets dropped
+      -- Give the "best" address another try, in case the TCP SYN gets dropped (kernel retry interval can be multiple seconds long)
       spawnConnectTask best
       threadDelay 100000
       -- Try to connect to all other resolved addresses to prevent waiting for e.g. a long IPv6 connection timeout
