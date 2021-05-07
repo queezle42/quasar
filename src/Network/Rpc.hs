@@ -298,9 +298,9 @@ class HasMultiplexerProtocolWorker a where
 instance HasMultiplexerProtocolWorker MultiplexerProtocolWorker where
   getMultiplexerProtocolWorker = id
 
-data ConnectionIsClosed = ConnectionIsClosed
+data NotConnected = NotConnected
   deriving Show
-instance Exception ConnectionIsClosed
+instance Exception NotConnected
 
 runMultiplexerProtocol :: (Channel -> IO ()) -> SocketConnection -> IO ()
 runMultiplexerProtocol channelSetupHook connection = do
@@ -309,7 +309,7 @@ runMultiplexerProtocol channelSetupHook connection = do
   when (maskingState /= Unmasked) (fail "'runMultiplexerProtocol' cannot run in masked thread state.")
 
   threadId <- myThreadId
-  killReceiverMVar <- newMVar $ throwTo threadId ConnectionIsClosed
+  killReceiverMVar <- newMVar $ throwTo threadId NotConnected
   let disarmKillReciver = modifyMVar_ killReceiverMVar $ \_ -> pure (pure ())
 
   stateMVar <- newMVar $ MultiplexerProtocolWorkerState {
@@ -324,7 +324,7 @@ runMultiplexerProtocol channelSetupHook connection = do
   }
   (((channelSetupHook =<< newChannel worker 0) >> metaProtocolReceive worker)
     `finally` (disarmKillReciver >> metaConnectionClose worker))
-      `catch` (\(_ex :: ConnectionIsClosed) -> pure ())
+      `catch` (\(_ex :: NotConnected) -> pure ())
 
 metaProtocolReceive :: MultiplexerProtocolWorker -> IO ()
 metaProtocolReceive worker = receiveThreadLoop metaDecoder
@@ -392,7 +392,7 @@ metaProtocolReceive worker = receiveThreadLoop metaDecoder
     receiveThrowing :: IO BS.ByteString
     receiveThrowing = do
       state <- readMVar worker.stateMVar
-      maybe (throwIO ConnectionIsClosed) (.receive) state.socketConnection
+      maybe (throwIO NotConnected) (.receive) state.socketConnection
 
 
 metaSend :: MultiplexerProtocolWorker -> MultiplexerProtocolMessage -> IO ()
@@ -403,7 +403,7 @@ metaStateSend state = metaStateSendRaw state . encode
 
 metaStateSendRaw :: MultiplexerProtocolWorkerState -> BSL.ByteString -> IO ()
 metaStateSendRaw MultiplexerProtocolWorkerState{socketConnection=Just connection} rawMsg = connection.send rawMsg
-metaStateSendRaw MultiplexerProtocolWorkerState{socketConnection=Nothing} _ = undefined
+metaStateSendRaw MultiplexerProtocolWorkerState{socketConnection=Nothing} _ = throwIO NotConnected
 
 metaSendChannelMessage :: MultiplexerProtocolWorker -> ChannelId -> BSL.ByteString -> [MessageHeader] -> IO ()
 metaSendChannelMessage worker channelId msg headers = do
