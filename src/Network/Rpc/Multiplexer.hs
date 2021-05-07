@@ -1,4 +1,25 @@
-module Network.Rpc.Multiplexer where
+module Network.Rpc.Multiplexer (
+  SocketConnection(..),
+  IsSocketConnection(..),
+  ChannelId,
+  MessageId,
+  MessageLength,
+  Channel,
+  MessageHeader(..),
+  MessageHeaderResult(..),
+  -- TODO rename (this class only exists for unified error reporting and connection termination)
+  HasMultiplexerProtocolWorker(..),
+  reportProtocolError,
+  reportLocalError,
+  channelSend,
+  channelSend_,
+  channelClose,
+  channelSetHandler,
+  ChannelMessageHandler,
+  SimpleChannelMessageHandler,
+  simpleMessageHandler,
+  runMultiplexerProtocol,
+) where
 
 import Control.Concurrent (myThreadId, throwTo)
 import Control.Exception (Exception(..), MaskingState(Unmasked), catch, finally, throwIO, getMaskingState)
@@ -304,4 +325,3 @@ channelStartHandleMessage channel headers = do
   pure (handler msgId headers)
 channelSetHandler :: Channel -> ChannelMessageHandler -> IO ()
 channelSetHandler channel handler = modifyMVar_ channel.receiveStateMVar $ \state -> pure state{handler}
-
