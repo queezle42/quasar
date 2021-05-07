@@ -116,21 +116,21 @@ runMultiplexerProtocol channelSetupHook connection = do
     stateMVar,
     killReceiverMVar
   }
-  (((channelSetupHook =<< newChannel worker 0) >> metaProtocolReceive worker)
-    `finally` (disarmKillReciver >> metaConnectionClose worker))
+  (((channelSetupHook =<< newChannel worker 0) >> multiplexerProtocolReceive worker)
+    `finally` (disarmKillReciver >> multiplexerConnectionClose worker))
       `catch` (\(_ex :: NotConnected) -> pure ())
 
-metaProtocolReceive :: MultiplexerProtocolWorker -> IO ()
-metaProtocolReceive worker = receiveThreadLoop metaDecoder
+multiplexerProtocolReceive :: MultiplexerProtocolWorker -> IO ()
+multiplexerProtocolReceive worker = receiveThreadLoop multiplexerDecoder
   where
-    metaDecoder :: Decoder MultiplexerProtocolMessage
-    metaDecoder = runGetIncremental Binary.get
+    multiplexerDecoder :: Decoder MultiplexerProtocolMessage
+    multiplexerDecoder = runGetIncremental Binary.get
     receiveThreadLoop :: Decoder MultiplexerProtocolMessage -> IO a
     receiveThreadLoop (Fail _ _ errMsg) = reportProtocolError worker ("Failed to parse protocol message: " <> errMsg)
     receiveThreadLoop (Partial feedFn) = receiveThreadLoop . feedFn . Just =<< receiveThrowing
     receiveThreadLoop (Done leftovers _ msg) = do
       newLeftovers <- execStateT (handleMultiplexerMessage msg) leftovers
-      receiveThreadLoop (pushChunk metaDecoder newLeftovers)
+      receiveThreadLoop (pushChunk multiplexerDecoder newLeftovers)
     handleMultiplexerMessage :: MultiplexerProtocolMessage -> StateT BS.ByteString IO ()
     handleMultiplexerMessage (ChannelMessage headers len) = do
       workerState <- liftIO $ readMVar worker.stateMVar
@@ -138,7 +138,7 @@ metaProtocolReceive worker = receiveThreadLoop metaDecoder
         Just channel -> handleChannelMessage channel headers len
         Nothing -> liftIO $ reportProtocolError worker ("Received message on invalid channel: " <> show workerState.receiveChannel)
     handleMultiplexerMessage (SwitchChannel channelId) = liftIO $ modifyMVar_ worker.stateMVar $ \state -> pure state{receiveChannel=channelId}
-    handleMultiplexerMessage x = liftIO $ print x >> undefined -- Unhandled meta message
+    handleMultiplexerMessage x = liftIO $ print x >> undefined -- Unhandled multiplexer message
 
     handleChannelMessage :: Channel -> [MultiplexerProtocolMessageHeader] -> MessageLength -> StateT BS.ByteString IO ()
     handleChannelMessage channel headers len = do
@@ -189,49 +189,49 @@ metaProtocolReceive worker = receiveThreadLoop metaDecoder
       maybe (throwIO NotConnected) (.receive) state.socketConnection
 
 
-metaSend :: MultiplexerProtocolWorker -> MultiplexerProtocolMessage -> IO ()
-metaSend worker msg = withMVar worker.stateMVar $ \state -> metaStateSend state msg
+multiplexerSend :: MultiplexerProtocolWorker -> MultiplexerProtocolMessage -> IO ()
+multiplexerSend worker msg = withMVar worker.stateMVar $ \state -> multiplexerStateSend state msg
 
-metaStateSend :: MultiplexerProtocolWorkerState -> MultiplexerProtocolMessage -> IO ()
-metaStateSend state = metaStateSendRaw state . encode
+multiplexerStateSend :: MultiplexerProtocolWorkerState -> MultiplexerProtocolMessage -> IO ()
+multiplexerStateSend state = multiplexerStateSendRaw state . encode
 
-metaStateSendRaw :: MultiplexerProtocolWorkerState -> BSL.ByteString -> IO ()
-metaStateSendRaw MultiplexerProtocolWorkerState{socketConnection=Just connection} rawMsg = connection.send rawMsg
-metaStateSendRaw MultiplexerProtocolWorkerState{socketConnection=Nothing} _ = throwIO NotConnected
+multiplexerStateSendRaw :: MultiplexerProtocolWorkerState -> BSL.ByteString -> IO ()
+multiplexerStateSendRaw MultiplexerProtocolWorkerState{socketConnection=Just connection} rawMsg = connection.send rawMsg
+multiplexerStateSendRaw MultiplexerProtocolWorkerState{socketConnection=Nothing} _ = throwIO NotConnected
 
-metaSendChannelMessage :: MultiplexerProtocolWorker -> ChannelId -> BSL.ByteString -> [MessageHeader] -> IO ()
-metaSendChannelMessage worker channelId msg headers = do
+multiplexerSendChannelMessage :: MultiplexerProtocolWorker -> ChannelId -> BSL.ByteString -> [MessageHeader] -> IO ()
+multiplexerSendChannelMessage worker channelId msg headers = do
   -- Sending a channel message consists of multiple low-level send operations, so the MVar is held during the operation
   modifyMVar_ worker.stateMVar $ \state -> do
     -- Switch to the specified channel (if required)
-    when (state.sendChannel /= channelId) $ metaSend worker (SwitchChannel channelId)
+    when (state.sendChannel /= channelId) $ multiplexerSend worker (SwitchChannel channelId)
 
     headerMessages <- sequence (prepareHeader <$> headers)
-    metaStateSend state (ChannelMessage headerMessages (fromIntegral (BSL.length msg)))
-    metaStateSendRaw state msg
+    multiplexerStateSend state (ChannelMessage headerMessages (fromIntegral (BSL.length msg)))
+    multiplexerStateSendRaw state msg
     pure state{sendChannel=channelId}
   where
     prepareHeader :: MessageHeader -> IO MultiplexerProtocolMessageHeader
     prepareHeader (CreateChannelHeader _newChannelCallback) = undefined
 
 
-metaChannelClose :: MultiplexerProtocolWorker -> ChannelId -> IO ()
-metaChannelClose worker channelId =
+multiplexerChannelClose :: MultiplexerProtocolWorker -> ChannelId -> IO ()
+multiplexerChannelClose worker channelId =
   if channelId == 0
-    then metaClose worker
+    then multiplexerClose worker
     else undefined
 
 -- | Close a mulxiplexer worker by closing the connection it is based on and then stopping the worker thread.
-metaClose :: MultiplexerProtocolWorker -> IO ()
-metaClose worker = do
-  metaConnectionClose worker
+multiplexerClose :: MultiplexerProtocolWorker -> IO ()
+multiplexerClose worker = do
+  multiplexerConnectionClose worker
   modifyMVar_ worker.killReceiverMVar $ \killReceiver -> do
     killReceiver
     pure (pure ())
 
 -- | Internal close operation: Closes the communication channel a multiplexer is operating on. The caller has the responsibility to ensure the receiver thread is closed.
-metaConnectionClose :: MultiplexerProtocolWorker -> IO ()
-metaConnectionClose worker = do
+multiplexerConnectionClose :: MultiplexerProtocolWorker -> IO ()
+multiplexerConnectionClose worker = do
   modifyMVar_ worker.stateMVar $ \state -> do
     case state.socketConnection of
       Just connection -> connection.close
@@ -243,7 +243,7 @@ reportProtocolError :: HasMultiplexerProtocolWorker a => a -> String -> IO b
 reportProtocolError hasWorker message = do
   let worker = getMultiplexerProtocolWorker hasWorker
   modifyMVar_ worker.stateMVar $ \state -> do
-    metaStateSend state $ ProtocolError message
+    multiplexerStateSend state $ ProtocolError message
     pure state
   -- TODO custom error type, close connection
   undefined
@@ -253,7 +253,7 @@ reportLocalError hasWorker message = do
   hPutStrLn stderr message
   let worker = getMultiplexerProtocolWorker hasWorker
   modifyMVar_ worker.stateMVar $ \state -> do
-    metaStateSend state $ ProtocolError "Internal server error"
+    multiplexerStateSend state $ ProtocolError "Internal server error"
     pure state
   -- TODO custom error type, close connection
   undefined
@@ -312,12 +312,12 @@ channelSend :: Channel -> BSL.ByteString -> [MessageHeader] -> (MessageId -> IO 
 channelSend channel msg headers callback = do
   modifyMVar_ channel.sendStateMVar $ \state -> do
     callback state.nextMessageId
-    metaSendChannelMessage channel.worker channel.channelId msg headers
+    multiplexerSendChannelMessage channel.worker channel.channelId msg headers
     pure state{nextMessageId = state.nextMessageId + 1}
 channelSend_ :: Channel -> BSL.ByteString -> [MessageHeader] -> IO ()
 channelSend_ channel msg headers = channelSend channel msg headers (const (pure ()))
 channelClose :: Channel -> IO ()
-channelClose channel = metaChannelClose channel.worker channel.channelId
+channelClose channel = multiplexerChannelClose channel.worker channel.channelId
 channelStartHandleMessage :: Channel -> [MessageHeaderResult] -> IO (Decoder (IO ()))
 channelStartHandleMessage channel headers = do
   (msgId, handler) <- modifyMVar channel.receiveStateMVar $ \state ->
