@@ -427,6 +427,7 @@ metaChannelClose worker channelId =
     then metaClose worker
     else undefined
 
+-- | Close a mulxiplexer worker by closing the connection it is based on and then stopping the worker thread.
 metaClose :: MultiplexerProtocolWorker -> IO ()
 metaClose worker = do
   metaConnectionClose worker
@@ -434,6 +435,7 @@ metaClose worker = do
     killReceiver
     pure (pure ())
 
+-- | Internal close operation: Closes the communication channel a multiplexer is operating on. The caller has the responsibility to ensure the receiver thread is closed.
 metaConnectionClose :: MultiplexerProtocolWorker -> IO ()
 metaConnectionClose worker = do
   modifyMVar_ worker.stateMVar $ \state -> do
