@@ -80,6 +80,7 @@ library
   import: shared-properties
   exposed-modules:
     Network.Rpc
+    Network.Rpc.Multiplexer
   hs-source-dirs:
     src
 
