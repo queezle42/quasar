@@ -1,6 +1,4 @@
 module Network.Rpc.Multiplexer (
-  SocketConnection(..),
-  IsSocketConnection(..),
   ChannelId,
   MessageId,
   MessageLength,
@@ -34,29 +32,10 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.HashMap.Strict as HM
 import Data.Word
-import qualified Network.Socket as Socket
-import qualified Network.Socket.ByteString as Socket
-import qualified Network.Socket.ByteString.Lazy as SocketL
+import Network.Rpc.Connection
 import Prelude
 import GHC.Generics
 import System.IO (hPutStrLn, stderr)
-
--- | Abstraction over a socket connection, to be able to switch to different communication channels (e.g. the dummy implementation for unit tests).
-data SocketConnection = SocketConnection {
-  send :: BSL.ByteString -> IO (),
-  receive :: IO BS.ByteString,
-  close :: IO ()
-}
-class IsSocketConnection a where
-  toSocketConnection :: a -> SocketConnection
-instance IsSocketConnection SocketConnection where
-  toSocketConnection = id
-instance IsSocketConnection Socket.Socket where
-  toSocketConnection sock = SocketConnection {
-    send=SocketL.sendAll sock,
-    receive=Socket.recv sock 4096,
-    close=Socket.gracefulClose sock 2000
-  }
 
 type ChannelId = Word64
 type MessageId = Word64
