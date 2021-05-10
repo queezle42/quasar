@@ -15,17 +15,17 @@ import qualified Network.Socket.ByteString.Lazy as SocketL
 import Prelude
 
 -- | Abstraction over a bidirectional stream connection (e.g. a socket), to be able to switch to different communication channels (e.g. stdin/stdout or a dummy implementation for unit tests).
-data SocketConnection = SocketConnection {
+data Connection = Connection {
   send :: BSL.ByteString -> IO (),
   receive :: IO BS.ByteString,
   close :: IO ()
 }
-class IsSocketConnection a where
-  toSocketConnection :: a -> SocketConnection
-instance IsSocketConnection SocketConnection where
+class IsConnection a where
+  toSocketConnection :: a -> Connection
+instance IsConnection Connection where
   toSocketConnection = id
-instance IsSocketConnection Socket.Socket where
-  toSocketConnection sock = SocketConnection {
+instance IsConnection Socket.Socket where
+  toSocketConnection sock = Connection {
     send=SocketL.sendAll sock,
     receive=Socket.recv sock 4096,
     close=Socket.gracefulClose sock 2000
@@ -89,16 +89,16 @@ connectTCP host port = do
       pure sock
 
 
-newDummySocketPair :: IO (SocketConnection, SocketConnection)
+newDummySocketPair :: IO (Connection, Connection)
 newDummySocketPair = do
   upstream <- newEmptyMVar
   downstream <- newEmptyMVar
-  let x = SocketConnection {
+  let x = Connection {
     send=putMVar upstream . BSL.toStrict,
     receive=takeMVar downstream,
     close=pure ()
   }
-  let y = SocketConnection {
+  let y = Connection {
     send=putMVar downstream . BSL.toStrict,
     receive=takeMVar upstream,
     close=pure ()

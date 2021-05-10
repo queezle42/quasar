@@ -333,10 +333,10 @@ newClientUnix socketPath = bracketOnError (Socket.socket Socket.AF_UNIX Socket.S
   newClient sock
 
 
-withClient :: forall p a b. (IsSocketConnection a, RpcProtocol p) => a -> (Client p -> IO b) -> IO b
+withClient :: forall p a b. (IsConnection a, RpcProtocol p) => a -> (Client p -> IO b) -> IO b
 withClient x = bracket (newClient x) clientClose
 
-newClient :: forall p a. (IsSocketConnection a, RpcProtocol p) => a -> IO (Client p)
+newClient :: forall p a. (IsConnection a, RpcProtocol p) => a -> IO (Client p)
 newClient x = do
   clientMVar <- newEmptyMVar
   -- 'runMultiplexerProtcol' needs to be interruptible (so it can terminate when it is closed), so 'unsafeUnmask' is used to ensure that this function also works when used in 'bracket'
@@ -399,7 +399,7 @@ listenOnBoundSocket protocolImpl sock = do
     socketFinalization conn (Right ()) = do
       Socket.gracefulClose conn 2000
 
-runServerHandler :: forall p a. (RpcProtocol p, HasProtocolImpl p, IsSocketConnection a) => ProtocolImpl p -> a -> IO ()
+runServerHandler :: forall p a. (RpcProtocol p, HasProtocolImpl p, IsConnection a) => ProtocolImpl p -> a -> IO ()
 runServerHandler protocolImpl = runMultiplexerProtocol (registerChannelServerHandler @p protocolImpl) . toSocketConnection
 
 

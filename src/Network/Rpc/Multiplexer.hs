@@ -60,7 +60,7 @@ data MultiplexerProtocolWorker = MultiplexerProtocolWorker {
   killReceiverMVar :: MVar (IO ())
 }
 data MultiplexerProtocolWorkerState = MultiplexerProtocolWorkerState {
-  socketConnection :: Maybe SocketConnection,
+  socketConnection :: Maybe Connection,
   channels :: HM.HashMap ChannelId Channel,
   sendChannel :: ChannelId,
   receiveChannel :: ChannelId
@@ -75,7 +75,7 @@ data NotConnected = NotConnected
   deriving Show
 instance Exception NotConnected
 
-runMultiplexerProtocol :: (Channel -> IO ()) -> SocketConnection -> IO ()
+runMultiplexerProtocol :: (Channel -> IO ()) -> Connection -> IO ()
 runMultiplexerProtocol channelSetupHook connection = do
   -- Running in masked state, this thread (running the receive-function) cannot be interrupted when closing the connection
   maskingState <- getMaskingState
