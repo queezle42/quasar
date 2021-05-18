@@ -2,7 +2,7 @@ module Network.Rpc where
 
 import Control.Concurrent (forkFinally)
 import Control.Concurrent.Async (Async, async, link, withAsync)
-import Control.Exception (SomeException, bracket, bracketOnError, bracketOnError)
+import Control.Exception (SomeException, bracket, bracketOnError, bracketOnError, interruptible)
 import Control.Monad ((>=>), when, forever)
 import Control.Monad.State (State, execState)
 import qualified Control.Monad.State as State
@@ -12,14 +12,13 @@ import qualified Data.ByteString.Lazy as BSL
 import Data.Hashable (Hashable)
 import qualified Data.HashMap.Strict as HM
 import Data.Maybe (isNothing)
-import Language.Haskell.TH
+import Language.Haskell.TH hiding (interruptible)
 import Language.Haskell.TH.Syntax
 import Network.Rpc.Multiplexer
 import Network.Rpc.Connection
 import qualified Network.Socket as Socket
 import Prelude
 import GHC.Generics
-import GHC.IO (unsafeUnmask)
 import System.Posix.Files (getFileStatus, isSocket)
 
 
@@ -261,11 +260,11 @@ emptyClientState = ClientState {
 }
 
 clientSend :: RpcProtocol p => Client p -> ProtocolRequest p -> IO ()
-clientSend client req = channelSend_ client.channel (encode req) []
+clientSend client req = channelSend_ client.channel [] (encode req)
 clientRequestBlocking :: forall p. RpcProtocol p => Client p -> ProtocolRequest p -> IO (ProtocolResponse p)
 clientRequestBlocking client req = do
   resultMVar <- newEmptyMVar
-  channelSend client.channel (encode req) [] $ \msgId ->
+  channelSend client.channel [] (encode req) $ \msgId ->
     modifyMVar_ client.stateMVar $
       \state -> pure state{callbacks = HM.insert msgId (requestCompletedCallback resultMVar msgId) state.callbacks}
   -- Block on resultMVar until the request completes
@@ -305,7 +304,7 @@ serverHandleChannelMessage protocolImpl channel msgId headers msg = case decodeO
     serverHandleChannelRequest :: ProtocolRequest p -> IO ()
     serverHandleChannelRequest req = handleMessage @p protocolImpl req >>= maybe (pure ()) serverSendResponse
     serverSendResponse :: ProtocolResponse p -> IO ()
-    serverSendResponse response = channelSend_ channel (encode wrappedResponse) []
+    serverSendResponse response = channelSend_ channel [] (encode wrappedResponse)
       where
         wrappedResponse :: ProtocolResponseWrapper p
         wrappedResponse = (msgId, response)
@@ -337,11 +336,7 @@ withClient :: forall p a b. (IsConnection a, RpcProtocol p) => a -> (Client p ->
 withClient x = bracket (newClient x) clientClose
 
 newClient :: forall p a. (IsConnection a, RpcProtocol p) => a -> IO (Client p)
-newClient x = do
-  clientMVar <- newEmptyMVar
-  -- 'runMultiplexerProtcol' needs to be interruptible (so it can terminate when it is closed), so 'unsafeUnmask' is used to ensure that this function also works when used in 'bracket'
-  link =<< async (unsafeUnmask (runMultiplexerProtocol (newChannelClient >=> putMVar clientMVar) (toSocketConnection x)))
-  takeMVar clientMVar
+newClient x = newChannelClient =<< newMultiplexer (toSocketConnection x)
 
 
 newChannelClient :: RpcProtocol p => Channel -> IO (Client p)
@@ -400,7 +395,7 @@ listenOnBoundSocket protocolImpl sock = do
       Socket.gracefulClose conn 2000
 
 runServerHandler :: forall p a. (RpcProtocol p, HasProtocolImpl p, IsConnection a) => ProtocolImpl p -> a -> IO ()
-runServerHandler protocolImpl = runMultiplexerProtocol (registerChannelServerHandler @p protocolImpl) . toSocketConnection
+runServerHandler protocolImpl = runMultiplexer (registerChannelServerHandler @p protocolImpl) . toSocketConnection
 
 
 -- ** Test implementation
@@ -483,10 +478,10 @@ buildTupleType fields = buildTupleType' =<< fields
     go t (f:fs) = go (AppT t f) fs
 
 buildFunctionType :: Q [Type] -> Q Type -> Q Type
-buildFunctionType argTypes pureType = go =<< argTypes
+buildFunctionType argTypes returnType = go =<< argTypes
   where
     go :: [Type] -> Q Type
-    go [] = pureType
+    go [] = returnType
     go (t:ts) = pure t `funT` go ts
 
 defaultBangType  :: Q Type -> Q BangType

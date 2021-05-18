@@ -3,12 +3,11 @@ module Network.Rpc.Connection where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (Async, async, cancel, link, waitCatch, withAsync)
 import Control.Concurrent.MVar
-import Control.Exception (Exception(..), SomeException, bracketOnError, finally, throwIO, bracketOnError, onException)
+import Control.Exception (Exception(..), SomeException, bracketOnError, interruptible, finally, throwIO, bracketOnError, onException)
 import Control.Monad ((>=>), unless, forM_)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.List (intercalate)
-import GHC.IO (unsafeUnmask)
 import qualified Network.Socket as Socket
 import qualified Network.Socket.ByteString as Socket
 import qualified Network.Socket.ByteString.Lazy as SocketL
@@ -37,6 +36,8 @@ newtype ConnectionFailed = ConnectionFailed [(Socket.AddrInfo, SomeException)]
 instance Exception ConnectionFailed where
   displayException (ConnectionFailed attemts) = "Connection attempts failed:\n" <> intercalate "\n" (map (\(addr, err) -> show (Socket.addrAddress addr) <> ": " <> displayException err) attemts)
 
+-- | Open a TCP connection to target host and port. Will start multiple connection attempts (i.e. retry quickly and then try other addresses) but only return the first successful connection.
+-- Throws a 'ConnectionFailed' on failure, which contains the exceptions from all failed connection attempts.
 connectTCP :: Socket.HostName -> Socket.ServiceName -> IO Socket.Socket
 connectTCP host port = do
   -- 'getAddrInfo' either pures a non-empty list or throws an exception
@@ -74,7 +75,7 @@ connectTCP host port = do
 
   -- The 'raceConnections'-async is 'link'ed to this thread, so 'readMVar' is interrupted when all connection attempts fail
   sock <-
-    (withAsync (unsafeUnmask raceConnections) (link >=> const (readMVar sockMVar))
+    (withAsync (interruptible raceConnections) (link >=> const (readMVar sockMVar))
       `finally` (mapM_ (cancel . snd) =<< readMVar connectTasksMVar))
         `onException` (mapM_ Socket.close =<< tryTakeMVar sockMVar)
     -- As soon as we have an open connection, stop spawning more connections

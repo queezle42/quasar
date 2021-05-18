@@ -94,5 +94,6 @@ test-suite qrpc-test
   main-is: Spec.hs
   other-modules:
     Network.RpcSpec
+    Network.Rpc.MultiplexerSpec
   hs-source-dirs:
     test
