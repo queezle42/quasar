@@ -1,9 +1,9 @@
 module Network.Rpc where
 
 import Control.Concurrent (forkFinally)
-import Control.Concurrent.Async (Async, async, link, withAsync)
-import Control.Exception (SomeException, bracket, bracketOnError, bracketOnError, interruptible)
-import Control.Monad ((>=>), when, forever)
+import Control.Concurrent.Async (Async, link, withAsync)
+import Control.Exception (SomeException, bracket, bracketOnError, bracketOnError)
+import Control.Monad (when, forever)
 import Control.Monad.State (State, execState)
 import qualified Control.Monad.State as State
 import Control.Concurrent.MVar
