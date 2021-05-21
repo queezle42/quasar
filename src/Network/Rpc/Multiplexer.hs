@@ -89,7 +89,8 @@ data Channel = Channel {
   worker :: MultiplexerProtocolWorker,
   stateMVar :: MVar ChannelState,
   sendStateMVar :: MVar ChannelSendState,
-  receiveStateMVar :: MVar ChannelReceiveState
+  receiveStateMVar :: MVar ChannelReceiveState,
+  handlerAtVar :: AtVar ChannelMessageHandler
 }
 instance HasMultiplexerProtocolWorker Channel where
   getMultiplexerProtocolWorker = (.worker)
@@ -101,8 +102,7 @@ newtype ChannelSendState = ChannelSendState {
   nextMessageId :: MessageId
 }
 data ChannelReceiveState = ChannelReceiveState {
-  nextMessageId :: MessageId,
-  handler :: ChannelMessageHandler
+  nextMessageId :: MessageId
 }
 
 data ChannelConnectivity = Connected | Closed | CloseConfirmed
@@ -433,17 +433,17 @@ newChannel worker channelId connectionState = do
   sendStateMVar <- newMVar ChannelSendState {
     nextMessageId = 0
   }
-  let handler = simpleMessageHandler $ \_ _ _ -> reportLocalError worker ("Channel " <> show channelId <> ": Received message but no Handler is registered")
   receiveStateMVar <- newMVar ChannelReceiveState {
-    nextMessageId = 0,
-    handler
+    nextMessageId = 0
   }
+  handlerAtVar <- newEmptyAtVar
   let channel = Channel {
     worker,
     channelId,
     stateMVar,
     sendStateMVar,
-    receiveStateMVar
+    receiveStateMVar,
+    handlerAtVar
   }
   modifyMVar_ worker.stateMVar $ \state -> pure state{channels = HM.insert channelId channel state.channels}
   pure channel
@@ -464,9 +464,28 @@ channelSend_ channel headers msg = channelSend channel headers msg (const (pure 
 
 channelStartHandleMessage :: Channel -> [MessageHeaderResult] -> IO (Decoder (IO ()))
 channelStartHandleMessage channel headers = do
-  (msgId, handler) <- modifyMVar channel.receiveStateMVar $ \state ->
-    pure (state{nextMessageId = state.nextMessageId + 1}, (state.nextMessageId, state.handler))
+  msgId <- modifyMVar channel.receiveStateMVar $ \state ->
+    pure (state{nextMessageId = state.nextMessageId + 1}, state.nextMessageId)
+  handler <- readAtVar channel.handlerAtVar
   pure (handler msgId headers)
 
 channelSetHandler :: Channel -> ChannelMessageHandler -> IO ()
-channelSetHandler channel handler = modifyMVar_ channel.receiveStateMVar $ \state -> pure state{handler}
+channelSetHandler channel = writeAtVar channel.handlerAtVar
+
+-- | Helper for an atomically writable MVar that can also be empty and, when read, will block until it has a value.
+data AtVar a = AtVar (MVar a) (MVar AtVarState)
+data AtVarState = AtVarIsEmpty | AtVarHasValue
+
+newEmptyAtVar :: IO (AtVar a)
+newEmptyAtVar = do
+  valueMVar <- newEmptyMVar
+  guardMVar <- newMVar AtVarIsEmpty
+  pure $ AtVar valueMVar guardMVar
+
+writeAtVar :: AtVar a -> a -> IO ()
+writeAtVar (AtVar valueMVar guardMVar) value = modifyMVar_ guardMVar $ \case
+  AtVarIsEmpty -> putMVar valueMVar value >> pure AtVarHasValue
+  AtVarHasValue -> modifyMVar_ valueMVar (const (pure value)) >> pure AtVarHasValue
+
+readAtVar :: AtVar a -> IO a
+readAtVar (AtVar valueMVar _) = readMVar valueMVar
