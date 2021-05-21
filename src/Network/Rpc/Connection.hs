@@ -76,9 +76,9 @@ connectTCP host port = do
   -- The 'raceConnections'-async is 'link'ed to this thread, so 'readMVar' is interrupted when all connection attempts fail
   sock <-
     (withAsync (interruptible raceConnections) (link >=> const (readMVar sockMVar))
+      -- As soon as we have an open connection, stop spawning more connections
       `finally` (mapM_ (cancel . snd) =<< readMVar connectTasksMVar))
         `onException` (mapM_ Socket.close =<< tryTakeMVar sockMVar)
-    -- As soon as we have an open connection, stop spawning more connections
   pure sock
   where
     hints :: Socket.AddrInfo
