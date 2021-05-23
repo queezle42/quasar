@@ -15,8 +15,6 @@ module Network.Rpc.Multiplexer (
   channelClose,
   channelSetHandler,
   ChannelMessageHandler,
-  SimpleChannelMessageHandler,
-  simpleMessageHandler,
   runMultiplexer,
   newMultiplexer,
 ) where
@@ -31,7 +29,7 @@ import qualified Control.Monad.State as State
 import Control.Concurrent.MVar
 import Data.Binary (Binary, encode)
 import qualified Data.Binary as Binary
-import Data.Binary.Get (Decoder(..), runGetIncremental, pushChunk, pushEndOfInput)
+import Data.Binary.Get (Get, Decoder(..), runGetIncremental, pushChunk, pushEndOfInput)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.HashMap.Strict as HM
@@ -87,7 +85,7 @@ data Channel = Channel {
   stateMVar :: MVar ChannelState,
   sendStateMVar :: MVar ChannelSendState,
   receiveStateMVar :: MVar ChannelReceiveState,
-  handlerAtVar :: AtVar ChannelMessageHandler
+  handlerAtVar :: AtVar InternalChannelMessageHandler
 }
 data ChannelState = ChannelState {
   connectionState :: ChannelConnectivity,
@@ -107,8 +105,24 @@ data ChannelNotConnected = ChannelNotConnected
   deriving Show
 instance Exception ChannelNotConnected
 
-type ChannelMessageHandler = MessageId -> [MessageHeaderResult] -> Decoder (IO ())
-type SimpleChannelMessageHandler = MessageId -> [MessageHeaderResult] -> BSL.ByteString -> IO ()
+type InternalChannelMessageHandler = MessageId -> [MessageHeaderResult] -> Decoder (IO ())
+
+class ChannelMessageHandler a where
+  toInternalChannelMessageHandler :: a -> InternalChannelMessageHandler
+
+instance ChannelMessageHandler (MessageId -> [MessageHeaderResult] -> Get (IO ())) where
+  toInternalChannelMessageHandler fn = \msgId headers -> runGetIncremental (fn msgId headers)
+
+instance ChannelMessageHandler (MessageId -> [MessageHeaderResult] -> BSL.ByteString -> IO ()) where
+  toInternalChannelMessageHandler handler msgId headers = decoder ""
+    where
+      decoder :: BSL.ByteString -> Decoder (IO ())
+      decoder acc = Partial (maybe done partial)
+        where
+          partial :: BS.ByteString -> Decoder (IO ())
+          partial = decoder . (acc <>) . BSL.fromStrict
+          done :: Decoder (IO ())
+          done = Done "" (BSL.length acc) (handler msgId headers acc)
 
 
 -- | Starts a new multiplexer on an existing connection.
@@ -413,17 +427,6 @@ channelReportLocalError channel message = do
   -- TODO custom error type, close connection
   undefined
 
-simpleMessageHandler :: SimpleChannelMessageHandler -> ChannelMessageHandler
-simpleMessageHandler handler msgId headers = decoder ""
-  where
-    decoder :: BSL.ByteString -> Decoder (IO ())
-    decoder acc = Partial (maybe done partial)
-      where
-        partial :: BS.ByteString -> Decoder (IO ())
-        partial = decoder . (acc <>) . BSL.fromStrict
-        done :: Decoder (IO ())
-        done = Done "" (BSL.length acc) (handler msgId headers acc)
-
 newSubChannel :: MultiplexerProtocolWorker -> ChannelId -> Channel -> IO Channel
 newSubChannel worker channelId parent =
   modifyMVar parent.stateMVar $ \parentChannelState -> do
@@ -480,8 +483,8 @@ channelStartHandleMessage channel headers = do
   handler <- readAtVar channel.handlerAtVar
   pure (handler msgId headers)
 
-channelSetHandler :: Channel -> ChannelMessageHandler -> IO ()
-channelSetHandler channel = writeAtVar channel.handlerAtVar
+channelSetHandler :: ChannelMessageHandler a => Channel -> a -> IO ()
+channelSetHandler channel = writeAtVar channel.handlerAtVar . toInternalChannelMessageHandler
 
 -- | Helper for an atomically writable MVar that can also be empty and, when read, will block until it has a value.
 data AtVar a = AtVar (MVar a) (MVar AtVarState)

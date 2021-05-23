@@ -311,7 +311,7 @@ serverHandleChannelMessage protocolImpl channel msgId headers msg = case decodeO
         wrappedResponse = (msgId, response)
 
 registerChannelServerHandler :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Channel -> IO ()
-registerChannelServerHandler protocolImpl channel = channelSetHandler channel (simpleMessageHandler (serverHandleChannelMessage @p protocolImpl channel))
+registerChannelServerHandler protocolImpl channel = channelSetHandler channel (serverHandleChannelMessage @p protocolImpl channel)
 
 
 -- ** Running client and server
@@ -347,7 +347,7 @@ newChannelClient channel = do
     channel,
     stateMVar
   }
-  channelSetHandler channel (simpleMessageHandler (clientHandleChannelMessage client))
+  channelSetHandler channel (clientHandleChannelMessage client)
   pure client
 
 listenTCP :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Maybe Socket.HostName -> Socket.ServiceName -> IO ()

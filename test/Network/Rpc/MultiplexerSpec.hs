@@ -3,6 +3,7 @@ module Network.Rpc.MultiplexerSpec where
 import Control.Concurrent.Async (concurrently_)
 import Control.Concurrent.MVar
 import Control.Exception (bracket, mask_)
+import qualified Data.ByteString.Lazy as BSL
 import Prelude
 import Network.Rpc.Multiplexer
 import Network.Rpc.Connection
@@ -27,7 +28,7 @@ spec = describe "runMultiplexerProtocol" $ parallel $ do
   it "it can send and receive simple messages" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
-      channelSetHandler channel $ simpleMessageHandler $ \_ _ -> putMVar recvMVar
+      channelSetHandler channel $ ((\_ _ -> putMVar recvMVar) :: MessageId -> [MessageHeaderResult] -> BSL.ByteString -> IO ())
       channelSend_ channel [] "foobar"
       takeMVar recvMVar `shouldReturn` "foobar"
       channelSend_ channel [] "test"
@@ -50,8 +51,8 @@ withEchoServer fn = bracket setup close (\(channel, _) -> fn channel)
     close (x, y) = channelClose x >> channelClose y
     configureEchoHandler :: Channel -> IO ()
     configureEchoHandler channel = channelSetHandler channel (echoHandler channel)
-    echoHandler :: Channel -> ChannelMessageHandler
-    echoHandler channel = simpleMessageHandler $ \_msgId headers msg -> do
+    echoHandler :: Channel -> MessageId -> [MessageHeaderResult] -> BSL.ByteString -> IO ()
+    echoHandler channel _msgId headers msg = do
       mapM_ echoHeaderHandler headers
       channelSend_ channel [] msg
     echoHeaderHandler :: MessageHeaderResult -> IO ()
