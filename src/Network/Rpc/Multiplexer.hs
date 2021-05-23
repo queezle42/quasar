@@ -288,8 +288,8 @@ multiplexerStateSendRaw rawMsg = do
     Nothing -> liftIO $ throwIO NotConnected
     Just connection -> liftIO $ connection.send rawMsg
 
-multiplexerSendChannelMessage :: Channel -> BSL.ByteString -> [MessageHeader] -> IO ()
-multiplexerSendChannelMessage channel msg headers = do
+multiplexerSendChannelMessage :: Channel -> [MessageHeader] -> BSL.ByteString -> IO ()
+multiplexerSendChannelMessage channel headers msg = do
   -- Sending a channel message consists of multiple low-level send operations, so the MVar is held during the operation
   withMultiplexerState worker $ do
     multiplexerSwitchChannel channel.channelId
@@ -463,7 +463,7 @@ newChannel worker channelId connectionState = do
   pure channel
 
 channelSend :: Channel -> [MessageHeader] -> BSL.ByteString -> (MessageId -> IO ()) -> IO ()
-channelSend channel msg headers callback = do
+channelSend channel headers msg callback = do
   modifyMVar_ channel.sendStateMVar $ \state -> do
     -- Don't send on closed channels
     channelState <- readMVar channel.stateMVar
