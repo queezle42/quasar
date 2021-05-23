@@ -1,7 +1,7 @@
 module Network.Rpc where
 
 import Control.Concurrent (forkFinally)
-import Control.Concurrent.Async (Async, link, withAsync)
+import Control.Concurrent.Async (link, withAsync)
 import Control.Exception (SomeException, bracket, bracketOnError, bracketOnError)
 import Control.Monad (when, forever)
 import Control.Monad.State (State, execState)
@@ -160,7 +160,7 @@ makeClient api@RpcApi{functions} = do
                   result <- newName "result"
                   match (conP (responseFunctionCtorName api fun) [varP result]) (normalB [|pure $(varE result)|]) []
                 invalid :: Q Match
-                invalid = match wildP (normalB [|reportProtocolError $clientE "TODO"|]) []
+                invalid = match wildP (normalB [|clientReportProtocolError $clientE "TODO"|]) []
 
             typedSend :: Q Exp
             typedSend = appTypeE [|clientSend|] (protocolType api)
@@ -249,8 +249,6 @@ data Client p = Client {
   channel :: Channel,
   stateMVar :: MVar (ClientState p)
 }
-instance HasMultiplexerProtocolWorker (Client p) where
-  getMultiplexerProtocolWorker = (.channel.worker)
 newtype ClientState p = ClientState {
   callbacks :: HM.HashMap MessageId (ProtocolResponse p -> IO ())
 }
@@ -278,9 +276,9 @@ clientRequestBlocking client req = do
       putMVar resultMVar response
 clientHandleChannelMessage :: forall p. (RpcProtocol p) => Client p -> MessageId -> [MessageHeaderResult] -> BSL.ByteString -> IO ()
 clientHandleChannelMessage client _msgId headers msg = case decodeOrFail msg of
-  Left (_, _, errMsg) -> reportProtocolError client errMsg
+  Left (_, _, errMsg) -> channelReportProtocolError client.channel errMsg
   Right ("", _, resp) -> clientHandleResponse resp
-  Right (leftovers, _, _) -> reportProtocolError client ("Response parser pureed unexpected leftovers: " <> show (BSL.length leftovers))
+  Right (leftovers, _, _) -> channelReportProtocolError client.channel ("Response parser pureed unexpected leftovers: " <> show (BSL.length leftovers))
   where
     clientHandleResponse :: ProtocolResponseWrapper p -> IO ()
     clientHandleResponse (requestId, resp) = do
@@ -288,18 +286,21 @@ clientHandleChannelMessage client _msgId headers msg = case decodeOrFail msg of
         let (callbacks, mCallback) = lookupDelete requestId state.callbacks
         case mCallback of
           Just callback -> pure (state{callbacks}, callback)
-          Nothing -> reportProtocolError client ("Received response with invalid request id " <> show requestId)
+          Nothing -> channelReportProtocolError client.channel ("Received response with invalid request id " <> show requestId)
       callback resp
 
 clientClose :: Client p -> IO ()
 clientClose client = channelClose client.channel
 
+clientReportProtocolError :: Client p -> String -> IO a
+clientReportProtocolError client = channelReportProtocolError client.channel
+
 
 serverHandleChannelMessage :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Channel -> MessageId -> [MessageHeaderResult] -> BSL.ByteString -> IO ()
 serverHandleChannelMessage protocolImpl channel msgId headers msg = case decodeOrFail msg of
-    Left (_, _, errMsg) -> reportProtocolError channel errMsg
+    Left (_, _, errMsg) -> channelReportProtocolError channel errMsg
     Right ("", _, req) -> serverHandleChannelRequest req
-    Right (leftovers, _, _) -> reportProtocolError channel ("Request parser pureed unexpected leftovers: " <> show (BSL.length leftovers))
+    Right (leftovers, _, _) -> channelReportProtocolError channel ("Request parser pureed unexpected leftovers: " <> show (BSL.length leftovers))
   where
     serverHandleChannelRequest :: ProtocolRequest p -> IO ()
     serverHandleChannelRequest req = handleMessage @p protocolImpl req >>= maybe (pure ()) serverSendResponse
@@ -501,9 +502,3 @@ lookupDelete key m = State.runState fn Nothing
   where
     fn :: State.State (Maybe v) (HM.HashMap k v)
     fn = HM.alterF (\c -> State.put c >> pure Nothing) key m
-
-withAsyncLinked :: IO a -> (Async a -> IO b) -> IO b
-withAsyncLinked inner outer = withAsync inner $ \task -> link task >> outer task
-
-withAsyncLinked_ :: IO a -> IO b -> IO b
-withAsyncLinked_ x = withAsyncLinked x . const

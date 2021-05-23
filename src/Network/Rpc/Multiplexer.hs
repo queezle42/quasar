@@ -6,9 +6,10 @@ module Network.Rpc.Multiplexer (
   MessageHeader(..),
   MessageHeaderResult(..),
   -- TODO rename (this class only exists for `reportProtocolError` and `reportLocalError`)
-  HasMultiplexerProtocolWorker(..),
   reportProtocolError,
   reportLocalError,
+  channelReportProtocolError,
+  channelReportLocalError,
   channelSend,
   channelSend_,
   channelClose,
@@ -50,6 +51,7 @@ data MultiplexerProtocolMessage
   | SwitchChannel ChannelId
   | CloseChannel
   | ProtocolError String
+  | ChannelProtocolError ChannelId String
   deriving (Binary, Generic, Show)
 
 -- | Low level network protocol message header type
@@ -74,11 +76,6 @@ data MultiplexerProtocolWorkerState = MultiplexerProtocolWorkerState {
   sendNextChannelId :: ChannelId
 }
 
-class HasMultiplexerProtocolWorker a where
-  getMultiplexerProtocolWorker :: a -> MultiplexerProtocolWorker
-instance HasMultiplexerProtocolWorker MultiplexerProtocolWorker where
-  getMultiplexerProtocolWorker = id
-
 data NotConnected = NotConnected
   deriving Show
 instance Exception NotConnected
@@ -92,8 +89,6 @@ data Channel = Channel {
   receiveStateMVar :: MVar ChannelReceiveState,
   handlerAtVar :: AtVar ChannelMessageHandler
 }
-instance HasMultiplexerProtocolWorker Channel where
-  getMultiplexerProtocolWorker = (.worker)
 data ChannelState = ChannelState {
   connectionState :: ChannelConnectivity,
   children :: [Channel]
@@ -387,18 +382,34 @@ multiplexerConnectionClose worker = do
     pure state{socketConnection = Nothing}
 
 
-reportProtocolError :: HasMultiplexerProtocolWorker a => a -> String -> IO b
-reportProtocolError hasWorker message = do
-  let worker = getMultiplexerProtocolWorker hasWorker
+reportProtocolError :: MultiplexerProtocolWorker -> String -> IO b
+reportProtocolError worker message = do
   multiplexerSend worker $ ProtocolError message
+  multiplexerConnectionClose worker
   -- TODO custom error type, close connection
   undefined
 
-reportLocalError :: HasMultiplexerProtocolWorker a => a -> String -> IO b
-reportLocalError hasWorker message = do
+reportLocalError :: MultiplexerProtocolWorker -> String -> IO b
+reportLocalError worker message = do
   hPutStrLn stderr message
-  let worker = getMultiplexerProtocolWorker hasWorker
   multiplexerSend worker $ ProtocolError "Internal server error"
+  multiplexerConnectionClose worker
+  -- TODO custom error type, close connection
+  undefined
+
+channelReportProtocolError :: Channel -> String -> IO b
+channelReportProtocolError channel message = do
+  -- TODO: send channelId as well
+  multiplexerSend channel.worker $ ChannelProtocolError channel.channelId message
+  multiplexerConnectionClose channel.worker
+  -- TODO custom error type, close connection
+  undefined
+
+channelReportLocalError :: Channel -> String -> IO b
+channelReportLocalError channel message = do
+  hPutStrLn stderr $ "Local error on channel " <> show channel.channelId <> ": " <> message
+  multiplexerSend channel.worker $ ProtocolError $ "Internal server error on channel " <> show channel.channelId
+  multiplexerConnectionClose channel.worker
   -- TODO custom error type, close connection
   undefined
 
