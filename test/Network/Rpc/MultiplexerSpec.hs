@@ -25,13 +25,15 @@ spec = describe "runMultiplexerProtocol" $ parallel $ do
       (runMultiplexer channelClose y)
 
   it "it can send and receive simple messages" $ do
+    recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
-      recvMVar <- newEmptyMVar
       channelSetHandler channel $ simpleMessageHandler $ \_ _ -> putMVar recvMVar
       channelSend_ channel [] "foobar"
       takeMVar recvMVar `shouldReturn` "foobar"
       channelSend_ channel [] "test"
       takeMVar recvMVar `shouldReturn` "test"
+
+    tryReadMVar recvMVar `shouldReturn` Nothing
 
 
 withEchoServer :: (Channel -> IO a) -> IO a
