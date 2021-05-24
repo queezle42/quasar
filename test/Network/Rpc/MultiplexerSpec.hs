@@ -28,7 +28,7 @@ spec = describe "runMultiplexerProtocol" $ parallel $ do
   it "it can send and receive simple messages" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
-      channelSetHandler channel $ ((\_ _ -> putMVar recvMVar) :: MessageId -> [MessageHeaderResult] -> BSL.ByteString -> IO ())
+      channelSetHandler channel $ ((\_ -> putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
       channelSend_ channel [] "foobar"
       takeMVar recvMVar `shouldReturn` "foobar"
       channelSend_ channel [] "test"
@@ -51,9 +51,7 @@ withEchoServer fn = bracket setup close (\(channel, _) -> fn channel)
     close (x, y) = channelClose x >> channelClose y
     configureEchoHandler :: Channel -> IO ()
     configureEchoHandler channel = channelSetHandler channel (echoHandler channel)
-    echoHandler :: Channel -> MessageId -> [MessageHeaderResult] -> BSL.ByteString -> IO ()
-    echoHandler channel _msgId headers msg = do
-      mapM_ echoHeaderHandler headers
+    echoHandler :: Channel -> ReceivedMessageResources -> BSL.ByteString -> IO ()
+    echoHandler channel resources msg = do
+      mapM_ configureEchoHandler resources.createdChannels
       channelSend_ channel [] msg
-    echoHeaderHandler :: MessageHeaderResult -> IO ()
-    echoHeaderHandler (CreateChannelHeaderResult channel) = configureEchoHandler channel

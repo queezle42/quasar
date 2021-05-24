@@ -4,8 +4,7 @@ module Network.Rpc.Multiplexer (
   MessageLength,
   Channel,
   MessageHeader(..),
-  MessageHeaderResult(..),
-  -- TODO rename (this class only exists for `reportProtocolError` and `reportLocalError`)
+  ReceivedMessageResources(..),
   reportProtocolError,
   reportLocalError,
   channelReportProtocolError,
@@ -59,7 +58,12 @@ data MultiplexerProtocolMessageHeader = CreateChannel
 newtype MessageHeader =
   -- | The callback is running in a masked state and is blocking all network traffic. The callback should only be used to register a callback on the channel and to store it; then it should return immediately.
   CreateChannelHeader (Channel -> IO ())
-newtype MessageHeaderResult = CreateChannelHeaderResult Channel
+
+data ReceivedMessageResources = ReceivedMessageResources {
+  messageId :: MessageId,
+  createdChannels :: [Channel]
+  --unixFds :: Undefined
+}
 
 data MultiplexerProtocolWorker = MultiplexerProtocolWorker {
   stateMVar :: MVar MultiplexerProtocolWorkerState,
@@ -105,16 +109,16 @@ data ChannelNotConnected = ChannelNotConnected
   deriving Show
 instance Exception ChannelNotConnected
 
-type InternalChannelMessageHandler = MessageId -> [MessageHeaderResult] -> Decoder (IO ())
+type InternalChannelMessageHandler = ReceivedMessageResources -> Decoder (IO ())
 
 class ChannelMessageHandler a where
   toInternalChannelMessageHandler :: a -> InternalChannelMessageHandler
 
-instance ChannelMessageHandler (MessageId -> [MessageHeaderResult] -> Get (IO ())) where
-  toInternalChannelMessageHandler fn = \msgId headers -> runGetIncremental (fn msgId headers)
+instance ChannelMessageHandler (ReceivedMessageResources -> Get (IO ())) where
+  toInternalChannelMessageHandler fn = runGetIncremental . fn
 
-instance ChannelMessageHandler (MessageId -> [MessageHeaderResult] -> BSL.ByteString -> IO ()) where
-  toInternalChannelMessageHandler handler msgId headers = decoder ""
+instance ChannelMessageHandler (ReceivedMessageResources -> BSL.ByteString -> IO ()) where
+  toInternalChannelMessageHandler handler result = decoder ""
     where
       decoder :: BSL.ByteString -> Decoder (IO ())
       decoder acc = Partial (maybe done partial)
@@ -122,7 +126,7 @@ instance ChannelMessageHandler (MessageId -> [MessageHeaderResult] -> BSL.ByteSt
           partial :: BS.ByteString -> Decoder (IO ())
           partial = decoder . (acc <>) . BSL.fromStrict
           done :: Decoder (IO ())
-          done = Done "" (BSL.length acc) (handler msgId headers acc)
+          done = Done "" (BSL.length acc) (handler result acc)
 
 
 -- | Starts a new multiplexer on an existing connection.
@@ -187,15 +191,23 @@ multiplexerProtocolReceive worker = receiveThreadLoop multiplexerDecoder
 
     handleChannelMessage :: Channel -> [MultiplexerProtocolMessageHeader] -> MessageLength -> StateT BS.ByteString IO ()
     handleChannelMessage channel headers len = do
+      messageResources <- liftIO $ do
+        messageId <- modifyMVar channel.receiveStateMVar $ \state ->
+          pure (state{nextMessageId = state.nextMessageId + 1}, state.nextMessageId)
+        let emptyResources = ReceivedMessageResources {
+          messageId,
+          createdChannels = []
+        }
+        execStateT (sequence (processHeader <$> headers)) emptyResources
       decoder <- liftIO $ do
         -- Don't receive messages on closed channels
         channelState <- readMVar channel.stateMVar
         case channelState.connectionState of
           Connected -> do
-            headerResults <- sequence (processHeader <$> headers)
-            channelStartHandleMessage channel headerResults
+            handler :: InternalChannelMessageHandler <- readAtVar channel.handlerAtVar
+            pure (handler messageResources)
           -- The channel is closed but the remote might not know that yet, so the message is silently ignored
-          Closed -> closedChannelMessageHandler <$> sequence (processHeader <$> headers)
+          Closed -> pure (closedChannelMessageHandler messageResources)
           -- This might only be reached in some edge cases, as a closed channel will be removed from the channel map after the close is confirmed.
           CloseConfirmed -> reportProtocolError worker ("Received message on channel " <> show channel.channelId <> " after receiving a close confirmation for that channel")
 
@@ -236,30 +248,35 @@ multiplexerProtocolReceive worker = receiveThreadLoop multiplexerDecoder
         failedToConsumeAllInput bytesRead = reportProtocolError worker ("Decoder for channel " <> show channel.channelId <> " failed to consume all input (" <> show (len - bytesRead) <> " bytes left)")
         failedToTerminate :: IO a
         failedToTerminate = reportLocalError worker ("Decoder on channel " <> show channel.channelId <> " failed to terminate after end-of-input")
-        processHeader :: MultiplexerProtocolMessageHeader -> IO MessageHeaderResult
+        processHeader :: MultiplexerProtocolMessageHeader -> StateT ReceivedMessageResources IO ()
         processHeader CreateChannel = do
-          channelId <- modifyMVar worker.stateMVar $ \workerState -> do
+          -- TODO only take MVar once for all headers
+          channelId <- liftIO $ modifyMVar worker.stateMVar $ \workerState -> do
             let
               receiveNextChannelId = workerState.receiveNextChannelId
               newWorkerState = workerState{receiveNextChannelId = receiveNextChannelId + 2}
             pure (newWorkerState, receiveNextChannelId)
-          modifyMVar channel.stateMVar $ \state -> do
+          -- TODO only take MVar once for all headers
+          createdChannel <- liftIO $ modifyMVar channel.stateMVar $ \state -> do
             createdChannel <- newSubChannel channel.worker channelId channel
             let newState = state{
               children = createdChannel : state.children
             }
-            pure (newState, CreateChannelHeaderResult createdChannel)
+            pure (newState, createdChannel)
+          State.modify $ \resources -> resources{createdChannels = resources.createdChannels <> [createdChannel]}
     receiveThrowing :: IO BS.ByteString
     receiveThrowing = do
       state <- readMVar worker.stateMVar
       maybe (throwIO NotConnected) (.receive) state.socketConnection
 
 
-closedChannelMessageHandler :: [MessageHeaderResult] -> Decoder (IO ())
-closedChannelMessageHandler headers = discardMessageDecoder $ mapM_ handleHeader headers
+closedChannelMessageHandler :: ReceivedMessageResources -> Decoder (IO ())
+closedChannelMessageHandler result = discardMessageDecoder closeSubChannels
   where
-    handleHeader :: MessageHeaderResult -> IO ()
-    handleHeader (CreateChannelHeaderResult createdChannel) =
+    closeSubChannels :: IO ()
+    closeSubChannels = mapM_ closeSubChannel result.createdChannels
+    closeSubChannel :: Channel -> IO ()
+    closeSubChannel createdChannel =
       -- The channel that received the message is already closed, so newly created children are implicitly closed as well
       modifyMVar_ createdChannel.stateMVar $ \state ->
         pure state{connectionState = Closed}
@@ -475,13 +492,6 @@ channelSend channel headers msg callback = do
 
 channelSend_ :: Channel -> [MessageHeader] -> BSL.ByteString -> IO ()
 channelSend_ channel headers msg = channelSend channel headers msg (const (pure ()))
-
-channelStartHandleMessage :: Channel -> [MessageHeaderResult] -> IO (Decoder (IO ()))
-channelStartHandleMessage channel headers = do
-  msgId <- modifyMVar channel.receiveStateMVar $ \state ->
-    pure (state{nextMessageId = state.nextMessageId + 1}, state.nextMessageId)
-  handler <- readAtVar channel.handlerAtVar
-  pure (handler msgId headers)
 
 channelSetHandler :: ChannelMessageHandler a => Channel -> a -> IO ()
 channelSetHandler channel = writeAtVar channel.handlerAtVar . toInternalChannelMessageHandler

@@ -274,14 +274,15 @@ clientRequestBlocking client req = do
       -- Remove callback
       modifyMVar_ client.stateMVar $ \state -> pure state{callbacks = HM.delete msgId state.callbacks}
       putMVar resultMVar response
-clientHandleChannelMessage :: forall p. (RpcProtocol p) => Client p -> MessageId -> [MessageHeaderResult] -> BSL.ByteString -> IO ()
-clientHandleChannelMessage client _msgId headers msg = case decodeOrFail msg of
+clientHandleChannelMessage :: forall p. (RpcProtocol p) => Client p -> ReceivedMessageResources -> BSL.ByteString -> IO ()
+clientHandleChannelMessage client resources msg = case decodeOrFail msg of
   Left (_, _, errMsg) -> channelReportProtocolError client.channel errMsg
   Right ("", _, resp) -> clientHandleResponse resp
   Right (leftovers, _, _) -> channelReportProtocolError client.channel ("Response parser pureed unexpected leftovers: " <> show (BSL.length leftovers))
   where
     clientHandleResponse :: ProtocolResponseWrapper p -> IO ()
     clientHandleResponse (requestId, resp) = do
+      mapM_ undefined resources.createdChannels
       callback <- modifyMVar client.stateMVar $ \state -> do
         let (callbacks, mCallback) = lookupDelete requestId state.callbacks
         case mCallback of
@@ -296,8 +297,8 @@ clientReportProtocolError :: Client p -> String -> IO a
 clientReportProtocolError client = channelReportProtocolError client.channel
 
 
-serverHandleChannelMessage :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Channel -> MessageId -> [MessageHeaderResult] -> BSL.ByteString -> IO ()
-serverHandleChannelMessage protocolImpl channel msgId headers msg = case decodeOrFail msg of
+serverHandleChannelMessage :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Channel -> ReceivedMessageResources -> BSL.ByteString -> IO ()
+serverHandleChannelMessage protocolImpl channel resources msg = case decodeOrFail msg of
     Left (_, _, errMsg) -> channelReportProtocolError channel errMsg
     Right ("", _, req) -> serverHandleChannelRequest req
     Right (leftovers, _, _) -> channelReportProtocolError channel ("Request parser pureed unexpected leftovers: " <> show (BSL.length leftovers))
@@ -308,7 +309,7 @@ serverHandleChannelMessage protocolImpl channel msgId headers msg = case decodeO
     serverSendResponse response = channelSend_ channel [] (encode wrappedResponse)
       where
         wrappedResponse :: ProtocolResponseWrapper p
-        wrappedResponse = (msgId, response)
+        wrappedResponse = (resources.messageId, response)
 
 registerChannelServerHandler :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Channel -> IO ()
 registerChannelServerHandler protocolImpl channel = channelSetHandler channel (serverHandleChannelMessage @p protocolImpl channel)
