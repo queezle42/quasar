@@ -3,7 +3,7 @@ module Network.Rpc where
 import Control.Concurrent (forkFinally)
 import Control.Concurrent.Async (link, withAsync)
 import Control.Exception (SomeException, bracket, bracketOnError, bracketOnError)
-import Control.Monad (when, forever)
+import Control.Monad (when, forever, void)
 import Control.Monad.State (State, execState)
 import qualified Control.Monad.State as State
 import Control.Concurrent.MVar
@@ -20,7 +20,6 @@ import qualified Network.Socket as Socket
 import Prelude
 import GHC.Generics
 import System.Posix.Files (getFileStatus, isSocket)
-
 
 -- * Rpc api definition
 
@@ -258,11 +257,11 @@ emptyClientState = ClientState {
 }
 
 clientSend :: RpcProtocol p => Client p -> ProtocolRequest p -> IO ()
-clientSend client req = channelSend_ client.channel [] (encode req)
+clientSend client req = void $ channelSend_ client.channel [] (encode req)
 clientRequestBlocking :: forall p. RpcProtocol p => Client p -> ProtocolRequest p -> IO (ProtocolResponse p)
 clientRequestBlocking client req = do
   resultMVar <- newEmptyMVar
-  channelSend client.channel [] (encode req) $ \msgId ->
+  void $ channelSend client.channel [] (encode req) $ \msgId ->
     modifyMVar_ client.stateMVar $
       \state -> pure state{callbacks = HM.insert msgId (requestCompletedCallback resultMVar msgId) state.callbacks}
   -- Block on resultMVar until the request completes
@@ -306,7 +305,7 @@ serverHandleChannelMessage protocolImpl channel resources msg = case decodeOrFai
     serverHandleChannelRequest :: ProtocolRequest p -> IO ()
     serverHandleChannelRequest req = handleMessage @p protocolImpl req >>= maybe (pure ()) serverSendResponse
     serverSendResponse :: ProtocolResponse p -> IO ()
-    serverSendResponse response = channelSend_ channel [] (encode wrappedResponse)
+    serverSendResponse response = channelSendSimple channel (encode wrappedResponse)
       where
         wrappedResponse :: ProtocolResponseWrapper p
         wrappedResponse = (resources.messageId, response)

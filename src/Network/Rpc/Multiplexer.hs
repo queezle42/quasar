@@ -4,6 +4,7 @@ module Network.Rpc.Multiplexer (
   MessageLength,
   Channel,
   MessageHeader(..),
+  SentMessageResources(..),
   ReceivedMessageResources(..),
   reportProtocolError,
   reportLocalError,
@@ -11,6 +12,7 @@ module Network.Rpc.Multiplexer (
   channelReportLocalError,
   channelSend,
   channelSend_,
+  channelSendSimple,
   channelClose,
   channelSetHandler,
   ChannelMessageHandler,
@@ -18,12 +20,14 @@ module Network.Rpc.Multiplexer (
   newMultiplexer,
 ) where
 
+
 import Control.Concurrent.Async (async, link)
 import Control.Concurrent (myThreadId, throwTo)
 import Control.Exception (Exception(..), MaskingState(Unmasked), catch, finally, interruptible, throwIO, getMaskingState, mask_)
 import Control.Monad (when, unless, void)
-import Control.Monad.IO.Class (liftIO)
-import Control.Monad.State (StateT, execStateT, runStateT)
+import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.State (StateT, execStateT, runStateT, lift)
+import Control.Monad.State.Class (MonadState)
 import qualified Control.Monad.State as State
 import Control.Concurrent.MVar
 import Data.Binary (Binary, encode)
@@ -55,10 +59,14 @@ data MultiplexerProtocolMessage
 data MultiplexerProtocolMessageHeader = CreateChannel
   deriving (Binary, Generic, Show)
 
-newtype MessageHeader =
+data MessageHeader =
   -- | The callback is running in a masked state and is blocking all network traffic. The callback should only be used to register a callback on the channel and to store it; then it should return immediately.
-  CreateChannelHeader (Channel -> IO ())
+  CreateChannelHeader
 
+data SentMessageResources = SentMessageResources {
+  messageId :: MessageId,
+  createdChannels :: [Channel]
+}
 data ReceivedMessageResources = ReceivedMessageResources {
   messageId :: MessageId,
   createdChannels :: [Channel]
@@ -135,7 +143,7 @@ newMultiplexer :: forall a. (IsConnection a) => a -> IO Channel
 newMultiplexer x = do
   channelMVar <- newEmptyMVar
   -- 'runMultiplexerProtcol' needs to be interruptible (so it can terminate when it is closed), so 'interruptible' is used to ensure that this function also works when used in 'bracket'
-  mask_ $ link =<< async (interruptible (runMultiplexer (putMVar channelMVar) (toSocketConnection x)))
+  mask_ $ link =<< async (interruptible (runMultiplexer side (putMVar channelMVar) (toSocketConnection x)))
   takeMVar channelMVar
 
 runMultiplexer :: (Channel -> IO ()) -> Connection -> IO ()
@@ -160,7 +168,7 @@ runMultiplexer channelSetupHook connection = do
     stateMVar,
     killReceiverMVar
   }
-  (((channelSetupHook =<< newChannel worker 0 Connected) >> multiplexerProtocolReceive worker)
+  (((channelSetupHook =<< withMultiplexerState worker (newChannel worker 0 Connected)) >> multiplexerProtocolReceive worker)
     `finally` (disarmKillReciver >> multiplexerConnectionClose worker))
       `catch` (\(_ex :: NotConnected) -> pure ())
 
@@ -191,18 +199,20 @@ multiplexerProtocolReceive worker = receiveThreadLoop multiplexerDecoder
 
     handleChannelMessage :: Channel -> [MultiplexerProtocolMessageHeader] -> MessageLength -> StateT BS.ByteString IO ()
     handleChannelMessage channel headers len = do
-      messageResources <- liftIO $ do
+      decoder <- liftIO $ do
         messageId <- modifyMVar channel.receiveStateMVar $ \state ->
           pure (state{nextMessageId = state.nextMessageId + 1}, state.nextMessageId)
         let emptyResources = ReceivedMessageResources {
           messageId,
           createdChannels = []
         }
-        execStateT (sequence (processHeader <$> headers)) emptyResources
-      decoder <- liftIO $ do
-        -- Don't receive messages on closed channels
-        channelState <- readMVar channel.stateMVar
-        case channelState.connectionState of
+        (messageResources, connectionState) <- withChannelState channel $
+          withMultiplexerState2 channel.worker $ do
+            messageResources <- execStateT (sequence (processHeader <$> headers)) emptyResources
+            -- Don't receive messages on closed channels
+            channelState <- State.get
+            pure (messageResources, channelState.connectionState)
+        case connectionState of
           Connected -> do
             handler :: InternalChannelMessageHandler <- readAtVar channel.handlerAtVar
             pure (handler messageResources)
@@ -248,21 +258,16 @@ multiplexerProtocolReceive worker = receiveThreadLoop multiplexerDecoder
         failedToConsumeAllInput bytesRead = reportProtocolError worker ("Decoder for channel " <> show channel.channelId <> " failed to consume all input (" <> show (len - bytesRead) <> " bytes left)")
         failedToTerminate :: IO a
         failedToTerminate = reportLocalError worker ("Decoder on channel " <> show channel.channelId <> " failed to terminate after end-of-input")
-        processHeader :: MultiplexerProtocolMessageHeader -> StateT ReceivedMessageResources IO ()
+        processHeader :: MultiplexerProtocolMessageHeader -> StateT ReceivedMessageResources (StateT ChannelState (StateT MultiplexerProtocolWorkerState IO)) ()
         processHeader CreateChannel = do
-          -- TODO only take MVar once for all headers
-          channelId <- liftIO $ modifyMVar worker.stateMVar $ \workerState -> do
-            let
-              receiveNextChannelId = workerState.receiveNextChannelId
-              newWorkerState = workerState{receiveNextChannelId = receiveNextChannelId + 2}
-            pure (newWorkerState, receiveNextChannelId)
-          -- TODO only take MVar once for all headers
-          createdChannel <- liftIO $ modifyMVar channel.stateMVar $ \state -> do
-            createdChannel <- newSubChannel channel.worker channelId channel
-            let newState = state{
-              children = createdChannel : state.children
+          channelId <- lift $ lift $ State.state $ \workerState ->
+            (workerState.receiveNextChannelId, workerState{receiveNextChannelId = workerState.receiveNextChannelId + 2})
+          createdChannel <- lift $ do
+            createdChannel <- newSubChannel channel.worker channelId
+            State.modify $ \channelState -> channelState{
+                children = createdChannel : channelState.children
             }
-            pure (newState, createdChannel)
+            pure createdChannel
           State.modify $ \resources -> resources{createdChannels = resources.createdChannels <> [createdChannel]}
     receiveThrowing :: IO BS.ByteString
     receiveThrowing = do
@@ -292,6 +297,17 @@ closedChannelMessageHandler result = discardMessageDecoder closeSubChannels
 withMultiplexerState :: MultiplexerProtocolWorker -> StateT MultiplexerProtocolWorkerState IO a -> IO a
 withMultiplexerState worker action = modifyMVar worker.stateMVar $ fmap swap . runStateT action
 
+withMultiplexerState2 :: MultiplexerProtocolWorker -> StateT ChannelState (StateT MultiplexerProtocolWorkerState IO) a -> StateT ChannelState IO a
+withMultiplexerState2 worker action = do
+  channelState <- State.get
+  (result, newChannelState) <- liftIO $ modifyMVar worker.stateMVar $
+    fmap swap . runStateT (runStateT action channelState)
+  State.put newChannelState
+  pure result
+
+withChannelState :: Channel -> StateT ChannelState IO a -> IO a
+withChannelState channel action = modifyMVar channel.stateMVar $ fmap swap . runStateT action
+
 multiplexerSend :: MultiplexerProtocolWorker -> MultiplexerProtocolMessage -> IO ()
 multiplexerSend worker msg = withMultiplexerState worker (multiplexerStateSend msg)
 
@@ -305,29 +321,53 @@ multiplexerStateSendRaw rawMsg = do
     Nothing -> liftIO $ throwIO NotConnected
     Just connection -> liftIO $ connection.send rawMsg
 
-multiplexerSendChannelMessage :: Channel -> [MessageHeader] -> BSL.ByteString -> IO ()
-multiplexerSendChannelMessage channel headers msg = do
-  -- Sending a channel message consists of multiple low-level send operations, so the MVar is held during the operation
-  withMultiplexerState worker $ do
-    multiplexerSwitchChannel channel.channelId
+channelSend :: Channel -> [MessageHeader] -> BSL.ByteString -> (MessageId -> IO ()) -> IO SentMessageResources
+channelSend channel headers msg callback = do
+  modifyMVar channel.sendStateMVar $ \channelSendState -> do
+    -- Don't send on closed channels
+    withChannelState channel $ do
+      channelState <- State.get
 
-    headerMessages <- sequence (prepareHeader <$> headers)
+      liftIO $ do
+        unless (channelState.connectionState == Connected) $ throwIO ChannelNotConnected
+        callback channelSendState.nextMessageId
 
-    multiplexerStateSend (ChannelMessage headerMessages (fromIntegral (BSL.length msg)))
-    multiplexerStateSendRaw msg
+      let emptyResources = SentMessageResources {
+        messageId = channelSendState.nextMessageId,
+        createdChannels = []
+      }
+
+      -- Sending a channel message consists of multiple low-level send operations, so the MVar is held during the operation
+      withMultiplexerState2 worker $ do
+        lift $ multiplexerSwitchChannel channel.channelId
+
+        -- TODO make sure we are deadlock-free before taking the channel state (if the receiver takes the multiplexer state and then the channel state that's a deadlock)
+        (headerMessages, resources) <- runStateT (sequence (prepareHeader <$> headers)) emptyResources
+
+        lift $ do
+          multiplexerStateSend (ChannelMessage headerMessages (fromIntegral (BSL.length msg)))
+          multiplexerStateSendRaw msg
+
+        pure (channelSendState{nextMessageId = channelSendState.nextMessageId + 1}, resources)
   where
     worker :: MultiplexerProtocolWorker
     worker = channel.worker
-    prepareHeader :: MessageHeader -> StateT MultiplexerProtocolWorkerState IO MultiplexerProtocolMessageHeader
-    prepareHeader (CreateChannelHeader newChannelCallback) = do
-      nextChannelId <- State.state (\state -> (state.sendNextChannelId, state{sendNextChannelId = state.sendNextChannelId + 1}))
-      createdChannel <- liftIO $ newSubChannel worker nextChannelId channel
+    prepareHeader :: MessageHeader -> StateT SentMessageResources (StateT ChannelState (StateT MultiplexerProtocolWorkerState IO)) MultiplexerProtocolMessageHeader
+    prepareHeader CreateChannelHeader = do
+      nextChannelId <- lift $ lift $ State.state (\multiplexerState -> (multiplexerState.sendNextChannelId, multiplexerState{sendNextChannelId = multiplexerState.sendNextChannelId + 1}))
+      createdChannel <- lift $ newSubChannel worker nextChannelId
 
-      -- TODO we probably don't want to call the callback here, as the state is locked; we also don't want to call it later, because at that point messages could already arrive and the handler has to be set
-      -- TODO: also we are currently holding the MultiplexerProtocolWorkerState which means sending messages from the callback will result in a deadlock - calling code must not do that. That's also an indication for a bad design
-      -- TODO the current design requires the caller to use mvars/iorefs to get the created channel - also not optimal.
-      liftIO $ newChannelCallback createdChannel
+      State.modify $ \resources -> resources{createdChannels = resources.createdChannels <> [createdChannel]}
       pure CreateChannel
+
+channelSend_ :: Channel -> [MessageHeader] -> BSL.ByteString -> IO SentMessageResources
+channelSend_ channel headers msg = channelSend channel headers msg (const (pure ()))
+
+channelSendSimple :: Channel -> BSL.ByteString -> IO ()
+channelSendSimple channel msg = do
+  -- We are not sending headers, so no channels can be created
+  SentMessageResources{createdChannels=[]} <- channelSend channel [] msg (const (pure ()))
+  pure ()
 
 multiplexerSwitchChannel :: ChannelId -> StateT MultiplexerProtocolWorkerState IO ()
 multiplexerSwitchChannel channelId = do
@@ -444,30 +484,32 @@ channelReportLocalError channel message = do
   -- TODO custom error type, close connection
   undefined
 
-newSubChannel :: MultiplexerProtocolWorker -> ChannelId -> Channel -> IO Channel
-newSubChannel worker channelId parent =
-  modifyMVar parent.stateMVar $ \parentChannelState -> do
-    -- Holding the parents channelState while initializing the channel will ensure the ChannelConnectivity is inherited atomically
-    createdChannel <- newChannel worker channelId parentChannelState.connectionState
+-- The StateT holds the parent channels state
+newSubChannel :: (MonadState MultiplexerProtocolWorkerState m, MonadIO m) => MultiplexerProtocolWorker -> ChannelId -> (StateT ChannelState m) Channel
+newSubChannel worker channelId = do
+  parentChannelState <- State.get
+  -- Holding the parents channelState while initializing the channel will ensure the ChannelConnectivity is inherited atomically
+  createdChannel <- lift $ newChannel worker channelId parentChannelState.connectionState
 
-    let newParentState = parentChannelState{
-      children = createdChannel : parentChannelState.children
-    }
-    pure (newParentState, createdChannel)
+  let newParentState = parentChannelState{
+    children = createdChannel : parentChannelState.children
+  }
+  State.put newParentState
+  pure createdChannel
 
-newChannel :: MultiplexerProtocolWorker -> ChannelId -> ChannelConnectivity -> IO Channel
+newChannel :: (MonadState MultiplexerProtocolWorkerState m, MonadIO m) => MultiplexerProtocolWorker -> ChannelId -> ChannelConnectivity -> m Channel
 newChannel worker channelId connectionState = do
-  stateMVar <- newMVar ChannelState {
+  stateMVar <- liftIO $ newMVar ChannelState {
     connectionState,
     children = []
   }
-  sendStateMVar <- newMVar ChannelSendState {
+  sendStateMVar <- liftIO $ newMVar ChannelSendState {
     nextMessageId = 0
   }
-  receiveStateMVar <- newMVar ChannelReceiveState {
+  receiveStateMVar <- liftIO $ newMVar ChannelReceiveState {
     nextMessageId = 0
   }
-  handlerAtVar <- newEmptyAtVar
+  handlerAtVar <- liftIO newEmptyAtVar
   let channel = Channel {
     worker,
     channelId,
@@ -476,22 +518,8 @@ newChannel worker channelId connectionState = do
     receiveStateMVar,
     handlerAtVar
   }
-  modifyMVar_ worker.stateMVar $ \state -> pure state{channels = HM.insert channelId channel state.channels}
+  State.modify $ \multiplexerState -> multiplexerState{channels = HM.insert channelId channel multiplexerState.channels}
   pure channel
-
-channelSend :: Channel -> [MessageHeader] -> BSL.ByteString -> (MessageId -> IO ()) -> IO ()
-channelSend channel headers msg callback = do
-  modifyMVar_ channel.sendStateMVar $ \state -> do
-    -- Don't send on closed channels
-    channelState <- readMVar channel.stateMVar
-    unless (channelState.connectionState == Connected) $ throwIO ChannelNotConnected
-
-    callback state.nextMessageId
-    multiplexerSendChannelMessage channel headers msg
-    pure state{nextMessageId = state.nextMessageId + 1}
-
-channelSend_ :: Channel -> [MessageHeader] -> BSL.ByteString -> IO ()
-channelSend_ channel headers msg = channelSend channel headers msg (const (pure ()))
 
 channelSetHandler :: ChannelMessageHandler a => Channel -> a -> IO ()
 channelSetHandler channel = writeAtVar channel.handlerAtVar . toInternalChannelMessageHandler
