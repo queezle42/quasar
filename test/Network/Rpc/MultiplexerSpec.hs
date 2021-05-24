@@ -13,17 +13,17 @@ spec :: Spec
 spec = describe "runMultiplexerProtocol" $ parallel $ do
   it "can be closed from the channelSetupHook" $ do
     (x, _) <- newDummySocketPair
-    runMultiplexer channelClose x
+    runMultiplexer MultiplexerSideA channelClose x
 
   it "fails when run in masked state" $ do
     (x, _) <- newDummySocketPair
-    mask_ $ runMultiplexer channelClose x `shouldThrow` anyException
+    mask_ $ runMultiplexer MultiplexerSideA channelClose x `shouldThrow` anyException
 
   it "closes when the remote is closed" $ do
     (x, y) <- newDummySocketPair
     concurrently_
-      (runMultiplexer (const (pure ())) x)
-      (runMultiplexer channelClose y)
+      (runMultiplexer MultiplexerSideA (const (pure ())) x)
+      (runMultiplexer MultiplexerSideB channelClose y)
 
   it "it can send and receive simple messages" $ do
     recvMVar <- newEmptyMVar
@@ -58,7 +58,6 @@ spec = describe "runMultiplexerProtocol" $ parallel $ do
 
       SentMessageResources{createdChannels=[c1, c2]} <- channelSend_ channel [CreateChannelHeader, CreateChannelHeader] "create channels"
       takeMVar recvMVar `shouldReturn` "create channels"
-
       channelSetHandler c1 $ ((\_ -> putMVar c1RecvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
       channelSetHandler c2 $ ((\_ -> putMVar c2RecvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
 
@@ -89,9 +88,9 @@ withEchoServer fn = bracket setup close (\(channel, _) -> fn channel)
     setup :: IO (Channel, Channel)
     setup = do
       (x, y) <- newDummySocketPair
-      echoChannel <- newMultiplexer y
+      mainChannel <- newMultiplexer MultiplexerSideA x
+      echoChannel <- newMultiplexer MultiplexerSideB y
       configureEchoHandler echoChannel
-      mainChannel <- newMultiplexer x
       pure (mainChannel, echoChannel)
     close :: (Channel, Channel) -> IO ()
     close (x, y) = channelClose x >> channelClose y

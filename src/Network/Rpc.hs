@@ -337,7 +337,7 @@ withClient :: forall p a b. (IsConnection a, RpcProtocol p) => a -> (Client p ->
 withClient x = bracket (newClient x) clientClose
 
 newClient :: forall p a. (IsConnection a, RpcProtocol p) => a -> IO (Client p)
-newClient x = newChannelClient =<< newMultiplexer (toSocketConnection x)
+newClient x = newChannelClient =<< newMultiplexer MultiplexerSideA (toSocketConnection x)
 
 
 newChannelClient :: RpcProtocol p => Channel -> IO (Client p)
@@ -396,7 +396,7 @@ listenOnBoundSocket protocolImpl sock = do
       Socket.gracefulClose conn 2000
 
 runServerHandler :: forall p a. (RpcProtocol p, HasProtocolImpl p, IsConnection a) => ProtocolImpl p -> a -> IO ()
-runServerHandler protocolImpl = runMultiplexer (registerChannelServerHandler @p protocolImpl) . toSocketConnection
+runServerHandler protocolImpl = runMultiplexer MultiplexerSideB (registerChannelServerHandler @p protocolImpl) . toSocketConnection
 
 
 -- ** Test implementation

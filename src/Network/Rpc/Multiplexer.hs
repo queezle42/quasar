@@ -16,6 +16,7 @@ module Network.Rpc.Multiplexer (
   channelClose,
   channelSetHandler,
   ChannelMessageHandler,
+  MultiplexerSide(..),
   runMultiplexer,
   newMultiplexer,
 ) where
@@ -25,9 +26,8 @@ import Control.Concurrent.Async (async, link)
 import Control.Concurrent (myThreadId, throwTo)
 import Control.Exception (Exception(..), MaskingState(Unmasked), catch, finally, interruptible, throwIO, getMaskingState, mask_)
 import Control.Monad (when, unless, void)
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State (StateT, execStateT, runStateT, lift)
-import Control.Monad.State.Class (MonadState)
 import qualified Control.Monad.State as State
 import Control.Concurrent.MVar
 import Data.Binary (Binary, encode)
@@ -136,18 +136,20 @@ instance ChannelMessageHandler (ReceivedMessageResources -> BSL.ByteString -> IO
           done :: Decoder (IO ())
           done = Done "" (BSL.length acc) (handler result acc)
 
+data MultiplexerSide = MultiplexerSideA | MultiplexerSideB
+  deriving (Eq, Show)
 
 -- | Starts a new multiplexer on an existing connection.
 -- This starts a thread which runs until 'channelClose' is called on the resulting 'Channel' (use e.g. 'bracket' to ensure the channel is closed).
-newMultiplexer :: forall a. (IsConnection a) => a -> IO Channel
-newMultiplexer x = do
+newMultiplexer :: forall a. (IsConnection a) => MultiplexerSide -> a -> IO Channel
+newMultiplexer side x = do
   channelMVar <- newEmptyMVar
   -- 'runMultiplexerProtcol' needs to be interruptible (so it can terminate when it is closed), so 'interruptible' is used to ensure that this function also works when used in 'bracket'
   mask_ $ link =<< async (interruptible (runMultiplexer side (putMVar channelMVar) (toSocketConnection x)))
   takeMVar channelMVar
 
-runMultiplexer :: (Channel -> IO ()) -> Connection -> IO ()
-runMultiplexer channelSetupHook connection = do
+runMultiplexer :: MultiplexerSide -> (Channel -> IO ()) -> Connection -> IO ()
+runMultiplexer side channelSetupHook connection = do
   -- Running in masked state, this thread (running the receive-function) cannot be interrupted when closing the connection
   maskingState <- getMaskingState
   when (maskingState /= Unmasked) (fail "'runMultiplexerProtocol' cannot run in masked thread state.")
@@ -161,8 +163,8 @@ runMultiplexer channelSetupHook connection = do
     channels = HM.empty,
     sendChannel = 0,
     receiveChannel = 0,
-    receiveNextChannelId = undefined,
-    sendNextChannelId = undefined
+    receiveNextChannelId = if side == MultiplexerSideA then 2 else 1,
+    sendNextChannelId = if side == MultiplexerSideA then 1 else 2
   }
   let worker = MultiplexerProtocolWorker {
     stateMVar,
@@ -354,7 +356,7 @@ channelSend channel headers msg callback = do
     worker = channel.worker
     prepareHeader :: MessageHeader -> StateT SentMessageResources (StateT ChannelState (StateT MultiplexerProtocolWorkerState IO)) MultiplexerProtocolMessageHeader
     prepareHeader CreateChannelHeader = do
-      nextChannelId <- lift $ lift $ State.state (\multiplexerState -> (multiplexerState.sendNextChannelId, multiplexerState{sendNextChannelId = multiplexerState.sendNextChannelId + 1}))
+      nextChannelId <- lift $ lift $ State.state (\multiplexerState -> (multiplexerState.sendNextChannelId, multiplexerState{sendNextChannelId = multiplexerState.sendNextChannelId + 2}))
       createdChannel <- lift $ newSubChannel worker nextChannelId
 
       State.modify $ \resources -> resources{createdChannels = resources.createdChannels <> [createdChannel]}
@@ -485,7 +487,7 @@ channelReportLocalError channel message = do
   undefined
 
 -- The StateT holds the parent channels state
-newSubChannel :: (MonadState MultiplexerProtocolWorkerState m, MonadIO m) => MultiplexerProtocolWorker -> ChannelId -> (StateT ChannelState m) Channel
+newSubChannel :: MultiplexerProtocolWorker -> ChannelId -> (StateT ChannelState (StateT MultiplexerProtocolWorkerState IO)) Channel
 newSubChannel worker channelId = do
   parentChannelState <- State.get
   -- Holding the parents channelState while initializing the channel will ensure the ChannelConnectivity is inherited atomically
@@ -497,7 +499,7 @@ newSubChannel worker channelId = do
   State.put newParentState
   pure createdChannel
 
-newChannel :: (MonadState MultiplexerProtocolWorkerState m, MonadIO m) => MultiplexerProtocolWorker -> ChannelId -> ChannelConnectivity -> m Channel
+newChannel :: MultiplexerProtocolWorker -> ChannelId -> ChannelConnectivity -> StateT MultiplexerProtocolWorkerState IO Channel
 newChannel worker channelId connectionState = do
   stateMVar <- liftIO $ newMVar ChannelState {
     connectionState,
