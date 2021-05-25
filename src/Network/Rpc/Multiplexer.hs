@@ -24,8 +24,8 @@ module Network.Rpc.Multiplexer (
 
 import Control.Concurrent.Async (async, link)
 import Control.Concurrent (myThreadId, throwTo)
-import Control.Exception (Exception(..), MaskingState(Unmasked), catch, finally, interruptible, throwIO, getMaskingState, mask_)
-import Control.Monad (when, unless, void)
+import Control.Exception (Exception(..), MaskingState(Unmasked), catch, handle, finally, interruptible, throwIO, getMaskingState, mask_)
+import Control.Monad (when, unless)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State (StateT, execStateT, runStateT, lift)
 import qualified Control.Monad.State as State
@@ -384,21 +384,23 @@ channelClose channel = do
   -- Change channel state of all unclosed channels in the tree to closed
   channelWasClosed <- channelClose' channel
 
-  when channelWasClosed $ do
-    -- Send close message
-    withMultiplexerState channel.worker $ do
-      multiplexerSwitchChannel channel.channelId
-      multiplexerStateSend CloseChannel
+  when channelWasClosed $
+    -- Closing a channel on a Connection that is no longer connected should not throw an exception (channelClose is a resource management operation and is supposed to be idempotent)
+    handle (\(_ :: NotConnected) -> pure ()) $ do
+      -- Send close message
+      withMultiplexerState channel.worker $ do
+        multiplexerSwitchChannel channel.channelId
+        multiplexerStateSend CloseChannel
 
-    -- Terminate the worker when the root channel is closed
-    when (channel.channelId == 0) $ multiplexerClose channel.worker
+      -- Terminate the worker when the root channel is closed
+      when (channel.channelId == 0) $ multiplexerClose channel.worker
   where
     channelClose' :: Channel -> IO Bool
     channelClose' chan = modifyMVar chan.stateMVar $ \state ->
       case state.connectionState of
         Connected -> do
           -- Close all children while blocking the state. This prevents children from receiving a messages after the parent channel has already rejected a message
-          liftIO (mapM_ (void . channelClose') state.children)
+          liftIO (mapM_ channelClose' state.children)
           pure (state{connectionState = Closed}, True)
         -- Channel was already closed and can be ignored
         Closed -> pure (state, False)
@@ -410,7 +412,7 @@ channelConfirmClose channel = do
   closeConfirmedIds <- channelClose' channel
 
   -- List can only be empty when the channel was already confirmed as closed
-  unless (closeConfirmedIds == []) $ do
+  unless (null closeConfirmedIds) $ do
     -- Remote channels from worker
     withMultiplexerState channel.worker $ do
       State.modify $ \state -> state{channels = foldr HM.delete state.channels closeConfirmedIds}

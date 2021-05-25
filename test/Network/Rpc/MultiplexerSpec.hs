@@ -28,7 +28,7 @@ spec = describe "runMultiplexerProtocol" $ parallel $ do
   it "it can send and receive simple messages" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
-      channelSetHandler channel $ ((\_ -> putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
+      channelSetHandler channel ((\_ -> putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
       channelSendSimple channel "foobar"
       takeMVar recvMVar `shouldReturn` "foobar"
       channelSendSimple channel "test"
@@ -39,7 +39,7 @@ spec = describe "runMultiplexerProtocol" $ parallel $ do
   it "it can create sub-channels" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
-      channelSetHandler channel $ ((\_ -> putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
+      channelSetHandler channel ((\_ -> putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
       SentMessageResources{createdChannels=[_]} <- channelSend_ channel [CreateChannelHeader] "create a channel"
       takeMVar recvMVar `shouldReturn` "create a channel"
       SentMessageResources{createdChannels=[_, _, _]} <- channelSend_ channel [CreateChannelHeader, CreateChannelHeader, CreateChannelHeader] "create more channels"
@@ -58,8 +58,8 @@ spec = describe "runMultiplexerProtocol" $ parallel $ do
 
       SentMessageResources{createdChannels=[c1, c2]} <- channelSend_ channel [CreateChannelHeader, CreateChannelHeader] "create channels"
       takeMVar recvMVar `shouldReturn` "create channels"
-      channelSetHandler c1 $ ((\_ -> putMVar c1RecvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
-      channelSetHandler c2 $ ((\_ -> putMVar c2RecvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
+      channelSetHandler c1 ((\_ -> putMVar c1RecvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
+      channelSetHandler c2 ((\_ -> putMVar c2RecvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
 
       channelSendSimple c1 "test"
       takeMVar c1RecvMVar `shouldReturn` "test"
@@ -72,7 +72,7 @@ spec = describe "runMultiplexerProtocol" $ parallel $ do
 
       SentMessageResources{createdChannels=[c3]} <- channelSend_ channel [CreateChannelHeader] "create another channel"
       takeMVar recvMVar `shouldReturn` "create another channel"
-      channelSetHandler c3 $ ((\_ -> putMVar c3RecvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
+      channelSetHandler c3 ((\_ -> putMVar c3RecvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
 
       channelSendSimple c3 "test5"
       takeMVar c3RecvMVar `shouldReturn` "test5"
