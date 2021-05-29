@@ -148,6 +148,8 @@ newMultiplexer side x = do
   mask_ $ link =<< async (interruptible (runMultiplexer side (putMVar channelMVar) (toSocketConnection x)))
   takeMVar channelMVar
 
+-- | Starts a new multiplexer on the provided connection and blocks until it is closed.
+-- The channel is provided to a setup action and can be closed by calling 'closeChannel'; otherwise the multiplexer will run until the underlying connection is closed.
 runMultiplexer :: MultiplexerSide -> (Channel -> IO ()) -> Connection -> IO ()
 runMultiplexer side channelSetupHook connection = do
   -- Running in masked state, this thread (running the receive-function) cannot be interrupted when closing the connection

@@ -1,8 +1,10 @@
 module Network.Rpc.MultiplexerSpec where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (concurrently_)
 import Control.Concurrent.MVar
 import Control.Exception (bracket, mask_)
+import Control.Monad (forever, void)
 import qualified Data.ByteString.Lazy as BSL
 import Prelude
 import Network.Rpc.Multiplexer
@@ -25,7 +27,7 @@ spec = describe "runMultiplexerProtocol" $ parallel $ do
       (runMultiplexer MultiplexerSideA (const (pure ())) x)
       (runMultiplexer MultiplexerSideB channelClose y)
 
-  it "it can send and receive simple messages" $ do
+  it "can send and receive simple messages" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
       channelSetHandler channel ((\_ -> putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
@@ -36,7 +38,7 @@ spec = describe "runMultiplexerProtocol" $ parallel $ do
 
     tryReadMVar recvMVar `shouldReturn` Nothing
 
-  it "it can create sub-channels" $ do
+  it "can create sub-channels" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
       channelSetHandler channel ((\_ -> putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
@@ -46,7 +48,7 @@ spec = describe "runMultiplexerProtocol" $ parallel $ do
       takeMVar recvMVar `shouldReturn` "create more channels"
     tryReadMVar recvMVar `shouldReturn` Nothing
 
-  it "it can send messages on sub-channels" $ do
+  it "can send messages on sub-channels" $ do
     recvMVar <- newEmptyMVar
     c1RecvMVar <- newEmptyMVar
     c2RecvMVar <- newEmptyMVar
@@ -80,6 +82,19 @@ spec = describe "runMultiplexerProtocol" $ parallel $ do
       takeMVar c1RecvMVar `shouldReturn` "test6"
 
     tryReadMVar recvMVar `shouldReturn` Nothing
+
+  it "can terminate a connection when the connection backend hangs" $ do
+    msgSentMVar <- newEmptyMVar
+    let
+      sleepForever = forever (threadDelay 1000000000)
+      connection = Connection {
+        send = const (putMVar msgSentMVar () >> sleepForever),
+        receive = sleepForever,
+        close = pure ()
+      }
+      testAction :: Channel -> IO ()
+      testAction channel = concurrently_ (channelSendSimple channel "foobar") (void (takeMVar msgSentMVar) >> channelClose channel)
+    runMultiplexer MultiplexerSideA testAction connection
 
 
 withEchoServer :: (Channel -> IO a) -> IO a
