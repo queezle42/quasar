@@ -31,10 +31,10 @@ instance IsConnection Socket.Socket where
   }
 
 
-newtype ConnectionFailed = ConnectionFailed [(Socket.AddrInfo, SomeException)]
+newtype ConnectingFailed = ConnectingFailed [(Socket.AddrInfo, SomeException)]
   deriving (Show)
-instance Exception ConnectionFailed where
-  displayException (ConnectionFailed attemts) = "Connection attempts failed:\n" <> intercalate "\n" (map (\(addr, err) -> show (Socket.addrAddress addr) <> ": " <> displayException err) attemts)
+instance Exception ConnectingFailed where
+  displayException (ConnectingFailed attemts) = "Connection attempts failed:\n" <> intercalate "\n" (map (\(addr, err) -> show (Socket.addrAddress addr) <> ": " <> displayException err) attemts)
 
 -- | Open a TCP connection to target host and port. Will start multiple connection attempts (i.e. retry quickly and then try other addresses) but only return the first successful connection.
 -- Throws a 'ConnectionFailed' on failure, which contains the exceptions from all failed connection attempts.
@@ -62,7 +62,7 @@ connectTCP host port = do
       -- Wait for all tasks to complete, throw an exception if all connections failed
       connectTasks <- readMVar connectTasksMVar
       results <- mapM (\(addr, task) -> (addr,) <$> waitCatch task) connectTasks
-      forM_ (collect results) (throwIO . ConnectionFailed . reverse)
+      forM_ (collect results) (throwIO . ConnectingFailed . reverse)
     collect :: [(Socket.AddrInfo, Either SomeException ())] -> Maybe [(Socket.AddrInfo, SomeException)]
     collect ((_, Right ()):_) = Nothing
     collect ((addr, Left ex):xs) = ((addr, ex):) <$> collect xs
