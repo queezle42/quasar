@@ -3,7 +3,7 @@ module Network.Rpc where
 import Control.Concurrent (forkFinally)
 import Control.Concurrent.Async (link, withAsync)
 import Control.Exception (SomeException, bracket, bracketOnError, bracketOnError)
-import Control.Monad (when, forever, void)
+import Control.Monad (when, unless, forever, void)
 import Control.Monad.State (State, execState)
 import qualified Control.Monad.State as State
 import Control.Concurrent.MVar
@@ -403,7 +403,8 @@ runServerHandler protocolImpl = runMultiplexer MultiplexerSideB (registerChannel
 
 withDummyClientServer :: forall p a. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> (Client p -> IO a) -> IO a
 withDummyClientServer impl runClientHook = do
-  (clientSocket, serverSocket) <- newDummySocketPair
+  unless Socket.isUnixDomainSocketAvailable $ fail "Unix domain sockets are not available"
+  (clientSocket, serverSocket) <- Socket.socketPair Socket.AF_UNIX Socket.Stream Socket.defaultProtocol
   withAsync (runServerHandler @p impl serverSocket) $ \serverTask -> do
     link serverTask
     withClient clientSocket runClientHook

@@ -90,24 +90,6 @@ connectTCP host port = do
       pure sock
 
 
-newDummySocketPair :: IO (Connection, Connection)
-newDummySocketPair = do
-  upstream <- newEmptyMVar
-  downstream <- newEmptyMVar
-  let x = Connection {
-    send=putMVar upstream . BSL.toStrict,
-    receive=takeMVar downstream,
-    close=pure ()
-  }
-  let y = Connection {
-    send=putMVar downstream . BSL.toStrict,
-    receive=takeMVar upstream,
-    close=pure ()
-  }
-  pure (x, y)
-
-
-
 -- | Reimplementation of 'openSocket' from the 'network'-package, which got introduced in version 3.1.2.0. Should be removed later.
 openSocket :: Socket.AddrInfo -> IO Socket.Socket
 openSocket addr = Socket.socket (Socket.addrFamily addr) (Socket.addrSocketType addr) (Socket.addrProtocol addr)
