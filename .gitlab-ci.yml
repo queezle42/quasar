@@ -1,0 +1,12 @@
+build:
+  stage: build
+  image: nixos/nix
+  before_script:
+    - nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
+    - nix-channel --update
+    - nix-env -iA nixpkgs.nixUnstable
+    - nix-env -iA nixpkgs.git
+  script: nix --experimental-features "nix-command flakes" build --log-format bar-with-logs
+  tags:
+    - docker
+    - kubernetes
