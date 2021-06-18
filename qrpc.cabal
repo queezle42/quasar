@@ -82,6 +82,7 @@ library
     Network.Rpc
     Network.Rpc.Connection
     Network.Rpc.Multiplexer
+    Network.Rpc.SocketLocation
   hs-source-dirs:
     src
 
