@@ -128,13 +128,13 @@ makeClient api@RpcApi{functions} = do
     makeClientFunction :: RpcFunction -> Q [Dec]
     makeClientFunction fun = do
       clientVarName <- newName "client"
-      varNames <- sequence (newName . (.name) <$> fun.arguments)
-      makeClientFunction' clientVarName varNames
+      argNames <- sequence (newName . (.name) <$> fun.arguments)
+      makeClientFunction' clientVarName argNames
       where
         funName :: Name
         funName = mkName fun.name
         makeClientFunction' :: Name -> [Name] -> Q [Dec]
-        makeClientFunction' clientVarName varNames = do
+        makeClientFunction' clientVarName argNames = do
           funArgTypes <- functionArgumentTypes fun
           clientType <- [t|Client $(protocolType api)|]
           resultType <- optionalResultType
@@ -153,7 +153,7 @@ makeClient api@RpcApi{functions} = do
             clientE :: Q Exp
             clientE = varE clientVarName
             varPats :: [Q Pat]
-            varPats = varP <$> varNames
+            varPats = varP <$> argNames
             body :: Q Body
             body
               | hasResult fun = normalB $ [|do
@@ -173,7 +173,7 @@ makeClient api@RpcApi{functions} = do
             requestE :: Q Exp -> Q Exp
             requestE msgExp = [|$typedRequest $(clientE) $(msgExp)|]
             applyVars :: Q Exp -> Q Exp
-            applyVars = go varNames
+            applyVars = go argNames
               where
                 go :: [Name] -> Q Exp -> Q Exp
                 go [] ex = ex
@@ -229,14 +229,14 @@ makeServer api@RpcApi{functions} = sequence [handlerRecordDec, logicInstanceDec]
           where
             handlerFunctionClause :: RpcFunction -> Q Clause
             handlerFunctionClause fun = do
-              varNames <- sequence (newName . (.name) <$> fun.arguments)
-              serverLogicHandlerFunctionClause' varNames
+              argNames <- sequence (newName . (.name) <$> fun.arguments)
+              serverLogicHandlerFunctionClause' argNames
               where
                 serverLogicHandlerFunctionClause' :: [Name] -> Q Clause
-                serverLogicHandlerFunctionClause' varNames = clause [conP (requestFunctionCtorName api fun) varPats] body []
+                serverLogicHandlerFunctionClause' argNames = clause [conP (requestFunctionCtorName api fun) varPats] body []
                   where
                     varPats :: [Q Pat]
-                    varPats = varP <$> varNames
+                    varPats = varP <$> argNames
                     body :: Q Body
                     body
                       | hasResult fun = normalB [|fmap Just $(packResponse (applyStreams (applyArguments implExp)))|]
@@ -244,7 +244,7 @@ makeServer api@RpcApi{functions} = sequence [handlerRecordDec, logicInstanceDec]
                     packResponse :: Q Exp -> Q Exp
                     packResponse = fmapE (conE (responseFunctionCtorName api fun))
                     applyArguments :: Q Exp -> Q Exp
-                    applyArguments = go varNames
+                    applyArguments = go argNames
                       where
                         go :: [Name] -> Q Exp -> Q Exp
                         go [] ex = ex
