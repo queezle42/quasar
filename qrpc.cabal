@@ -91,7 +91,8 @@ test-suite qrpc-test
   type: exitcode-stdio-1.0
   build-depends:
     hspec,
-    qrpc
+    qrpc,
+    QuickCheck
   main-is: Spec.hs
   other-modules:
     Network.RpcSpec

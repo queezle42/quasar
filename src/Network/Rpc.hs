@@ -1,5 +1,6 @@
 module Network.Rpc where
 
+import Control.Applicative (liftA2)
 import Control.Concurrent (forkFinally)
 import Control.Concurrent.Async (link, withAsync)
 import Control.Exception (SomeException, bracket, bracketOnError, bracketOnError)
@@ -32,6 +33,7 @@ data RpcFunction = RpcFunction {
   name :: String,
   arguments :: [RpcArgument],
   results :: [RpcResult],
+  streams :: [RpcStream],
   fixedHandler :: Maybe (Q Exp)
 }
 
@@ -45,6 +47,12 @@ data RpcResult = RpcResult {
   ty :: Q Type
 }
 
+data RpcStream = RpcStream {
+  name :: String,
+  tyUp :: Q Type,
+  tyDown :: Q Type
+}
+
 rpcApi :: String -> [RpcFunction] -> RpcApi
 rpcApi apiName functions = RpcApi {
   name = apiName,
@@ -56,6 +64,7 @@ rpcFunction methodName setup = execState setup RpcFunction {
     name = methodName,
     arguments = [],
     results = [],
+    streams = [],
     fixedHandler = Nothing
   }
 
@@ -64,6 +73,9 @@ addArgument name t = State.modify (\fun -> fun{arguments = fun.arguments <> [Rpc
 
 addResult :: String -> Q Type -> State RpcFunction ()
 addResult name t = State.modify (\fun -> fun{results = fun.results <> [RpcResult name t]})
+
+addStream :: String -> Q Type -> Q Type -> State RpcFunction ()
+addStream name tUp tDown = State.modify (\fun -> fun{streams = fun.streams <> [RpcStream name tUp tDown]})
 
 setFixedHandler :: Q Exp -> State RpcFunction ()
 setFixedHandler handler = State.modify (\fun -> fun{fixedHandler = Just handler})
@@ -125,21 +137,37 @@ makeClient api@RpcApi{functions} = do
         makeClientFunction' clientVarName varNames = do
           funArgTypes <- functionArgumentTypes fun
           clientType <- [t|Client $(protocolType api)|]
+          resultType <- optionalResultType
+          streamTypes <- clientStreamTypes
           sequence [
-            sigD funName (buildFunctionType (pure ([clientType] <> funArgTypes)) [t|IO $(buildTupleType (functionResultTypes fun))|]),
+            sigD funName (buildFunctionType (pure ([clientType] <> funArgTypes)) [t|IO $(buildTupleType (pure (resultType <> streamTypes)))|]),
             funD funName [clause ([varP clientVarName] <> varPats) body []]
             ]
           where
+            optionalResultType :: Q [Type]
+            optionalResultType
+              | hasResult fun = (\x -> [x]) <$> buildTupleType (functionResultTypes fun)
+              | otherwise = pure []
+            clientStreamTypes :: Q [Type]
+            clientStreamTypes = sequence $ (\stream -> [t|Stream $(stream.tyUp) $(stream.tyDown)|]) <$> fun.streams
             clientE :: Q Exp
             clientE = varE clientVarName
             varPats :: [Q Pat]
             varPats = varP <$> varNames
             body :: Q Body
             body
-              | hasResult fun = normalB $ checkResult (requestE requestDataE)
-              | otherwise = normalB $ sendE requestDataE
+              | hasResult fun = normalB $ [|do
+                  result <- $(checkResult (requestE requestDataE))
+                  pure $(buildTuple (liftA2 (:) [|result|] streamsE))
+                  |]
+              | otherwise = normalB $ [|do
+                  $(sendE requestDataE)
+                  pure $(buildTuple streamsE)
+                  |]
             requestDataE :: Q Exp
             requestDataE = applyVars (conE (requestFunctionCtorName api fun))
+            streamsE :: Q [Exp]
+            streamsE = mapM (\stream -> [|undefined|]) fun.streams
             sendE :: Q Exp -> Q Exp
             sendE msgExp = [|$typedSend $(clientE) $(msgExp)|]
             requestE :: Q Exp -> Q Exp
@@ -177,7 +205,13 @@ makeServer api@RpcApi{functions} = sequence [handlerRecordDec, logicInstanceDec]
     handlerRecordField :: RpcFunction -> Q VarBangType
     handlerRecordField fun = varDefaultBangType (implFieldName api fun) (handlerFunctionType fun)
     handlerFunctionType :: RpcFunction -> Q Type
-    handlerFunctionType fun = buildFunctionType (functionArgumentTypes fun) [t|IO $(buildTupleType (functionResultTypes fun))|]
+    handlerFunctionType fun = do
+      argumentTypes <- functionArgumentTypes fun
+      streamTypes <- serverStreamTypes
+      buildFunctionType (pure (argumentTypes <> streamTypes)) [t|IO $(buildTupleType (functionResultTypes fun))|]
+      where
+        serverStreamTypes :: Q [Type]
+        serverStreamTypes = sequence $ (\stream -> [t|Stream $(stream.tyDown) $(stream.tyUp)|]) <$> fun.streams
 
     logicInstanceDec :: Q Dec
     logicInstanceDec = instanceD (cxt []) [t|HasProtocolImpl $(protocolType api)|] [
@@ -205,16 +239,22 @@ makeServer api@RpcApi{functions} = sequence [handlerRecordDec, logicInstanceDec]
                     varPats = varP <$> varNames
                     body :: Q Body
                     body
-                      | hasResult fun = normalB [|fmap Just $(packResponse (applyVars implExp))|]
-                      | otherwise = normalB [|Nothing <$ $(applyVars implExp)|]
+                      | hasResult fun = normalB [|fmap Just $(packResponse (applyStreams (applyArguments implExp)))|]
+                      | otherwise = normalB [|Nothing <$ $(applyStreams (applyArguments implExp))|]
                     packResponse :: Q Exp -> Q Exp
                     packResponse = fmapE (conE (responseFunctionCtorName api fun))
-                    applyVars :: Q Exp -> Q Exp
-                    applyVars = go varNames
+                    applyArguments :: Q Exp -> Q Exp
+                    applyArguments = go varNames
                       where
                         go :: [Name] -> Q Exp -> Q Exp
                         go [] ex = ex
                         go (n:ns) ex = go ns (appE ex (varE n))
+                    applyStreams :: Q Exp -> Q Exp
+                    applyStreams = go fun.streams
+                      where
+                        go :: [RpcStream] -> Q Exp -> Q Exp
+                        go [] ex = ex
+                        go (s:ss) ex = go ss (appE ex [|undefined|])
                     implExp :: Q Exp
                     implExp = implExp' fun.fixedHandler
                       where
@@ -313,6 +353,17 @@ serverHandleChannelMessage protocolImpl channel resources msg = case decodeOrFai
 registerChannelServerHandler :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Channel -> IO ()
 registerChannelServerHandler protocolImpl channel = channelSetHandler channel (serverHandleChannelMessage @p protocolImpl channel)
 
+
+data Stream up down = Stream
+
+streamSend :: Stream up down -> up -> IO ()
+streamSend = undefined
+
+streamSetHandler :: Stream up down -> (down -> IO ()) -> IO ()
+streamSetHandler = undefined
+
+streamClose :: Stream up down -> IO ()
+streamClose = undefined
 
 -- ** Running client and server
 
@@ -472,12 +523,20 @@ buildTupleType :: Q [Type] -> Q Type
 buildTupleType fields = buildTupleType' =<< fields
   where
     buildTupleType' :: [Type] -> Q Type
-    buildTupleType' [] = tupleT 0
+    buildTupleType' [] = [t|()|]
     buildTupleType' [single] = pure single
     buildTupleType' fs = pure $ go (TupleT (length fs)) fs
     go :: Type -> [Type] -> Type
     go t [] = t
     go t (f:fs) = go (AppT t f) fs
+
+buildTuple :: Q [Exp] -> Q Exp
+buildTuple fields = buildTuple' =<< fields
+  where
+    buildTuple' :: [Exp] -> Q Exp
+    buildTuple' [] = [|()|]
+    buildTuple' [single] = pure single
+    buildTuple' fs = pure $ TupE (Just <$> fs)
 
 buildFunctionType :: Q [Type] -> Q Type -> Q Type
 buildFunctionType argTypes returnType = go =<< argTypes
