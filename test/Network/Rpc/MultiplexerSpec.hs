@@ -43,9 +43,9 @@ spec = describe "runMultiplexerProtocol" $ parallel $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
       channelSetHandler channel ((\_ -> putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
-      SentMessageResources{createdChannels=[_]} <- channelSend_ channel [CreateChannelHeader] "create a channel"
+      SentMessageResources{createdChannels=[_]} <- channelSend_ channel defaultMessageConfiguration{createChannels=1} "create a channel"
       takeMVar recvMVar `shouldReturn` "create a channel"
-      SentMessageResources{createdChannels=[_, _, _]} <- channelSend_ channel [CreateChannelHeader, CreateChannelHeader, CreateChannelHeader] "create more channels"
+      SentMessageResources{createdChannels=[_, _, _]} <- channelSend_ channel defaultMessageConfiguration{createChannels=3} "create more channels"
       takeMVar recvMVar `shouldReturn` "create more channels"
     tryReadMVar recvMVar `shouldReturn` Nothing
 
@@ -59,7 +59,7 @@ spec = describe "runMultiplexerProtocol" $ parallel $ do
       channelSendSimple channel "foobar"
       takeMVar recvMVar `shouldReturn` "foobar"
 
-      SentMessageResources{createdChannels=[c1, c2]} <- channelSend_ channel [CreateChannelHeader, CreateChannelHeader] "create channels"
+      SentMessageResources{createdChannels=[c1, c2]} <- channelSend_ channel defaultMessageConfiguration{createChannels=2}  "create channels"
       takeMVar recvMVar `shouldReturn` "create channels"
       channelSetHandler c1 ((\_ -> putMVar c1RecvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
       channelSetHandler c2 ((\_ -> putMVar c2RecvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
@@ -73,7 +73,7 @@ spec = describe "runMultiplexerProtocol" $ parallel $ do
       channelSendSimple c1 "test4"
       takeMVar c1RecvMVar `shouldReturn` "test4"
 
-      SentMessageResources{createdChannels=[c3]} <- channelSend_ channel [CreateChannelHeader] "create another channel"
+      SentMessageResources{createdChannels=[c3]} <- channelSend_ channel  defaultMessageConfiguration{createChannels=1} "create another channel"
       takeMVar recvMVar `shouldReturn` "create another channel"
       channelSetHandler c3 ((\_ -> putMVar c3RecvMVar) :: ReceivedMessageResources -> BSL.ByteString -> IO ())
 

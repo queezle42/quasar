@@ -3,7 +3,8 @@ module Network.Rpc.Multiplexer (
   MessageId,
   MessageLength,
   Channel,
-  MessageHeader(..),
+  MessageConfiguration(..),
+  defaultMessageConfiguration,
   SentMessageResources(..),
   ReceivedMessageResources(..),
   MultiplexerException,
@@ -14,6 +15,7 @@ module Network.Rpc.Multiplexer (
   channelSendSimple,
   channelClose,
   channelSetHandler,
+  channelSetSimpleHandler,
   ChannelMessageHandler,
   MultiplexerSide(..),
   runMultiplexer,
@@ -59,8 +61,16 @@ data MultiplexerMessage
 data MultiplexerMessageHeader = CreateChannel
   deriving (Binary, Generic, Show)
 
+data MessageConfiguration = MessageConfiguration {
+  createChannels :: Int
+}
+
+defaultMessageConfiguration :: MessageConfiguration
+defaultMessageConfiguration = MessageConfiguration {
+  createChannels = 0
+}
+
 data MessageHeader =
-  -- | The callback is running in a masked state and is blocking all network traffic. The callback should only be used to register a callback on the channel and to store it; then it should return immediately.
   CreateChannelHeader
 
 data SentMessageResources = SentMessageResources {
@@ -93,6 +103,7 @@ data MultiplexerException =
   | LocalException SomeException
   | RemoteException String
   | ProtocolException String
+  | ChannelProtocolException ChannelId String
   deriving Show
 instance Exception MultiplexerException
 
@@ -128,9 +139,11 @@ type InternalChannelMessageHandler = ReceivedMessageResources -> Decoder (IO ())
 class ChannelMessageHandler a where
   toInternalChannelMessageHandler :: a -> InternalChannelMessageHandler
 
+-- | Fully featured channel message handler
 instance ChannelMessageHandler (ReceivedMessageResources -> Get (IO ())) where
   toInternalChannelMessageHandler fn = runGetIncremental . fn
 
+-- | Raw channel message handler
 instance ChannelMessageHandler (ReceivedMessageResources -> BSL.ByteString -> IO ()) where
   toInternalChannelMessageHandler handler result = decoder ""
     where
@@ -347,8 +360,8 @@ multiplexerStateSendRaw worker rawMsg = do
         (throwIO =<< multiplexerWaitUntilClosed worker)
         (connection.send rawMsg `catch` \ex -> throwIO =<< multiplexerClose (ConnectionLost ex) worker)
 
-channelSend :: Channel -> [MessageHeader] -> BSL.ByteString -> (MessageId -> IO ()) -> IO SentMessageResources
-channelSend channel headers msg callback = do
+channelSend :: Channel -> MessageConfiguration -> BSL.ByteString -> (MessageId -> IO ()) -> IO SentMessageResources
+channelSend channel configuration msg callback = do
   modifyMVar channel.sendStateMVar $ \channelSendState -> do
     -- Don't send on closed channels
     withChannelState channel $ do
@@ -376,6 +389,8 @@ channelSend channel headers msg callback = do
 
         pure (channelSendState{nextMessageId = channelSendState.nextMessageId + 1}, resources)
   where
+    headers :: [MessageHeader]
+    headers = replicate configuration.createChannels CreateChannelHeader
     worker :: MultiplexerWorker
     worker = channel.worker
     prepareHeader :: MessageHeader -> StateT SentMessageResources (StateT ChannelState (StateT MultiplexerWorkerState IO)) MultiplexerMessageHeader
@@ -386,13 +401,13 @@ channelSend channel headers msg callback = do
       State.modify $ \resources -> resources{createdChannels = resources.createdChannels <> [createdChannel]}
       pure CreateChannel
 
-channelSend_ :: Channel -> [MessageHeader] -> BSL.ByteString -> IO SentMessageResources
-channelSend_ channel headers msg = channelSend channel headers msg (const (pure ()))
+channelSend_ :: Channel -> MessageConfiguration -> BSL.ByteString -> IO SentMessageResources
+channelSend_ channel configuration msg = channelSend channel configuration msg (const (pure ()))
 
 channelSendSimple :: Channel -> BSL.ByteString -> IO ()
 channelSendSimple channel msg = do
   -- We are not sending headers, so no channels can be created
-  SentMessageResources{createdChannels=[]} <- channelSend channel [] msg (const (pure ()))
+  SentMessageResources{createdChannels=[]} <- channelSend channel defaultMessageConfiguration msg (const (pure ()))
   pure ()
 
 multiplexerSwitchChannel :: MultiplexerWorker -> ChannelId -> StateT MultiplexerWorkerState IO ()
@@ -489,9 +504,9 @@ reportProtocolError worker message = do
 
 channelReportProtocolError :: Channel -> String -> IO b
 channelReportProtocolError channel message = do
-  -- TODO: send channelId as well
-  multiplexerSend channel.worker $ ChannelProtocolError channel.channelId message
-  let ex = ProtocolException message
+  let channelId = channel.channelId
+  multiplexerSend channel.worker $ ChannelProtocolError channelId message
+  let ex = ChannelProtocolException channelId message
   multiplexerClose_ ex channel.worker
   throwIO ex
 
@@ -542,6 +557,16 @@ newChannel worker channelId connectionState = do
 
 channelSetHandler :: ChannelMessageHandler a => Channel -> a -> IO ()
 channelSetHandler channel = writeAtVar channel.handlerAtVar . toInternalChannelMessageHandler
+
+-- | Sets a simple channel message handler, which cannot handle sub-resurces (e.g. new channels). When a resource is received the channel will be terminated with a channel protocol error.
+channelSetSimpleHandler :: forall a. Binary a => Channel -> (a -> IO ()) -> IO ()
+channelSetSimpleHandler channel handler = channelSetHandler channel innerHandler
+  where
+    innerHandler :: ReceivedMessageResources -> Get (IO ())
+    innerHandler resources = guard resources <$> Binary.get
+    guard :: ReceivedMessageResources -> a -> IO ()
+    guard (ReceivedMessageResources _ []) value = handler value
+    guard _ _ = channelReportProtocolError channel "Subchannel created on a channel with a simple handler"
 
 -- | Helper for an atomically writable MVar that can also be empty and, when read, will block until it has a value.
 data AtVar a = AtVar (MVar a) (MVar AtVarState)
