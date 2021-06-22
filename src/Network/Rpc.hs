@@ -4,7 +4,7 @@ import Control.Applicative (liftA2)
 import Control.Concurrent (forkFinally)
 import Control.Concurrent.Async (link, withAsync)
 import Control.Exception (SomeException, bracket, bracketOnError, bracketOnError)
-import Control.Monad (when, unless, forever, void)
+import Control.Monad (when, unless, forever)
 import Control.Monad.State (State, execState)
 import qualified Control.Monad.State as State
 import Control.Concurrent.MVar
@@ -172,13 +172,22 @@ makeClient api@RpcApi{functions} = do
             requestDataE :: Q Exp
             requestDataE = applyVars (conE (requestFunctionCtorName api fun))
             createStreams :: Q Exp -> [Q Stmt]
-            createStreams channelsE = if length fun.streams > 0 then [assignChannels] <> go channelNames streamNames else []
+            createStreams channelsE = if length fun.streams > 0 then [assignChannels] <> go channelNames streamNames else [verifyNoChannels]
               where
+                verifyNoChannels :: Q Stmt
+                verifyNoChannels = noBindS [|unless (null $(channelsE)) (fail "Invalid number of channel created")|]
                 assignChannels :: Q Stmt
-                assignChannels = letS [valD (listP (varP <$> channelNames)) (normalB channelsE) []]
+                assignChannels =
+                  bindS
+                    (tupP (varP <$> channelNames))
+                    $ caseE channelsE [
+                      match (listP (varP <$> channelNames)) (normalB [|pure $(tupE (varE <$> channelNames))|]) [],
+                      match [p|_|] (normalB [|fail "Invalid number of channel created"|]) []
+                      ]
                 go :: [Name] -> [Name] -> [Q Stmt]
                 go [] [] = []
                 go (cn:cns) (sn:sns) = createStream cn sn : go cns sns
+                go _ _ = fail "Logic error: lists have different lengths"
                 createStream :: Name -> Name -> Q Stmt
                 createStream channelName streamName = bindS (varP streamName) [|newStream $(varE channelName)|]
             streamsE :: Q [Exp]
@@ -258,17 +267,24 @@ makeServer api@RpcApi{functions} = sequence [handlerRecordDec, logicInstanceDec]
                     varPats :: [Q Pat]
                     varPats = varP <$> argNames
                     body :: Q Body
-                    body = normalB $ doE $ [verifyChannelCount] <> createStreams <> [callImplementation]
-                    verifyChannelCount :: Q Stmt
-                    verifyChannelCount = noBindS [|when (length $(channelsE) /= $(litE $ integerL $ toInteger $ length fun.streams)) (fail "Received invalid channel count")|] -- TODO channelReportProtocolError
+                    body = normalB $ doE $ createStreams <> [callImplementation]
                     createStreams :: [Q Stmt]
-                    createStreams = if length fun.streams > 0 then [assignChannels] <> go channelNames streamNames else []
+                    createStreams = if length fun.streams > 0 then [assignChannels] <> go channelNames streamNames else [verifyNoChannels]
                       where
+                        verifyNoChannels :: Q Stmt
+                        verifyNoChannels = noBindS [|unless (null $(channelsE)) (fail "Received invalid channel count")|] -- TODO channelReportProtocolError
                         assignChannels :: Q Stmt
-                        assignChannels = letS [valD (listP (varP <$> channelNames)) (normalB channelsE) []]
+                        assignChannels =
+                          bindS
+                            (tupP (varP <$> channelNames))
+                            $ caseE channelsE [
+                              match (listP (varP <$> channelNames)) (normalB [|pure $(tupE (varE <$> channelNames))|]) [],
+                              match [p|_|] (normalB [|fail "Received invalid channel count"|]) [] -- TODO channelReportProtocolError
+                              ]
                         go :: [Name] -> [Name] -> [Q Stmt]
                         go [] [] = []
                         go (cn:cns) (sn:sns) = createStream cn sn : go cns sns
+                        go _ _ = fail "Logic error: lists have different lengths"
                         createStream :: Name -> Name -> Q Stmt
                         createStream channelName streamName = bindS (varP streamName) [|newStream $(varE channelName)|]
                     callImplementation :: Q Stmt
@@ -286,11 +302,11 @@ makeServer api@RpcApi{functions} = sequence [handlerRecordDec, logicInstanceDec]
                         go [] ex = ex
                         go (n:ns) ex = go ns (appE ex (varE n))
                     applyStreams :: Q Exp -> Q Exp
-                    applyStreams = go fun.streams streamNames
+                    applyStreams = go streamNames
                       where
-                        go :: [RpcStream] -> [Name] -> Q Exp -> Q Exp
-                        go [] [] ex = ex
-                        go (s:ss) (sn:sns) ex = go ss sns (appE ex (varE sn))
+                        go :: [Name] -> Q Exp -> Q Exp
+                        go [] ex = ex
+                        go (sn:sns) ex = go sns (appE ex (varE sn))
                     implExp :: Q Exp
                     implExp = implExp' fun.fixedHandler
                       where

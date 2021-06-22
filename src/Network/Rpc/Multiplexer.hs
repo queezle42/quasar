@@ -85,8 +85,7 @@ data ReceivedMessageResources = ReceivedMessageResources {
 
 data MultiplexerWorker = MultiplexerWorker {
   stateMVar :: MVar MultiplexerWorkerState,
-  multiplexerClosedAtVar :: AtVar MultiplexerException,
-  outboxMVar :: MVar (MVar BSL.ByteString)
+  multiplexerClosedAtVar :: AtVar MultiplexerException
 }
 data MultiplexerWorkerState = MultiplexerWorkerState {
   socketConnection :: Either MultiplexerException Connection,
