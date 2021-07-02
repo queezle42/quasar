@@ -23,8 +23,8 @@ module Network.Rpc.Multiplexer (
 ) where
 
 
-import Control.Concurrent.Async (async, link, race_, wait, waitAnyCancel, withAsync, withAsyncWithUnmask)
-import Control.Exception (Exception(..), Handler(..), MaskingState(Unmasked), SomeException, catch, catches, handle, interruptible, throwIO, getMaskingState, mask_)
+import Control.Concurrent.Async (AsyncCancelled(..), async, link, race_, wait, waitAnyCancel, withAsync, withAsyncWithUnmask)
+import Control.Exception (Exception(..), Handler(..), MaskingState(Unmasked), SomeException(..), catch, catches, handle, interruptible, throwIO, getMaskingState, mask_)
 import Control.Monad (when, unless, void)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State (StateT, execStateT, runStateT, lift)
@@ -188,23 +188,27 @@ runMultiplexer side channelSetupHook connection = do
       stateMVar,
       multiplexerClosedAtVar
     }
-    run :: IO MultiplexerException
+    run :: IO (MultiplexerException, Bool)
     run = do
       rootChannel <- withMultiplexerState worker (newChannel worker 0 Connected)
       channelSetupHook rootChannel
       withAsync (receiveThread worker) $ \receiveTask ->
         withAsync (throwIO =<< multiplexerWaitUntilClosed worker) $ \waitForCloseTask -> do
           void $ waitAnyCancel [receiveTask, waitForCloseTask]
-      pure ConnectionClosed
+      pure (ConnectionClosed, False)
 
-  exception <- run `catches` [
-    Handler (\(ex :: MultiplexerException) -> pure ex),
-    Handler (\(ex :: SomeException) -> pure (LocalException ex))
+  (exception, isAsyncCancelled) <- run `catches` [
+    Handler (\(ex :: MultiplexerException) -> pure (ex, False)),
+    Handler (\(ex :: AsyncCancelled) -> pure (LocalException (SomeException ex), True)),
+    Handler (\(ex :: SomeException) -> pure (LocalException ex, False))
     ]
 
-  multiplexerClose exception worker >>= \case
-    ConnectionClosed -> pure ()
-    ex -> throwIO ex
+  storedException <- multiplexerClose exception worker
+  if isAsyncCancelled
+    then throwIO AsyncCancelled
+    else case storedException of
+      ConnectionClosed -> pure ()
+      ex -> throwIO ex
 
 receiveThread :: MultiplexerWorker -> IO a
 receiveThread worker = receiveThreadLoop multiplexerDecoder
