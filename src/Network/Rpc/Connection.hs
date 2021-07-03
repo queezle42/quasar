@@ -3,7 +3,7 @@ module Network.Rpc.Connection where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (Async, async, cancel, link, waitCatch, withAsync)
 import Control.Concurrent.MVar
-import Control.Exception (Exception(..), SomeException, bracketOnError, interruptible, finally, throwIO, bracketOnError, onException)
+import Control.Exception (Exception(..), SomeException, bracketOnError, catch, interruptible, finally, throwIO, bracketOnError, onException)
 import Control.Monad ((>=>), unless, forM_)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
@@ -17,6 +17,7 @@ import Prelude
 data Connection = Connection {
   send :: BSL.ByteString -> IO (),
   receive :: IO BS.ByteString,
+  -- | Close - expected to be idempotent
   close :: IO ()
 }
 class IsConnection a where
@@ -27,7 +28,8 @@ instance IsConnection Socket.Socket where
   toSocketConnection sock = Connection {
     send=SocketL.sendAll sock,
     receive=Socket.recv sock 4096,
-    close=Socket.gracefulClose sock 2000
+    -- gracefulClose may fail but guarantees that the socket is deallocated
+    close=Socket.gracefulClose sock 2000 `catch` \(_ :: SomeException) -> pure ()
   }
 
 
