@@ -76,7 +76,7 @@ spec :: Spec
 spec = parallel $ do
   describe "Example" $ do
     it "works" $ do
-      withDummyClientServer @ExampleProtocol exampleProtocolImpl $ \client -> do
+      withStandaloneClient @ExampleProtocol exampleProtocolImpl $ \client -> do
         fixedHandler42 client 5 `shouldReturn` False
         fixedHandler42 client 42 `shouldReturn` True
         fixedHandlerInc client 41 `shouldReturn` 42
@@ -86,16 +86,16 @@ spec = parallel $ do
 
   describe "StreamExample" $ do
     it "can open and close a stream" $ do
-      withDummyClientServer @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
+      withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
         streamClose =<< createMultiplyStream client
 
     it "can open multiple streams in a single rpc call" $ do
-      withDummyClientServer @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
+      withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
         (stream1, stream2) <- createStreams client
         streamClose stream1
         streamClose stream2
 
-    aroundAll (\x -> withDummyClientServer @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
+    aroundAll (\x -> withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
         resultMVar <- newEmptyMVar
         stream <- createMultiplyStream client
         streamSetHandler stream $ putMVar resultMVar
