@@ -1,0 +1,1 @@
+(git ls-files app; git ls-files test; git ls-files '*.cabal') | entr -r nix develop -c ghcid --warnings "--command=cabal repl lib:quasar" "--test=:! cabal test --test-show-details=direct --ghc-option -fdiagnostics-color=always && cabal build --ghc-option -fdiagnostics-color=always && zsh -c 'print -P %F{green}build and tests passed%f'"
