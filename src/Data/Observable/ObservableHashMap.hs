@@ -48,10 +48,10 @@ instance IsObservable (HM.HashMap k v) (ObservableHashMap k v) where
         callback (Current, toHashMap handle)
         unique <- newUnique
         let handle' = handle & set (_subscribers . at unique) (Just callback)
-        return (handle', FunctionDisposable $ unsubscribe unique)
+        pure (handle', FunctionDisposable $ unsubscribe unique)
       unsubscribe :: Unique -> IO () -> IO ()
       unsubscribe unique unsubscribedCallback = do
-        modifyHandle_ (return . set (_subscribers . at unique) Nothing) ohm
+        modifyHandle_ (pure . set (_subscribers . at unique) Nothing) ohm
         unsubscribedCallback
 
 instance IsDeltaObservable k v (ObservableHashMap k v) where
@@ -62,10 +62,10 @@ instance IsDeltaObservable k v (ObservableHashMap k v) where
         callback (Reset $ toHashMap handle)
         unique <- newUnique
         let handle' = handle & set (_deltaSubscribers . at unique) (Just callback)
-        return (handle', FunctionDisposable $ unsubscribe unique)
+        pure (handle', FunctionDisposable $ unsubscribe unique)
       unsubscribe :: Unique -> IO () -> IO ()
       unsubscribe unique unsubscribedCallback = do
-        modifyHandle_ (return . set (_deltaSubscribers . at unique) Nothing) ohm
+        modifyHandle_ (pure . set (_deltaSubscribers . at unique) Nothing) ohm
         unsubscribedCallback
 
 
@@ -99,16 +99,16 @@ modifyKeyHandleNotifying :: (Eq k, Hashable k) => (KeyHandle v -> IO (KeyHandle 
 modifyKeyHandleNotifying f k = modifyHandle $ \handle -> do
   (newHandle, (delta, result)) <- updateKeyHandle f k handle
   notifySubscribers newHandle delta
-  return (newHandle, result)
+  pure (newHandle, result)
 
 modifyKeyHandleNotifying_ :: (Eq k, Hashable k) => (KeyHandle v -> IO (KeyHandle v, Maybe (Delta k v))) -> k -> ObservableHashMap k v -> IO ()
 modifyKeyHandleNotifying_ f k = modifyHandle_ $ \handle -> do
   (newHandle, delta) <- updateKeyHandle f k handle
   notifySubscribers newHandle delta
-  return newHandle
+  pure newHandle
 
 notifySubscribers :: Handle k v -> Maybe (Delta k v) -> IO ()
-notifySubscribers _ Nothing = return ()
+notifySubscribers _ Nothing = pure ()
 notifySubscribers handle@Handle{deltaSubscribers, subscribers} (Just delta) = do
   mapM_ ($ delta) $ HM.elems deltaSubscribers
   mapM_ ($ (Update, toHashMap handle)) $ HM.elems subscribers
@@ -128,15 +128,15 @@ observeKey key ohm@(ObservableHashMap mvar) = Observable FnObservable{getValueFn
     subscribeFn callback = do
       subscriptionKey <- newUnique
       modifyKeyHandle_ (subscribeFn' subscriptionKey) key ohm
-      return $ FunctionDisposable $ unsubscribe subscriptionKey
+      pure $ FunctionDisposable $ unsubscribe subscriptionKey
       where
         subscribeFn' :: Unique -> KeyHandle v -> IO (KeyHandle v)
         subscribeFn' subKey keyHandle@KeyHandle{value} = do
           callback (Current, value)
-          return $ modifyKeySubscribers (HM.insert subKey callback) keyHandle
+          pure $ modifyKeySubscribers (HM.insert subKey callback) keyHandle
         unsubscribe :: Unique -> IO () -> IO ()
         unsubscribe subKey unsubscribedCallback = do
-          modifyKeyHandle_ (return . modifyKeySubscribers (HM.delete subKey)) key ohm
+          modifyKeyHandle_ (pure . modifyKeySubscribers (HM.delete subKey)) key ohm
           unsubscribedCallback
 
 insert :: forall k v. (Eq k, Hashable k) => k -> v -> ObservableHashMap k v -> IO ()
@@ -145,7 +145,7 @@ insert key value = modifyKeyHandleNotifying_ fn key
     fn :: KeyHandle v -> IO (KeyHandle v, Maybe (Delta k v))
     fn keyHandle@KeyHandle{keySubscribers} = do
       mapM_ ($ (Update, Just value)) $ HM.elems keySubscribers
-      return (keyHandle{value=Just value}, Just (Insert key value))
+      pure (keyHandle{value=Just value}, Just (Insert key value))
 
 delete :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> IO ()
 delete key = modifyKeyHandleNotifying_ fn key
@@ -154,12 +154,12 @@ delete key = modifyKeyHandleNotifying_ fn key
     fn keyHandle@KeyHandle{value=oldValue, keySubscribers} = do
       mapM_ ($ (Update, Nothing)) $ HM.elems keySubscribers
       let delta = if isJust oldValue then Just (Delete key) else Nothing
-      return (keyHandle{value=Nothing}, delta)
+      pure (keyHandle{value=Nothing}, delta)
 
 lookup :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> IO (Maybe v)
 lookup key (ObservableHashMap mvar) = do
   Handle{keyHandles} <- readMVar mvar
-  return $ join $ value <$> HM.lookup key keyHandles
+  pure $ join $ value <$> HM.lookup key keyHandles
 
 lookupDelete :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> IO (Maybe v)
 lookupDelete key = modifyKeyHandleNotifying fn key
@@ -168,4 +168,4 @@ lookupDelete key = modifyKeyHandleNotifying fn key
     fn keyHandle@KeyHandle{value=oldValue, keySubscribers} = do
       mapM_ ($ (Update, Nothing)) $ HM.elems keySubscribers
       let delta = if isJust oldValue then Just (Delete key) else Nothing
-      return (keyHandle{value=Nothing}, (delta, oldValue))
+      pure (keyHandle{value=Nothing}, (delta, oldValue))

@@ -73,13 +73,13 @@ data Disposable
 
 instance IsDisposable Disposable where
   dispose (SomeDisposable x) = dispose x
-  dispose (FunctionDisposable fn) = fn (return ())
+  dispose (FunctionDisposable fn) = fn (pure ())
   dispose d@(MultiDisposable _) = waitFor' $ dispose' d
-  dispose DummyDisposable = return ()
+  dispose DummyDisposable = pure ()
   dispose_ (SomeDisposable x) = dispose_ x
-  dispose_ (FunctionDisposable fn) = fn (return ())
+  dispose_ (FunctionDisposable fn) = fn (pure ())
   dispose_ d@(MultiDisposable _) = waitFor' $ dispose' d
-  dispose_ DummyDisposable = return ()
+  dispose_ DummyDisposable = pure ()
   dispose' (SomeDisposable x) = dispose' x
   dispose' (FunctionDisposable fn) = fn
   dispose' (MultiDisposable xs) = \disposeCallback -> do
@@ -91,7 +91,7 @@ instance IsDisposable Disposable where
       startDispose disposable = do
         mvar <- newEmptyMVar
         dispose' disposable (callback mvar)
-        return (mvar :: MVar ())
+        pure (mvar :: MVar ())
       callback :: MVar () -> IO ()
       callback mvar = do
         success <- tryPutMVar mvar ()
@@ -104,7 +104,7 @@ class IsDisposable a where
   dispose = waitFor' . dispose'
   -- | Dispose a resource. Returns without waiting for the resource to be released.
   dispose_ :: a -> IO ()
-  dispose_ disposable = dispose' disposable (return ())
+  dispose_ disposable = dispose' disposable (pure ())
   -- | Dispose a resource. When the resource has been released the callback is invoked.
   dispose' :: a -> IO () -> IO ()
 instance IsDisposable a => IsDisposable (Maybe a) where
@@ -124,7 +124,7 @@ class IsGettable v o => IsObservable v o | o -> v where
   toObservable :: o -> Observable v
   toObservable = Observable
   mapObservable :: (v -> a) -> o -> Observable a
-  mapObservable f = mapObservableM (return . f)
+  mapObservable f = mapObservableM (pure . f)
   mapObservableM :: (v -> IO a) -> o -> Observable a
   mapObservableM f = Observable . MappedObservable f
 
@@ -133,7 +133,7 @@ instance IsGettable a ((a -> IO ()) -> IO ()) where
 
 -- | Variant of `getValue` that throws exceptions instead of returning them.
 unsafeGetValue :: (Exception e, IsObservable (Either e v) o) => o -> IO v
-unsafeGetValue = either throwIO return <=< getValue
+unsafeGetValue = either throwIO pure <=< getValue
 
 -- | A variant of `subscribe` that passes the `Disposable` to the callback.
 subscribe' :: IsObservable v o => o -> (Disposable -> ObservableMessage v -> IO ()) -> IO Disposable
@@ -195,18 +195,18 @@ instance IsObservable v (ObservableVar v) where
     modifyMVar_ mvar $ \(state, subscribers) -> do
       -- Call listener
       callback (Current, state)
-      return (state, HM.insert key callback subscribers)
-    return $ FunctionDisposable (disposeFn key)
+      pure (state, HM.insert key callback subscribers)
+    pure $ FunctionDisposable (disposeFn key)
     where
       disposeFn :: Unique -> IO () -> IO ()
       disposeFn key disposeCallback = do
-        modifyMVar_ mvar (\(state, subscribers) -> return (state, HM.delete key subscribers))
+        modifyMVar_ mvar (\(state, subscribers) -> pure (state, HM.delete key subscribers))
         disposeCallback
 
 instance IsSettable v (ObservableVar v) where
   setValue (ObservableVar mvar) value = modifyMVar_ mvar $ \(_, subscribers) -> do
     mapM_ (\callback -> callback (Update, value)) subscribers
-    return (value, subscribers)
+    pure (value, subscribers)
 
 
 newObservableVar :: v -> IO (ObservableVar v)
@@ -219,14 +219,14 @@ modifyObservableVar (ObservableVar mvar) f =
   modifyMVar mvar $ \(oldState, subscribers) -> do
     (newState, result) <- f oldState
     mapM_ (\callback -> callback (Update, newState)) subscribers
-    return ((newState, subscribers), result)
+    pure ((newState, subscribers), result)
 
 modifyObservableVar_ :: ObservableVar v -> (v -> IO v) -> IO ()
 modifyObservableVar_ (ObservableVar mvar) f =
   modifyMVar_ mvar $ \(oldState, subscribers) -> do
     newState <- f oldState
     mapM_ (\callback -> callback (Update, newState)) subscribers
-    return (newState, subscribers)
+    pure (newState, subscribers)
 
 withObservableVar :: ObservableVar a -> (a -> IO b) -> IO b
 withObservableVar (ObservableVar mvar) f = withMVar mvar (f . fst)
@@ -246,7 +246,7 @@ instance forall o i v. (IsObservable i o, IsObservable v i) => IsObservable v (J
   subscribe (JoinedObservable outer) callback = do
     innerSubscriptionMVar <- newMVar DummyDisposable
     outerSubscription <- subscribe outer (outerCallback innerSubscriptionMVar)
-    return $ FunctionDisposable (\disposeCallback -> dispose' outerSubscription (readMVar innerSubscriptionMVar >>= \innerSubscription -> dispose' innerSubscription disposeCallback))
+    pure $ FunctionDisposable (\disposeCallback -> dispose' outerSubscription (readMVar innerSubscriptionMVar >>= \innerSubscription -> dispose' innerSubscription disposeCallback))
       where
         outerCallback innerSubscriptionMVar = outerCallback'
           where
@@ -279,20 +279,20 @@ instance forall o0 v0 o1 v1 r. (IsGettable v0 o0, IsGettable v1 o1) => IsGettabl
   getValue (MergedObservable merge obs0 obs1) = do
     x0 <- getValue obs0
     x1 <- getValue obs1
-    return $ merge x0 x1
+    pure $ merge x0 x1
 instance forall o0 v0 o1 v1 r. (IsObservable v0 o0, IsObservable v1 o1) => IsObservable r (MergedObservable o0 v0 o1 v1 r) where
   subscribe (MergedObservable merge obs0 obs1) callback = do
     currentValuesTupleRef <- newIORef (Nothing, Nothing)
     sub0 <- subscribe obs0 (mergeCallback currentValuesTupleRef . fmap Left)
     sub1 <- subscribe obs1 (mergeCallback currentValuesTupleRef . fmap Right)
-    return $ MultiDisposable [sub0, sub1]
+    pure $ MultiDisposable [sub0, sub1]
     where
       mergeCallback :: IORef (Maybe v0, Maybe v1) -> (MessageReason, Either v0 v1) -> IO ()
       mergeCallback currentValuesTupleRef (reason, state) = do
         currentTuple <- atomicModifyIORef' currentValuesTupleRef ((\x -> (x, x)) . updateTuple state)
         case currentTuple of
           (Just l, Just r) -> callback (reason, uncurry merge (l, r))
-          _ -> return () -- Start only once both values have been received
+          _ -> pure () -- Start only once both values have been received
       updateTuple :: Either v0 v1 -> (Maybe v0, Maybe v1) -> (Maybe v0, Maybe v1)
       updateTuple (Left l) (_, r) = (Just l, r)
       updateTuple (Right r) (l, _) = (l, Just r)
@@ -326,11 +326,11 @@ instance IsObservable v (FnObservable v) where
 
 newtype ConstObservable a = ConstObservable a
 instance IsGettable a (ConstObservable a) where
-  getValue (ConstObservable x) = return x
+  getValue (ConstObservable x) = pure x
 instance IsObservable a (ConstObservable a) where
   subscribe (ConstObservable x) callback = do
     callback (Current, x)
-    return DummyDisposable
+    pure DummyDisposable
 -- | Create an observable that contains a constant value.
 constObservable :: a -> Observable a
 constObservable = Observable . ConstObservable

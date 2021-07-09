@@ -126,4 +126,4 @@ traceShowIO = traceIO . show
 
 {-# DEPRECATED traceShowIdIO "Trace." #-}
 traceShowIdIO :: (Control.Monad.IO.Class.MonadIO m, Show a) => a -> m a
-traceShowIdIO a = traceShowIO a >> return a
+traceShowIdIO a = traceShowIO a >> pure a

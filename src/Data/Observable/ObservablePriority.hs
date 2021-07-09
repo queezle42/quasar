@@ -32,12 +32,12 @@ instance IsObservable (Maybe v) (ObservablePriority p v) where
     modifyMVar_ mvar $ \internals@Internals{subscribers} -> do
       -- Call listener
       callback (Current, currentValue internals)
-      return internals{subscribers = HM.insert key callback subscribers}
-    return $ FunctionDisposable (unsubscribe key)
+      pure internals{subscribers = HM.insert key callback subscribers}
+    pure $ FunctionDisposable (unsubscribe key)
     where
       unsubscribe :: Unique -> IO () -> IO ()
       unsubscribe key disposeCallback = do
-        modifyMVar_ mvar $ \internals@Internals{subscribers} -> return internals{subscribers=HM.delete key subscribers}
+        modifyMVar_ mvar $ \internals@Internals{subscribers} -> pure internals{subscribers=HM.delete key subscribers}
         disposeCallback
 
 type PriorityMap p v = HM.HashMap p (NonEmpty (Entry v))
@@ -65,15 +65,15 @@ insertValue :: forall p v. (Ord p, Hashable p) => ObservablePriority p v -> p ->
 insertValue (ObservablePriority mvar) priority value = modifyMVar mvar $ \internals -> do
   key <- newUnique
   newInternals <- insertValue' key internals
-  return (newInternals, FunctionDisposable (\callback -> removeValue key >> callback))
+  pure (newInternals, FunctionDisposable (\callback -> removeValue key >> callback))
   where
     insertValue' :: Unique -> Internals p v -> IO (Internals p v)
     insertValue' key internals@Internals{priorityMap, current}
       | hasToUpdateCurrent current = do
         let newInternals = internals{priorityMap=insertEntry priorityMap, current=Just (key, priority, value)}
         notifySubscribers newInternals
-        return newInternals
-      | otherwise = return $ internals{priorityMap=insertEntry priorityMap}
+        pure newInternals
+      | otherwise = pure internals{priorityMap=insertEntry priorityMap}
       where
         insertEntry :: PriorityMap p v -> PriorityMap p v
         insertEntry = HM.alter addToEntryList priority
@@ -95,7 +95,7 @@ insertValue (ObservablePriority mvar) priority value = modifyMVar mvar $ \intern
           let newInternals = internals{priorityMap = removeEntry priorityMap}
           if hasToUpdateCurrent current
             then updateCurrent newInternals
-            else return newInternals
+            else pure newInternals
 
         removeEntry :: PriorityMap p v -> PriorityMap p v
         removeEntry = HM.alter removeEntryFromList priority
@@ -107,7 +107,7 @@ insertValue (ObservablePriority mvar) priority value = modifyMVar mvar $ \intern
         updateCurrent internals@Internals{priorityMap} = do
           let newInternals = internals{current = selectCurrent $ HM.toList priorityMap}
           notifySubscribers newInternals
-          return newInternals
+          pure newInternals
         selectCurrent :: [(p, (NonEmpty (Entry v)))] -> Maybe (Unique, p, v)
         selectCurrent [] = Nothing
         selectCurrent list = Just . selectCurrentFromList . maximumBy (comparing fst) $ list
