@@ -20,7 +20,7 @@ import Network.Rpc.Connection
 import qualified Network.Socket as Socket
 import Prelude
 import GHC.Generics
-import System.Posix.Files (getFileStatus, isSocket)
+import System.Posix.Files (getFileStatus, isSocket, fileExist, removeLink)
 
 -- * Rpc api definition
 
@@ -520,9 +520,13 @@ runUnixSocketListener server socketPath = do
   where
     create :: IO Socket.Socket
     create = do
-      fileStatus <- getFileStatus socketPath
-      let socketExists = isSocket fileStatus
-      when socketExists (fail "Socket already exists")
+      fileExistsAtPath <- fileExist socketPath
+      when fileExistsAtPath $ do
+        fileStatus <- getFileStatus socketPath
+        if isSocket fileStatus
+          then removeLink socketPath
+          else fail "Cannot bind socket: Socket path is not empty"
+
       bracketOnError (Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol) Socket.close $ \sock -> do
         Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
         Socket.bind sock (Socket.SockAddrUnix socketPath)
