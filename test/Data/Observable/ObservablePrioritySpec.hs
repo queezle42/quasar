@@ -1,8 +1,8 @@
-module Qd.Observable.ObservablePrioritySpec where
+module Data.Observable.ObservablePrioritySpec where
 
-import Qd.Observable
-import Qd.Observable.ObservablePriority (ObservablePriority)
-import qualified Qd.Observable.ObservablePriority as OP
+import Data.Observable
+import Data.Observable.ObservablePriority (ObservablePriority)
+import qualified Data.Observable.ObservablePriority as OP
 
 import Control.Monad (void)
 import Data.IORef

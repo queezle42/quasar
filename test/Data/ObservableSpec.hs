@@ -1,6 +1,6 @@
-module Qd.ObservableSpec where
+module Data.ObservableSpec where
 
-import Qd.Observable
+import Data.Observable
 
 import Control.Monad (void)
 import Data.IORef

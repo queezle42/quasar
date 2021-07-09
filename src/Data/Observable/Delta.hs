@@ -1,7 +1,7 @@
-module Qd.Observable.Delta where
+module Data.Observable.Delta where
 
-import Qd.Observable
-import Qd.Prelude
+import Data.Observable
+import Prelude
 
 --import Conduit
 import qualified Data.HashMap.Strict as HM

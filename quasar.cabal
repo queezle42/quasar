@@ -61,6 +61,10 @@ common shared-executable-properties
 library
   import: shared-properties
   exposed-modules:
+    Data.Observable
+    Data.Observable.Delta
+    Data.Observable.ObservableHashMap
+    Data.Observable.ObservablePriority
   hs-source-dirs:
     src
 
@@ -72,5 +76,8 @@ test-suite quasar-test
     hspec,
   main-is: Spec.hs
   other-modules:
+    Data.ObservableSpec
+    Data.Observable.ObservableHashMapSpec
+    Data.Observable.ObservablePrioritySpec
   hs-source-dirs:
     test

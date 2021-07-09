@@ -1,6 +1,6 @@
 {-# LANGUAGE ViewPatterns #-}
 
-module Qd.Observable.ObservableHashMap (
+module Data.Observable.ObservableHashMap (
   ObservableHashMap,
   new,
   observeKey,
@@ -10,10 +10,10 @@ module Qd.Observable.ObservableHashMap (
   lookupDelete,
 ) where
 
-import Qd.Observable
-import Qd.Observable.Delta
-import Qd.Prelude hiding (lookup, lookupDelete)
-import Qd.Utils.ExtraT
+import Data.Observable
+import Data.Observable.Delta
+import Prelude hiding (lookup, lookupDelete)
+import Data.Utils.ExtraT
 
 import Control.Concurrent.MVar
 import qualified Data.HashMap.Strict as HM

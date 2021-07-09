@@ -1,11 +1,11 @@
-module Qd.Observable.ObservablePriority (
+module Data.Observable.ObservablePriority (
   ObservablePriority,
   create,
   insertValue,
 ) where
 
-import Qd.Observable
-import Qd.Prelude
+import Data.Observable
+import Prelude
 
 import Control.Concurrent.MVar
 import qualified Data.HashMap.Strict as HM

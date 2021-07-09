@@ -1,6 +1,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 
-module Qd.Observable (
+module Data.Observable (
   Observable(..),
   IsGettable(..),
   IsObservable(..),
@@ -31,7 +31,7 @@ module Qd.Observable (
   waitFor',
 ) where
 
-import Qd.Prelude
+import Prelude
 
 import Control.Concurrent.MVar
 import Control.Exception (Exception)
