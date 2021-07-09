@@ -13,13 +13,13 @@ import qualified Data.ByteString.Lazy as BSL
 import Data.Hashable (Hashable)
 import qualified Data.HashMap.Strict as HM
 import Data.Maybe (isNothing)
+import GHC.Generics
 import Language.Haskell.TH hiding (interruptible)
 import Language.Haskell.TH.Syntax
 import Network.Rpc.Multiplexer
 import Network.Rpc.Connection
 import qualified Network.Socket as Socket
 import Prelude
-import GHC.Generics
 import System.Posix.Files (getFileStatus, isSocket, fileExist, removeLink)
 
 -- * Rpc api definition
