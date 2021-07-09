@@ -1,6 +1,6 @@
 module Data.Observable.ObservableHashMapSpec where
 
-import Data
+import Data.Observable
 import Data.Observable.Delta
 import qualified Data.Observable.ObservableHashMap as OM
 

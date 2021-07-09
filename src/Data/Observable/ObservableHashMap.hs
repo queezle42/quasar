@@ -12,8 +12,8 @@ module Data.Observable.ObservableHashMap (
 
 import Data.Observable
 import Data.Observable.Delta
-import Prelude hiding (lookup, lookupDelete)
-import Data.Utils.ExtraT
+import Quasar.Prelude hiding (lookup, lookupDelete)
+import Quasar.Utils.ExtraT
 
 import Control.Concurrent.MVar
 import qualified Data.HashMap.Strict as HM

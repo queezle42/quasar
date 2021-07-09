@@ -5,7 +5,7 @@ module Data.Observable.ObservablePriority (
 ) where
 
 import Data.Observable
-import Prelude
+import Quasar.Prelude
 
 import Control.Concurrent.MVar
 import qualified Data.HashMap.Strict as HM

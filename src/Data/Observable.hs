@@ -31,8 +31,6 @@ module Data.Observable (
   waitFor',
 ) where
 
-import Prelude
-
 import Control.Concurrent.MVar
 import Control.Exception (Exception)
 import Control.Monad.Except
@@ -41,6 +39,7 @@ import Data.Binary (Binary)
 import qualified Data.HashMap.Strict as HM
 import Data.IORef
 import Data.Unique
+import Quasar.Prelude
 
 waitFor :: forall a. ((a -> IO ()) -> IO ()) -> IO a
 waitFor action = do
@@ -134,7 +133,7 @@ instance IsGettable a ((a -> IO ()) -> IO ()) where
 
 -- | Variant of `getValue` that throws exceptions instead of returning them.
 unsafeGetValue :: (Exception e, IsObservable (Either e v) o) => o -> IO v
-unsafeGetValue = either throw return <=< getValue
+unsafeGetValue = either throwIO return <=< getValue
 
 -- | A variant of `subscribe` that passes the `Disposable` to the callback.
 subscribe' :: IsObservable v o => o -> (Disposable -> ObservableMessage v -> IO ()) -> IO Disposable
@@ -290,7 +289,7 @@ instance forall o0 v0 o1 v1 r. (IsObservable v0 o0, IsObservable v1 o1) => IsObs
     where
       mergeCallback :: IORef (Maybe v0, Maybe v1) -> (MessageReason, Either v0 v1) -> IO ()
       mergeCallback currentValuesTupleRef (reason, state) = do
-        currentTuple <- atomicModifyIORef' currentValuesTupleRef (dup . updateTuple state)
+        currentTuple <- atomicModifyIORef' currentValuesTupleRef ((\x -> (x, x)) . updateTuple state)
         case currentTuple of
           (Just l, Just r) -> callback (reason, uncurry merge (l, r))
           _ -> return () -- Start only once both values have been received

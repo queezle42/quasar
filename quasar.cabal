@@ -65,6 +65,9 @@ library
     Data.Observable.Delta
     Data.Observable.ObservableHashMap
     Data.Observable.ObservablePriority
+    Quasar.Prelude
+    Quasar.PreludeExtras
+    Quasar.Utils.ExtraT
   hs-source-dirs:
     src
 

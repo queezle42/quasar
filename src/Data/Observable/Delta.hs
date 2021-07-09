@@ -1,7 +1,7 @@
 module Data.Observable.Delta where
 
 import Data.Observable
-import Prelude
+import Quasar.Prelude
 
 --import Conduit
 import qualified Data.HashMap.Strict as HM
@@ -39,7 +39,7 @@ observeHashMapDefaultImpl o callback = do
   subscribeDelta o (deltaCallback hashMapRef)
   where
     deltaCallback :: IORef (HM.HashMap k v) -> Delta k v -> IO ()
-    deltaCallback hashMapRef delta = callback =<< atomicModifyIORef' hashMapRef (dup . (applyDelta delta))
+    deltaCallback hashMapRef delta = callback =<< atomicModifyIORef' hashMapRef ((\x -> (x, x)) . (applyDelta delta))
     applyDelta :: Delta k v -> HM.HashMap k v -> HM.HashMap k v
     applyDelta (Reset state) = const state
     applyDelta (Insert key value) = HM.insert key value
@@ -59,7 +59,7 @@ instance Functor (DeltaObservable k) where
 
 data MappedDeltaObservable k b = forall a o. IsDeltaObservable k a o => MappedDeltaObservable (a -> b) o
 instance IsGettable (HM.HashMap k b) (MappedDeltaObservable k b) where
-  getValue (MappedDeltaObservable f o) = f <$$> getValue o
+  getValue (MappedDeltaObservable f o) = fmap f <$> getValue o
 instance IsObservable (HM.HashMap k b) (MappedDeltaObservable k b) where
   subscribe (MappedDeltaObservable f o) callback = subscribe o (callback . fmap (fmap f))
 instance IsDeltaObservable k b (MappedDeltaObservable k b) where
