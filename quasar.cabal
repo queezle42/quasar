@@ -1,0 +1,76 @@
+cabal-version: 3.0
+
+name:           quasar
+version:        0.1.0.0
+license:        NONE
+build-type:     Simple
+extra-source-files:
+    README.md
+
+--source-repository head
+--  type: git
+--  location: https://git.c3pb.de/jens/quasar.git
+
+common shared-properties
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    DataKinds
+    DefaultSignatures
+    DeriveAnyClass
+    DeriveGeneric
+    DerivingStrategies
+    DuplicateRecordFields
+    ExistentialQuantification
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    GADTs
+    GeneralizedNewtypeDeriving
+    InstanceSigs
+    LambdaCase
+    MultiParamTypeClasses
+    NamedFieldPuns
+    NoImplicitPrelude
+    OverloadedStrings
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TemplateHaskell
+    TupleSections
+    TypeApplications
+    TypeFamilies
+    TypeOperators
+  build-depends:
+    base >=4.7 && <5,
+    binary,
+    ghc-prim,
+    hashable,
+    microlens-platform,
+    mtl,
+    template-haskell,
+    transformers,
+    unordered-containers,
+  default-language: Haskell2010
+  ghc-options: -fwarn-unused-do-bind -fwarn-tabs -Wall -Wincomplete-uni-patterns -Wpartial-fields
+
+common shared-executable-properties
+  import: shared-properties
+  ghc-options: -fwarn-unused-do-bind -fwarn-tabs -Wall -Wincomplete-uni-patterns -Wpartial-fields -threaded -rtsopts "-with-rtsopts=-N -I0"
+
+library
+  import: shared-properties
+  exposed-modules:
+  hs-source-dirs:
+    src
+
+test-suite quasar-test
+  import: shared-executable-properties
+  type: exitcode-stdio-1.0
+  build-depends:
+    quasar,
+    hspec,
+  main-is: Spec.hs
+  other-modules:
+  hs-source-dirs:
+    test
