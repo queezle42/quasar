@@ -1,0 +1,7 @@
+build:
+  stage: build
+  image: nixpkgs/nix-flakes
+  script: nix build --log-format bar-with-logs
+  tags:
+    - docker
+    - kubernetes
