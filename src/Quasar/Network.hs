@@ -456,9 +456,6 @@ serverHandleChannelMessage protocolImpl channel resources msg = case decodeOrFai
         wrappedResponse :: ProtocolResponseWrapper p
         wrappedResponse = (resources.messageId, response)
 
-registerChannelServerHandler :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Channel -> IO ()
-registerChannelServerHandler protocolImpl channel = channelSetHandler channel (serverHandleChannelMessage @p protocolImpl channel)
-
 
 newtype Stream up down = Stream Channel
 
@@ -613,7 +610,10 @@ connectToServer server conn = void $ forkFinally (interruptible (runServerHandle
 
 -- | Internal
 runServerHandler :: forall p a. (RpcProtocol p, HasProtocolImpl p, IsConnection a) => ProtocolImpl p -> a -> IO ()
-runServerHandler protocolImpl = runMultiplexer MultiplexerSideB (registerChannelServerHandler @p protocolImpl) . toSocketConnection
+runServerHandler protocolImpl = runMultiplexer MultiplexerSideB registerChannelServerHandler . toSocketConnection
+  where
+    registerChannelServerHandler :: Channel -> IO ()
+    registerChannelServerHandler channel = channelSetHandler channel (serverHandleChannelMessage @p protocolImpl channel)
 
 
 withLocalClient :: forall p a. (RpcProtocol p, HasProtocolImpl p) => Server p -> ((Client p) -> IO a) -> IO a
