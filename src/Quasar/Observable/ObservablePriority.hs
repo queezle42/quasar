@@ -1,10 +1,10 @@
-module Data.Observable.ObservablePriority (
+module Quasar.Observable.ObservablePriority (
   ObservablePriority,
   create,
   insertValue,
 ) where
 
-import Data.Observable
+import Quasar.Observable
 import Quasar.Prelude
 
 import Control.Concurrent.MVar

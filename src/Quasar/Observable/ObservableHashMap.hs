@@ -1,6 +1,6 @@
 {-# LANGUAGE ViewPatterns #-}
 
-module Data.Observable.ObservableHashMap (
+module Quasar.Observable.ObservableHashMap (
   ObservableHashMap,
   new,
   observeKey,
@@ -10,8 +10,8 @@ module Data.Observable.ObservableHashMap (
   lookupDelete,
 ) where
 
-import Data.Observable
-import Data.Observable.Delta
+import Quasar.Observable
+import Quasar.Observable.Delta
 import Quasar.Prelude hiding (lookup, lookupDelete)
 import Quasar.Utils.ExtraT
 

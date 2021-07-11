@@ -1,6 +1,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 
-module Data.Observable (
+module Quasar.Observable (
   Observable(..),
   IsGettable(..),
   IsObservable(..),

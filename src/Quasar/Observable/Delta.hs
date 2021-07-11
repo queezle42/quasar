@@ -1,6 +1,6 @@
-module Data.Observable.Delta where
+module Quasar.Observable.Delta where
 
-import Data.Observable
+import Quasar.Observable
 import Quasar.Prelude
 
 --import Conduit

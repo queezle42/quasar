@@ -1,8 +1,8 @@
-module Data.Observable.ObservableHashMapSpec where
+module Quasar.Observable.ObservableHashMapSpec where
 
-import Data.Observable
-import Data.Observable.Delta
-import qualified Data.Observable.ObservableHashMap as OM
+import Quasar.Observable
+import Quasar.Observable.Delta
+import qualified Quasar.Observable.ObservableHashMap as OM
 
 import Control.Monad (void)
 import qualified Data.HashMap.Strict as HM
