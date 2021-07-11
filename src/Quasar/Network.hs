@@ -1,4 +1,4 @@
-module Network.Rpc where
+module Quasar.Network where
 
 import Control.Applicative (liftA2)
 import Control.Concurrent (forkFinally)
@@ -16,8 +16,8 @@ import Data.Maybe (isNothing)
 import GHC.Generics
 import Language.Haskell.TH hiding (interruptible)
 import Language.Haskell.TH.Syntax
-import Network.Rpc.Multiplexer
-import Network.Rpc.Connection
+import Quasar.Network.Multiplexer
+import Quasar.Network.Connection
 import qualified Network.Socket as Socket
 import Prelude
 import System.Posix.Files (getFileStatus, isSocket, fileExist, removeLink)

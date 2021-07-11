@@ -8,12 +8,12 @@
 -- Print generated rpc code during build
 {-# OPTIONS_GHC -ddump-splices #-}
 
-module Network.RpcSpec where
+module Quasar.NetworkSpec where
 
 import Control.Concurrent.MVar
 import Control.Monad.IO.Class (liftIO)
 import Prelude
-import Network.Rpc
+import Quasar.Network
 import Test.Hspec
 import Test.QuickCheck
 import Test.QuickCheck.Monadic

@@ -1,4 +1,4 @@
-module Network.Rpc.MultiplexerSpec where
+module Quasar.Network.MultiplexerSpec where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (concurrently_)
@@ -7,8 +7,8 @@ import Control.Exception (bracket, mask_)
 import Control.Monad (forever, void, unless)
 import qualified Data.ByteString.Lazy as BSL
 import Prelude
-import Network.Rpc.Multiplexer
-import Network.Rpc.Connection
+import Quasar.Network.Multiplexer
+import Quasar.Network.Connection
 import Network.Socket
 import Test.Hspec
 

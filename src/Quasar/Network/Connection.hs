@@ -1,4 +1,4 @@
-module Network.Rpc.Connection where
+module Quasar.Network.Connection where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (Async, async, cancel, link, waitCatch, withAsync)

@@ -1,4 +1,4 @@
-module Network.Rpc.Multiplexer (
+module Quasar.Network.Multiplexer (
   ChannelId,
   MessageId,
   MessageLength,
@@ -38,7 +38,7 @@ import qualified Data.ByteString.Lazy as BSL
 import qualified Data.HashMap.Strict as HM
 import Data.Tuple (swap)
 import Data.Word
-import Network.Rpc.Connection
+import Quasar.Network.Connection
 import Prelude
 import GHC.Generics
 import System.IO (hPutStrLn, stderr)

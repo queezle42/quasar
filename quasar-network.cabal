@@ -79,10 +79,10 @@ common shared-executable-properties
 library
   import: shared-properties
   exposed-modules:
-    Network.Rpc
-    Network.Rpc.Connection
-    Network.Rpc.Multiplexer
-    Network.Rpc.SocketLocation
+    Quasar.Network
+    Quasar.Network.Connection
+    Quasar.Network.Multiplexer
+    Quasar.Network.SocketLocation
   hs-source-dirs:
     src
 
@@ -95,7 +95,7 @@ test-suite quasar-network-test
     QuickCheck
   main-is: Spec.hs
   other-modules:
-    Network.RpcSpec
-    Network.Rpc.MultiplexerSpec
+    Quasar.NetworkSpec
+    Quasar.Network.MultiplexerSpec
   hs-source-dirs:
     test

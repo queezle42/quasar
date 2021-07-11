@@ -1,4 +1,4 @@
-module Network.Rpc.SocketLocation where
+module Quasar.Network.SocketLocation where
 
 import Control.Exception (handle)
 import Prelude
