@@ -5,7 +5,7 @@
     nix develop -c \
       ghcid \
         --warnings \
-        "--command=cabal repl lib:qrpc" \
+        "--command=cabal repl lib:quasar-network" \
         "--test=:! \
           cabal test --test-show-details=direct --ghc-option -fdiagnostics-color=always && \
           cabal build --ghc-option -fdiagnostics-color=always && \

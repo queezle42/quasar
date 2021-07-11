@@ -1,1 +1,1 @@
-# qrpc
+# quasar-network
