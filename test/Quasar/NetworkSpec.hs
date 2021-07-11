@@ -14,6 +14,8 @@ import Control.Concurrent.MVar
 import Control.Monad.IO.Class (liftIO)
 import Prelude
 import Quasar.Network
+import Quasar.Network.Runtime (withStandaloneClient)
+import Quasar.Network.TH (makeRpc)
 import Test.Hspec
 import Test.QuickCheck
 import Test.QuickCheck.Monadic

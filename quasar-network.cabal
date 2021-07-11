@@ -82,7 +82,9 @@ library
     Quasar.Network
     Quasar.Network.Connection
     Quasar.Network.Multiplexer
+    Quasar.Network.Runtime
     Quasar.Network.SocketLocation
+    Quasar.Network.TH
   hs-source-dirs:
     src
 

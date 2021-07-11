@@ -1,4 +1,8 @@
-module Quasar.Network.Connection where
+module Quasar.Network.Connection (
+  Connection(..),
+  IsConnection(..),
+  connectTCP,
+) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (Async, async, cancel, link, waitCatch, withAsync)
