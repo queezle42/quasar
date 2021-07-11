@@ -1,4 +1,57 @@
-module Quasar.Network where
+module Quasar.Network (
+  -- * Rpc api definition
+  RpcApi,
+  RpcFunction,
+  RpcArgument,
+  RpcResult,
+  RpcStream,
+  rpcApi,
+  rpcFunction,
+  addArgument,
+  addResult,
+  addStream,
+  setFixedHandler,
+  makeRpc,
+  --makeProtocol,
+  --makeClient,
+  --makeServer,
+  --RpcProtocol(ProtocolRequest, ProtocolResponse),
+  --HasProtocolImpl
+  Client,
+  clientSend,
+  clientClose,
+  clientReportProtocolError,
+
+  -- * Runtime
+  Stream,
+  streamSend,
+  streamSetHandler,
+  streamClose,
+
+  -- ** Client
+  withClientTCP,
+  --newClientTCP,
+  withClientUnix,
+  --newClientUnix,
+  withClient,
+  --newClient,
+
+  -- ** Server
+  Server,
+  Listener,
+  runServer,
+  withServer,
+  withLocalClient,
+  --newLocalClient,
+  listenTCP,
+  listenUnix,
+  listenOnBoundSocket,
+
+  -- ** Test implementation
+  --TODO remove here
+  withStandaloneClient,
+
+) where
 
 import Control.Applicative (liftA2)
 import Control.Concurrent (forkFinally)
