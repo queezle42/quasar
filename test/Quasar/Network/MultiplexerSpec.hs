@@ -100,7 +100,7 @@ spec = describe "runMultiplexerProtocol" $ parallel $ do
 
 
 withEchoServer :: (Channel -> IO a) -> IO a
-withEchoServer fn = bracket setup close (\(channel, _) -> fn channel)
+withEchoServer fn = bracket setup closePair (\(channel, _) -> fn channel)
   where
     setup :: IO (Channel, Channel)
     setup = do
@@ -109,8 +109,8 @@ withEchoServer fn = bracket setup close (\(channel, _) -> fn channel)
       echoChannel <- newMultiplexer MultiplexerSideB echoSocket
       configureEchoHandler echoChannel
       pure (mainChannel, echoChannel)
-    close :: (Channel, Channel) -> IO ()
-    close (x, y) = channelClose x >> channelClose y
+    closePair :: (Channel, Channel) -> IO ()
+    closePair (x, y) = channelClose x >> channelClose y
     configureEchoHandler :: Channel -> IO ()
     configureEchoHandler channel = channelSetHandler channel (echoHandler channel)
     echoHandler :: Channel -> ReceivedMessageResources -> BSL.ByteString -> IO ()

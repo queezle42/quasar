@@ -16,8 +16,6 @@ module Quasar.Network.TH (
   HasProtocolImpl
 ) where
 
-import Control.Applicative (liftA2)
-import Control.Monad (unless)
 import Control.Monad.State (State, execState)
 import qualified Control.Monad.State as State
 import Data.Binary (Binary)
@@ -25,9 +23,9 @@ import Data.Maybe (isNothing)
 import GHC.Generics
 import Language.Haskell.TH hiding (interruptible)
 import Language.Haskell.TH.Syntax
-import Prelude
 import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
+import Quasar.Prelude
 
 data RpcApi = RpcApi {
   name :: String,

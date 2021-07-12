@@ -24,9 +24,7 @@ module Quasar.Network.Multiplexer (
 
 
 import Control.Concurrent.Async (AsyncCancelled(..), async, link, race_, wait, waitAnyCancel, withAsync, withAsyncWithUnmask)
-import Control.Exception (Exception(..), Handler(..), MaskingState(Unmasked), SomeException(..), catch, catches, handle, interruptible, throwIO, getMaskingState, mask_)
-import Control.Monad (when, unless, void)
-import Control.Monad.IO.Class (liftIO)
+import Control.Exception (Exception(..), Handler(..), MaskingState(Unmasked), SomeException(..), catch, catches, handle, interruptible, getMaskingState, mask_)
 import Control.Monad.State (StateT, execStateT, runStateT, lift)
 import qualified Control.Monad.State as State
 import Control.Concurrent.MVar
@@ -39,8 +37,7 @@ import qualified Data.HashMap.Strict as HM
 import Data.Tuple (swap)
 import Data.Word
 import Quasar.Network.Connection
-import Prelude
-import GHC.Generics
+import Quasar.Prelude
 import System.IO (hPutStrLn, stderr)
 
 -- NOTE this module got more complicated than expected and should be refactored to encode the core protocol interactions in pure code, with an IO wrapper that handles usage, callbacks and sending/receiving.

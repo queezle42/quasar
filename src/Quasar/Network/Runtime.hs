@@ -42,17 +42,14 @@ module Quasar.Network.Runtime (
 import Control.Concurrent (forkFinally)
 import Control.Concurrent.Async (cancel, link, withAsync, mapConcurrently_)
 import Control.Exception (SomeException, bracket, bracketOnError, bracketOnError, interruptible, mask_)
-import Control.Monad (when, unless, forever, void)
-import qualified Control.Monad.State as State
 import Control.Concurrent.MVar
 import Data.Binary (Binary, encode, decodeOrFail)
 import qualified Data.ByteString.Lazy as BSL
-import Data.Hashable (Hashable)
 import qualified Data.HashMap.Strict as HM
 import qualified Network.Socket as Socket
-import Prelude
 import Quasar.Network.Connection
 import Quasar.Network.Multiplexer
+import Quasar.Prelude
 import System.Posix.Files (getFileStatus, isSocket, fileExist, removeLink)
 
 
@@ -305,14 +302,3 @@ newLocalClient server = do
 
 withStandaloneClient :: forall p a. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> (Client p -> IO a) -> IO a
 withStandaloneClient impl runClientHook = withServer impl [] $ \server -> withLocalClient server runClientHook
-
-
-
--- * Helper functions
-
--- | Lookup and delete a value from a HashMap in one operation
-lookupDelete :: forall k v. (Eq k, Hashable k) => k -> HM.HashMap k v -> (HM.HashMap k v, Maybe v)
-lookupDelete key m = State.runState fn Nothing
-  where
-    fn :: State.State (Maybe v) (HM.HashMap k v)
-    fn = HM.alterF (\c -> State.put c >> pure Nothing) key m

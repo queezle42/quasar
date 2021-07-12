@@ -1,7 +1,7 @@
 module Quasar.Network.SocketLocation where
 
 import Control.Exception (handle)
-import Prelude
+import Quasar.Prelude
 import System.Environment (getEnv)
 
 systemSocketPath :: String -> IO FilePath

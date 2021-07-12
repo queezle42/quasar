@@ -7,15 +7,13 @@ module Quasar.Network.Connection (
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (Async, async, cancel, link, waitCatch, withAsync)
 import Control.Concurrent.MVar
-import Control.Exception (Exception(..), SomeException, bracketOnError, catch, interruptible, finally, throwIO, bracketOnError, onException)
-import Control.Monad ((>=>), unless, forM_)
+import Control.Exception (Exception(..), SomeException, bracketOnError, catch, interruptible, finally, bracketOnError, onException)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
-import Data.List (intercalate)
 import qualified Network.Socket as Socket
 import qualified Network.Socket.ByteString as Socket
 import qualified Network.Socket.ByteString.Lazy as SocketL
-import Prelude
+import Quasar.Prelude
 
 -- | Abstraction over a bidirectional stream connection (e.g. a socket), to be able to switch to different communication channels (e.g. stdin/stdout or a dummy implementation for unit tests).
 data Connection = Connection {
