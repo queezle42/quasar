@@ -13,9 +13,32 @@
         "type": "indirect"
       }
     },
+    "quasar": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "host": "git.c3pb.de",
+        "lastModified": 1626105841,
+        "narHash": "sha256-od9bq8zu30xbbPckIeLW4d1cEOI1EQllOn3qW9qLr1Y=",
+        "owner": "jens",
+        "repo": "quasar",
+        "rev": "fc85ec26151845dc9e972a7b91bd3828b0132baf",
+        "type": "gitlab"
+      },
+      "original": {
+        "host": "git.c3pb.de",
+        "owner": "jens",
+        "repo": "quasar",
+        "type": "gitlab"
+      }
+    },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "quasar": "quasar"
       }
     }
   },

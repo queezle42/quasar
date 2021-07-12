@@ -1,5 +1,12 @@
 {
-  outputs = { self, nixpkgs }:
+  inputs = {
+    quasar = {
+      url = gitlab:jens/quasar?host=git.c3pb.de;
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+
+  outputs = { self, nixpkgs, quasar }:
   let
     lib = nixpkgs.lib;
     systems = lib.platforms.unix;
@@ -7,7 +14,7 @@
   in {
     packages = forAllSystems (system: {
       quasar-network = import ./. {
-        pkgs = nixpkgs.legacyPackages.${system};
+        pkgs = import nixpkgs { inherit system; overlays = [ quasar.overlay ]; };
       };
     });
 

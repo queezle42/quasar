@@ -63,6 +63,7 @@ common shared-properties
     hashable,
     mtl,
     network,
+    quasar,
     template-haskell,
     unix,
     unordered-containers,
