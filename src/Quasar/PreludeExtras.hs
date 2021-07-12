@@ -8,6 +8,7 @@ import "base" Prelude
 
 import Quasar.Utils.ExtraT
 
+import Control.Applicative (liftA2)
 import Control.Monad.State.Lazy as State
 import qualified Data.Char as Char
 import qualified Data.Hashable as Hashable
@@ -79,6 +80,10 @@ lookupInsert key value hm = runExtra $ HM.alterF fn key hm
 infixl 4 <<$>>
 (<<$>>) :: (Functor f, Functor g) => (a -> b) -> f (g a) -> f (g b)
 (<<$>>) = fmap . fmap
+
+infixr 6 <<>>
+(<<>>) :: (Applicative f, Semigroup a) => f a -> f a -> f a
+(<<>>) = liftA2 (<>)
 
 dup :: a -> (a, a)
 dup x = (x, x)
