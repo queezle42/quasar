@@ -7,7 +7,9 @@
         --warnings \
         "--command=cabal repl lib:quasar-network" \
         "--test=:! \
+          zsh -c 'print -P %F{yellow}Cleaning repository to ensure template haskell is run%f' && \
+          cabal clean && \
           cabal test --test-show-details=direct --ghc-option -fdiagnostics-color=always && \
           cabal build --ghc-option -fdiagnostics-color=always && \
-          zsh -c 'print -P %F{green}build and tests passed%f' \
+          zsh -c 'print -P %F{green}Build and tests passed%f' \
         "
