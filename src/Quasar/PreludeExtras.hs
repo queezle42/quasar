@@ -1,14 +1,12 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE PackageImports #-}
-
 module Quasar.PreludeExtras where
 
 -- Use prelude from `base` to prevent module import cycle.
-import "base" Prelude
+import Prelude
 
 import Quasar.Utils.ExtraT
 
 import Control.Applicative (liftA2)
+import Control.Concurrent (threadDelay)
 import Control.Monad.State.Lazy as State
 import qualified Data.Char as Char
 import qualified Data.Hashable as Hashable
@@ -16,7 +14,10 @@ import qualified Data.HashMap.Strict as HM
 import qualified Data.HashSet as HS
 import qualified Data.List as List
 import qualified Data.Maybe as Maybe
+import GHC.Records.Compat (HasField, getField, setField)
 import qualified GHC.Stack.Types
+import GHC.TypeLits (Symbol)
+import Lens.Micro.Platform (Lens', lens)
 
 impossibleCodePath :: GHC.Stack.Types.HasCallStack => a
 impossibleCodePath = error "Code path marked as impossible was reached"
@@ -51,6 +52,7 @@ leftToMaybe :: Either a b -> Maybe a
 leftToMaybe (Left x) = Just x
 leftToMaybe (Right _) = Nothing
 
+-- | Returns all duplicate elements in a list. The order of the produced list is unspecified.
 duplicates :: forall a. (Eq a, Hashable.Hashable a) => [a] -> [a]
 duplicates = HS.toList . duplicates' HS.empty
   where
@@ -87,3 +89,19 @@ infixr 6 <<>>
 
 dup :: a -> (a, a)
 dup x = (x, x)
+
+-- | Enumerate all values of an 'Enum'
+enumerate :: (Enum a, Bounded a) => [a]
+enumerate = [minBound..maxBound]
+
+-- | Splits a list using a predicate. The separator is removed. The opposite of `intercalate`.
+splitOn :: (a -> Bool) -> [a] -> [[a]]
+splitOn p s = case break p s of
+  (w, []) -> [w]
+  (w, _:r) -> w : splitOn p r
+
+fieldLens :: forall (x :: Symbol) r a. HasField x r a => Lens' r a
+fieldLens = lens (getField @x) (setField @x)
+
+sleepForever :: IO a
+sleepForever = forever $ threadDelay 1000000000000

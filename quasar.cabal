@@ -15,6 +15,7 @@ common shared-properties
   default-extensions:
     AllowAmbiguousTypes
     BangPatterns
+    ConstraintKinds
     DataKinds
     DefaultSignatures
     DeriveAnyClass
@@ -33,6 +34,7 @@ common shared-properties
     NamedFieldPuns
     NoImplicitPrelude
     OverloadedStrings
+    PolyKinds
     RankNTypes
     ScopedTypeVariables
     StandaloneDeriving
@@ -48,6 +50,7 @@ common shared-properties
     hashable,
     microlens-platform,
     mtl,
+    record-hasfield,
     template-haskell,
     transformers,
     unordered-containers,

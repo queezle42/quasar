@@ -1,13 +1,12 @@
-{-# LANGUAGE PackageImports #-}
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE PolyKinds #-}
-
 module Quasar.Prelude
-  ( module BasePrelude,
+  ( module Prelude,
     module Quasar.PreludeExtras,
     (>=>),
     (<=<),
     Control.Applicative.liftA2,
+    module Control.Concurrent.MVar,
+    Control.Exception.Exception,
+    Control.Exception.SomeException,
     Control.Exception.throwIO,
     Control.Monad.forever,
     Control.Monad.unless,
@@ -16,15 +15,25 @@ module Quasar.Prelude
     Control.Monad.forM,
     Control.Monad.forM_,
     Control.Monad.join,
+    Data.Unique.Unique,
+    Data.Unique.newUnique,
     Data.Void.Void,
     Hashable.Hashable,
     GHC.Generics.Generic,
     MonadIO,
     liftIO,
-    Maybe.catMaybes,
-    Maybe.fromMaybe,
-    Maybe.listToMaybe,
-    Maybe.maybeToList,
+    Data.Maybe.catMaybes,
+    Data.Maybe.fromMaybe,
+    Data.Maybe.listToMaybe,
+    Data.Maybe.maybeToList,
+    Data.Int.Int8,
+    Data.Int.Int16,
+    Data.Int.Int32,
+    Data.Int.Int64,
+    Data.Word.Word8,
+    Data.Word.Word16,
+    Data.Word.Word32,
+    Data.Word.Word64,
     error,
     errorWithoutStackTrace,
     head,
@@ -43,26 +52,34 @@ module Quasar.Prelude
   )
 where
 
-import "base" Prelude as BasePrelude hiding
+import Prelude hiding
   ( error,
     errorWithoutStackTrace,
     head,
     last,
     read,
+    -- Due to the accepted "monad of no return" proposal, return becomes an
+    -- alias for pure. Return can be a pitfall for newcomers, so we decided to
+    -- use pure instead.
+    return,
     undefined,
   )
-import qualified "base" Prelude as P
+import qualified Prelude as P
 
 import Quasar.PreludeExtras
 
 import qualified Control.Applicative
+import Control.Concurrent.MVar
 import qualified Control.Exception
 import qualified Control.Monad
-import qualified Data.Void
 import Control.Monad ((>=>), (<=<))
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import qualified Data.Hashable as Hashable
-import qualified Data.Maybe as Maybe
+import qualified Data.Int
+import qualified Data.Maybe
+import qualified Data.Unique
+import qualified Data.Void
+import qualified Data.Word
 import qualified Debug.Trace as Trace
 import qualified GHC.Generics
 import qualified GHC.Stack.Types
