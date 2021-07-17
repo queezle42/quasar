@@ -1,23 +1,25 @@
+-- This module only contains helper functions that are added to the prelude
+{-# OPTIONS_GHC -Wno-missing-export-lists #-}
+
 module Quasar.PreludeExtras where
 
 -- Use prelude from `base` to prevent module import cycle.
 import Prelude
 
-import Quasar.Utils.ExtraT
-
 import Control.Applicative (liftA2)
 import Control.Concurrent (threadDelay)
 import Control.Monad.State.Lazy as State
-import qualified Data.Char as Char
-import qualified Data.Hashable as Hashable
-import qualified Data.HashMap.Strict as HM
-import qualified Data.HashSet as HS
-import qualified Data.List as List
-import qualified Data.Maybe as Maybe
+import Data.Char qualified as Char
+import Data.HashMap.Strict qualified as HM
+import Data.HashSet qualified as HS
+import Data.Hashable qualified as Hashable
+import Data.List qualified as List
+import Data.Maybe qualified as Maybe
 import GHC.Records.Compat (HasField, getField, setField)
-import qualified GHC.Stack.Types
+import GHC.Stack.Types qualified
 import GHC.TypeLits (Symbol)
 import Lens.Micro.Platform (Lens', lens)
+import Quasar.Utils.ExtraT
 
 impossibleCodePath :: GHC.Stack.Types.HasCallStack => a
 impossibleCodePath = error "Code path marked as impossible was reached"

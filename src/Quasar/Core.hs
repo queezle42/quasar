@@ -17,7 +17,7 @@ module Quasar.Core (
   dummyDisposable,
 ) where
 
-import qualified Data.HashMap.Strict as HM
+import Data.HashMap.Strict qualified as HM
 import Quasar.Prelude
 
 -- * Async

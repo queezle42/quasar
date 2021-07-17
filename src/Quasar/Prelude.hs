@@ -64,26 +64,25 @@ import Prelude hiding
     return,
     undefined,
   )
-import qualified Prelude as P
+import Prelude qualified as P
 
-import Quasar.PreludeExtras
-
-import qualified Control.Applicative
+import Control.Applicative qualified
 import Control.Concurrent.MVar
-import qualified Control.Exception
-import qualified Control.Monad
+import Control.Exception qualified
 import Control.Monad ((>=>), (<=<))
+import Control.Monad qualified
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import qualified Data.Hashable as Hashable
-import qualified Data.Int
-import qualified Data.Maybe
-import qualified Data.Unique
-import qualified Data.Void
-import qualified Data.Word
-import qualified Debug.Trace as Trace
-import qualified GHC.Generics
-import qualified GHC.Stack.Types
-import qualified GHC.Types
+import Data.Hashable qualified as Hashable
+import Data.Int qualified
+import Data.Maybe qualified
+import Data.Unique qualified
+import Data.Void qualified
+import Data.Word qualified
+import Debug.Trace qualified as Trace
+import GHC.Generics qualified
+import GHC.Stack.Types qualified
+import GHC.Types qualified
+import Quasar.PreludeExtras
 
 {-# DEPRECATED head "Partial Function." #-}
 head :: [a] -> a

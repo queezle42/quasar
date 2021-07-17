@@ -1,4 +1,4 @@
-module Quasar.ObservableSpec where
+module Quasar.ObservableSpec (spec) where
 
 import Quasar.Observable
 

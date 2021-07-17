@@ -4,15 +4,14 @@ module Quasar.Observable.ObservablePriority (
   insertValue,
 ) where
 
+import Data.HashMap.Strict qualified as HM
+import Data.List (maximumBy)
+import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
+import Data.List.NonEmpty qualified as NonEmpty
+import Data.Ord (comparing)
 import Quasar.Core
 import Quasar.Observable
 import Quasar.Prelude
-
-import qualified Data.HashMap.Strict as HM
-import Data.List (maximumBy)
-import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
-import qualified Data.List.NonEmpty as NonEmpty
-import Data.Ord (comparing)
 
 type Entry v = (Unique, v)
 

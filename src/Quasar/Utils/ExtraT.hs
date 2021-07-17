@@ -1,4 +1,7 @@
-module Quasar.Utils.ExtraT where
+module Quasar.Utils.ExtraT (
+  ExtraT(..),
+  Extra(..),
+) where
 
 -- Use prelude from `base` to prevent module import cycle. This allows using ExtraT in PreludeExtras.
 import Prelude

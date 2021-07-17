@@ -32,7 +32,7 @@ import Control.Concurrent.MVar
 import Control.Monad.Except
 import Control.Monad.Trans.Maybe
 import Data.Binary (Binary)
-import qualified Data.HashMap.Strict as HM
+import Data.HashMap.Strict qualified as HM
 import Data.IORef
 import Data.Unique
 import Quasar.Core
@@ -40,7 +40,7 @@ import Quasar.Prelude
 
 
 data MessageReason = Current | Update
-  deriving (Eq, Show, Generic)
+  deriving stock (Eq, Show, Generic)
 instance Binary MessageReason
 
 type ObservableMessage v = (MessageReason, v)

@@ -10,16 +10,15 @@ module Quasar.Observable.ObservableHashMap (
   lookupDelete,
 ) where
 
+import Data.HashMap.Strict qualified as HM
+import Data.Maybe (isJust)
+import Language.Haskell.TH.Syntax (mkName, nameBase)
+import Lens.Micro.Platform
 import Quasar.Core
 import Quasar.Observable
 import Quasar.Observable.Delta
 import Quasar.Prelude hiding (lookup, lookupDelete)
 import Quasar.Utils.ExtraT
-
-import qualified Data.HashMap.Strict as HM
-import Data.Maybe (isJust)
-import Language.Haskell.TH.Syntax (mkName, nameBase)
-import Lens.Micro.Platform
 
 
 newtype ObservableHashMap k v = ObservableHashMap (MVar (Handle k v))
