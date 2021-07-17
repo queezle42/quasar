@@ -64,6 +64,7 @@ common shared-executable-properties
 library
   import: shared-properties
   exposed-modules:
+    Quasar.Core
     Quasar.Observable
     Quasar.Observable.Delta
     Quasar.Observable.ObservableHashMap

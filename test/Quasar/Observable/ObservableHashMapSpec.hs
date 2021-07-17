@@ -1,5 +1,6 @@
 module Quasar.Observable.ObservableHashMapSpec where
 
+import Quasar.Core
 import Quasar.Observable
 import Quasar.Observable.Delta
 import qualified Quasar.Observable.ObservableHashMap as OM
@@ -12,15 +13,15 @@ import Test.Hspec
 
 spec :: Spec
 spec = parallel $ do
-  describe "getValue" $ do
+  describe "getBlocking" $ do
     it "returns the contents of the map" $ do
       om <- OM.new :: IO (OM.ObservableHashMap String String)
-      getValue om `shouldReturn` HM.empty
+      getBlocking om `shouldReturn` HM.empty
       -- Evaluate unit for coverage
       () <- OM.insert "key" "value" om
-      getValue om `shouldReturn` HM.singleton "key" "value"
+      getBlocking om `shouldReturn` HM.singleton "key" "value"
       OM.insert "key2" "value2" om
-      getValue om `shouldReturn` HM.fromList [("key", "value"), ("key2", "value2")]
+      getBlocking om `shouldReturn` HM.fromList [("key", "value"), ("key2", "value2")]
 
   describe "subscribe" $ do
     it "calls the callback with the contents of the map" $ do
@@ -36,7 +37,7 @@ spec = parallel $ do
       OM.insert "key2" "value2" om
       lastCallbackShouldBe (Update, HM.fromList [("key", "value"), ("key2", "value2")])
 
-      dispose subscriptionHandle
+      disposeBlocking subscriptionHandle
       lastCallbackShouldBe (Update, HM.fromList [("key", "value"), ("key2", "value2")])
 
       OM.insert "key3" "value3" om
@@ -58,7 +59,7 @@ spec = parallel $ do
       OM.insert "key2" "value2" om
       lastDeltaShouldBe $ Insert "key2" "value2"
 
-      dispose subscriptionHandle
+      disposeBlocking subscriptionHandle
       lastDeltaShouldBe $ Insert "key2" "value2"
 
       OM.insert "key3" "value3" om
@@ -73,7 +74,7 @@ spec = parallel $ do
       OM.lookupDelete "key" om `shouldReturn` Just "changed"
       lastDeltaShouldBe $ Delete "key"
 
-      getValue om `shouldReturn` HM.singleton "key3" "value3"
+      getBlocking om `shouldReturn` HM.singleton "key3" "value3"
 
   describe "observeKey" $ do
     it "calls key callbacks with the correct value" $ do
@@ -112,9 +113,8 @@ spec = parallel $ do
       v1ShouldBe $ (Update, Nothing)
       v2ShouldBe $ (Update, Just "changed")
 
-      getValue om `shouldReturn` HM.singleton "key2" "changed"
-      -- Evaluate unit for coverage
-      () <- dispose handle2
+      getBlocking om `shouldReturn` HM.singleton "key2" "changed"
+      disposeBlocking handle2
 
       OM.lookupDelete "key2" om `shouldReturn` (Just "changed")
       v2ShouldBe $ (Update, Just "changed")
@@ -124,4 +124,4 @@ spec = parallel $ do
       OM.lookupDelete "key1" om `shouldReturn` Nothing
       v1ShouldBe $ (Update, Nothing)
 
-      getValue om `shouldReturn` HM.empty
+      getBlocking om `shouldReturn` HM.empty

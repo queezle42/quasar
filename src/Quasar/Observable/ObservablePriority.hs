@@ -4,24 +4,23 @@ module Quasar.Observable.ObservablePriority (
   insertValue,
 ) where
 
+import Quasar.Core
 import Quasar.Observable
 import Quasar.Prelude
 
-import Control.Concurrent.MVar
 import qualified Data.HashMap.Strict as HM
 import Data.List (maximumBy)
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import Data.Ord (comparing)
-import Data.Unique
 
 type Entry v = (Unique, v)
 
 -- | Mutable data structure that stores values of type "v" with an assiciated priority "p". The `IsObservable` instance can be used to get or observe the value with the highest priority.
-data ObservablePriority p v = ObservablePriority (MVar (Internals p v))
+newtype ObservablePriority p v = ObservablePriority (MVar (Internals p v))
 
 instance IsGettable (Maybe v) (ObservablePriority p v) where
-  getValue (ObservablePriority mvar) = getValueFromInternals <$> readMVar mvar
+  getValue (ObservablePriority mvar) = liftIO $ getValueFromInternals <$> readMVar mvar
     where
       getValueFromInternals :: Internals p v -> Maybe v
       getValueFromInternals Internals{current=Nothing} = Nothing
@@ -33,12 +32,10 @@ instance IsObservable (Maybe v) (ObservablePriority p v) where
       -- Call listener
       callback (Current, currentValue internals)
       pure internals{subscribers = HM.insert key callback subscribers}
-    pure $ FunctionDisposable (unsubscribe key)
+    pure $ synchronousDisposable (unsubscribe key)
     where
-      unsubscribe :: Unique -> IO () -> IO ()
-      unsubscribe key disposeCallback = do
-        modifyMVar_ mvar $ \internals@Internals{subscribers} -> pure internals{subscribers=HM.delete key subscribers}
-        disposeCallback
+      unsubscribe :: Unique -> IO ()
+      unsubscribe key = modifyMVar_ mvar $ \internals@Internals{subscribers} -> pure internals{subscribers=HM.delete key subscribers}
 
 type PriorityMap p v = HM.HashMap p (NonEmpty (Entry v))
 
@@ -65,7 +62,7 @@ insertValue :: forall p v. (Ord p, Hashable p) => ObservablePriority p v -> p ->
 insertValue (ObservablePriority mvar) priority value = modifyMVar mvar $ \internals -> do
   key <- newUnique
   newInternals <- insertValue' key internals
-  pure (newInternals, FunctionDisposable (\callback -> removeValue key >> callback))
+  pure (newInternals, synchronousDisposable (removeValue key))
   where
     insertValue' :: Unique -> Internals p v -> IO (Internals p v)
     insertValue' key internals@Internals{priorityMap, current}

@@ -1,11 +1,13 @@
 module Quasar.Observable.Delta where
 
+import Quasar.Core
 import Quasar.Observable
 import Quasar.Prelude
 
 --import Conduit
 import qualified Data.HashMap.Strict as HM
-import Data.Binary (Binary(..))
+import Data.Binary (Binary)
+import qualified Data.Binary as B
 import Data.IORef
 import Data.Word (Word8)
 
@@ -17,21 +19,18 @@ instance Functor (Delta k) where
   fmap _ (Delete key) = Delete key
 instance (Eq k, Hashable k, Binary k, Binary v) => Binary (Delta k v) where
   get = do
-    (tag :: Word8) <- get
+    (tag :: Word8) <- B.get
     case tag of
-      0 -> Reset . HM.fromList <$> get
-      1 -> Insert <$> get <*> get
-      2 -> Delete <$> get
+      0 -> Reset . HM.fromList <$> B.get
+      1 -> Insert <$> B.get <*> B.get
+      2 -> Delete <$> B.get
       _ -> fail "Invalid tag"
-  put (Reset hashmap) = put (0 :: Word8) >> put (HM.toList hashmap)
-  put (Insert key value) = put (1 :: Word8) >> put key >> put value
-  put (Delete key) = put (2 :: Word8) >> put key
+  put (Reset hashmap) = B.put (0 :: Word8) >> B.put (HM.toList hashmap)
+  put (Insert key value) = B.put (1 :: Word8) >> B.put key >> B.put value
+  put (Delete key) = B.put (2 :: Word8) >> B.put key
 
 class IsObservable (HM.HashMap k v) o => IsDeltaObservable k v o | o -> k, o -> v where
   subscribeDelta :: o -> (Delta k v -> IO ()) -> IO Disposable
-  --subscribeDeltaC :: o -> ConduitT () (Delta k v) IO ()
-  --subscribeDeltaC = undefined
-  --{-# MINIMAL subscribeDelta | subscribeDeltaC #-}
 
 observeHashMapDefaultImpl :: forall k v o. (Eq k, Hashable k) => IsDeltaObservable k v o => o -> (HM.HashMap k v -> IO ()) -> IO Disposable
 observeHashMapDefaultImpl o callback = do
@@ -39,7 +38,7 @@ observeHashMapDefaultImpl o callback = do
   subscribeDelta o (deltaCallback hashMapRef)
   where
     deltaCallback :: IORef (HM.HashMap k v) -> Delta k v -> IO ()
-    deltaCallback hashMapRef delta = callback =<< atomicModifyIORef' hashMapRef ((\x -> (x, x)) . (applyDelta delta))
+    deltaCallback hashMapRef delta = callback =<< atomicModifyIORef' hashMapRef ((\x -> (x, x)) . applyDelta delta)
     applyDelta :: Delta k v -> HM.HashMap k v -> HM.HashMap k v
     applyDelta (Reset state) = const state
     applyDelta (Insert key value) = HM.insert key value
@@ -59,7 +58,7 @@ instance Functor (DeltaObservable k) where
 
 data MappedDeltaObservable k b = forall a o. IsDeltaObservable k a o => MappedDeltaObservable (a -> b) o
 instance IsGettable (HM.HashMap k b) (MappedDeltaObservable k b) where
-  getValue (MappedDeltaObservable f o) = fmap f <$> getValue o
+  getValue (MappedDeltaObservable f o) = f <<$>> getValue o
 instance IsObservable (HM.HashMap k b) (MappedDeltaObservable k b) where
   subscribe (MappedDeltaObservable f o) callback = subscribe o (callback . fmap (fmap f))
 instance IsDeltaObservable k b (MappedDeltaObservable k b) where
