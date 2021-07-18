@@ -15,12 +15,12 @@ spec = do
 mergeObservableSpec :: Spec
 mergeObservableSpec = do
   describe "mergeObservable" $ parallel $ do
-    it "merges correctly using getBlocking" $ do
+    it "merges correctly using retrieveIO" $ do
       a <- newObservableVar ""
       b <- newObservableVar ""
 
       let mergedObservable = mergeObservable (,) a b
-      let latestShouldBe = (getBlocking mergedObservable `shouldReturn`)
+      let latestShouldBe = (retrieveIO mergedObservable `shouldReturn`)
 
       testSequence a b latestShouldBe
 

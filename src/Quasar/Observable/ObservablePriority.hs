@@ -18,8 +18,8 @@ type Entry v = (Unique, v)
 -- | Mutable data structure that stores values of type "v" with an assiciated priority "p". The `IsObservable` instance can be used to get or observe the value with the highest priority.
 newtype ObservablePriority p v = ObservablePriority (MVar (Internals p v))
 
-instance IsGettable (Maybe v) (ObservablePriority p v) where
-  getValue (ObservablePriority mvar) = liftIO $ getValueFromInternals <$> readMVar mvar
+instance IsRetrievable (Maybe v) (ObservablePriority p v) where
+  retrieve (ObservablePriority mvar) = liftIO $ getValueFromInternals <$> readMVar mvar
     where
       getValueFromInternals :: Internals p v -> Maybe v
       getValueFromInternals Internals{current=Nothing} = Nothing

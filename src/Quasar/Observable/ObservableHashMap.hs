@@ -36,8 +36,8 @@ data KeyHandle v = KeyHandle {
 makeLensesWith (lensField .~ (\_ _ -> pure . TopName . mkName . ("_" <>) . nameBase) $ lensRules) ''Handle
 makeLensesWith (lensField .~ (\_ _ -> pure . TopName . mkName . ("_" <>) . nameBase) $ lensRules) ''KeyHandle
 
-instance IsGettable (HM.HashMap k v) (ObservableHashMap k v) where
-  getValue (ObservableHashMap mvar) = liftIO $ HM.mapMaybe value . keyHandles <$> readMVar mvar
+instance IsRetrievable (HM.HashMap k v) (ObservableHashMap k v) where
+  retrieve (ObservableHashMap mvar) = liftIO $ HM.mapMaybe value . keyHandles <$> readMVar mvar
 instance IsObservable (HM.HashMap k v) (ObservableHashMap k v) where
   subscribe ohm callback = modifyHandle update ohm
     where

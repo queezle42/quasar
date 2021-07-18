@@ -46,8 +46,8 @@ class IsObservable (HM.HashMap k v) o => IsDeltaObservable k v o | o -> k, o -> 
 
 
 data DeltaObservable k v = forall o. IsDeltaObservable k v o => DeltaObservable o
-instance IsGettable (HM.HashMap k v) (DeltaObservable k v) where
-  getValue (DeltaObservable o) = getValue o
+instance IsRetrievable (HM.HashMap k v) (DeltaObservable k v) where
+  retrieve (DeltaObservable o) = retrieve o
 instance IsObservable (HM.HashMap k v) (DeltaObservable k v) where
   subscribe (DeltaObservable o) = subscribe o
 instance IsDeltaObservable k v (DeltaObservable k v) where
@@ -57,8 +57,8 @@ instance Functor (DeltaObservable k) where
 
 
 data MappedDeltaObservable k b = forall a o. IsDeltaObservable k a o => MappedDeltaObservable (a -> b) o
-instance IsGettable (HM.HashMap k b) (MappedDeltaObservable k b) where
-  getValue (MappedDeltaObservable f o) = f <<$>> getValue o
+instance IsRetrievable (HM.HashMap k b) (MappedDeltaObservable k b) where
+  retrieve (MappedDeltaObservable f o) = f <<$>> retrieve o
 instance IsObservable (HM.HashMap k b) (MappedDeltaObservable k b) where
   subscribe (MappedDeltaObservable f o) callback = subscribe o (callback . fmap (fmap f))
 instance IsDeltaObservable k b (MappedDeltaObservable k b) where

@@ -2,8 +2,8 @@
 
 module Quasar.Observable (
   Observable(..),
-  IsGettable(..),
-  getBlocking,
+  IsRetrievable(..),
+  retrieveIO,
   IsObservable(..),
   unsafeGetBlocking,
   subscribe',
@@ -49,14 +49,14 @@ mapObservableMessage :: (a -> b) -> ObservableMessage a -> ObservableMessage b
 mapObservableMessage f (reason, x) = (reason, f x)
 
 
-class IsGettable v a | a -> v where
-  getValue :: a -> AsyncIO v
+class IsRetrievable v a | a -> v where
+  retrieve :: a -> AsyncIO v
 
-getBlocking :: IsGettable v a => a -> IO v
-getBlocking = runAsyncIO . getValue
+retrieveIO :: IsRetrievable v a => a -> IO v
+retrieveIO = runAsyncIO . retrieve
 
 
-class IsGettable v o => IsObservable v o | o -> v where
+class IsRetrievable v o => IsObservable v o | o -> v where
   subscribe :: o -> (ObservableMessage v -> IO ()) -> IO Disposable
 
   toObservable :: o -> Observable v
@@ -65,9 +65,9 @@ class IsGettable v o => IsObservable v o | o -> v where
   mapObservable :: (v -> a) -> o -> Observable a
   mapObservable f = Observable . MappedObservable f
 
--- | Variant of `getBlocking` that throws exceptions instead of returning them.
+-- | Variant of `retrieveIO` that throws exceptions instead of returning them.
 unsafeGetBlocking :: (Exception e, IsObservable (Either e v) o) => o -> IO v
-unsafeGetBlocking = either throwIO pure <=< getBlocking
+unsafeGetBlocking = either throwIO pure <=< retrieveIO
 
 -- | A variant of `subscribe` that passes the `Disposable` to the callback.
 subscribe' :: IsObservable v o => o -> (Disposable -> ObservableMessage v -> IO ()) -> IO Disposable
@@ -76,9 +76,9 @@ subscribe' observable callback = mfix $ \subscription -> subscribe observable (c
 type ObservableCallback v = ObservableMessage v -> IO ()
 
 
-instance IsGettable v o => IsGettable v (IO o) where
-  getValue :: IO o -> AsyncIO v
-  getValue = getValue <=< liftIO
+instance IsRetrievable v o => IsRetrievable v (IO o) where
+  retrieve :: IO o -> AsyncIO v
+  retrieve = retrieve <=< liftIO
 
 instance IsObservable v o => IsObservable v (IO o) where
   subscribe :: IO o -> (ObservableMessage v -> IO ()) -> IO Disposable
@@ -93,8 +93,8 @@ class IsSettable v a | a -> v where
 
 -- | Existential quantification wrapper for the IsObservable type class.
 data Observable v = forall o. IsObservable v o => Observable o
-instance IsGettable v (Observable v) where
-  getValue (Observable o) = getValue o
+instance IsRetrievable v (Observable v) where
+  retrieve (Observable o) = retrieve o
 instance IsObservable v (Observable v) where
   subscribe (Observable o) = subscribe o
   toObservable = id
@@ -113,16 +113,16 @@ instance Monad Observable where
 
 
 data MappedObservable b = forall a o. IsObservable a o => MappedObservable (a -> b) o
-instance IsGettable v (MappedObservable v) where
-  getValue (MappedObservable f observable) = f <$> getValue observable
+instance IsRetrievable v (MappedObservable v) where
+  retrieve (MappedObservable f observable) = f <$> retrieve observable
 instance IsObservable v (MappedObservable v) where
   subscribe (MappedObservable f observable) callback = subscribe observable (callback . mapObservableMessage f)
   mapObservable f1 (MappedObservable f2 upstream) = Observable $ MappedObservable (f1 . f2) upstream
 
 
 newtype ObservableVar v = ObservableVar (MVar (v, HM.HashMap Unique (ObservableCallback v)))
-instance IsGettable v (ObservableVar v) where
-  getValue (ObservableVar mvar) = liftIO $ fst <$> readMVar mvar
+instance IsRetrievable v (ObservableVar v) where
+  retrieve (ObservableVar mvar) = liftIO $ fst <$> readMVar mvar
 instance IsObservable v (ObservableVar v) where
   subscribe (ObservableVar mvar) callback = do
     key <- newUnique
@@ -170,9 +170,9 @@ bindObservable x fy = joinObservable $ mapObservable fy x
 
 
 newtype JoinedObservable o = JoinedObservable o
-instance forall o i v. (IsGettable i o, IsGettable v i) => IsGettable v (JoinedObservable o) where
-  getValue :: JoinedObservable o -> AsyncIO v
-  getValue (JoinedObservable outer) = getValue =<< getValue outer
+instance forall o i v. (IsRetrievable i o, IsRetrievable v i) => IsRetrievable v (JoinedObservable o) where
+  retrieve :: JoinedObservable o -> AsyncIO v
+  retrieve (JoinedObservable outer) = retrieve =<< retrieve outer
 instance forall o i v. (IsObservable i o, IsObservable v i) => IsObservable v (JoinedObservable o) where
   subscribe :: (JoinedObservable o) -> (ObservableMessage v -> IO ()) -> IO Disposable
   subscribe (JoinedObservable outer) callback = do
@@ -212,8 +212,8 @@ joinObservableEither' = runExceptT . join . fmap (ExceptT . toObservable) . Exce
 
 
 data MergedObservable o0 v0 o1 v1 r = MergedObservable (v0 -> v1 -> r) o0 o1
-instance forall o0 v0 o1 v1 r. (IsGettable v0 o0, IsGettable v1 o1) => IsGettable r (MergedObservable o0 v0 o1 v1 r) where
-  getValue (MergedObservable merge obs0 obs1) = merge <$> getValue obs0 <*> getValue obs1
+instance forall o0 v0 o1 v1 r. (IsRetrievable v0 o0, IsRetrievable v1 o1) => IsRetrievable r (MergedObservable o0 v0 o1 v1 r) where
+  retrieve (MergedObservable merge obs0 obs1) = merge <$> retrieve obs0 <*> retrieve obs1
 instance forall o0 v0 o1 v1 r. (IsObservable v0 o0, IsObservable v1 o1) => IsObservable r (MergedObservable o0 v0 o1 v1 r) where
   subscribe (MergedObservable merge obs0 obs1) callback = do
     currentValuesTupleRef <- newIORef (Nothing, Nothing)
@@ -243,13 +243,13 @@ mergeObservableMaybe :: (IsObservable (Maybe v0) o0, IsObservable (Maybe v1) o1)
 mergeObservableMaybe merge x y = Observable $ MergedObservable (liftA2 merge) x y
 
 
--- | Data type that can be used as an implementation for the `IsObservable` interface that works by directly providing functions for `getValue` and `subscribe`.
+-- | Data type that can be used as an implementation for the `IsObservable` interface that works by directly providing functions for `retrieve` and `subscribe`.
 data FnObservable v = FnObservable {
   getValueFn :: AsyncIO v,
   subscribeFn :: (ObservableMessage v -> IO ()) -> IO Disposable
 }
-instance IsGettable v (FnObservable v) where
-  getValue o = getValueFn o
+instance IsRetrievable v (FnObservable v) where
+  retrieve o = getValueFn o
 instance IsObservable v (FnObservable v) where
   subscribe o = subscribeFn o
   mapObservable f FnObservable{getValueFn, subscribeFn} = Observable $ FnObservable {
@@ -259,8 +259,8 @@ instance IsObservable v (FnObservable v) where
 
 
 newtype ConstObservable a = ConstObservable a
-instance IsGettable a (ConstObservable a) where
-  getValue (ConstObservable x) = pure x
+instance IsRetrievable a (ConstObservable a) where
+  retrieve (ConstObservable x) = pure x
 instance IsObservable a (ConstObservable a) where
   subscribe (ConstObservable x) callback = do
     callback (Current, x)

@@ -13,15 +13,15 @@ import Test.Hspec
 
 spec :: Spec
 spec = parallel $ do
-  describe "getBlocking" $ do
+  describe "retrieveIO" $ do
     it "returns the contents of the map" $ do
       om <- OM.new :: IO (OM.ObservableHashMap String String)
-      getBlocking om `shouldReturn` HM.empty
+      retrieveIO om `shouldReturn` HM.empty
       -- Evaluate unit for coverage
       () <- OM.insert "key" "value" om
-      getBlocking om `shouldReturn` HM.singleton "key" "value"
+      retrieveIO om `shouldReturn` HM.singleton "key" "value"
       OM.insert "key2" "value2" om
-      getBlocking om `shouldReturn` HM.fromList [("key", "value"), ("key2", "value2")]
+      retrieveIO om `shouldReturn` HM.fromList [("key", "value"), ("key2", "value2")]
 
   describe "subscribe" $ do
     it "calls the callback with the contents of the map" $ do
@@ -74,7 +74,7 @@ spec = parallel $ do
       OM.lookupDelete "key" om `shouldReturn` Just "changed"
       lastDeltaShouldBe $ Delete "key"
 
-      getBlocking om `shouldReturn` HM.singleton "key3" "value3"
+      retrieveIO om `shouldReturn` HM.singleton "key3" "value3"
 
   describe "observeKey" $ do
     it "calls key callbacks with the correct value" $ do
@@ -113,7 +113,7 @@ spec = parallel $ do
       v1ShouldBe $ (Update, Nothing)
       v2ShouldBe $ (Update, Just "changed")
 
-      getBlocking om `shouldReturn` HM.singleton "key2" "changed"
+      retrieveIO om `shouldReturn` HM.singleton "key2" "changed"
       disposeIO handle2
 
       OM.lookupDelete "key2" om `shouldReturn` (Just "changed")
@@ -124,4 +124,4 @@ spec = parallel $ do
       OM.lookupDelete "key1" om `shouldReturn` Nothing
       v1ShouldBe $ (Update, Nothing)
 
-      getBlocking om `shouldReturn` HM.empty
+      retrieveIO om `shouldReturn` HM.empty
