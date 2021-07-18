@@ -178,7 +178,7 @@ instance forall o i v. (IsObservable i o, IsObservable v i) => IsObservable v (J
   subscribe (JoinedObservable outer) callback = do
     -- TODO: rewrite with latest semantics
     -- the current implementation blocks the callback while `dispose` is running
-    innerDisposableMVar <- newMVar dummyDisposable
+    innerDisposableMVar <- newMVar noDisposable
     outerDisposable <- subscribe outer (outerCallback innerDisposableMVar)
     pure $ mkDisposable $ do
       dispose outerDisposable
@@ -264,7 +264,7 @@ instance IsGettable a (ConstObservable a) where
 instance IsObservable a (ConstObservable a) where
   subscribe (ConstObservable x) callback = do
     callback (Current, x)
-    pure dummyDisposable
+    pure noDisposable
 
 -- | Create an observable that contains a constant value.
 constObservable :: a -> Observable a

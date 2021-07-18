@@ -93,6 +93,7 @@ test-suite quasar-test
     unordered-containers,
   main-is: Spec.hs
   other-modules:
+    Quasar.AsyncSpec
     Quasar.ObservableSpec
     Quasar.Observable.ObservableHashMapSpec
     Quasar.Observable.ObservablePrioritySpec

@@ -22,9 +22,9 @@ spec = do
       getBlocking op `shouldReturn` Just "p2"
       p1 <- OP.insertValue op 1 "p1"
       getBlocking op `shouldReturn` Just "p2"
-      disposeBlocking p2
+      disposeIO p2
       getBlocking op `shouldReturn` Just "p1"
-      disposeBlocking p1
+      disposeIO p1
       getBlocking op `shouldReturn` Nothing
     it "sends updates when its value changes" $ do
       result <- newIORef []
@@ -38,9 +38,9 @@ spec = do
       mostRecentShouldBe (Update, Just "p2")
       p1 <- OP.insertValue op 1 "p1"
       mostRecentShouldBe (Update, Just "p2")
-      disposeBlocking p2
+      disposeIO p2
       mostRecentShouldBe (Update, Just "p1")
-      disposeBlocking p1
+      disposeIO p1
       mostRecentShouldBe (Update, Nothing)
 
       length <$> readIORef result `shouldReturn` 4

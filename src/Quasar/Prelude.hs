@@ -4,6 +4,8 @@ module Quasar.Prelude
     (>=>),
     (<=<),
     Control.Applicative.liftA2,
+    Data.Foldable.sequenceA_,
+    Data.Foldable.traverse_,
     module Control.Concurrent.MVar,
     Control.Exception.Exception,
     Control.Exception.SomeException,
@@ -18,7 +20,7 @@ module Quasar.Prelude
     Data.Unique.Unique,
     Data.Unique.newUnique,
     Data.Void.Void,
-    Hashable.Hashable,
+    Data.Hashable.Hashable,
     GHC.Generics.Generic,
     MonadIO,
     liftIO,
@@ -72,7 +74,8 @@ import Control.Exception qualified
 import Control.Monad ((>=>), (<=<))
 import Control.Monad qualified
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Data.Hashable qualified as Hashable
+import Data.Foldable qualified
+import Data.Hashable qualified
 import Data.Int qualified
 import Data.Maybe qualified
 import Data.Unique qualified

@@ -11,10 +11,12 @@ module Quasar.Core (
   newAsyncVar,
   putAsyncVar,
   IsDisposable(..),
+  disposeIO,
+  disposeEventually,
   Disposable,
   mkDisposable,
   synchronousDisposable,
-  dummyDisposable,
+  noDisposable,
 ) where
 
 import Data.HashMap.Strict qualified as HM
@@ -27,11 +29,11 @@ class IsAsync r a | a -> r where
   wait :: a -> IO r
   wait promise = do
     mvar <- newEmptyMVar
-    onResult_ promise (callback mvar)
+    onResult_ promise (resultCallback mvar)
     readMVar mvar
     where
-      callback :: MVar r -> r -> IO ()
-      callback mvar result = do
+      resultCallback :: MVar r -> r -> IO ()
+      resultCallback mvar result = do
         success <- tryPutMVar mvar result
         unless success $ fail "Callback was called multiple times"
 
@@ -53,19 +55,26 @@ class IsAsync r a | a -> r where
   toAsync = SomeAsync
 
 
-data Async r
-  = forall a. IsAsync r a => SomeAsync a
-  -- '| forall a. Async ((r -> IO ()) -> IO Disposable)
-  | CompletedAsync r
-  | forall a. MappedAsync (a -> r) (Async a)
-  | forall a. BindAsync (Async a) (a -> Async r)
-
+data Async r = forall a. IsAsync r a => SomeAsync a
 
 instance IsAsync r (Async r) where
-  onResult :: Async r -> (r -> IO ()) -> IO Disposable
-  onResult (SomeAsync promise) callback = onResult promise callback
-  onResult (CompletedAsync result) callback = DummyDisposable <$ callback result
-  onResult (MappedAsync fn promise) callback = onResult promise $ callback . fn
+  wait (SomeAsync x) = wait x
+  onResult (SomeAsync x) = onResult x
+  onResult_ (SomeAsync x) = onResult_ x
+  toAsync = id
+
+newtype CompletedAsync r = CompletedAsync r
+instance IsAsync r (CompletedAsync r) where
+  wait (CompletedAsync value) = pure value
+  onResult (CompletedAsync value) callback = noDisposable <$ callback value
+
+data MappedAsync r = forall a. MappedAsync (a -> r) (Async a)
+instance IsAsync r (MappedAsync r) where
+  onResult (MappedAsync fn x) callback = onResult x $ callback . fn
+  onResult_ (MappedAsync fn x) callback = onResult_ x $ callback . fn
+
+data BindAsync r = forall a. BindAsync (Async a) (a -> Async r)
+instance IsAsync r (BindAsync r) where
   onResult (BindAsync px fn) callback = do
     (disposableMVar :: MVar (Maybe Disposable)) <- newEmptyMVar
     d1 <- onResult px $ \x ->
@@ -79,23 +88,18 @@ instance IsAsync r (Async r) where
     pure $ mkDisposable $ do
       currentDisposable <- liftIO $ readMVar disposableMVar
       dispose currentDisposable
-  onResult_ :: Async r -> (r -> IO ()) -> IO ()
-  onResult_ (SomeAsync promise) callback = onResult_ promise callback
-  onResult_ (CompletedAsync result) callback = callback result
-  onResult_ (MappedAsync fn promise) callback = onResult_ promise $ callback . fn
   onResult_ (BindAsync px fn) callback = onResult_ px $ \x -> onResult_ (fn x) callback
-  toAsync = id
 
 instance Functor Async where
-  fmap fn promise = MappedAsync fn promise
+  fmap fn = toAsync . MappedAsync fn
 
 instance Applicative Async where
-  pure = CompletedAsync
+  pure = toAsync . CompletedAsync
   (<*>) pf px = pf >>= \f -> f <$> px
   liftA2 f px py = px >>= \x -> f x <$> py
 
 instance Monad Async where
-  (>>=) = BindAsync
+  x >>= y = toAsync $ BindAsync x y
 
 
 instance Semigroup r => Semigroup (Async r) where
@@ -113,8 +117,15 @@ instance Functor AsyncIO where
   fmap f (AsyncIO x) = AsyncIO (f <<$>> x)
 instance Applicative AsyncIO where
   pure = AsyncIO . pure . pure
-  (<*>) pf px = pf >>= \f -> f <$> px
-  liftA2 f px py = px >>= \x -> f x <$> py
+  -- | 'liftA2 f px py' behaves like the do expression
+  -- > do
+  -- >   x <- async px
+  -- >   y <- async py
+  -- >   await $ liftA2 f x y
+  liftA2 f px py = do
+    x <- async px
+    y <- async py
+    await $ liftA2 f x y
 instance Monad AsyncIO where
   lhs >>= fn = AsyncIO $ do
     resultVar <- newAsyncVar
@@ -163,23 +174,19 @@ instance IsAsync r (AsyncVar r) where
       Just callbacks -> do
         key <- newUnique
         pure (Just (HM.insert key callback callbacks), removeHandler key)
-      Nothing -> (Nothing, DummyDisposable) <$ (callback =<< readMVar valueMVar)
+      Nothing -> (Nothing, noDisposable) <$ (callback =<< readMVar valueMVar)
     where
       removeHandler :: Unique -> Disposable
       removeHandler key = synchronousDisposable $ modifyMVar_ callbackMVar $ pure . fmap (HM.delete key)
 
 
-newAsyncVar :: IO (AsyncVar r)
-newAsyncVar = do
-  valueMVar <- newEmptyMVar
-  callbackMVar <- newMVar $ Just HM.empty
-  pure $ AsyncVar valueMVar callbackMVar
+newAsyncVar :: MonadIO m => m (AsyncVar r)
+newAsyncVar = liftIO $ AsyncVar <$> newEmptyMVar <*> newMVar (Just HM.empty)
 
-putAsyncVar :: AsyncVar a -> a -> IO ()
-putAsyncVar (AsyncVar valueMVar callbackMVar) value = do
+putAsyncVar :: MonadIO m => AsyncVar a -> a -> m ()
+putAsyncVar (AsyncVar valueMVar callbackMVar) value = liftIO $ do
   success <- tryPutMVar valueMVar value
   unless success $ fail "A promise can only be fulfilled once"
-  putMVar valueMVar value
   callbacks <- modifyMVar callbackMVar (pure . (Nothing, ) . concatMap HM.elems)
   mapM_ ($ value) callbacks
 
@@ -199,14 +206,14 @@ instance IsAsync r (CachedAsync r) where
       CacheHasCallbacks disp callbacks -> do
         key <- newUnique
         pure (CacheHasCallbacks disp (HM.insert key callback callbacks), removeHandler key)
-      x@(CacheSettled value) -> (x, DummyDisposable) <$ callback value
+      x@(CacheSettled value) -> (x, noDisposable) <$ callback value
     where
       removeHandler :: Unique -> Disposable
       removeHandler key = synchronousDisposable $ modifyMVar_ stateMVar $ \case
         CacheHasCallbacks disp callbacks -> do
           let newCallbacks = HM.delete key callbacks
           if HM.null newCallbacks
-            then CacheNoCallbacks <$ disposeBlocking disp
+            then CacheNoCallbacks <$ disposeIO disp
             else pure (CacheHasCallbacks disp newCallbacks)
         state -> pure state
       fulfillCache :: r -> IO ()
@@ -227,53 +234,34 @@ class IsDisposable a where
 
   -- | Dispose a resource. When the resource has been released the promise is fulfilled.
   dispose :: a -> AsyncIO ()
-  dispose = liftIO . disposeBlocking
-  -- | Dispose a resource. Returns without waiting for the resource to be released.
-  disposeEventually :: a -> IO ()
-  disposeEventually = void . startAsyncIO . dispose
-  -- | Dispose a resource. Blocks until the resource is released.
-  disposeBlocking :: a -> IO ()
-  disposeBlocking = runAsyncIO . dispose
 
   toDisposable :: a -> Disposable
-  toDisposable = SomeDisposable
+  toDisposable = mkDisposable . dispose
 
-  {-# MINIMAL dispose | disposeBlocking #-}
+-- | Dispose a resource. Blocks until the resource is released.
+disposeIO :: IsDisposable a => a -> IO ()
+disposeIO = runAsyncIO . dispose
+
+-- | Dispose a resource. Returns without waiting for the resource to be released.
+disposeEventually :: IsDisposable a => a -> IO ()
+disposeEventually = void . startAsyncIO . dispose
 
 instance IsDisposable a => IsDisposable (Maybe a) where
   dispose = mapM_ dispose
-  disposeEventually = mapM_ disposeEventually
-  disposeBlocking = mapM_ disposeBlocking
 
 
-data Disposable
-  = forall a. IsDisposable a => SomeDisposable a
-  | Disposable (AsyncIO ())
-  | MultiDisposable [Disposable]
-  | DummyDisposable
+newtype Disposable = Disposable (AsyncIO ())
 
 instance IsDisposable Disposable where
-  dispose (SomeDisposable x) = dispose x
   dispose (Disposable fn) = fn
-  dispose (MultiDisposable disposables) = mconcat <$> mapM dispose disposables
-  dispose DummyDisposable = pure ()
-
-  disposeEventually (SomeDisposable x) = disposeEventually x
-  disposeEventually x = void . startAsyncIO . dispose $ x
-
-  disposeBlocking (SomeDisposable x) = disposeBlocking x
-  disposeBlocking x = runAsyncIO . dispose $ x
-
   toDisposable = id
 
 instance Semigroup Disposable where
-  MultiDisposable x <> MultiDisposable y = MultiDisposable (x <> y)
-  x <> MultiDisposable y = MultiDisposable (x : y)
-  x <> y = MultiDisposable [x, y]
+  x <> y = mkDisposable $ liftA2 (<>) (dispose x) (dispose y)
 
 instance Monoid Disposable where
-  mempty = DummyDisposable
-  mconcat = MultiDisposable
+  mempty = mkDisposable $ pure ()
+  mconcat disposables = mkDisposable $ traverse_ dispose disposables
 
 
 mkDisposable :: AsyncIO () -> Disposable
@@ -282,5 +270,5 @@ mkDisposable = Disposable
 synchronousDisposable :: IO () -> Disposable
 synchronousDisposable = mkDisposable . liftIO
 
-dummyDisposable :: Disposable
-dummyDisposable = mempty
+noDisposable :: Disposable
+noDisposable = mempty

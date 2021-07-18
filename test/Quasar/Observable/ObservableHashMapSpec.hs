@@ -37,7 +37,7 @@ spec = parallel $ do
       OM.insert "key2" "value2" om
       lastCallbackShouldBe (Update, HM.fromList [("key", "value"), ("key2", "value2")])
 
-      disposeBlocking subscriptionHandle
+      disposeIO subscriptionHandle
       lastCallbackShouldBe (Update, HM.fromList [("key", "value"), ("key2", "value2")])
 
       OM.insert "key3" "value3" om
@@ -59,7 +59,7 @@ spec = parallel $ do
       OM.insert "key2" "value2" om
       lastDeltaShouldBe $ Insert "key2" "value2"
 
-      disposeBlocking subscriptionHandle
+      disposeIO subscriptionHandle
       lastDeltaShouldBe $ Insert "key2" "value2"
 
       OM.insert "key3" "value3" om
@@ -114,7 +114,7 @@ spec = parallel $ do
       v2ShouldBe $ (Update, Just "changed")
 
       getBlocking om `shouldReturn` HM.singleton "key2" "changed"
-      disposeBlocking handle2
+      disposeIO handle2
 
       OM.lookupDelete "key2" om `shouldReturn` (Just "changed")
       v2ShouldBe $ (Update, Just "changed")
