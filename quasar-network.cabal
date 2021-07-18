@@ -38,6 +38,7 @@ common shared-properties
     NamedFieldPuns
     NoImplicitPrelude
     OverloadedStrings
+    PolyKinds
     RankNTypes
     ScopedTypeVariables
     StandaloneDeriving
