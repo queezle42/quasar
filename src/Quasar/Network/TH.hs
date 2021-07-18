@@ -123,7 +123,7 @@ makeProtocol api code = sequence [protocolDec, protocolInstanceDec, requestDec, 
       ]
 
 makeClient :: Code -> Q [Dec]
-makeClient code = sequence code.stubDecs
+makeClient code = sequence code.clientStubDecs
 
 makeServer :: RpcApi -> Code -> Q [Dec]
 makeServer api@RpcApi{functions} code = sequence [protocolImplDec, logicInstanceDec]
@@ -191,19 +191,19 @@ makeServer api@RpcApi{functions} code = sequence [protocolImplDec, logicInstance
 -- * Pluggable codegen interface
 
 data Code = Code {
-  stubDecs :: [Q Dec],
+  clientStubDecs :: [Q Dec],
   serverImplFields :: [Q VarBangType],
   requests :: [Request]
 }
 instance Semigroup Code where
   x <> y = Code {
-    stubDecs = x.stubDecs <> y.stubDecs,
+    clientStubDecs = x.clientStubDecs <> y.clientStubDecs,
     serverImplFields = x.serverImplFields <> y.serverImplFields,
     requests = x.requests <> y.requests
   }
 instance Monoid Code where
   mempty = Code {
-    stubDecs = [],
+    clientStubDecs = [],
     serverImplFields = [],
     requests = []
   }
@@ -240,9 +240,9 @@ data RequestHandlerContext = RequestHandlerContext {
 
 generateFunction :: RpcApi -> RpcFunction -> Q Code
 generateFunction api fun = do
-  stubDecs <- clientFunctionStub
+  clientStubDecs <- clientFunctionStub
   pure Code {
-    stubDecs,
+    clientStubDecs,
     serverImplFields =
       if isNothing fun.fixedHandler
         then [ varDefaultBangType implFieldName implSig ]
@@ -354,7 +354,7 @@ generateFunction api fun = do
                     (tupP (varP <$> channelNames))
                     $ caseE channelsE [
                       match (listP (varP <$> channelNames)) (normalB [|pure $(tupE (varE <$> channelNames))|]) [],
-                      match [p|_|] (normalB [|fail "Invalid number of channel created"|]) []
+                      match wildP (normalB [|fail "Invalid number of channel created"|]) []
                       ]
                 go :: [Name] -> [Name] -> [Q Stmt]
                 go [] [] = []
