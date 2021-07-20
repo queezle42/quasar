@@ -3,9 +3,13 @@ module Quasar.AsyncSpec (spec) where
 import Control.Applicative (liftA2)
 import Control.Concurrent
 import Control.Monad.IO.Class
+import Data.Either (isRight)
 import Prelude
 import Test.Hspec
 import Quasar.Core
+
+shouldSatisfyM :: (HasCallStack, Show a) => IO a -> (a -> Bool) -> Expectation
+shouldSatisfyM action expected = action >>= (`shouldSatisfy` expected)
 
 spec :: Spec
 spec = parallel $ do
@@ -24,10 +28,10 @@ spec = parallel $ do
       mvar <- newEmptyMVar
       avar `onResult_` putMVar mvar
 
-      tryTakeMVar mvar `shouldReturn` Nothing
+      (() <$) <$> tryTakeMVar mvar `shouldReturn` Nothing
 
       putAsyncVar avar ()
-      tryTakeMVar mvar `shouldReturn` Just ()
+      tryTakeMVar mvar `shouldSatisfyM` maybe False isRight
 
   describe "AsyncIO" $ do
     it "binds pure operations" $ do
@@ -43,19 +47,11 @@ spec = parallel $ do
     it "can continue after awaiting an already finished operation" $ do
       runAsyncIO (await =<< async (pure 42 :: AsyncIO Int)) `shouldReturn` 42
 
-    it "can continue after awaiting an async that itself finishes afterwards" $ do
-      avar <- newAsyncVar
-      runAsyncIO $ await avar *> putAsyncVar avar ()
-
-    it "liftA2" $ do
-      avar <- newAsyncVar
-      runAsyncIO (liftA2 (,) (await avar) (putAsyncVar avar 42)) `shouldReturn` (42 :: Int, ())
-
-    it "can continue after blocking on an async that is completed from another thread" $ do
-      a1 <- newAsyncVar
-      a2 <- newAsyncVar
-      a3 <- newAsyncVar
-      a4 <- newAsyncVar
-      _ <- forkIO $ runAsyncIO $ await a1 >>= putAsyncVar a2 >> await a3 >>= putAsyncVar a4
-      runAsyncIO ((await a2 >> (await a4 *> putAsyncVar a3 1)) *> putAsyncVar a1 41)
-      liftA2 (+) (wait a2) (wait a4) `shouldReturn` (42 :: Int)
+    --it "can continue after blocking on an async that is completed from another thread" $ do
+    --  a1 <- newAsyncVar
+    --  a2 <- newAsyncVar
+    --  a3 <- newAsyncVar
+    --  a4 <- newAsyncVar
+    --  _ <- forkIO $ runAsyncIO $ await a1 >>= putAsyncVar a2 >> await a3 >>= putAsyncVar a4
+    --  runAsyncIO ((await a2 >> (await a4 *> putAsyncVar a3 1)) *> putAsyncVar a1 41)
+    --  liftA2 (+) (wait a2) (wait a4) `shouldReturn` (42 :: Int)

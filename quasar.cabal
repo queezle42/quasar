@@ -51,6 +51,7 @@ common shared-properties
     -Wno-missing-import-lists
     -Wno-unsafe
     -Wno-all-missed-specialisations
+    -Werror=missing-methods
 
 common shared-executable-properties
   import: shared-properties
