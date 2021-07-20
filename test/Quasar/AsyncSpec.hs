@@ -9,7 +9,7 @@ import Quasar.Core
 
 spec :: Spec
 spec = parallel $ do
-  describe "AsyncVar" $ parallel $ do
+  describe "AsyncVar" $ do
     it "can be created" $ do
       _ <- newAsyncVar :: IO (AsyncVar ())
       pure ()
@@ -29,7 +29,7 @@ spec = parallel $ do
       putAsyncVar avar ()
       tryTakeMVar mvar `shouldReturn` Just ()
 
-  describe "AsyncIO" $ parallel $ do
+  describe "AsyncIO" $ do
     it "binds pure operations" $ do
       runAsyncIO (pure () >>= \() -> pure ())
 
@@ -41,7 +41,7 @@ spec = parallel $ do
       tryTakeMVar m2 `shouldReturn` Just ()
 
     it "can continue after awaiting an already finished operation" $ do
-      runAsyncIO (await (pure 42 :: Async Int)) `shouldReturn` 42
+      runAsyncIO (await =<< async (pure 42 :: AsyncIO Int)) `shouldReturn` 42
 
     it "can continue after awaiting an async that itself finishes afterwards" $ do
       avar <- newAsyncVar

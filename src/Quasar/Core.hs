@@ -1,15 +1,21 @@
 module Quasar.Core (
+  -- * Async
   IsAsync(..),
   Async,
-  cacheAsync,
+
+  -- * AsyncIO
   AsyncIO,
   async,
   await,
   runAsyncIO,
   startAsyncIO,
+
+  -- * AsyncVar
   AsyncVar,
   newAsyncVar,
   putAsyncVar,
+
+  -- * Disposable
   IsDisposable(..),
   disposeIO,
   disposeEventually,
@@ -55,6 +61,7 @@ class IsAsync r a | a -> r where
   toAsync = SomeAsync
 
 
+
 data Async r = forall a. IsAsync r a => SomeAsync a
 
 instance IsAsync r (Async r) where
@@ -62,6 +69,30 @@ instance IsAsync r (Async r) where
   onResult (SomeAsync x) = onResult x
   onResult_ (SomeAsync x) = onResult_ x
   toAsync = id
+
+--instance Functor Async where
+--  fmap fn = toAsync . MappedAsync fn
+--
+--instance Applicative Async where
+--  pure = toAsync . CompletedAsync
+--  (<*>) pf px = pf >>= \f -> f <$> px
+--  liftA2 f px py = px >>= \x -> f x <$> py
+--
+--instance Monad Async where
+--  x >>= y = toAsync $ BindAsync x y
+--
+--
+--instance Semigroup r => Semigroup (Async r) where
+--  (<>) = liftA2 (<>)
+--
+--instance Monoid r => Monoid (Async r) where
+--  mempty = pure mempty
+--  mconcat = fmap mconcat . sequence
+
+completedAsync :: x -> Async x
+completedAsync = toAsync . CompletedAsync
+
+
 
 newtype CompletedAsync r = CompletedAsync r
 instance IsAsync r (CompletedAsync r) where
@@ -90,42 +121,21 @@ instance IsAsync r (BindAsync r) where
       dispose currentDisposable
   onResult_ (BindAsync px fn) callback = onResult_ px $ \x -> onResult_ (fn x) callback
 
-instance Functor Async where
-  fmap fn = toAsync . MappedAsync fn
 
-instance Applicative Async where
-  pure = toAsync . CompletedAsync
-  (<*>) pf px = pf >>= \f -> f <$> px
-  liftA2 f px py = px >>= \x -> f x <$> py
-
-instance Monad Async where
-  x >>= y = toAsync $ BindAsync x y
-
-
-instance Semigroup r => Semigroup (Async r) where
-  (<>) = liftA2 (<>)
-
-instance Monoid r => Monoid (Async r) where
-  mempty = pure mempty
-  mconcat = fmap mconcat . sequence
-
-
+-- * AsyncIO
 
 newtype AsyncIO r = AsyncIO (IO (Async r))
 
 instance Functor AsyncIO where
-  fmap f (AsyncIO x) = AsyncIO (f <<$>> x)
+  fmap f = (pure . f =<<)
+
 instance Applicative AsyncIO where
-  pure = AsyncIO . pure . pure
-  -- | 'liftA2 f px py' behaves like the do expression
-  -- > do
-  -- >   x <- async px
-  -- >   y <- async py
-  -- >   await $ liftA2 f x y
+  pure = AsyncIO . pure . completedAsync
   liftA2 f px py = do
-    x <- async px
-    y <- async py
-    await $ liftA2 f x y
+    ax <- async px
+    y <- py
+    x <- await ax
+    await $ completedAsync (f x y)
 instance Monad AsyncIO where
   lhs >>= fn = AsyncIO $ do
     resultVar <- newAsyncVar
@@ -136,9 +146,10 @@ instance Monad AsyncIO where
     pure $ toAsync resultVar
 
 instance MonadIO AsyncIO where
-  liftIO = AsyncIO . fmap pure
+  liftIO = AsyncIO . fmap completedAsync
 
 
+-- | Run the synchronous part of an `AsyncIO` and then return an `Async` that can be used to wait for completion of the synchronous part.
 async :: AsyncIO r -> AsyncIO (Async r)
 async = liftIO . startAsyncIO
 
@@ -160,7 +171,9 @@ startAsyncIO (AsyncIO x) = x
 --  asyncThread :: m r -> AsyncIO r
 
 
--- ** Async implementation
+-- * Async helpers
+
+-- ** AsyncVar
 
 -- | The default implementation for a `Async` that can be fulfilled later.
 data AsyncVar r = AsyncVar (MVar r) (MVar (Maybe (HM.HashMap Unique (r -> IO ()))))
@@ -186,63 +199,67 @@ newAsyncVar = liftIO $ AsyncVar <$> newEmptyMVar <*> newMVar (Just HM.empty)
 putAsyncVar :: MonadIO m => AsyncVar a -> a -> m ()
 putAsyncVar (AsyncVar valueMVar callbackMVar) value = liftIO $ do
   success <- tryPutMVar valueMVar value
-  unless success $ fail "A promise can only be fulfilled once"
+  unless success $ fail "An AsyncVar can only be fulfilled once"
   callbacks <- modifyMVar callbackMVar (pure . (Nothing, ) . concatMap HM.elems)
   mapM_ ($ value) callbacks
 
 
 -- ** Async cache
 
-data CachedAsyncState r = CacheNoCallbacks | CacheHasCallbacks Disposable (HM.HashMap Unique (r -> IO ())) | CacheSettled r
-data CachedAsync r = CachedAsync (Async r) (MVar (CachedAsyncState r))
-
-instance IsAsync r (CachedAsync r) where
-  onResult (CachedAsync baseAsync stateMVar) callback =
-    modifyMVar stateMVar $ \case
-      CacheNoCallbacks -> do
-        key <- newUnique
-        disp <- onResult baseAsync fulfillCache
-        pure (CacheHasCallbacks disp (HM.singleton key callback), removeHandler key)
-      CacheHasCallbacks disp callbacks -> do
-        key <- newUnique
-        pure (CacheHasCallbacks disp (HM.insert key callback callbacks), removeHandler key)
-      x@(CacheSettled value) -> (x, noDisposable) <$ callback value
-    where
-      removeHandler :: Unique -> Disposable
-      removeHandler key = synchronousDisposable $ modifyMVar_ stateMVar $ \case
-        CacheHasCallbacks disp callbacks -> do
-          let newCallbacks = HM.delete key callbacks
-          if HM.null newCallbacks
-            then CacheNoCallbacks <$ disposeIO disp
-            else pure (CacheHasCallbacks disp newCallbacks)
-        state -> pure state
-      fulfillCache :: r -> IO ()
-      fulfillCache value = do
-        callbacks <- modifyMVar stateMVar $ \case
-          CacheHasCallbacks _ callbacks -> pure (CacheSettled value, HM.elems callbacks)
-          CacheNoCallbacks -> pure (CacheSettled value, [])
-          CacheSettled _ -> fail "Callback was called multiple times"
-        mapM_ ($ value) callbacks
-
-cacheAsync :: IsAsync r p => p -> IO (Async r)
-cacheAsync promise = toAsync . CachedAsync (toAsync promise) <$> newMVar CacheNoCallbacks
+--data CachedAsyncState r = CacheNoCallbacks | CacheHasCallbacks Disposable (HM.HashMap Unique (r -> IO ())) | CacheSettled r
+--data CachedAsync r = CachedAsync (Async r) (MVar (CachedAsyncState r))
+--
+--instance IsAsync r (CachedAsync r) where
+--  onResult (CachedAsync baseAsync stateMVar) callback =
+--    modifyMVar stateMVar $ \case
+--      CacheNoCallbacks -> do
+--        key <- newUnique
+--        disp <- onResult baseAsync baseAsyncResultCallback
+--        pure (CacheHasCallbacks disp (HM.singleton key callback), removeHandler key)
+--      CacheHasCallbacks disp callbacks -> do
+--        key <- newUnique
+--        pure (CacheHasCallbacks disp (HM.insert key callback callbacks), removeHandler key)
+--      x@(CacheSettled value) -> (x, noDisposable) <$ callback value
+--    where
+--      removeHandler :: Unique -> Disposable
+--      removeHandler key = mkDisposable $ do
+--        state <- liftIO $ takeMVar stateMVar
+--        newState <- case state of
+--          CacheHasCallbacks disp callbacks -> do
+--            let newCallbacks = HM.delete key callbacks
+--            if HM.null newCallbacks
+--              then CacheNoCallbacks <$ dispose disp
+--              else pure (CacheHasCallbacks disp newCallbacks)
+--          x -> pure x
+--        liftIO $ putMVar stateMVar newState
+--      baseAsyncResultCallback :: r -> IO ()
+--      baseAsyncResultCallback value = do
+--        -- FIXME race condition: mvar is blocked by caller when baseAsync runs synchronous
+--        callbacks <- modifyMVar stateMVar $ \case
+--          CacheHasCallbacks _ callbacks -> pure (CacheSettled value, HM.elems callbacks)
+--          CacheNoCallbacks -> pure (CacheSettled value, [])
+--          CacheSettled _ -> fail "Callback was called multiple times"
+--        mapM_ ($ value) callbacks
+--
+--newCachedAsync :: (IsAsync r p, MonadIO m) => p -> m (Async r)
+--newCachedAsync x = liftIO $ toAsync . CachedAsync (toAsync x) <$> newMVar CacheNoCallbacks
 
 -- * Disposable
 
 class IsDisposable a where
   -- TODO document laws: must not throw exceptions, is idempotent
 
-  -- | Dispose a resource. When the resource has been released the promise is fulfilled.
+  -- | Dispose a resource.
   dispose :: a -> AsyncIO ()
 
   toDisposable :: a -> Disposable
   toDisposable = mkDisposable . dispose
 
--- | Dispose a resource. Blocks until the resource is released.
+-- | Dispose a resource in the IO monad.
 disposeIO :: IsDisposable a => a -> IO ()
 disposeIO = runAsyncIO . dispose
 
--- | Dispose a resource. Returns without waiting for the resource to be released.
+-- | Dispose a resource. Returns without waiting for the resource to be released if possible.
 disposeEventually :: IsDisposable a => a -> IO ()
 disposeEventually = void . startAsyncIO . dispose
 
