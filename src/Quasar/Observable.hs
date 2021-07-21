@@ -187,7 +187,7 @@ instance forall o i v. (IsObservable i o, IsObservable v i) => IsObservable v (J
         outerCallback :: MVar Disposable -> ObservableMessage i -> IO ()
         outerCallback innerDisposableMVar (_reason, innerObservable) = do
           oldInnerSubscription <- takeMVar innerDisposableMVar
-          void $ startAsyncIO $ do
+          void $ async $ do
             dispose oldInnerSubscription
             liftIO $ do
               newInnerSubscription <- subscribe innerObservable callback
