@@ -11,6 +11,10 @@ module Quasar.Core (
   async,
   await,
   runAsyncIO,
+  awaitResult,
+
+  -- * Async helpers
+  mapAsync,
 
   -- * AsyncVar
   AsyncVar,
@@ -70,7 +74,6 @@ class IsAsync r a | a -> r where
 
   toAsync :: a -> Async r
   toAsync = SomeAsync
-
 
 
 data Async r = forall a. IsAsync r a => SomeAsync a
@@ -140,6 +143,16 @@ await = AsyncIO . pure . toAsync
 -- | Run an `AsyncIO` to completion and return the result.
 runAsyncIO :: AsyncIO r -> IO r
 runAsyncIO = async >=> wait
+
+awaitResult :: AsyncIO (Async r) -> AsyncIO r
+awaitResult = (await =<<)
+
+
+mapAsync :: (a -> b) -> Async a -> AsyncIO (Async b)
+-- FIXME: don't actually attach a function if the resulting async is not used
+-- maybe use `Weak`? When `Async b` is GC'ed, the handler is detached from `Async a`
+mapAsync fn = async . fmap fn . await
+
 
 
 -- ** Forking asyncs
