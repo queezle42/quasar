@@ -23,6 +23,7 @@ import Data.Maybe (isNothing)
 import GHC.Records.Compat (HasField)
 import Language.Haskell.TH hiding (interruptible)
 import Language.Haskell.TH.Syntax
+import Quasar.Core
 import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
 import Quasar.Prelude
@@ -119,7 +120,8 @@ makeProtocol api code = sequence [protocolDec, protocolInstanceDec, requestDec, 
 
     serializableTypeDerivClauses :: [Q DerivClause]
     serializableTypeDerivClauses = [
-      derivClause Nothing [[t|Eq|], [t|Show|], [t|Generic|], [t|Binary|]]
+      derivClause (Just StockStrategy) [[t|Eq|], [t|Show|], [t|Generic|]],
+      derivClause (Just AnyclassStrategy) [[t|Binary|]]
       ]
 
 makeClient :: Code -> Q [Dec]
@@ -131,14 +133,6 @@ makeServer api@RpcApi{functions} code = sequence [protocolImplDec, logicInstance
     protocolImplDec :: Q Dec
     protocolImplDec = do
       dataD (pure []) (implTypeName api) [] Nothing [recC (implTypeName api) code.serverImplFields] []
-    functionImplType :: RpcFunction -> Q Type
-    functionImplType fun = do
-      argumentTypes <- functionArgumentTypes fun
-      streamTypes <- serverStreamTypes
-      buildFunctionType (pure (argumentTypes <> streamTypes)) [t|IO $(buildTupleType (functionResultTypes fun))|]
-      where
-        serverStreamTypes :: Q [Type]
-        serverStreamTypes = sequence $ (\stream -> [t|Stream $(stream.tyDown) $(stream.tyUp)|]) <$> fun.streams
 
     logicInstanceDec :: Q Dec
     logicInstanceDec = instanceD (cxt []) [t|HasProtocolImpl $(protocolType api)|] [
@@ -245,7 +239,7 @@ generateFunction api fun = do
     clientStubDecs,
     serverImplFields =
       if isNothing fun.fixedHandler
-        then [ varDefaultBangType implFieldName implSig ]
+        then [varDefaultBangType implFieldName implSig]
         else [],
     requests = [request]
   }
@@ -263,7 +257,6 @@ generateFunction api fun = do
       name = fun.name,
       -- TODO unpack?
       fields = [ Field { name = "packedResponse", ty = buildTupleType (sequence ((.ty) <$> fun.results)) } ]
-      --numCreatedChannels = undefined
     }
     implFieldName :: Name
     implFieldName = functionImplFieldName api fun
@@ -277,7 +270,7 @@ generateFunction api fun = do
         serverStreamTypes = sequence $ (\stream -> [t|Stream $(stream.tyDown) $(stream.tyUp)|]) <$> fun.streams
 
     serverRequestHandlerE :: RequestHandlerContext -> Q Exp
-    serverRequestHandlerE ctx = applyChannels ctx.channelEs (applyArgs (implFieldE ctx.implRecordE))
+    serverRequestHandlerE ctx = applyChannels (applyArgs (implFieldE ctx.implRecordE)) ctx.channelEs
       where
         implFieldE :: Q Exp -> Q Exp
         implFieldE implRecordE = case fun.fixedHandler of
@@ -285,41 +278,34 @@ generateFunction api fun = do
           Just handler -> [|$(handler) :: $implSig|]
         applyArgs :: Q Exp -> Q Exp
         applyArgs implE = foldl appE implE ctx.argumentEs
-        applyChannels :: [Q Exp] -> Q Exp -> Q Exp
-        applyChannels [] implE = implE
-        applyChannels (channel0E:channelEs) implE = varE 'join `appE` foldl
-          (\x y -> [|$x <*> $y|])
-          ([|$implE <$> $(createStream channel0E)|])
-          (createStream <$> channelEs)
+        applyChannels :: Q Exp -> [Q Exp] -> Q Exp
+        applyChannels implE channelsEs = varE 'join `appE` applyM implE (createStream <$> channelsEs)
           where
             createStream :: Q Exp -> Q Exp
             createStream = (varE 'newStream `appE`)
 
     clientFunctionStub :: Q [Q Dec]
     clientFunctionStub = do
+      clientStubPrimeName <- newName fun.name
       clientVarName <- newName "client"
       argNames <- sequence (newName . (.name) <$> fun.arguments)
-      channelNames <- sequence (newName . (<> "Channel") . (.name) <$> fun.streams)
-      streamNames <- sequence (newName . (.name) <$> fun.streams)
-      makeClientFunction' clientVarName argNames channelNames streamNames
+      makeClientFunction' clientStubPrimeName clientVarName argNames
       where
         funName :: Name
         funName = mkName fun.name
-        makeClientFunction' :: Name -> [Name] -> [Name] -> [Name] -> Q [Q Dec]
-        makeClientFunction' clientVarName argNames channelNames streamNames = do
+        makeClientFunction' :: Name -> Name -> [Name] -> Q [Q Dec]
+        makeClientFunction' clientStubPrimeName clientVarName argNames = do
           funArgTypes <- functionArgumentTypes fun
           clientType <- [t|Client $(protocolType api)|]
-          resultType <- optionalResultType
-          streamTypes <- clientStreamTypes
           pure [
-            sigD funName (buildFunctionType (pure ([clientType] <> funArgTypes)) [t|IO $(buildTupleType (pure (resultType <> streamTypes)))|]),
-            funD funName [clause ([varP clientVarName] <> varPats) body []]
+            sigD funName (makeStubSig (pure (clientType : funArgTypes))),
+            funD funName [clause ([varP clientVarName] <> varPats) body clientStubPrimeDecs]
             ]
           where
+            makeStubSig :: Q [Type] -> Q Type
+            makeStubSig arguments = buildFunctionType arguments [t|AsyncIO $(buildTupleType (liftA2 (<>) optionalResultType clientStreamTypes))|]
             optionalResultType :: Q [Type]
-            optionalResultType
-              | hasResult fun = (\x -> [x]) <$> buildTupleType (functionResultTypes fun)
-              | otherwise = pure []
+            optionalResultType = sequence $ whenHasResult [t|Async $(buildTupleType (functionResultTypes fun))|]
             clientStreamTypes :: Q [Type]
             clientStreamTypes = sequence $ (\stream -> [t|Stream $(stream.tyUp) $(stream.tyDown)|]) <$> fun.streams
             clientE :: Q Exp
@@ -328,69 +314,65 @@ generateFunction api fun = do
             varPats = varP <$> argNames
             body :: Q Body
             body
-              | hasResult fun = do
-                responseName <- newName "response"
-                normalB $ doE $
-                  [
-                    bindS [p|($(varP responseName), resources)|] (requestE requestDataE),
-                    bindS [p|result|] (checkResult (varE responseName))
-                  ] <>
-                  createStreams [|resources.createdChannels|] <>
-                  [noBindS [|pure $(buildTuple (liftA2 (:) [|result|] streamsE))|]]
-              | otherwise = normalB $ doE $
-                  [bindS [p|resources|] (sendE requestDataE)] <>
-                  createStreams [|resources.createdChannels|] <>
-                  [noBindS [|pure $(buildTuple streamsE)|]]
+              | hasResult fun = normalB ([|$(requestE requestDataE) >>= \(result, resources) -> $(varE clientStubPrimeName) result resources.createdChannels|])
+              | otherwise = normalB ([|$(sendE requestDataE) >>= \resources -> $(varE clientStubPrimeName) resources.createdChannels|])
+            clientStubPrimeDecs :: [Q Dec]
+            clientStubPrimeDecs = [
+              sigD clientStubPrimeName (makeStubSig (liftA2 (<>) optionalResultType (sequence [[t|[Channel]|]]))),
+              funD clientStubPrimeName (clientStubPrimeClauses request)
+              ]
+            clientStubPrimeClauses :: Request -> [Q Clause]
+            clientStubPrimeClauses req = [mainClause, invalidChannelCountClause]
+              where
+                mainClause :: Q Clause
+                mainClause = do
+                  resultAsyncName <- newName "result"
+
+                  channelNames <- sequence $ newName . ("channel" <>) . show <$> [0 .. (req.numPipelinedChannels - 1)]
+
+                  clause
+                    (whenHasResult (varP resultAsyncName) <> [listP (varP <$> channelNames)])
+                    (normalB (buildTupleM (sequence (whenHasResult [|pure $(varE resultAsyncName)|] <> ((\x -> [|newStream $(varE x)|]) <$> channelNames)))))
+                    []
+
+                invalidChannelCountClause :: Q Clause
+                invalidChannelCountClause = do
+                  channelsName <- newName "newChannels"
+                  clause
+                    (whenHasResult wildP <> [varP channelsName])
+                    (normalB [|$(varE 'multiplexerInvalidChannelCount) $(litE (integerL (toInteger req.numPipelinedChannels))) $(varE channelsName)|])
+                    []
+            whenHasResult :: a -> [a]
+            whenHasResult x = if hasResult fun then [x] else []
             requestDataE :: Q Exp
             requestDataE = applyVars (conE (requestFunctionConName api fun))
-            createStreams :: Q Exp -> [Q Stmt]
-            createStreams channelsE = if length fun.streams > 0 then [assignChannels] <> go channelNames streamNames else [verifyNoChannels]
-              where
-                verifyNoChannels :: Q Stmt
-                verifyNoChannels = noBindS [|unless (null $(channelsE)) (fail "Invalid number of channel created")|]
-                assignChannels :: Q Stmt
-                assignChannels =
-                  bindS
-                    (tupP (varP <$> channelNames))
-                    $ caseE channelsE [
-                      match (listP (varP <$> channelNames)) (normalB [|pure $(tupE (varE <$> channelNames))|]) [],
-                      match wildP (normalB [|fail "Invalid number of channel created"|]) []
-                      ]
-                go :: [Name] -> [Name] -> [Q Stmt]
-                go [] [] = []
-                go (cn:cns) (sn:sns) = createStream cn sn : go cns sns
-                go _ _ = fail "Logic error: lists have different lengths"
-                createStream :: Name -> Name -> Q Stmt
-                createStream channelName streamName = bindS (varP streamName) [|newStream $(varE channelName)|]
-            streamsE :: Q [Exp]
-            streamsE = mapM varE streamNames
             messageConfigurationE :: Q Exp
             messageConfigurationE = [|defaultMessageConfiguration{createChannels = $(litE $ integerL $ toInteger $ length fun.streams)}|]
             sendE :: Q Exp -> Q Exp
             sendE msgExp = [|$typedSend $clientE $messageConfigurationE $msgExp|]
             requestE :: Q Exp -> Q Exp
-            requestE msgExp = [|$typedRequest $clientE $messageConfigurationE $msgExp|]
+            requestE msgExp = [|$typedRequest $clientE $checkResult $messageConfigurationE $msgExp|]
             applyVars :: Q Exp -> Q Exp
             applyVars = go argNames
               where
                 go :: [Name] -> Q Exp -> Q Exp
                 go [] ex = ex
                 go (n:ns) ex = go ns (appE ex (varE n))
-            -- check if the response to a request matches the expected result constructor
-            checkResult :: Q Exp -> Q Exp
-            checkResult x = caseE x [valid, invalid]
+            -- check if the response to a request matches the expected response constructor
+            checkResult :: Q Exp
+            checkResult = lamCaseE [valid, invalid]
               where
                 valid :: Q Match
                 valid = do
                   result <- newName "result"
                   match (conP (responseFunctionCtorName api fun) [varP result]) (normalB [|pure $(varE result)|]) []
                 invalid :: Q Match
-                invalid = match wildP (normalB [|$(varE 'clientReportProtocolError) $clientE "TODO"|]) []
+                invalid = match wildP (normalB [|Nothing|]) []
 
             typedSend :: Q Exp
-            typedSend = appTypeE [|clientSend|] (protocolType api)
+            typedSend = appTypeE (varE 'clientSend) (protocolType api)
             typedRequest :: Q Exp
-            typedRequest = appTypeE (varE 'clientRequestBlocking) (protocolType api)
+            typedRequest = appTypeE (varE 'clientRequest) (protocolType api)
 
 functionArgumentTypes :: RpcFunction -> Q [Type]
 functionArgumentTypes fun = sequence $ (.ty) <$> fun.arguments
@@ -459,6 +441,7 @@ buildTupleType fields = buildTupleType' =<< fields
     go t [] = t
     go t (f:fs) = go (AppT t f) fs
 
+-- | [a, b, c] -> (a, b, c)
 buildTuple :: Q [Exp] -> Q Exp
 buildTuple fields = buildTuple' =<< fields
   where
@@ -466,6 +449,20 @@ buildTuple fields = buildTuple' =<< fields
     buildTuple' [] = [|()|]
     buildTuple' [single] = pure single
     buildTuple' fs = pure $ TupE (Just <$> fs)
+
+-- | [m a, m b, m c] -> m (a, b, c)
+buildTupleM :: Q [Exp] -> Q Exp
+buildTupleM fields = buildTuple' =<< fields
+  where
+    buildTuple' :: [Exp] -> Q Exp
+    buildTuple' [] = [|pure ()|]
+    buildTuple' [single] = pure single
+    buildTuple' fs = pure (TupE (const Nothing <$> fs)) `applyM` (pure <$> fs)
+
+-- | (a -> b -> c -> d) -> [m a, m b, m c] -> m d
+applyM :: Q Exp -> [Q Exp] -> Q Exp
+applyM con [] = [|pure $con|]
+applyM con (monadicE:monadicEs) = foldl (\x y -> [|$x <*> $y|]) [|$con <$> $monadicE|] monadicEs
 
 buildFunctionType :: Q [Type] -> Q Type -> Q Type
 buildFunctionType argTypes returnType = go =<< argTypes
@@ -480,8 +477,6 @@ defaultBangType = bangType (bang noSourceUnpackedness noSourceStrictness)
 varDefaultBangType  :: Name -> Q Type -> Q VarBangType
 varDefaultBangType name qType = varBangType name $ bangType (bang noSourceUnpackedness noSourceStrictness) qType
 
-fmapE :: Q Exp -> Q Exp -> Q Exp
-fmapE f e = [|$(f) <$> $(e)|]
 
 -- * Error reporting
 
@@ -490,3 +485,9 @@ reportInvalidChannelCount expectedCount newChannels onChannel = channelReportPro
   where
     msg = mconcat parts
     parts = ["Received ", show (length newChannels), " new channels, but expected ", show expectedCount]
+
+multiplexerInvalidChannelCount :: MonadIO m => Int -> [Channel] -> m a
+multiplexerInvalidChannelCount expectedCount newChannels = liftIO $ fail msg
+  where
+    msg = mconcat parts
+    parts = ["Internal error: Multiplexer created ", show (length newChannels), " new channels, but expected ", show expectedCount]

@@ -34,19 +34,20 @@ module Quasar.Network.Runtime (
   RpcProtocol(..),
   HasProtocolImpl(..),
   clientSend,
-  clientRequestBlocking,
+  clientRequest,
   clientReportProtocolError,
   newStream,
 ) where
 
 import Control.Concurrent (forkFinally)
 import Control.Concurrent.Async (cancel, link, withAsync, mapConcurrently_)
-import Control.Exception (SomeException, bracket, bracketOnError, bracketOnError, interruptible, mask_)
+import Control.Exception (bracket, bracketOnError, bracketOnError, interruptible, mask_)
 import Control.Concurrent.MVar
 import Data.Binary (Binary, encode, decodeOrFail)
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.HashMap.Strict as HM
 import qualified Network.Socket as Socket
+import Quasar.Core
 import Quasar.Network.Connection
 import Quasar.Network.Multiplexer
 import Quasar.Prelude
@@ -78,29 +79,31 @@ emptyClientState = ClientState {
   callbacks = HM.empty
 }
 
-clientSend :: RpcProtocol p => Client p -> MessageConfiguration -> ProtocolRequest p -> IO SentMessageResources
-clientSend client config req = channelSend_ client.channel config (encode req)
-clientRequestBlocking :: forall p. RpcProtocol p => Client p -> MessageConfiguration -> ProtocolRequest p -> IO (ProtocolResponse p, SentMessageResources)
-clientRequestBlocking client config req = do
-  resultMVar <- newEmptyMVar
-  sentMessageResources <- channelSend client.channel config (encode req) $ \msgId ->
+clientSend :: forall p m. (MonadIO m, RpcProtocol p) => Client p -> MessageConfiguration -> ProtocolRequest p -> m SentMessageResources
+clientSend client config req = liftIO $ channelSend_ client.channel config (encode req)
+
+clientRequest :: forall p m a. (MonadIO m, RpcProtocol p) => Client p -> (ProtocolResponse p -> Maybe a) -> MessageConfiguration -> ProtocolRequest p -> m (Async a, SentMessageResources)
+clientRequest client checkResponse config req = do
+  resultAsync <- newAsyncVar
+  sentMessageResources <- liftIO $ channelSend client.channel config (encode req) $ \msgId ->
     modifyMVar_ client.stateMVar $
-      \state -> pure state{callbacks = HM.insert msgId (requestCompletedCallback resultMVar msgId) state.callbacks}
-  -- Block on resultMVar until the request completes
-  -- TODO: Future-based variant
-  result <- takeMVar resultMVar
-  pure (result, sentMessageResources)
+      \state -> pure state{callbacks = HM.insert msgId (requestCompletedCallback resultAsync msgId) state.callbacks}
+  pure (toAsync resultAsync, sentMessageResources)
   where
-    requestCompletedCallback :: MVar (ProtocolResponse p) -> MessageId -> ProtocolResponse p -> IO ()
-    requestCompletedCallback resultMVar msgId response = do
+    requestCompletedCallback :: AsyncVar a -> MessageId -> ProtocolResponse p -> IO ()
+    requestCompletedCallback resultAsync msgId response = do
       -- Remove callback
       modifyMVar_ client.stateMVar $ \state -> pure state{callbacks = HM.delete msgId state.callbacks}
-      putMVar resultMVar response
+
+      case checkResponse response of
+        Nothing -> clientReportProtocolError client "Invalid response"
+        Just result -> putAsyncVar resultAsync result
+
 clientHandleChannelMessage :: forall p. (RpcProtocol p) => Client p -> ReceivedMessageResources -> BSL.ByteString -> IO ()
 clientHandleChannelMessage client resources msg = case decodeOrFail msg of
   Left (_, _, errMsg) -> channelReportProtocolError client.channel errMsg
   Right ("", _, resp) -> clientHandleResponse resp
-  Right (leftovers, _, _) -> channelReportProtocolError client.channel ("Response parser pureed unexpected leftovers: " <> show (BSL.length leftovers))
+  Right (leftovers, _, _) -> channelReportProtocolError client.channel ("Response parser returned unexpected leftovers: " <> show (BSL.length leftovers))
   where
     clientHandleResponse :: ProtocolResponseWrapper p -> IO ()
     clientHandleResponse (requestId, resp) = do
@@ -136,29 +139,29 @@ serverHandleChannelMessage protocolImpl channel resources msg = case decodeOrFai
 
 newtype Stream up down = Stream Channel
 
-newStream :: Channel -> IO (Stream up down)
-newStream = pure . Stream
+newStream :: MonadIO m => Channel -> m (Stream up down)
+newStream = liftIO . pure . Stream
 
-streamSend :: Binary up => Stream up down -> up -> IO ()
-streamSend (Stream channel) value = channelSendSimple channel (encode value)
+streamSend :: (Binary up, MonadIO m) => Stream up down -> up -> m ()
+streamSend (Stream channel) value = liftIO $ channelSendSimple channel (encode value)
 
-streamSetHandler :: Binary down => Stream up down -> (down -> IO ()) -> IO ()
-streamSetHandler (Stream channel) handler = channelSetSimpleHandler channel handler
+streamSetHandler :: (Binary down, MonadIO m) => Stream up down -> (down -> IO ()) -> m ()
+streamSetHandler (Stream channel) handler = liftIO $ channelSetSimpleHandler channel handler
 
-streamClose :: Stream up down -> IO ()
-streamClose (Stream channel) = channelClose channel
+streamClose :: MonadIO m => Stream up down -> m ()
+streamClose (Stream channel) = liftIO $ channelClose channel
 
 -- ** Running client and server
 
-withClientTCP :: RpcProtocol p => Socket.HostName -> Socket.ServiceName -> (Client p -> IO a) -> IO a
-withClientTCP host port = bracket (newClientTCP host port) clientClose
+withClientTCP :: RpcProtocol p => Socket.HostName -> Socket.ServiceName -> (Client p -> AsyncIO a) -> IO a
+withClientTCP host port = withClientBracket (newClientTCP host port)
 
 newClientTCP :: forall p. RpcProtocol p => Socket.HostName -> Socket.ServiceName -> IO (Client p)
 newClientTCP host port = newClient =<< connectTCP host port
 
 
-withClientUnix :: RpcProtocol p => FilePath -> (Client p -> IO a) -> IO a
-withClientUnix socketPath = bracket (newClientUnix socketPath) clientClose
+withClientUnix :: RpcProtocol p => FilePath -> (Client p -> AsyncIO a) -> IO a
+withClientUnix socketPath = withClientBracket (newClientUnix socketPath)
 
 newClientUnix :: RpcProtocol p => FilePath -> IO (Client p)
 newClientUnix socketPath = bracketOnError (Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol) Socket.close $ \sock -> do
@@ -167,11 +170,14 @@ newClientUnix socketPath = bracketOnError (Socket.socket Socket.AF_UNIX Socket.S
   newClient sock
 
 
-withClient :: forall p a b. (IsConnection a, RpcProtocol p) => a -> (Client p -> IO b) -> IO b
-withClient x = bracket (newClient x) clientClose
+withClient :: forall p a b. (IsConnection a, RpcProtocol p) => a -> (Client p -> AsyncIO b) -> IO b
+withClient connection = withClientBracket (newClient connection)
 
 newClient :: forall p a. (IsConnection a, RpcProtocol p) => a -> IO (Client p)
-newClient x = newChannelClient =<< newMultiplexer MultiplexerSideA (toSocketConnection x)
+newClient connection = newChannelClient =<< newMultiplexer MultiplexerSideA (toSocketConnection connection)
+
+withClientBracket :: forall p a. (RpcProtocol p) => IO (Client p) -> (Client p -> AsyncIO a) -> IO a
+withClientBracket createClient action = bracket createClient clientClose $ \client -> runAsyncIO (action client)
 
 
 newChannelClient :: RpcProtocol p => Channel -> IO (Client p)
@@ -287,8 +293,8 @@ runServerHandler protocolImpl = runMultiplexer MultiplexerSideB registerChannelS
     registerChannelServerHandler channel = channelSetHandler channel (serverHandleChannelMessage @p protocolImpl channel)
 
 
-withLocalClient :: forall p a. (RpcProtocol p, HasProtocolImpl p) => Server p -> ((Client p) -> IO a) -> IO a
-withLocalClient server = bracket (newLocalClient server) clientClose
+withLocalClient :: forall p a. (RpcProtocol p, HasProtocolImpl p) => Server p -> ((Client p) -> AsyncIO a) -> IO a
+withLocalClient server action = bracket (newLocalClient server) clientClose $ \client -> runAsyncIO (action client)
 
 newLocalClient :: forall p. (RpcProtocol p, HasProtocolImpl p) => Server p -> IO (Client p)
 newLocalClient server = do
@@ -300,5 +306,5 @@ newLocalClient server = do
 
 -- ** Test implementation
 
-withStandaloneClient :: forall p a. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> (Client p -> IO a) -> IO a
+withStandaloneClient :: forall p a. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> (Client p -> AsyncIO a) -> IO a
 withStandaloneClient impl runClientHook = withServer impl [] $ \server -> withLocalClient server runClientHook

@@ -13,12 +13,17 @@ module Quasar.NetworkSpec where
 import Control.Concurrent.MVar
 import Control.Monad.IO.Class (liftIO)
 import Prelude
+import Quasar.Core
 import Quasar.Network
 import Quasar.Network.Runtime (withStandaloneClient)
 import Quasar.Network.TH (makeRpc)
 import Test.Hspec
 import Test.QuickCheck
 import Test.QuickCheck.Monadic
+
+shouldReturnAsync :: (HasCallStack, Show a, Eq a) => AsyncIO a -> a -> AsyncIO ()
+action `shouldReturnAsync` expected = action >>= liftIO . (`shouldBe` expected)
+
 
 $(makeRpc $ rpcApi "Example" [
     rpcFunction "fixedHandler42" $ do
@@ -79,10 +84,10 @@ spec = parallel $ do
   describe "Example" $ do
     it "works" $ do
       withStandaloneClient @ExampleProtocol exampleProtocolImpl $ \client -> do
-        fixedHandler42 client 5 `shouldReturn` False
-        fixedHandler42 client 42 `shouldReturn` True
-        fixedHandlerInc client 41 `shouldReturn` 42
-        multiArgs client 10 3 False `shouldReturn` (13, True)
+        awaitResult (fixedHandler42 client 5) `shouldReturnAsync` False
+        awaitResult (fixedHandler42 client 42) `shouldReturnAsync` True
+        awaitResult (fixedHandlerInc client 41) `shouldReturnAsync` 42
+        awaitResult (multiArgs client 10 3 False) `shouldReturnAsync` (13, True)
         noResponse client 1337
         noNothing client
 
@@ -98,10 +103,10 @@ spec = parallel $ do
         streamClose stream2
 
     aroundAll (\x -> withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
-        resultMVar <- newEmptyMVar
+        resultMVar <- liftIO newEmptyMVar
         stream <- createMultiplyStream client
         streamSetHandler stream $ putMVar resultMVar
-        x (resultMVar, stream)
+        liftIO $ x (resultMVar, stream)
       ) $ it "can send data over the stream" $ \(resultMVar, stream) -> property $ \(x, y) -> monadicIO $ do
         liftIO $ streamSend stream (x, y)
         liftIO $ takeMVar resultMVar `shouldReturn` x * y
