@@ -87,62 +87,62 @@ import GHC.Stack.Types qualified
 import GHC.Types qualified
 import Quasar.PreludeExtras
 
-{-# DEPRECATED head "Partial Function." #-}
+{-# WARNING head "Partial Function." #-}
 head :: [a] -> a
 head = P.head
 
-{-# DEPRECATED last "Partial Function." #-}
+{-# WARNING last "Partial Function." #-}
 last :: [a] -> a
 last = P.last
 
-{-# DEPRECATED read "Partial Function." #-}
+{-# WARNING read "Partial Function." #-}
 read :: Read a => String -> a
 read = P.read
 
-{-# DEPRECATED error "Undefined." #-}
+{-# WARNING error "Undefined." #-}
 error :: forall (r :: GHC.Types.RuntimeRep). forall (a :: GHC.Types.TYPE r). GHC.Stack.Types.HasCallStack => String -> a
 error = P.error
 
-{-# DEPRECATED errorWithoutStackTrace "Undefined." #-}
+{-# WARNING errorWithoutStackTrace "Undefined." #-}
 errorWithoutStackTrace :: String -> a
 errorWithoutStackTrace = P.errorWithoutStackTrace
 
-{-# DEPRECATED undefined "Undefined." #-}
+{-# WARNING undefined "Undefined." #-}
 undefined :: forall (r :: GHC.Types.RuntimeRep). forall (a :: GHC.Types.TYPE r). GHC.Stack.Types.HasCallStack  => a
 undefined = P.undefined
 
-{-# DEPRECATED trace "Trace." #-}
+{-# WARNING trace "Trace." #-}
 trace :: String -> a -> a
 trace = Trace.trace
 
-{-# DEPRECATED traceId "Trace." #-}
+{-# WARNING traceId "Trace." #-}
 traceId :: String -> String
 traceId = Trace.traceId
 
-{-# DEPRECATED traceShow "Trace." #-}
+{-# WARNING traceShow "Trace." #-}
 traceShow :: Show a => a -> b -> b
 traceShow = Trace.traceShow
 
-{-# DEPRECATED traceShowId "Trace." #-}
+{-# WARNING traceShowId "Trace." #-}
 traceShowId :: Show a => a -> a
 traceShowId = Trace.traceShowId
 
-{-# DEPRECATED traceM "Trace." #-}
+{-# WARNING traceM "Trace." #-}
 traceM :: Applicative m => String -> m ()
 traceM = Trace.traceM
 
-{-# DEPRECATED traceShowM "Trace." #-}
+{-# WARNING traceShowM "Trace." #-}
 traceShowM :: (Show a, Applicative m) => a -> m ()
 traceShowM = Trace.traceShowM
 
-{-# DEPRECATED traceIO "Trace." #-}
+{-# WARNING traceIO "Trace." #-}
 traceIO :: Control.Monad.IO.Class.MonadIO m => String -> m ()
 traceIO = Control.Monad.IO.Class.liftIO . Trace.traceIO
 
-{-# DEPRECATED traceShowIO "Trace." #-}
+{-# WARNING traceShowIO "Trace." #-}
 traceShowIO :: (Control.Monad.IO.Class.MonadIO m, Show a) => a -> m ()
 traceShowIO = traceIO . show
 
-{-# DEPRECATED traceShowIdIO "Trace." #-}
+{-# WARNING traceShowIdIO "Trace." #-}
 traceShowIdIO :: (Control.Monad.IO.Class.MonadIO m, Show a) => a -> m a
 traceShowIdIO a = traceShowIO a >> pure a
