@@ -2,6 +2,7 @@ module Quasar.AsyncSpec (spec) where
 
 import Control.Concurrent
 import Control.Exception (throwIO)
+import Control.Monad (void)
 import Control.Monad.IO.Class
 import Data.Either (isRight)
 import Prelude
@@ -26,7 +27,7 @@ spec = parallel $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
 
       mvar <- newEmptyMVar
-      onResult_ throwIO avar (putMVar mvar)
+      onResult_ avar throwIO (putMVar mvar)
 
       (() <$) <$> tryTakeMVar mvar `shouldReturn` Nothing
 
@@ -46,3 +47,27 @@ spec = parallel $ do
 
     it "can continue after awaiting an already finished operation" $ do
       runAsyncIO (await =<< async (pure 42 :: AsyncIO Int)) `shouldReturn` 42
+
+    it "can fmap the result of an already finished async" $ do
+      avar <- newAsyncVar :: IO (AsyncVar ())
+      putAsyncVar avar ()
+      runAsyncIO (id <$> await avar)
+
+    it "can fmap the result of an async that is completed later" $ do
+      avar <- newAsyncVar :: IO (AsyncVar ())
+      void $ forkIO $ do
+        threadDelay 100000
+        putAsyncVar avar ()
+      runAsyncIO (id <$> await avar)
+
+    it "can bind the result of an already finished async" $ do
+      avar <- newAsyncVar :: IO (AsyncVar ())
+      putAsyncVar avar ()
+      runAsyncIO (await avar >>= pure)
+
+    it "can bind the result of an async that is completed later" $ do
+      avar <- newAsyncVar :: IO (AsyncVar ())
+      void $ forkIO $ do
+        threadDelay 100000
+        putAsyncVar avar ()
+      runAsyncIO (await avar >>= pure)
