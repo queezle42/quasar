@@ -8,6 +8,7 @@ import Data.Either (isRight)
 import Prelude
 import Test.Hspec
 import Quasar.Core
+import System.Timeout
 
 shouldSatisfyM :: (HasCallStack, Show a) => IO a -> (a -> Bool) -> Expectation
 shouldSatisfyM action expected = action >>= (`shouldSatisfy` expected)
@@ -71,3 +72,11 @@ spec = parallel $ do
         threadDelay 100000
         putAsyncVar avar ()
       runAsyncIO (await avar >>= pure)
+
+    it "can terminate when encountering an asynchronous exception" $ do
+      never <- newAsyncVar :: IO (AsyncVar ())
+
+      result <- timeout 100000 $ runAsyncIO $
+        -- Use bind to create an AsyncIOPlumbing, which is the interesting case that uses `uninterruptibleMask` when run
+        await never >>= pure
+      result `shouldBe` Nothing
