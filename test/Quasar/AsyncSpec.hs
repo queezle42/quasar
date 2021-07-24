@@ -80,3 +80,9 @@ spec = parallel $ do
         -- Use bind to create an AsyncIOPlumbing, which is the interesting case that uses `uninterruptibleMask` when run
         await never >>= pure
       result `shouldBe` Nothing
+
+  describe "CancellationToken" $ do
+    it "can be waited upon" $ do
+      result <- timeout 100000 $ withCancellationToken wait
+      result `shouldBe` Nothing -- `wait` re-throws the exception
+
