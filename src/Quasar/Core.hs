@@ -5,9 +5,6 @@ module Quasar.Core (
   await,
   runAsyncIO,
   awaitResult,
-
-  -- * Cancellation
-  withCancellationToken,
 ) where
 
 import Control.Concurrent (forkIOWithUnmask)
@@ -165,45 +162,3 @@ peekEitherSTM x y =
       Just (Left ex) -> pure (Just (Left ex))
       Just (Right r) -> pure (Just (Right (Right r)))
       Nothing -> pure Nothing
-
-
--- * Cancellation
-
-newtype CancellationToken = CancellationToken (AsyncVar Void)
-
-instance IsAwaitable Void CancellationToken where
-  toAwaitable (CancellationToken var) = toAwaitable var
-
-newCancellationToken :: IO CancellationToken
-newCancellationToken = CancellationToken <$> newAsyncVar
-
-cancel :: Exception e => CancellationToken -> e -> IO ()
-cancel (CancellationToken var) = failAsyncVar_ var . toException
-
-isCancellationRequested :: CancellationToken -> IO Bool
-isCancellationRequested (CancellationToken var) = isJust <$> peekAwaitable var
-
-cancellationState :: CancellationToken -> IO (Maybe SomeException)
-cancellationState (CancellationToken var) = (either Just (const Nothing) =<<) <$> peekAwaitable var
-
-throwIfCancellationRequested :: CancellationToken -> IO ()
-throwIfCancellationRequested (CancellationToken var) =
-  peekAwaitable var >>= \case
-    Just (Left ex) -> throwIO ex
-    _ -> pure ()
-
-awaitUnlessCancellationRequested :: IsAwaitable a b => CancellationToken -> b -> AsyncIO a
-awaitUnlessCancellationRequested cancellationToken = fmap (either absurd id) . awaitEither cancellationToken . toAwaitable
-
-
-withCancellationToken :: (CancellationToken -> IO a) -> IO a
-withCancellationToken action = do
-  cancellationToken <- newCancellationToken
-  resultMVar :: MVar (Either SomeException a) <- newEmptyMVar
-
-  uninterruptibleMask $ \unmask -> do
-    void $ forkIOWithUnmask $ \threadUnmask -> do
-      putMVar resultMVar =<< try (threadUnmask (action cancellationToken))
-
-    -- TODO test if it is better to run readMVar recursively or to keep it uninterruptible
-    either throwIO pure =<< (unmask (readMVar resultMVar) `catchAll` (\ex -> cancel cancellationToken ex >> readMVar resultMVar))

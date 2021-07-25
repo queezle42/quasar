@@ -69,12 +69,3 @@ spec = parallel $ do
         -- Use bind to create an AsyncIOPlumbing, which is the interesting case that uses `uninterruptibleMask` when run
         await never >>= pure
       result `shouldBe` Nothing
-
-  describe "CancellationToken" $ do
-    it "propagates outer exceptions to the cancellation token" $ do
-      result <- timeout 100000 $ withCancellationToken (runAsyncIO . await)
-      result `shouldBe` Nothing
-
-    it "can return a value after cancellation" $ do
-      result <- timeout 100000 $ withCancellationToken (fmap (either (const True) (const False)) . atomically . awaitSTM)
-      result `shouldBe` Just True
