@@ -6,6 +6,7 @@ import Control.Monad (void, (<=<))
 import Control.Monad.IO.Class
 import Prelude
 import Test.Hspec
+import Quasar.Awaitable
 import Quasar.Core
 import System.Timeout
 

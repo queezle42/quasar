@@ -1,24 +1,15 @@
 module Quasar.Core (
-  -- * Awaitable
-  IsAwaitable(..),
-  awaitSTM,
-  Awaitable,
-  successfulAwaitable,
-  failedAwaitable,
-  completedAwaitable,
-  peekAwaitable,
-
-  -- * AsyncVar
-  AsyncVar,
-  newAsyncVar,
-  putAsyncVar,
-
   -- * AsyncIO
   AsyncIO,
   async,
   await,
   runAsyncIO,
   awaitResult,
+
+  -- * AsyncVar
+  AsyncVar,
+  newAsyncVar,
+  putAsyncVar,
 
   -- * Disposable
   IsDisposable(..),
@@ -37,68 +28,8 @@ import Control.Exception (MaskingState(..), getMaskingState)
 import Control.Monad.Catch
 import Data.Maybe (isJust)
 import Data.Void (absurd)
+import Quasar.Awaitable
 import Quasar.Prelude
-
--- * Awaitable
-
-class IsAwaitable r a | a -> r where
-  peekSTM :: a -> STM (Maybe (Either SomeException r))
-  peekSTM = peekSTM . toAwaitable
-
-  toAwaitable :: a -> Awaitable r
-  toAwaitable = SomeAwaitable
-
-  {-# MINIMAL toAwaitable | peekSTM #-}
-
-
--- | Wait until the promise is settled and return the result.
-awaitSTM :: IsAwaitable r a => a -> STM (Either SomeException r)
-awaitSTM = peekSTM >=> maybe retry pure
-
-
-data Awaitable r = forall a. IsAwaitable r a => SomeAwaitable a
-
-instance IsAwaitable r (Awaitable r) where
-  peekSTM (SomeAwaitable x) = peekSTM x
-  toAwaitable = id
-
-instance Functor Awaitable where
-  fmap fn = toAwaitable . FnAwaitable . fmap (fmap (fmap fn)) . peekSTM
-
-
-
-newtype CompletedAwaitable r = CompletedAwaitable (Either SomeException r)
-instance IsAwaitable r (CompletedAwaitable r) where
-  peekSTM (CompletedAwaitable value) = pure $ Just value
-
-completedAwaitable :: Either SomeException r -> Awaitable r
-completedAwaitable = toAwaitable . CompletedAwaitable
-
-successfulAwaitable :: r -> Awaitable r
-successfulAwaitable = completedAwaitable . Right
-
-failedAwaitable :: SomeException -> Awaitable r
-failedAwaitable = completedAwaitable . Left
-
-
-peekAwaitable :: (IsAwaitable r a, MonadIO m) => a -> m (Maybe (Either SomeException r))
-peekAwaitable = liftIO . atomically . peekSTM
-
-
-newtype FnAwaitable r = FnAwaitable (STM (Maybe (Either SomeException r)))
-instance IsAwaitable r (FnAwaitable r) where
-  peekSTM (FnAwaitable fn) = fn
-
-awaitableSTM :: STM (Maybe (Either SomeException r)) -> IO (Awaitable r)
-awaitableSTM fn = do
-  cache <- newTVarIO (Left fn)
-  pure . toAwaitable . FnAwaitable $
-    readTVar cache >>= \case
-      Left generatorFn -> do
-        value <- generatorFn
-        writeTVar cache (Right value)
-        pure value
-      Right value -> pure value
 
 
 -- * AsyncIO
@@ -266,7 +197,7 @@ awaitEither :: (IsAwaitable ra a , IsAwaitable rb b) => a -> b -> AsyncIO (Eithe
 awaitEither x y = AsyncIOPlumbing $ \_ _ -> AsyncIOAsync <$> awaitEitherPlumbing x y
 
 awaitEitherPlumbing :: (IsAwaitable ra a , IsAwaitable rb b) => a -> b -> IO (Awaitable (Either ra rb))
-awaitEitherPlumbing x y = awaitableSTM $ peekEitherSTM x y
+awaitEitherPlumbing x y = awaitableFromSTM $ peekEitherSTM x y
 
 peekEitherSTM :: (IsAwaitable ra a , IsAwaitable rb b) => a -> b -> STM (Maybe (Either SomeException (Either ra rb)))
 peekEitherSTM x y =

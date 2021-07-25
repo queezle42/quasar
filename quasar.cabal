@@ -76,6 +76,7 @@ library
     transformers,
     unordered-containers,
   exposed-modules:
+    Quasar.Awaitable
     Quasar.Core
     Quasar.Observable
     Quasar.Observable.Delta
