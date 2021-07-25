@@ -1,6 +1,7 @@
 module Quasar.Observable.ObservablePrioritySpec (spec) where
 
 import Quasar.Core
+import Quasar.Disposable
 import Quasar.Observable
 import Quasar.Observable.ObservablePriority (ObservablePriority)
 import Quasar.Observable.ObservablePriority qualified as OP

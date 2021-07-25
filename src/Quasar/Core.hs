@@ -11,13 +11,6 @@ module Quasar.Core (
   newAsyncVar,
   putAsyncVar,
 
-  -- * Disposable
-  IsDisposable(..),
-  Disposable,
-  mkDisposable,
-  synchronousDisposable,
-  noDisposable,
-
   -- * Cancellation
   withCancellationToken,
 ) where
@@ -250,47 +243,3 @@ withCancellationToken action = do
 
     -- TODO test if it is better to run readMVar recursively or to keep it uninterruptible
     either throwIO pure =<< (unmask (readMVar resultMVar) `catchAll` (\ex -> cancel cancellationToken ex >> readMVar resultMVar))
-
-
--- * Disposable
-
-class IsDisposable a where
-  -- TODO document laws: must not throw exceptions, is idempotent
-
-  -- | Dispose a resource.
-  dispose :: a -> AsyncIO ()
-
-  -- | Dispose a resource in the IO monad.
-  disposeIO :: a -> IO ()
-
-  toDisposable :: a -> Disposable
-  toDisposable = mkDisposable . dispose
-
-instance IsDisposable a => IsDisposable (Maybe a) where
-  dispose = mapM_ dispose
-  disposeIO = mapM_ disposeIO
-
-
-newtype Disposable = Disposable (AsyncIO ())
-
-instance IsDisposable Disposable where
-  dispose (Disposable fn) = fn
-  disposeIO = runAsyncIO . dispose
-  toDisposable = id
-
-instance Semigroup Disposable where
-  x <> y = mkDisposable $ liftA2 (<>) (dispose x) (dispose y)
-
-instance Monoid Disposable where
-  mempty = mkDisposable $ pure ()
-  mconcat disposables = mkDisposable $ traverse_ dispose disposables
-
-
-mkDisposable :: AsyncIO () -> Disposable
-mkDisposable = Disposable
-
-synchronousDisposable :: IO () -> Disposable
-synchronousDisposable = mkDisposable . liftIO
-
-noDisposable :: Disposable
-noDisposable = mempty

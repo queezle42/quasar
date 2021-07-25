@@ -9,7 +9,7 @@ import Data.List (maximumBy)
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Ord (comparing)
-import Quasar.Core
+import Quasar.Disposable
 import Quasar.Observable
 import Quasar.Prelude
 

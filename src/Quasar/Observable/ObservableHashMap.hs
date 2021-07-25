@@ -15,6 +15,7 @@ import Data.Maybe (isJust)
 import Language.Haskell.TH.Syntax (mkName, nameBase)
 import Lens.Micro.Platform
 import Quasar.Core
+import Quasar.Disposable
 import Quasar.Observable
 import Quasar.Observable.Delta
 import Quasar.Prelude hiding (lookup, lookupDelete)

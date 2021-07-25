@@ -36,6 +36,7 @@ import Data.HashMap.Strict qualified as HM
 import Data.IORef
 import Data.Unique
 import Quasar.Core
+import Quasar.Disposable
 import Quasar.Prelude
 
 

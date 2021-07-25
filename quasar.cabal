@@ -78,6 +78,7 @@ library
   exposed-modules:
     Quasar.Awaitable
     Quasar.Core
+    Quasar.Disposable
     Quasar.Observable
     Quasar.Observable.Delta
     Quasar.Observable.ObservableHashMap

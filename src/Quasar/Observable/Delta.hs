@@ -7,7 +7,7 @@ module Quasar.Observable.Delta (
 import Data.Binary (Binary)
 import Data.Binary qualified as B
 import Data.HashMap.Strict qualified as HM
-import Quasar.Core
+import Quasar.Disposable
 import Quasar.Observable
 import Quasar.Prelude
 
