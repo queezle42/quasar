@@ -1,4 +1,5 @@
 module Quasar.Awaitable (
+  -- * Awaitable
   IsAwaitable(..),
   awaitSTM,
   Awaitable,
@@ -7,8 +8,20 @@ module Quasar.Awaitable (
   completedAwaitable,
   awaitableFromSTM,
   peekAwaitable,
-) where
 
+  -- * AsyncVar
+  AsyncVar,
+  newAsyncVar,
+  newAsyncVarSTM,
+  putAsyncVarEither,
+  putAsyncVarEitherSTM,
+  putAsyncVar,
+  putAsyncVar_,
+  failAsyncVar,
+  failAsyncVar_,
+  putAsyncVarEither_,
+  putAsyncVarEitherSTM_,
+) where
 
 import Control.Concurrent.STM
 import Control.Monad.Catch
@@ -65,3 +78,45 @@ awaitableFromSTM fn = do
         pure value
       Right value -> pure value
 
+
+
+-- ** AsyncVar
+
+-- | The default implementation for an `Awaitable` that can be fulfilled later.
+newtype AsyncVar r = AsyncVar (TMVar (Either SomeException r))
+
+instance IsAwaitable r (AsyncVar r) where
+  peekSTM (AsyncVar var) = tryReadTMVar var
+
+
+newAsyncVarSTM :: STM (AsyncVar r)
+newAsyncVarSTM = AsyncVar <$> newEmptyTMVar
+
+newAsyncVar :: MonadIO m => m (AsyncVar r)
+newAsyncVar = liftIO $ AsyncVar <$> newEmptyTMVarIO
+
+
+putAsyncVarEither :: forall a m. MonadIO m => AsyncVar a -> Either SomeException a -> m Bool
+putAsyncVarEither var = liftIO . atomically . putAsyncVarEitherSTM var
+
+putAsyncVarEitherSTM :: AsyncVar a -> Either SomeException a -> STM Bool
+putAsyncVarEitherSTM (AsyncVar var) = tryPutTMVar var
+
+
+putAsyncVar :: MonadIO m => AsyncVar a -> a -> m Bool
+putAsyncVar var = putAsyncVarEither var . Right
+
+putAsyncVar_ :: MonadIO m => AsyncVar a -> a -> m ()
+putAsyncVar_ var = void . putAsyncVar var
+
+failAsyncVar :: MonadIO m => AsyncVar a -> SomeException -> m Bool
+failAsyncVar var = putAsyncVarEither var . Left
+
+failAsyncVar_ :: MonadIO m => AsyncVar a -> SomeException -> m ()
+failAsyncVar_ var = void . failAsyncVar var
+
+putAsyncVarEither_ :: MonadIO m => AsyncVar a -> Either SomeException a -> m ()
+putAsyncVarEither_ var = void . putAsyncVarEither var
+
+putAsyncVarEitherSTM_ :: AsyncVar a -> Either SomeException a -> STM ()
+putAsyncVarEitherSTM_ var = void . putAsyncVarEitherSTM var

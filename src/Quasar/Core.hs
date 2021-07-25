@@ -6,11 +6,6 @@ module Quasar.Core (
   runAsyncIO,
   awaitResult,
 
-  -- * AsyncVar
-  AsyncVar,
-  newAsyncVar,
-  putAsyncVar,
-
   -- * Cancellation
   withCancellationToken,
 ) where
@@ -136,52 +131,6 @@ awaitResult = (await =<<)
 --  asyncThread :: m r -> AsyncIO r
 
 
--- * Async helpers
-
--- ** AsyncVar
-
--- | The default implementation for an `Awaitable` that can be fulfilled later.
-newtype AsyncVar r = AsyncVar (TMVar (Either SomeException r))
-
-instance IsAwaitable r (AsyncVar r) where
-  peekSTM (AsyncVar var) = tryReadTMVar var
-
-tryPutAsyncVarEitherSTM :: AsyncVar a -> Either SomeException a -> STM Bool
-tryPutAsyncVarEitherSTM (AsyncVar var) = tryPutTMVar var
-
-tryPutAsyncVarEither :: forall a m. MonadIO m => AsyncVar a -> Either SomeException a -> m Bool
-tryPutAsyncVarEither var = liftIO . atomically . tryPutAsyncVarEitherSTM var
-
-
-newAsyncVarSTM :: STM (AsyncVar r)
-newAsyncVarSTM = AsyncVar <$> newEmptyTMVar
-
-newAsyncVar :: MonadIO m => m (AsyncVar r)
-newAsyncVar = liftIO $ AsyncVar <$> newEmptyTMVarIO
-
-
-putAsyncVar :: MonadIO m => AsyncVar a -> a -> m ()
-putAsyncVar var = putAsyncVarEither var . Right
-
-tryPutAsyncVar :: MonadIO m => AsyncVar a -> a -> m Bool
-tryPutAsyncVar var = tryPutAsyncVarEither var . Right
-
-tryPutAsyncVar_ :: MonadIO m => AsyncVar a -> a -> m ()
-tryPutAsyncVar_ var = void . tryPutAsyncVar var
-
-failAsyncVar :: MonadIO m => AsyncVar a -> SomeException -> m Bool
-failAsyncVar var = tryPutAsyncVarEither var . Left
-
-failAsyncVar_ :: MonadIO m => AsyncVar a -> SomeException -> m ()
-failAsyncVar_ var = void . failAsyncVar var
-
-putAsyncVarEither :: MonadIO m => AsyncVar a -> Either SomeException a -> m ()
-putAsyncVarEither avar value = liftIO $ do
-  success <- tryPutAsyncVarEither avar value
-  unless success $ fail "An AsyncVar can only be fulfilled once"
-
-tryPutAsyncVarEither_ :: MonadIO m => AsyncVar a -> Either SomeException a -> m ()
-tryPutAsyncVarEither_ var = void . tryPutAsyncVarEither var
 
 
 -- * Awaiting multiple asyncs

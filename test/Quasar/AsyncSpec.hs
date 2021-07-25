@@ -2,7 +2,7 @@ module Quasar.AsyncSpec (spec) where
 
 import Control.Concurrent
 import Control.Concurrent.STM
-import Control.Monad (void, (<=<))
+import Control.Monad (void)
 import Control.Monad.IO.Class
 import Prelude
 import Test.Hspec
@@ -22,7 +22,7 @@ spec = parallel $ do
 
     it "accepts a value" $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
-      putAsyncVar avar ()
+      putAsyncVar_ avar ()
 
   describe "AsyncIO" $ do
     it "binds pure operations" $ do
@@ -40,26 +40,26 @@ spec = parallel $ do
 
     it "can fmap the result of an already finished async" $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
-      putAsyncVar avar ()
+      putAsyncVar_ avar ()
       runAsyncIO (id <$> await avar)
 
     it "can fmap the result of an async that is completed later" $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
       void $ forkIO $ do
         threadDelay 100000
-        putAsyncVar avar ()
+        putAsyncVar_ avar ()
       runAsyncIO (id <$> await avar)
 
     it "can bind the result of an already finished async" $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
-      putAsyncVar avar ()
+      putAsyncVar_ avar ()
       runAsyncIO (await avar >>= pure)
 
     it "can bind the result of an async that is completed later" $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
       void $ forkIO $ do
         threadDelay 100000
-        putAsyncVar avar ()
+        putAsyncVar_ avar ()
       runAsyncIO (await avar >>= pure)
 
     it "can terminate when encountering an asynchronous exception" $ do
