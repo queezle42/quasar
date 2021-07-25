@@ -1,10 +1,9 @@
 module Quasar.AsyncSpec (spec) where
 
 import Control.Concurrent
-import Control.Exception (throwIO)
-import Control.Monad (void)
+import Control.Concurrent.STM
+import Control.Monad (void, (<=<))
 import Control.Monad.IO.Class
-import Data.Either (isRight)
 import Prelude
 import Test.Hspec
 import Quasar.Core
@@ -23,17 +22,6 @@ spec = parallel $ do
     it "accepts a value" $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
       putAsyncVar avar ()
-
-    it "calls a callback" $ do
-      avar <- newAsyncVar :: IO (AsyncVar ())
-
-      mvar <- newEmptyMVar
-      onResult_ avar throwIO (putMVar mvar)
-
-      (() <$) <$> tryTakeMVar mvar `shouldReturn` Nothing
-
-      putAsyncVar avar ()
-      tryTakeMVar mvar `shouldSatisfyM` maybe False isRight
 
   describe "AsyncIO" $ do
     it "binds pure operations" $ do
@@ -82,7 +70,10 @@ spec = parallel $ do
       result `shouldBe` Nothing
 
   describe "CancellationToken" $ do
-    it "can be waited upon" $ do
-      result <- timeout 100000 $ withCancellationToken wait
-      result `shouldBe` Nothing -- `wait` re-throws the exception
+    it "propagates outer exceptions to the cancellation token" $ do
+      result <- timeout 100000 $ withCancellationToken (runAsyncIO . await)
+      result `shouldBe` Nothing
 
+    it "can return a value after cancellation" $ do
+      result <- timeout 100000 $ withCancellationToken (fmap (either (const True) (const False)) . atomically . awaitSTM)
+      result `shouldBe` Just True
