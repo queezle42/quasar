@@ -7,12 +7,12 @@ module Quasar.Core (
   awaitResult,
 ) where
 
-import Control.Concurrent (forkIOWithUnmask)
+import Control.Concurrent (ThreadId, forkIO, forkIOWithUnmask, myThreadId)
 import Control.Concurrent.STM
 import Control.Exception (MaskingState(..), getMaskingState)
 import Control.Monad.Catch
-import Data.Maybe (isJust)
-import Data.Void (absurd)
+import Data.HashSet
+import Data.Sequence
 import Quasar.Awaitable
 import Quasar.Prelude
 
@@ -71,39 +71,62 @@ await = AsyncIOAwait . toAwaitable
 
 -- | Run an `AsyncIO` to completion and return the result.
 runAsyncIO :: AsyncIO r -> IO r
-runAsyncIO x = withDefaultPool $ \pool -> runAsyncIOWithPool pool x
+runAsyncIO = withDefaultPool
 
-runAsyncIOWithPool :: Pool -> AsyncIO r -> IO r
-runAsyncIOWithPool pool x = do
-  stepResult <- stepAsyncIO pool x
-  case stepResult of
-    Left awaitable -> either throwIO pure =<< atomically (awaitSTM awaitable)
-    Right result -> pure result
+runOnPool :: Pool -> AsyncIO r -> AsyncIO r
+runOnPool pool work = await =<< (liftIO . atomically $ queueWork pool work)
 
+data AsyncCall r = forall a. AsyncCall (Awaitable a) (Either SomeException a -> AsyncIO r)
+asyncCall :: Awaitable a -> (Either SomeException a -> AsyncIO r) -> AsyncCall r
+asyncCall = AsyncCall
 
-stepAsyncIO :: Pool -> AsyncIO r -> IO (Either (Awaitable r) r)
+data StepResult r
+  = StepResultCompleted r
+  | StepResultAwaitable (Awaitable r)
+  | StepResultAsyncCall (AsyncCall r)
+
+stepAsyncIO :: Pool -> AsyncIO r -> IO (StepResult r)
 stepAsyncIO pool = go
   where
-    go :: AsyncIO r -> IO (Either (Awaitable r) r)
-    go (AsyncIOCompleted x) = Right <$> either throwIO pure x
-    go (AsyncIOIO x) = Right <$> x
-    go (AsyncIOAwait x) = pure $ Left x
+    --packResult :: Either SomeException (StepResult r) -> Either (AsyncCall r) (Awaitable r)
+    --packResult (Left ex) = Right (failedAwaitable ex)
+    --packResult (Right (StepResultCompleted x)) = Right (successfulAwaitable x)
+    --packResult (Right (StepResultAwaitable x)) = Right x
+    --packResult (Right (StepResultAsyncCall x)) = Left x
+
+    go :: AsyncIO r -> IO (StepResult r)
+    go (AsyncIOCompleted x) = StepResultCompleted <$> either throwIO pure x
+    go (AsyncIOIO x) = StepResultCompleted <$> x
+    go (AsyncIOAwait x) =
+      atomically (peekSTM x) >>= \case
+        Nothing -> pure $ StepResultAwaitable x
+        Just (Left ex) -> throwIO ex
+        Just (Right r) -> pure $ StepResultCompleted r
     go (AsyncIOBind x fn) = do
       go x >>= \case
-        Left awaitable -> bindAwaitable awaitable (either throwM fn)
-        Right r -> go (fn r)
+        StepResultCompleted r -> go (fn r)
+        StepResultAwaitable awaitable -> pure $ StepResultAsyncCall (asyncCall awaitable foobar)
+        (StepResultAsyncCall call) -> continueAfterCall call foobar
+      where
+        foobar = either throwM fn
     go (AsyncIOCatch x handler) = do
       try (go x) >>= \case
         Left ex -> go (handler ex)
-        Right (Left awaitable) -> bindAwaitable awaitable (either (handleSomeException handler) pure)
-        Right (Right r) -> pure $ Right r
-    go AsyncIOAskPool = pure $ Right pool
+        Right (StepResultCompleted r) -> pure $ StepResultCompleted r
+        Right (StepResultAwaitable awaitable) -> pure $ StepResultAsyncCall (asyncCall awaitable foobar)
+        Right (StepResultAsyncCall c) -> continueAfterCall c foobar
+      where
+        foobar = either (handleSomeException handler) pure
+    go AsyncIOAskPool = pure $ StepResultCompleted pool
 
-    bindAwaitable :: Awaitable a -> (Either SomeException a -> AsyncIO r) -> IO (Either (Awaitable r) r)
-    bindAwaitable input work = fmap Left . atomically $ queueBlockedWork pool input work
+    continueAfterCall :: AsyncCall a -> (Either SomeException a -> AsyncIO r) -> IO (StepResult r)
+    continueAfterCall call fn = do
+      -- Tail call optimization is not possible when having to wait for the result of a call, so the call is queued as a new work item.
+      awaitable <- atomically $ queueBlockedWork pool call
+      pure $ StepResultAsyncCall $ asyncCall awaitable fn
 
-handleSomeException :: (Exception e, MonadThrow m) => (e -> m a) -> SomeException -> m a
-handleSomeException handler ex = maybe (throwM ex) handler (fromException ex)
+    handleSomeException :: forall e a m. (Exception e, MonadThrow m) => (e -> m a) -> SomeException -> m a
+    handleSomeException handler ex = maybe (throwM ex) handler (fromException ex)
 
 awaitResult :: AsyncIO (Awaitable r) -> AsyncIO r
 awaitResult = (await =<<)
@@ -115,34 +138,118 @@ awaitResult = (await =<<)
 -- AsyncIORuntime
 -- AsyncIOContext
 data Pool = Pool {
-  queue :: TVar [AsyncQueueItem]
+  configuration :: PoolConfiguraiton,
+  queue :: TVar (Seq AsyncWorkItem),
+  threads :: TVar (HashSet ThreadId)
 }
 
-data AsyncQueueItem = forall a. AsyncQueueItem (Awaitable a) (Either SomeException a -> AsyncIO ())
+newtype AsyncTask r = AsyncTask (Awaitable r)
+instance IsAwaitable r (AsyncTask r) where
+  toAwaitable (AsyncTask awaitable) = awaitable
 
-withPool :: (Pool -> IO a) -> IO a
-withPool = undefined
+data AsyncWorkItem = forall r. AsyncWorkItem (AsyncCall r) (Awaitable r -> IO ())
 
-withDefaultPool :: (Pool -> IO a) -> IO a
-withDefaultPool = (=<< atomically defaultPool)
+newtype AsyncWorkResult r = AsyncWorkResult (TMVar (Awaitable r))
+instance IsAwaitable r (AsyncWorkResult r) where
+  peekSTM (AsyncWorkResult var) = peekSTM =<< readTMVar var
 
-defaultPool :: STM Pool
-defaultPool = do
-  queue <- newTVar []
-  pure Pool {
-    queue
+completeWork :: AsyncWorkResult r -> Awaitable r -> IO ()
+completeWork (AsyncWorkResult var) = atomically . putTMVar var
+
+
+data PoolConfiguraiton = PoolConfiguraiton
+
+defaultPoolConfiguration :: PoolConfiguraiton
+defaultPoolConfiguration = PoolConfiguraiton
+
+withPool :: PoolConfiguraiton -> AsyncIO r -> IO r
+withPool configuration work = mask $ \unmask -> do
+  pool <- newPool configuration
+  task <- atomically $ newTask pool work
+
+  result <- awaitAndThrowTo task unmask `finally` pure () -- TODO dispose pool
+
+  either throwIO pure result
+
+  where
+    awaitAndThrowTo :: AsyncTask r -> (forall a. IO a -> IO a) -> IO (Either SomeException r)
+    -- TODO handle asynchronous exceptions (stop pool)
+    awaitAndThrowTo task unmask = unmask (atomically (awaitSTM task)) `catchAll` (\ex -> undefined >> awaitAndThrowTo task unmask)
+
+withDefaultPool :: AsyncIO a -> IO a
+withDefaultPool = withPool defaultPoolConfiguration
+
+newPool :: PoolConfiguraiton -> IO Pool
+newPool configuration = do
+  queue <- newTVarIO mempty
+  threads <- newTVarIO mempty
+  let pool = Pool {
+    configuration,
+    queue,
+    threads
   }
+  void $ forkIO (managePool pool)
+  pure pool
+  where
+    managePool :: Pool -> IO ()
+    managePool pool = forever $ do
+      worker <- atomically $ takeWorkItem (toWorker pool) pool
+      void $ forkIO worker
+
+    workerSetup :: Pool -> IO () -> (forall a. IO a -> IO a) -> IO ()
+    workerSetup pool worker unmask = do
+      unmask worker
+
+newTask :: Pool -> AsyncIO r -> STM (AsyncTask r)
+newTask pool work = do
+  awaitable <- queueWork pool work
+  pure $ AsyncTask awaitable
+
+
+queueWorkItem :: Pool -> AsyncWorkItem -> STM ()
+queueWorkItem pool item = do
+  modifyTVar' (queue pool) (|> item)
 
 queueWork :: Pool -> AsyncIO r -> STM (Awaitable r)
-queueWork pool work = queueBlockedWork pool (successfulAwaitable ()) (const work)
+queueWork pool work = queueBlockedWork pool $ asyncCall (successfulAwaitable ()) (const work)
 
-queueBlockedWork :: Pool -> Awaitable a -> (Either SomeException a -> AsyncIO r) -> STM (Awaitable r)
-queueBlockedWork pool input work = do
-  resultVar <- newAsyncVarSTM
-  -- TODO masking state
-  let actualWork = try . work >=> putAsyncVarEither_ resultVar
-  undefined
+queueBlockedWork :: Pool -> AsyncCall r -> STM (Awaitable r)
+queueBlockedWork pool call = do
+  resultVar <- AsyncWorkResult <$> newEmptyTMVar
+  queueWorkItem pool $ AsyncWorkItem call (completeWork resultVar)
   pure $ toAwaitable resultVar
+
+toWorker :: Pool -> AsyncWorkItem -> STM (Maybe (IO ()))
+toWorker pool (AsyncWorkItem (AsyncCall inputAwaitable work) putResult) = worker <<$>> peekSTM inputAwaitable
+  where
+    worker input = do
+      threadId <- myThreadId
+      atomically $ modifyTVar (threads pool) $ insert threadId
+
+      stepAsyncIO pool (work input) >>= \case
+        StepResultCompleted r -> putResult (successfulAwaitable r)
+        StepResultAwaitable x -> putResult x
+        -- This is an async tail call. Tail call optimization is performed by reusing `putResult`.
+        StepResultAsyncCall call -> atomically $ queueWorkItem pool (AsyncWorkItem call putResult)
+
+      atomically . modifyTVar (threads pool) . delete =<< myThreadId
+
+
+takeWorkItem :: forall a. (AsyncWorkItem -> STM (Maybe a)) -> Pool -> STM a
+takeWorkItem fn pool = do
+  items <- readTVar (queue pool)
+  (item, remaining) <- nextWorkItem Empty items
+  writeTVar (queue pool) remaining
+  pure item
+  where
+    nextWorkItem :: Seq AsyncWorkItem -> Seq AsyncWorkItem -> STM (a, Seq AsyncWorkItem)
+    nextWorkItem remaining (item :<| seq) = do
+      fn item >>= \case
+        Just work -> pure (work, remaining <> seq)
+        Nothing -> nextWorkItem (remaining |> item) seq
+    nextWorkItem _ _ = retry
+
+
 
 
 -- * Awaiting multiple asyncs

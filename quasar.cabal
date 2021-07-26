@@ -65,6 +65,7 @@ library
   build-depends:
     base >=4.7 && <5,
     binary,
+    containers,
     exceptions,
     ghc-prim,
     hashable,

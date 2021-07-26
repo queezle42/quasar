@@ -1,6 +1,5 @@
 module Quasar.Observable.ObservableHashMapSpec (spec) where
 
-import Quasar.Core
 import Quasar.Disposable
 import Quasar.Observable
 import Quasar.Observable.Delta
