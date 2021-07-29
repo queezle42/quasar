@@ -1,6 +1,7 @@
 module Quasar.Awaitable (
   -- * Awaitable
   IsAwaitable(..),
+  awaitIO,
   awaitSTM,
   Awaitable,
   successfulAwaitable,
@@ -41,6 +42,9 @@ class IsAwaitable r a | a -> r where
 -- | Wait until the promise is settled and return the result.
 awaitSTM :: IsAwaitable r a => a -> STM (Either SomeException r)
 awaitSTM = peekSTM >=> maybe retry pure
+
+awaitIO :: (IsAwaitable r a, MonadIO m) => a -> m r
+awaitIO action = liftIO $ either throwIO pure =<< atomically (awaitSTM action)
 
 
 newtype Awaitable r = Awaitable (STM (Maybe (Either SomeException r)))
