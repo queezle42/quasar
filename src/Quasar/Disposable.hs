@@ -19,7 +19,7 @@ class IsDisposable a where
 
   -- | Dispose a resource in the IO monad.
   disposeIO :: a -> IO ()
-  disposeIO = runAsyncIO . dispose
+  disposeIO = withDefaultResourceManager . dispose
 
   toDisposable :: a -> Disposable
   toDisposable = mkDisposable . dispose

@@ -26,46 +26,46 @@ spec = parallel $ do
 
   describe "AsyncIO" $ do
     it "binds pure operations" $ do
-      runAsyncIO (pure () >>= \() -> pure ())
+      withDefaultResourceManager (pure () >>= \() -> pure ())
 
     it "binds IO actions" $ do
       m1 <- newEmptyMVar
       m2 <- newEmptyMVar
-      runAsyncIO (liftIO (putMVar m1 ()) >>= \() -> liftIO (putMVar m2 ()))
+      withDefaultResourceManager (liftIO (putMVar m1 ()) >>= \() -> liftIO (putMVar m2 ()))
       tryTakeMVar m1 `shouldReturn` Just ()
       tryTakeMVar m2 `shouldReturn` Just ()
 
     it "can continue after awaiting an already finished operation" $ do
-      runAsyncIO (await =<< async (pure 42 :: AsyncIO Int)) `shouldReturn` 42
+      withDefaultResourceManager (await =<< async (pure 42 :: AsyncIO Int)) `shouldReturn` 42
 
     it "can fmap the result of an already finished async" $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
       putAsyncVar_ avar ()
-      runAsyncIO (id <$> await avar)
+      withDefaultResourceManager (id <$> await avar)
 
     it "can fmap the result of an async that is completed later" $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
       void $ forkIO $ do
         threadDelay 100000
         putAsyncVar_ avar ()
-      runAsyncIO (id <$> await avar)
+      withDefaultResourceManager (id <$> await avar)
 
     it "can bind the result of an already finished async" $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
       putAsyncVar_ avar ()
-      runAsyncIO (await avar >>= pure)
+      withDefaultResourceManager (await avar >>= pure)
 
     it "can bind the result of an async that is completed later" $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
       void $ forkIO $ do
         threadDelay 100000
         putAsyncVar_ avar ()
-      runAsyncIO (await avar >>= pure)
+      withDefaultResourceManager (await avar >>= pure)
 
     it "can terminate when encountering an asynchronous exception" $ do
       never <- newAsyncVar :: IO (AsyncVar ())
 
-      result <- timeout 100000 $ runAsyncIO $
+      result <- timeout 100000 $ withDefaultResourceManager $
         -- Use bind to create an AsyncIOPlumbing, which is the interesting case that uses `uninterruptibleMask` when run
         await never >>= pure
       result `shouldBe` Nothing

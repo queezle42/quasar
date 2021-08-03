@@ -47,10 +47,10 @@ common shared-properties
   default-language: Haskell2010
   ghc-options:
     -Weverything
+    -Wno-all-missed-specialisations
     -Wno-missing-safe-haskell-mode
     -Wno-missing-import-lists
     -Wno-unsafe
-    -Wno-all-missed-specialisations
     -Werror=incomplete-patterns
     -Werror=missing-methods
 
