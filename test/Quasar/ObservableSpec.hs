@@ -24,14 +24,16 @@ mergeObservableSpec = do
 
       testSequence a b latestShouldBe
 
-    it "merges correctly using subscribe" $ do
+    it "merges correctly using observe" $ do
       a <- newObservableVar ""
       b <- newObservableVar ""
 
-      let mergedObservable = mergeObservable (\v0 v1 -> (v0, v1)) a b
-      (latestRef :: IORef (String, String)) <- newIORef ("", "")
-      void $ subscribe mergedObservable (writeIORef latestRef . snd)
-      let latestShouldBe = ((readIORef latestRef) `shouldReturn`)
+      let mergedObservable = mergeObservable (,) a b
+      (latestRef :: IORef (ObservableMessage (String, String))) <- newIORef (ObservableUpdate ("", ""))
+      void $ observe mergedObservable (writeIORef latestRef)
+      let latestShouldBe expected = do
+            (ObservableUpdate x) <- readIORef latestRef
+            x `shouldBe` expected
 
       testSequence a b latestShouldBe
   where
@@ -39,18 +41,18 @@ mergeObservableSpec = do
     testSequence a b latestShouldBe = do
       latestShouldBe ("", "")
 
-      setValue a "a0"
+      setObservableVar a "a0"
       latestShouldBe ("a0", "")
 
-      setValue b "b0"
+      setObservableVar b "b0"
       latestShouldBe ("a0", "b0")
 
-      setValue a "a1"
+      setObservableVar a "a1"
       latestShouldBe ("a1", "b0")
 
-      setValue b "b1"
+      setObservableVar b "b1"
       latestShouldBe ("a1", "b1")
 
       -- No change
-      setValue a "a1"
+      setObservableVar a "a1"
       latestShouldBe ("a1", "b1")

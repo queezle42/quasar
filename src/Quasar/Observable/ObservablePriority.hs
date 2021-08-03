@@ -19,17 +19,17 @@ type Entry v = (Unique, v)
 newtype ObservablePriority p v = ObservablePriority (MVar (Internals p v))
 
 instance IsRetrievable (Maybe v) (ObservablePriority p v) where
-  retrieve (ObservablePriority mvar) = liftIO $ getValueFromInternals <$> readMVar mvar
+  retrieve (ObservablePriority mvar) = liftIO $ pure . getValueFromInternals <$> readMVar mvar
     where
       getValueFromInternals :: Internals p v -> Maybe v
       getValueFromInternals Internals{current=Nothing} = Nothing
       getValueFromInternals Internals{current=Just (_, _, value)} = Just value
 instance IsObservable (Maybe v) (ObservablePriority p v) where
-  subscribe (ObservablePriority mvar) callback = do
+  observe (ObservablePriority mvar) callback = do
     key <- newUnique
     modifyMVar_ mvar $ \internals@Internals{subscribers} -> do
       -- Call listener
-      callback (Current, currentValue internals)
+      callback (pure (currentValue internals))
       pure internals{subscribers = HM.insert key callback subscribers}
     pure $ synchronousDisposable (unsubscribe key)
     where
@@ -119,4 +119,4 @@ insertValue (ObservablePriority mvar) priority value = modifyMVar mvar $ \intern
 
 
 notifySubscribers :: forall p v. Internals p v -> IO ()
-notifySubscribers Internals{subscribers, current} = forM_ subscribers (\callback -> callback (Update, (\(_, _, value) -> value) <$> current))
+notifySubscribers Internals{subscribers, current} = forM_ subscribers (\callback -> callback (pure ((\(_, _, value) -> value) <$> current)))

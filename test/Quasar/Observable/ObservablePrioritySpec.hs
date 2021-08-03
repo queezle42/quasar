@@ -28,19 +28,21 @@ spec = do
       retrieveIO op `shouldReturn` Nothing
     it "sends updates when its value changes" $ do
       result <- newIORef []
-      let mostRecentShouldBe = (head <$> readIORef result `shouldReturn`)
+      let mostRecentShouldBe expected = do
+            (ObservableUpdate x) <- (head <$> readIORef result)
+            x `shouldBe` expected
 
       (op :: ObservablePriority Int String) <- OP.create
-      _s <- subscribe op (modifyIORef result . (:))
-      readIORef result `shouldReturn` [(Current, Nothing)]
+      _s <- observe op (modifyIORef result . (:))
+      mostRecentShouldBe Nothing
       p2 <- OP.insertValue op 2 "p2"
 
-      mostRecentShouldBe (Update, Just "p2")
+      mostRecentShouldBe (Just "p2")
       p1 <- OP.insertValue op 1 "p1"
-      mostRecentShouldBe (Update, Just "p2")
+      mostRecentShouldBe (Just "p2")
       disposeIO p2
-      mostRecentShouldBe (Update, Just "p1")
+      mostRecentShouldBe (Just "p1")
       disposeIO p1
-      mostRecentShouldBe (Update, Nothing)
+      mostRecentShouldBe Nothing
 
       length <$> readIORef result `shouldReturn` 4

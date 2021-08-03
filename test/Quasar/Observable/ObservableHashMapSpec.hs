@@ -1,11 +1,12 @@
 module Quasar.Observable.ObservableHashMapSpec (spec) where
 
+import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Observable
 import Quasar.Observable.Delta
 import Quasar.Observable.ObservableHashMap qualified as OM
 
-import Control.Monad (void)
+import Control.Monad ((<=<), void)
 import Data.HashMap.Strict qualified as HM
 import Data.IORef
 import Prelude
@@ -28,20 +29,22 @@ spec = parallel $ do
       lastCallbackValue <- newIORef undefined
 
       om <- OM.new :: IO (OM.ObservableHashMap String String)
-      subscriptionHandle <- subscribe om $ writeIORef lastCallbackValue
-      let lastCallbackShouldBe = (readIORef lastCallbackValue `shouldReturn`)
+      subscriptionHandle <- observe om $ writeIORef lastCallbackValue
+      let lastCallbackShouldBe expected = do
+            (ObservableUpdate update) <- readIORef lastCallbackValue
+            update `shouldBe` expected
 
-      lastCallbackShouldBe (Current, HM.empty)
+      lastCallbackShouldBe HM.empty
       OM.insert "key" "value" om
-      lastCallbackShouldBe (Update, HM.singleton "key" "value")
+      lastCallbackShouldBe (HM.singleton "key" "value")
       OM.insert "key2" "value2" om
-      lastCallbackShouldBe (Update, HM.fromList [("key", "value"), ("key2", "value2")])
+      lastCallbackShouldBe (HM.fromList [("key", "value"), ("key2", "value2")])
 
       disposeIO subscriptionHandle
-      lastCallbackShouldBe (Update, HM.fromList [("key", "value"), ("key2", "value2")])
+      lastCallbackShouldBe (HM.fromList [("key", "value"), ("key2", "value2")])
 
       OM.insert "key3" "value3" om
-      lastCallbackShouldBe (Update, HM.fromList [("key", "value"), ("key2", "value2")])
+      lastCallbackShouldBe (HM.fromList [("key", "value"), ("key2", "value2")])
 
   describe "subscribeDelta" $ do
     it "calls the callback with changes to the map" $ do
@@ -83,45 +86,49 @@ spec = parallel $ do
 
       om <- OM.new :: IO (OM.ObservableHashMap String String)
 
-      void $ subscribe (OM.observeKey "key1" om) (writeIORef value1)
-      let v1ShouldBe = (readIORef value1 `shouldReturn`)
+      void $ observe (OM.observeKey "key1" om) (writeIORef value1)
+      let v1ShouldBe expected = do
+            (ObservableUpdate update) <- readIORef value1
+            update `shouldBe` expected
 
-      v1ShouldBe $ (Current, Nothing)
+      v1ShouldBe $ Nothing
 
       OM.insert "key1" "value1" om
-      v1ShouldBe $ (Update, Just "value1")
+      v1ShouldBe $ Just "value1"
 
       OM.insert "key2" "value2" om
-      v1ShouldBe $ (Update, Just "value1")
+      v1ShouldBe $ Just "value1"
 
-      handle2 <- subscribe (OM.observeKey "key2" om) (writeIORef value2)
-      let v2ShouldBe = (readIORef value2 `shouldReturn`)
+      handle2 <- observe (OM.observeKey "key2" om) (writeIORef value2)
+      let v2ShouldBe expected = do
+            (ObservableUpdate update) <- readIORef value2
+            update `shouldBe` expected
 
-      v1ShouldBe $ (Update, Just "value1")
-      v2ShouldBe $ (Current, Just "value2")
+      v1ShouldBe $ Just "value1"
+      v2ShouldBe $ Just "value2"
 
       OM.insert "key2" "changed" om
-      v1ShouldBe $ (Update, Just "value1")
-      v2ShouldBe $ (Update, Just "changed")
+      v1ShouldBe $ Just "value1"
+      v2ShouldBe $ Just "changed"
 
       OM.delete "key1" om
-      v1ShouldBe $ (Update, Nothing)
-      v2ShouldBe $ (Update, Just "changed")
+      v1ShouldBe $ Nothing
+      v2ShouldBe $ Just "changed"
 
       -- Delete again (should have no effect)
       OM.delete "key1" om
-      v1ShouldBe $ (Update, Nothing)
-      v2ShouldBe $ (Update, Just "changed")
+      v1ShouldBe $ Nothing
+      v2ShouldBe $ Just "changed"
 
       retrieveIO om `shouldReturn` HM.singleton "key2" "changed"
       disposeIO handle2
 
-      OM.lookupDelete "key2" om `shouldReturn` (Just "changed")
-      v2ShouldBe $ (Update, Just "changed")
+      OM.lookupDelete "key2" om `shouldReturn` Just "changed"
+      v2ShouldBe $ Just "changed"
 
       OM.lookupDelete "key2" om `shouldReturn` Nothing
 
       OM.lookupDelete "key1" om `shouldReturn` Nothing
-      v1ShouldBe $ (Update, Nothing)
+      v1ShouldBe $ Nothing
 
       retrieveIO om `shouldReturn` HM.empty
