@@ -73,6 +73,12 @@ instance Monad Awaitable where
       Left ex -> pure $ Left ex
       Right x -> runAwaitable (fn x)
 
+instance Semigroup r => Semigroup (Awaitable r) where
+  x <> y = liftA2 (<>) x y
+
+instance Monoid r => Monoid (Awaitable r) where
+  mempty = pure mempty
+
 
 
 completedAwaitable :: Either SomeException r -> Awaitable r
