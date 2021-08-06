@@ -188,8 +188,10 @@ instance forall v o i. (IsObservable i o, IsObservable v i) => IsObservable v (J
     innerDisposableMVar <- newMVar Nothing
     outerDisposable <- observe outer (outerCallback innerDisposableMVar)
     pure $ mkDisposable $ do
-      dispose outerDisposable
-      mapM_ dispose =<< liftIO (readMVar innerDisposableMVar)
+      -- TODO use `disposeEventually` to immediately deregister handler (ignoring messages from the old callback after that)
+      undefined
+      --dispose outerDisposable
+      --mapM_ dispose =<< liftIO (readMVar innerDisposableMVar)
       where
         outerCallback :: MVar (Maybe Disposable) -> ObservableMessage i -> IO ()
         outerCallback innerDisposableMVar message = do

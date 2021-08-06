@@ -20,6 +20,14 @@ module Quasar.Core (
   async,
   await,
   awaitResult,
+
+  -- * Disposable
+  IsDisposable(..),
+  Disposable,
+  disposeIO,
+  mkDisposable,
+  synchronousDisposable,
+  noDisposable,
 ) where
 
 import Control.Concurrent (ThreadId, forkIOWithUnmask, myThreadId)
@@ -103,8 +111,8 @@ cancelTask = const (pure ())
 
 -- | Creates an `AsyncTask` from an `Awaitable`.
 -- The resulting task only depends on an external resource, so disposing it has no effect.
-toAsyncTask :: Awaitable r -> AsyncTask r
-toAsyncTask = AsyncTask
+toAsyncTask :: IsAwaitable r a => a -> AsyncTask r
+toAsyncTask = AsyncTask . toAwaitable
 
 successfulTask :: r -> AsyncTask r
 successfulTask = AsyncTask . successfulAwaitable
@@ -157,3 +165,50 @@ newResourceManager configuration = do
 disposeResourceManager :: ResourceManager -> IO ()
 -- TODO resource management
 disposeResourceManager = const (pure ())
+
+
+
+-- * Disposable
+
+class IsDisposable a where
+  -- TODO document laws: must not throw exceptions, is idempotent
+
+  -- | Dispose a resource.
+  dispose :: a -> IO (Awaitable ())
+  dispose = dispose . toDisposable
+
+  toDisposable :: a -> Disposable
+  toDisposable = mkDisposable . dispose
+
+  {-# MINIMAL toDisposable | dispose #-}
+
+-- | Dispose a resource in the IO monad.
+disposeIO :: IsDisposable a => a -> IO ()
+disposeIO = awaitIO <=< dispose
+
+instance IsDisposable a => IsDisposable (Maybe a) where
+  dispose = maybe (pure (pure ())) dispose
+
+
+newtype Disposable = Disposable (IO (Awaitable ()))
+
+instance IsDisposable Disposable where
+  dispose (Disposable fn) = fn
+  toDisposable = id
+
+instance Semigroup Disposable where
+  x <> y = mkDisposable $ liftA2 (<>) (dispose x) (dispose y)
+
+instance Monoid Disposable where
+  mempty = mkDisposable $ pure $ pure ()
+  mconcat disposables = mkDisposable $ mconcat <$> traverse dispose disposables
+
+
+mkDisposable :: IO (Awaitable ()) -> Disposable
+mkDisposable = Disposable
+
+synchronousDisposable :: IO () -> Disposable
+synchronousDisposable = mkDisposable . fmap pure . liftIO
+
+noDisposable :: Disposable
+noDisposable = mempty
