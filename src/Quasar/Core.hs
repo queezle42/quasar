@@ -28,6 +28,8 @@ module Quasar.Core (
   mkDisposable,
   synchronousDisposable,
   noDisposable,
+  disposeEventually,
+  boundDisposable,
 ) where
 
 import Control.Concurrent (ThreadId, forkIOWithUnmask, myThreadId)
@@ -212,3 +214,18 @@ synchronousDisposable = mkDisposable . fmap pure . liftIO
 
 noDisposable :: Disposable
 noDisposable = mempty
+
+-- | Start disposing a resource but instead of waiting for the operation to complete, pass the responsibility to a `ResourceManager`.
+--
+-- The synchronous part of the `dispose`-Function will be run immediately but the resulting `Awaitable` will be passed to the resource manager.
+disposeEventually :: (IsDisposable a, MonadIO m) => ResourceManager -> a -> m ()
+disposeEventually resourceManager disposable = liftIO $ do
+  disposeCompleted <- dispose disposable
+  peekAwaitable disposeCompleted >>= \case
+    Just (Left ex) -> throwIO ex
+    Just (Right ()) -> pure ()
+    Nothing -> undefined -- TODO register on resourceManager
+
+-- | Creates an `Disposable` that is bound to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
+boundDisposable :: HasResourceManager m => IO (Awaitable ()) -> m Disposable
+boundDisposable = undefined
