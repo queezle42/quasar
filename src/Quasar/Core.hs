@@ -7,11 +7,13 @@ module Quasar.Core (
   withDefaultResourceManager,
   withUnlimitedResourceManager,
   newResourceManager,
-  disposeResourceManager,
+  defaultResourceManagerConfiguration,
+  unlimitedResourceManagerConfiguration,
 
   -- * AsyncTask
   AsyncTask,
   cancelTask,
+  cancelTaskIO,
   toAsyncTask,
   successfulTask,
 
@@ -30,6 +32,8 @@ module Quasar.Core (
   noDisposable,
   disposeEventually,
   boundDisposable,
+  attachDisposeAction,
+  attachDisposeAction_,
 ) where
 
 import Control.Concurrent (ThreadId, forkIOWithUnmask, myThreadId)
@@ -84,11 +88,13 @@ instance HasResourceManager AsyncIO where
 awaitResult :: IsAwaitable r a => AsyncIO a -> AsyncIO r
 awaitResult = (await =<<)
 
--- TODO rename to ResourceManager
 data ResourceManager = ResourceManager {
   configuration :: ResourceManagerConfiguraiton,
   threads :: TVar (HashSet ThreadId)
 }
+
+instance IsDisposable ResourceManager where
+  dispose x = pure $ pure ()
 
 
 -- | A task that is running asynchronously. It has a result and can fail.
@@ -100,6 +106,9 @@ newtype AsyncTask r = AsyncTask (Awaitable r)
 instance IsAwaitable r (AsyncTask r) where
   toAwaitable (AsyncTask awaitable) = awaitable
 
+instance IsDisposable (AsyncTask r) where
+  dispose = undefined
+
 instance Functor AsyncTask where
   fmap fn (AsyncTask x) = AsyncTask (fn <$> x)
 
@@ -107,9 +116,11 @@ instance Applicative AsyncTask where
   pure = AsyncTask . pure
   liftA2 fn (AsyncTask fx) (AsyncTask fy) = AsyncTask $ liftA2 fn fx fy
 
-cancelTask :: AsyncTask r -> IO ()
--- TODO resource management
-cancelTask = const (pure ())
+cancelTask :: AsyncTask r -> IO (Awaitable ())
+cancelTask = dispose
+
+cancelTaskIO :: AsyncTask r -> IO ()
+cancelTaskIO = awaitIO <=< dispose
 
 -- | Creates an `AsyncTask` from an `Awaitable`.
 -- The resulting task only depends on an external resource, so disposing it has no effect.
@@ -228,4 +239,12 @@ disposeEventually resourceManager disposable = liftIO $ do
 
 -- | Creates an `Disposable` that is bound to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
 boundDisposable :: HasResourceManager m => IO (Awaitable ()) -> m Disposable
-boundDisposable = undefined
+boundDisposable action = do
+  resourceManager <- askResourceManager
+  attachDisposeAction resourceManager action
+
+attachDisposeAction :: MonadIO m => ResourceManager -> IO (Awaitable ()) -> m Disposable
+attachDisposeAction = undefined
+
+attachDisposeAction_ :: MonadIO m => ResourceManager -> IO (Awaitable ()) -> m ()
+attachDisposeAction_ resourceManager action = void $ attachDisposeAction resourceManager action
