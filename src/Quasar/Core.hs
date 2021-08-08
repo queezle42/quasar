@@ -84,6 +84,9 @@ class MonadIO m => HasResourceManager m where
 instance HasResourceManager AsyncIO where
   askResourceManager = AsyncIO ask
 
+instance MonadIO m => HasResourceManager (ReaderT ResourceManager m) where
+  askResourceManager = ask
+
 
 awaitResult :: IsAwaitable r a => AsyncIO a -> AsyncIO r
 awaitResult = (await =<<)
