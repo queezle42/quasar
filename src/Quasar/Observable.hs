@@ -71,7 +71,7 @@ instance Applicative ObservableMessage where
 
 
 class IsRetrievable v a | a -> v where
-  retrieve :: HasResourceManager m => a -> m (AsyncTask v)
+  retrieve :: HasResourceManager m => a -> m (Task v)
 
 retrieveIO :: IsRetrievable v a => a -> IO v
 retrieveIO x = awaitIO =<< withDefaultResourceManager (retrieve x)
@@ -94,7 +94,7 @@ type ObservableCallback v = ObservableMessage v -> IO ()
 
 
 instance IsRetrievable v o => IsRetrievable v (IO o) where
-  retrieve :: HasResourceManager m => IO o -> m (AsyncTask v)
+  retrieve :: HasResourceManager m => IO o -> m (Task v)
   retrieve = retrieve <=< liftIO
 
 instance IsObservable v o => IsObservable v (IO o) where
@@ -191,7 +191,7 @@ instance IsDisposable JoinedObservableState where
 
 newtype JoinedObservable o = JoinedObservable o
 instance forall v o i. (IsRetrievable i o, IsRetrievable v i) => IsRetrievable v (JoinedObservable o) where
-  retrieve :: HasResourceManager m => JoinedObservable o -> m (AsyncTask v)
+  retrieve :: HasResourceManager m => JoinedObservable o -> m (Task v)
   retrieve (JoinedObservable outer) = async $ await =<< retrieve =<< await =<< retrieve outer
 instance forall v o i. (IsObservable i o, IsObservable v i) => IsObservable v (JoinedObservable o) where
   observe :: JoinedObservable o -> (ObservableMessage v -> IO ()) -> IO Disposable
@@ -283,7 +283,7 @@ mergeObservableMaybe merge x y = Observable $ MergedObservable (liftA2 merge) x 
 
 
 data FnObservable v = FnObservable {
-  retrieveFn :: forall m. HasResourceManager m => m (AsyncTask v),
+  retrieveFn :: forall m. HasResourceManager m => m (Task v),
   observeFn :: (ObservableMessage v -> IO ()) -> IO Disposable
 }
 instance IsRetrievable v (FnObservable v) where
@@ -298,7 +298,7 @@ instance IsObservable v (FnObservable v) where
 -- | Implement an Observable by directly providing functions for `retrieve` and `subscribe`.
 fnObservable
   :: ((ObservableMessage v -> IO ()) -> IO Disposable)
-  -> (forall m. HasResourceManager m => m (AsyncTask v))
+  -> (forall m. HasResourceManager m => m (Task v))
   -> Observable v
 fnObservable observeFn retrieveFn = toObservable FnObservable{observeFn, retrieveFn}
 
@@ -309,7 +309,7 @@ synchronousFnObservable
   -> Observable v
 synchronousFnObservable observeFn synchronousRetrieveFn = fnObservable observeFn retrieveFn
   where
-    retrieveFn :: (forall m. HasResourceManager m => m (AsyncTask v))
+    retrieveFn :: (forall m. HasResourceManager m => m (Task v))
     retrieveFn = liftIO $ successfulTask <$> synchronousRetrieveFn
 
 

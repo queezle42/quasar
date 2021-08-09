@@ -10,11 +10,11 @@ module Quasar.Core (
   defaultResourceManagerConfiguration,
   unlimitedResourceManagerConfiguration,
 
-  -- * AsyncTask
-  AsyncTask,
+  -- * Task
+  Task,
   cancelTask,
   cancelTaskIO,
-  toAsyncTask,
+  toTask,
   successfulTask,
 
   -- * AsyncIO
@@ -53,11 +53,11 @@ newtype AsyncIO a = AsyncIO (ReaderT ResourceManager IO a)
 
 
 -- | Run the synchronous part of an `AsyncIO` and then return an `Awaitable` that can be used to wait for completion of the synchronous part.
-async :: HasResourceManager m => AsyncIO r -> m (AsyncTask r)
+async :: HasResourceManager m => AsyncIO r -> m (Task r)
 async action = asyncWithUnmask (\unmask -> unmask action)
 
 -- | Run the synchronous part of an `AsyncIO` and then return an `Awaitable` that can be used to wait for completion of the synchronous part.
-asyncWithUnmask :: HasResourceManager m => ((forall a. AsyncIO a -> AsyncIO a) -> AsyncIO r) -> m (AsyncTask r)
+asyncWithUnmask :: HasResourceManager m => ((forall a. AsyncIO a -> AsyncIO a) -> AsyncIO r) -> m (Task r)
 -- TODO resource limits
 asyncWithUnmask action = do
   resourceManager <- askResourceManager
@@ -66,7 +66,7 @@ asyncWithUnmask action = do
     void $ forkIOWithUnmask $ \unmask -> do
       result <- try $ runOnResourceManager resourceManager (action (liftUnmask unmask))
       putAsyncVarEither_ resultVar result
-    pure $ AsyncTask (toAwaitable resultVar)
+    pure $ Task (toAwaitable resultVar)
 
 liftUnmask :: (IO a -> IO a) -> AsyncIO a -> AsyncIO a
 liftUnmask unmask action = do
@@ -104,34 +104,34 @@ instance IsDisposable ResourceManager where
 -- The result (or exception) can be aquired by using the `Awaitable` class (e.g. by calling `await` or `awaitIO`).
 -- It might be possible to cancel the task by using the `Disposable` class if the operation has not been completed.
 -- If the result is no longer required the task should be cancelled, to avoid leaking memory.
-newtype AsyncTask r = AsyncTask (Awaitable r)
+newtype Task r = Task (Awaitable r)
 
-instance IsAwaitable r (AsyncTask r) where
-  toAwaitable (AsyncTask awaitable) = awaitable
+instance IsAwaitable r (Task r) where
+  toAwaitable (Task awaitable) = awaitable
 
-instance IsDisposable (AsyncTask r) where
+instance IsDisposable (Task r) where
   dispose = undefined
 
-instance Functor AsyncTask where
-  fmap fn (AsyncTask x) = AsyncTask (fn <$> x)
+instance Functor Task where
+  fmap fn (Task x) = Task (fn <$> x)
 
-instance Applicative AsyncTask where
-  pure = AsyncTask . pure
-  liftA2 fn (AsyncTask fx) (AsyncTask fy) = AsyncTask $ liftA2 fn fx fy
+instance Applicative Task where
+  pure = Task . pure
+  liftA2 fn (Task fx) (Task fy) = Task $ liftA2 fn fx fy
 
-cancelTask :: AsyncTask r -> IO (Awaitable ())
+cancelTask :: Task r -> IO (Awaitable ())
 cancelTask = dispose
 
-cancelTaskIO :: AsyncTask r -> IO ()
+cancelTaskIO :: Task r -> IO ()
 cancelTaskIO = awaitIO <=< dispose
 
--- | Creates an `AsyncTask` from an `Awaitable`.
+-- | Creates an `Task` from an `Awaitable`.
 -- The resulting task only depends on an external resource, so disposing it has no effect.
-toAsyncTask :: IsAwaitable r a => a -> AsyncTask r
-toAsyncTask = AsyncTask . toAwaitable
+toTask :: IsAwaitable r a => a -> Task r
+toTask = Task . toAwaitable
 
-successfulTask :: r -> AsyncTask r
-successfulTask = AsyncTask . successfulAwaitable
+successfulTask :: r -> Task r
+successfulTask = Task . successfulAwaitable
 
 
 
