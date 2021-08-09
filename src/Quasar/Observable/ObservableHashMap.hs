@@ -115,7 +115,7 @@ new :: IO (ObservableHashMap k v)
 new = ObservableHashMap <$> newMVar Handle{keyHandles=HM.empty, subscribers=HM.empty, deltaSubscribers=HM.empty}
 
 observeKey :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> Observable (Maybe v)
-observeKey key ohm@(ObservableHashMap mvar) = Observable FnObservable{retrieveFn, observeFn}
+observeKey key ohm@(ObservableHashMap mvar) = synchronousFnObservable observeFn retrieveFn
   where
     retrieveFn :: IO (Maybe v)
     retrieveFn = liftIO $ join . preview (_keyHandles . at key . _Just . _value) <$> readMVar mvar
