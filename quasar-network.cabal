@@ -85,6 +85,7 @@ library
     Quasar.Network.Connection
     Quasar.Network.Multiplexer
     Quasar.Network.Runtime
+    Quasar.Network.Runtime.Observable
     Quasar.Network.SocketLocation
     Quasar.Network.TH
   hs-source-dirs:

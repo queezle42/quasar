@@ -11,8 +11,9 @@
 module Quasar.NetworkSpec where
 
 import Control.Concurrent.MVar
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Prelude
+import Quasar.Awaitable
 import Quasar.Core
 import Quasar.Network
 import Quasar.Network.Runtime (withStandaloneClient)
@@ -25,38 +26,43 @@ shouldReturnAsync :: (HasCallStack, Show a, Eq a) => AsyncIO a -> a -> AsyncIO (
 action `shouldReturnAsync` expected = action >>= liftIO . (`shouldBe` expected)
 
 
-$(makeRpc $ rpcApi "Example" [
+$(makeRpc $ rpcApi "Example" $ do
     rpcFunction "fixedHandler42" $ do
       addArgument "arg" [t|Int|]
       addResult "result" [t|Bool|]
-      setFixedHandler [| pure . (== 42) |],
+      setFixedHandler [| pure . (== 42) |]
+
     rpcFunction "fixedHandlerInc" $ do
       addArgument "arg" [t|Int|]
       addResult "result" [t|Int|]
-      setFixedHandler [| pure . (+ 1) |],
+      setFixedHandler [| pure . (+ 1) |]
+
     rpcFunction "multiArgs" $ do
       addArgument "one" [t|Int|]
       addArgument "two" [t|Int|]
       addArgument "three" [t|Bool|]
       addResult "result" [t|Int|]
-      addResult "result2" [t|Bool|],
-    rpcFunction "noArgs" $ do
-      addResult "result" [t|Int|],
-    rpcFunction "noResponse" $ do
-      addArgument "arg" [t|Int|],
-    rpcFunction "noNothing" $ pure ()
-    ]
- )
+      addResult "result2" [t|Bool|]
 
-$(makeRpc $ rpcApi "StreamExample" [
+    rpcFunction "noArgs" $ do
+      addResult "result" [t|Int|]
+
+    rpcFunction "noResponse" $ do
+      addArgument "arg" [t|Int|]
+
+    rpcFunction "noNothing" $ pure ()
+  )
+
+$(makeRpc $ rpcApi "StreamExample" $ do
     rpcFunction "createMultiplyStream" $ do
       addStream "stream" [t|(Int, Int)|] [t|Int|]
-    ,
+
     rpcFunction "createStreams" $ do
       addStream "stream1" [t|Bool|] [t|Bool|]
       addStream "stream2" [t|Int|] [t|Int|]
-    ]
- )
+
+    rpcObservable "intObservable" [t|Int|]
+  )
 
 exampleProtocolImpl :: ExampleProtocolImpl
 exampleProtocolImpl = ExampleProtocolImpl {
@@ -72,9 +78,9 @@ streamExampleProtocolImpl = StreamExampleProtocolImpl {
   createStreamsImpl
 }
   where
-    createMultiplyStreamImpl :: Stream Int (Int, Int) -> IO ()
+    createMultiplyStreamImpl :: MonadIO m => Stream Int (Int, Int) -> m ()
     createMultiplyStreamImpl stream = streamSetHandler stream $ \(x, y) -> streamSend stream (x * y)
-    createStreamsImpl :: Stream Bool Bool -> Stream Int Int -> IO ()
+    createStreamsImpl :: MonadIO m => Stream Bool Bool -> Stream Int Int -> m ()
     createStreamsImpl stream1 stream2 = do
       streamSetHandler stream1 $ streamSend stream1
       streamSetHandler stream2 $ streamSend stream2
@@ -84,10 +90,10 @@ spec = parallel $ do
   describe "Example" $ do
     it "works" $ do
       withStandaloneClient @ExampleProtocol exampleProtocolImpl $ \client -> do
-        awaitResult (fixedHandler42 client 5) `shouldReturnAsync` False
-        awaitResult (fixedHandler42 client 42) `shouldReturnAsync` True
-        awaitResult (fixedHandlerInc client 41) `shouldReturnAsync` 42
-        awaitResult (multiArgs client 10 3 False) `shouldReturnAsync` (13, True)
+        (awaitIO =<< fixedHandler42 client 5) `shouldReturn` False
+        (awaitIO =<< fixedHandler42 client 42) `shouldReturn` True
+        (awaitIO =<< fixedHandlerInc client 41) `shouldReturn` 42
+        (awaitIO =<< multiArgs client 10 3 False) `shouldReturn` (13, True)
         noResponse client 1337
         noNothing client
 

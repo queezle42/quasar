@@ -11,6 +11,7 @@ module Quasar.Network (
   addResult,
   addStream,
   setFixedHandler,
+  rpcObservable,
 
   -- * Runtime
 
