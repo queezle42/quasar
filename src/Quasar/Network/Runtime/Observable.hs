@@ -1,12 +1,31 @@
-module Quasar.Network.Runtime.Observable () where
+module Quasar.Network.Runtime.Observable (newObservableStub, observeToStream) where
 
-import Quasar.Network.Runtime
+import Data.Binary (Binary)
+import Quasar.Awaitable
 import Quasar.Core
+import Quasar.Network.Runtime
 import Quasar.Observable
 import Quasar.Prelude
 
-newNetworkObservable
-  :: ((ObservableMessage v -> IO ()) -> IO Disposable)
-  -> (forall m. HasResourceManager m => m (Task v))
+newObservableStub
+  :: forall v. Binary v =>
+     (forall m. MonadIO m => m (Stream Void v))
+  -> (forall m. MonadIO m => m (Awaitable v))
   -> IO (Observable v)
-newNetworkObservable observeFn retrieveFn = pure $ fnObservable observeFn retrieveFn
+newObservableStub startObserveRequest startRetrieveRequest = pure uncachedObservable -- TODO cache
+  where
+    uncachedObservable :: Observable v
+    uncachedObservable = fnObservable observeFn retrieveFn
+    observeFn :: (ObservableMessage v -> IO ()) -> IO Disposable
+    observeFn callback = do
+      stream <- startObserveRequest
+      streamSetHandler stream (callback . ObservableUpdate)
+      pure $ synchronousDisposable $ streamClose stream
+    retrieveFn :: forall m. HasResourceManager m => m (Task v)
+    retrieveFn = toTask <$> startRetrieveRequest
+
+observeToStream :: Observable v -> Stream v Void -> IO ()
+observeToStream observable stream = do
+  disposable <- observe observable undefined
+  -- TODO: dispose when the stream is closed
+  undefined
