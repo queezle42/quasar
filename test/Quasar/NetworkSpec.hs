@@ -60,7 +60,9 @@ $(makeRpc $ rpcApi "StreamExample" $ do
     rpcFunction "createStreams" $ do
       addStream "stream1" [t|Bool|] [t|Bool|]
       addStream "stream2" [t|Int|] [t|Int|]
+  )
 
+$(makeRpc $ rpcApi "ObservableExample" $ do
     rpcObservable "intObservable" [t|Int|]
   )
 
