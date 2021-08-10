@@ -287,7 +287,7 @@ makeServer api@RpcApi{functions} code = sequence [protocolImplDec, logicInstance
             handlerDec :: Name -> [Name] -> RequestHandlerContext -> Q Dec
             handlerDec handlerName resourceNames ctx = funD handlerName [clause (varP <$> resourceNames) (normalB (req.handlerE ctx)) []]
             applyResources :: [Q Exp] -> Q Exp -> Q Exp
-            applyResources resourceEs implE = varE 'join `appE` applyM implE resourceEs
+            applyResources resourceEs implE = applyM implE resourceEs
 
             invalidChannelCountClause :: Q Clause
             invalidChannelCountClause = do
@@ -588,12 +588,17 @@ buildTupleM fields = buildTuple' =<< fields
     buildTuple' :: [Exp] -> Q Exp
     buildTuple' [] = [|pure ()|]
     buildTuple' [single] = pure single
-    buildTuple' fs = pure (TupE (const Nothing <$> fs)) `applyM` (pure <$> fs)
+    buildTuple' fs = pure (TupE (const Nothing <$> fs)) `applyA` (pure <$> fs)
 
 -- | (a -> b -> c -> d) -> [m a, m b, m c] -> m d
+applyA :: Q Exp -> [Q Exp] -> Q Exp
+applyA con [] = [|pure $con|]
+applyA con (monadicE:monadicEs) = foldl (\x y -> [|$x <*> $y|]) [|$con <$> $monadicE|] monadicEs
+
+-- | (a -> b -> c -> m d) -> [m a, m b, m c] -> m d
 applyM :: Q Exp -> [Q Exp] -> Q Exp
-applyM con [] = [|pure $con|]
-applyM con (monadicE:monadicEs) = foldl (\x y -> [|$x <*> $y|]) [|$con <$> $monadicE|] monadicEs
+applyM con [] = con
+applyM con args = [|join $(applyA con args)|]
 
 buildFunctionType :: Q [Type] -> Q Type -> Q Type
 buildFunctionType argTypes returnType = go =<< argTypes
