@@ -15,7 +15,9 @@ module Quasar.Core (
   cancelTask,
   cancelTaskIO,
   toTask,
+  completedTask,
   successfulTask,
+  failedTask,
 
   -- * AsyncIO
   AsyncIO,
@@ -130,8 +132,15 @@ cancelTaskIO = awaitIO <=< dispose
 toTask :: IsAwaitable r a => a -> Task r
 toTask = Task . toAwaitable
 
+completedTask :: Either SomeException r -> Task r
+completedTask = toTask . completedAwaitable
+
+-- | Alias for `pure`
 successfulTask :: r -> Task r
-successfulTask = Task . successfulAwaitable
+successfulTask = pure
+
+failedTask :: SomeException -> Task r
+failedTask = toTask . failedAwaitable
 
 
 
