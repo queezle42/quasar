@@ -20,12 +20,7 @@ module Quasar.Observable (
   fnObservable,
   synchronousFnObservable,
   mergeObservable,
-  mergeObservableMaybe,
   joinObservable,
-  joinObservableMaybe,
-  joinObservableMaybe',
-  joinObservableEither,
-  joinObservableEither',
   bindObservable,
 
   -- * Helper types
@@ -236,19 +231,6 @@ joinObservable :: (IsObservable i o, IsObservable v i) => o -> Observable v
 joinObservable = Observable . JoinedObservable
 
 
-joinObservableMaybe :: forall v o i. (IsObservable (Maybe i) o, IsObservable v i) => o -> Observable (Maybe v)
-joinObservableMaybe = runMaybeT . join . fmap (MaybeT . fmap Just . toObservable) . MaybeT . toObservable
-
-joinObservableMaybe' :: (IsObservable (Maybe i) o, IsObservable (Maybe v) i) => o -> Observable (Maybe v)
-joinObservableMaybe' = runMaybeT . join . fmap (MaybeT . toObservable) . MaybeT . toObservable
-
-
-joinObservableEither :: (IsObservable (Either e i) o, IsObservable v i) => o -> Observable (Either e v)
-joinObservableEither = runExceptT . join . fmap (ExceptT . fmap Right . toObservable) . ExceptT . toObservable
-
-joinObservableEither' :: (IsObservable (Either e i) o, IsObservable (Either e v) i) => o -> Observable (Either e v)
-joinObservableEither' = runExceptT . join . fmap (ExceptT . toObservable) . ExceptT . toObservable
-
 
 data MergedObservable r o0 v0 o1 v1 = MergedObservable (v0 -> v1 -> r) o0 o1
 instance forall r o0 v0 o1 v1. (IsRetrievable v0 o0, IsRetrievable v1 o1) => IsRetrievable r (MergedObservable r o0 v0 o1 v1) where
@@ -276,11 +258,6 @@ instance forall r o0 v0 o1 v1. (IsObservable v0 o0, IsObservable v1 o1) => IsObs
 -- There is no caching involed, every subscriber effectively subscribes to both input observables.
 mergeObservable :: (IsObservable v0 o0, IsObservable v1 o1) => (v0 -> v1 -> r) -> o0 -> o1 -> Observable r
 mergeObservable merge x y = Observable $ MergedObservable merge x y
-
--- | Similar to `mergeObservable`, but built to operator on `Maybe` values: If either input value is `Nothing`, the resulting value will be `Nothing`.
-mergeObservableMaybe :: (IsObservable (Maybe v0) o0, IsObservable (Maybe v1) o1) => (v0 -> v1 -> r) -> o0 -> o1 -> Observable (Maybe r)
-mergeObservableMaybe merge x y = Observable $ MergedObservable (liftA2 merge) x y
-
 
 data FnObservable v = FnObservable {
   retrieveFn :: forall m. HasResourceManager m => m (Task v),
