@@ -25,6 +25,7 @@ import GHC.Records.Compat (HasField)
 import Language.Haskell.TH hiding (interruptible)
 import Language.Haskell.TH.Syntax
 import Quasar.Awaitable
+import Quasar.Core
 import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
 import Quasar.Network.Runtime.Observable
@@ -160,7 +161,7 @@ clientRequestStub api req = do
     stubName = clientRequestStubName api req
     makeStubSig :: Q [Type] -> Q Type
     makeStubSig arguments =
-      [t|forall m. MonadIO m => $(buildFunctionType arguments [t|m $(buildTupleType (liftA2 (<>) optionalResultType (resourceTypes req)))|])|]
+      [t|forall m. MonadIO m => $(buildFunctionType arguments [t|m $(buildTupleType (liftA2 (<>) optionalResultType (stubResourceTypes req)))|])|]
     optionalResultType :: Q [Type]
     optionalResultType = case req.mResponse of
                             Nothing -> pure []
@@ -282,12 +283,22 @@ makeServer api@RpcApi{functions} code = sequence [protocolImplDec, logicInstance
               clause
                 [requestConP, listP (varP <$> channelNames)]
                 (normalB (packResponse req.mResponse (applyResources resourceEs (varE handlerName))))
-                [handlerDec handlerName resourceNames ctx]
+                [
+                  handlerSig handlerName,
+                  handlerDec handlerName resourceNames ctx
+                ]
 
+            handlerSig :: Name -> Q Dec
+            handlerSig handlerName = sigD handlerName (buildFunctionType (implResourceTypes req) [t|IO $(resultType)|])
             handlerDec :: Name -> [Name] -> RequestHandlerContext -> Q Dec
             handlerDec handlerName resourceNames ctx = funD handlerName [clause (varP <$> resourceNames) (normalB (req.handlerE ctx)) []]
             applyResources :: [Q Exp] -> Q Exp -> Q Exp
             applyResources resourceEs implE = applyM implE resourceEs
+            resultType :: Q Type
+            resultType =
+              case req.mResponse of
+                Nothing -> [t|()|]
+                Just resp -> [t|$(buildTupleType (sequence ((.ty) <$> resp.fields)))|]
 
             invalidChannelCountClause :: Q Clause
             invalidChannelCountClause = do
@@ -522,26 +533,28 @@ clientRequestStubSig api req = makeStubSig (sequence ((clientType api) : ((.ty) 
   where
     makeStubSig :: Q [Type] -> Q Type
     makeStubSig arguments =
-      [t|forall m. MonadIO m => $(buildFunctionType arguments [t|m $(buildTupleType (liftA2 (<>) optionalResultType resourceTypes))|])|]
-    resourceTypes :: Q [Type]
-    resourceTypes = sequence $ resourceType <$> req.createdResources
+      [t|forall m. MonadIO m => $(buildFunctionType arguments [t|m $(buildTupleType (liftA2 (<>) optionalResultType (stubResourceTypes req)))|])|]
     optionalResultType :: Q [Type]
     optionalResultType = case req.mResponse of
                             Nothing -> pure []
                             Just resp -> sequence [[t|Awaitable $(buildTupleType (sequence ((.ty) <$> resp.fields)))|]]
-    resourceType :: RequestCreateResource -> Q Type
-    resourceType RequestCreateChannel = [t|Channel|]
-    resourceType (RequestCreateStream up down) = [t|Stream $up $down|]
 
 clientRequestStubSigDec :: RpcApi -> Request -> Q Dec
 clientRequestStubSigDec api req = sigD (clientRequestStubName api req) (clientRequestStubSig api req)
 
-resourceTypes :: Request -> Q [Type]
-resourceTypes req = sequence $ resourceType <$> req.createdResources
+stubResourceTypes :: Request -> Q [Type]
+stubResourceTypes req = sequence $ stubResourceType <$> req.createdResources
 
-resourceType :: RequestCreateResource -> Q Type
-resourceType RequestCreateChannel = [t|Channel|]
-resourceType (RequestCreateStream up down) = [t|Stream $up $down|]
+implResourceTypes :: Request -> Q [Type]
+implResourceTypes req = sequence $ implResourceType <$> req.createdResources
+
+stubResourceType :: RequestCreateResource -> Q Type
+stubResourceType RequestCreateChannel = [t|Channel|]
+stubResourceType (RequestCreateStream up down) = [t|Stream $up $down|]
+
+implResourceType :: RequestCreateResource -> Q Type
+implResourceType RequestCreateChannel = [t|Channel|]
+implResourceType (RequestCreateStream up down) = [t|Stream $down $up|]
 
 resourceNamePrefix :: RequestCreateResource -> String
 resourceNamePrefix RequestCreateChannel = "channel"
