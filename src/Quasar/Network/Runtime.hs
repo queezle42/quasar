@@ -48,6 +48,7 @@ import qualified Data.ByteString.Lazy as BSL
 import qualified Data.HashMap.Strict as HM
 import qualified Network.Socket as Socket
 import Quasar.Awaitable
+import Quasar.Core
 import Quasar.Network.Connection
 import Quasar.Network.Multiplexer
 import Quasar.Prelude
@@ -64,7 +65,7 @@ type ProtocolResponseWrapper p = (MessageId, ProtocolResponse p)
 
 class RpcProtocol p => HasProtocolImpl p where
   type ProtocolImpl p
-  handleRequest :: ProtocolImpl p -> Channel -> ProtocolRequest p -> [Channel] -> IO (Maybe (ProtocolResponse p))
+  handleRequest :: HasResourceManager m => ProtocolImpl p -> Channel -> ProtocolRequest p -> [Channel] -> m (Maybe (Task (ProtocolResponse p)))
 
 
 data Client p = Client {
@@ -129,7 +130,14 @@ serverHandleChannelMessage protocolImpl channel resources msg = case decodeOrFai
     Right (leftovers, _, _) -> channelReportProtocolError channel ("Request parser pureed unexpected leftovers: " <> show (BSL.length leftovers))
   where
     serverHandleChannelRequest :: [Channel] -> ProtocolRequest p -> IO ()
-    serverHandleChannelRequest channels req = handleRequest @p protocolImpl channel req channels >>= maybe (pure ()) serverSendResponse
+    serverHandleChannelRequest channels req = do
+      -- TODO resource manager should belong to the current channel/api
+      withDefaultResourceManager $
+        handleRequest @p protocolImpl channel req channels >>= \case
+          Nothing -> pure ()
+          Just task -> do
+            response <- await task
+            liftIO $ serverSendResponse response
     serverSendResponse :: ProtocolResponse p -> IO ()
     serverSendResponse response = channelSendSimple channel (encode wrappedResponse)
       where

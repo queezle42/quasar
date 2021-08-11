@@ -246,11 +246,11 @@ makeServer api@RpcApi{functions} code = sequence [protocolImplDec, logicInstance
   where
     protocolImplDec :: Q Dec
     protocolImplDec = do
-      dataD (pure []) (implTypeName api) [] Nothing [recC (implTypeName api) code.serverImplFields] []
+      dataD (pure []) (implRecordTypeName api) [] Nothing [recC (implRecordTypeName api) code.serverImplFields] []
 
     logicInstanceDec :: Q Dec
     logicInstanceDec = instanceD (cxt []) [t|HasProtocolImpl $(protocolType api)|] [
-      tySynInstD (tySynEqn Nothing [t|ProtocolImpl $(protocolType api)|] (implType api)),
+      tySynInstD (tySynEqn Nothing [t|ProtocolImpl $(protocolType api)|] (implRecordType api)),
       requestHandler
       ]
     requestHandler :: Q Dec
@@ -289,16 +289,11 @@ makeServer api@RpcApi{functions} code = sequence [protocolImplDec, logicInstance
                 ]
 
             handlerSig :: Name -> Q Dec
-            handlerSig handlerName = sigD handlerName (buildFunctionType (implResourceTypes req) [t|IO $(resultType)|])
+            handlerSig handlerName = sigD handlerName (buildFunctionType (implResourceTypes req) (implResultType req))
             handlerDec :: Name -> [Name] -> RequestHandlerContext -> Q Dec
             handlerDec handlerName resourceNames ctx = funD handlerName [clause (varP <$> resourceNames) (normalB (req.handlerE ctx)) []]
             applyResources :: [Q Exp] -> Q Exp -> Q Exp
             applyResources resourceEs implE = applyM implE resourceEs
-            resultType :: Q Type
-            resultType =
-              case req.mResponse of
-                Nothing -> [t|()|]
-                Just resp -> [t|$(buildTupleType (sequence ((.ty) <$> resp.fields)))|]
 
             invalidChannelCountClause :: Q Clause
             invalidChannelCountClause = do
@@ -311,7 +306,7 @@ makeServer api@RpcApi{functions} code = sequence [protocolImplDec, logicInstance
 
     packResponse :: Maybe Response -> Q Exp -> Q Exp
     packResponse Nothing handlerE = [|Nothing <$ $(handlerE)|]
-    packResponse (Just response) handlerE = [|Just . $(conE (responseConName api response)) <$> $handlerE|]
+    packResponse (Just response) handlerE = [|Just . fmap $(conE (responseConName api response)) <$> $handlerE|]
 
 
 -- * Pluggable codegen interface
@@ -387,8 +382,7 @@ generateObservable api observable = pure Code {
       fields = [],
       createdResources = [],
       mResponse = Just retrieveResponse,
-      -- TODO use awaitable for result instead of blocking the network thread
-      handlerE = \ctx -> [|withDefaultResourceManager (awaitResult (retrieve $(observableE ctx)))|]
+      handlerE = \ctx -> [|retrieve $(observableE ctx)|]
       }
     retrieveResponse :: Response
     retrieveResponse = Response {
@@ -439,13 +433,7 @@ generateFunction api fun = do
     implFieldName :: Name
     implFieldName = functionImplFieldName api fun
     implSig :: Q Type
-    implSig = do
-      argumentTypes <- functionArgumentTypes fun
-      streamTypes <- serverStreamTypes
-      buildFunctionType (pure (argumentTypes <> streamTypes)) [t|IO $(buildTupleType (functionResultTypes fun))|]
-      where
-        serverStreamTypes :: Q [Type]
-        serverStreamTypes = sequence $ (\stream -> [t|Stream $(stream.tyDown) $(stream.tyUp)|]) <$> fun.streams
+    implSig = buildFunctionType ((functionArgumentTypes fun) <<>> (implResourceTypes request)) (implResultType request)
 
     serverRequestHandlerE :: RequestHandlerContext -> Q Exp
     serverRequestHandlerE ctx = applyResources (applyArgs (implFieldE ctx.implRecordE)) ctx.resourceEs
@@ -513,11 +501,11 @@ responseConName api resp = mkName (responseTypeIdentifier api <> "_" <> resp.nam
 clientType :: RpcApi -> Q Type
 clientType api = [t|Client $(protocolType api)|]
 
-implTypeName :: RpcApi -> Name
-implTypeName RpcApi{name} = mkName $ name <> "ProtocolImpl"
+implRecordTypeName :: RpcApi -> Name
+implRecordTypeName RpcApi{name} = mkName $ name <> "ProtocolImpl"
 
-implType :: RpcApi -> Q Type
-implType = conT . implTypeName
+implRecordType :: RpcApi -> Q Type
+implRecordType = conT . implRecordTypeName
 
 functionImplFieldName :: RpcApi -> RpcFunction -> Name
 functionImplFieldName _api fun = mkName (fun.name <> "Impl")
@@ -563,6 +551,13 @@ resourceNamePrefix (RequestCreateStream _ _) = "stream"
 createResource :: RequestCreateResource -> Q Exp -> Q Exp
 createResource RequestCreateChannel channelE = [|pure $channelE|]
 createResource (RequestCreateStream up down) channelE = [|newStream $channelE|]
+
+implResultType :: Request -> Q Type
+implResultType req = [t|forall m. HasResourceManager m => m $(resultType)|]
+  where
+    resultType = case req.mResponse of
+      Nothing -> [t|()|]
+      Just resp -> [t|Task $(buildTupleType (sequence ((.ty) <$> resp.fields)))|]
 
 -- * Template Haskell helper functions
 
@@ -629,7 +624,7 @@ varDefaultBangType name qType = varBangType name $ bangType (bang noSourceUnpack
 
 -- * Error reporting
 
-reportInvalidChannelCount :: Int -> [Channel] -> Channel -> IO a
+reportInvalidChannelCount :: MonadIO m => Int -> [Channel] -> Channel -> m a
 reportInvalidChannelCount expectedCount newChannels onChannel = channelReportProtocolError onChannel msg
   where
     msg = mconcat parts

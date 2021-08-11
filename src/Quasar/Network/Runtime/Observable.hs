@@ -24,8 +24,8 @@ newObservableStub startObserveRequest startRetrieveRequest = pure uncachedObserv
     retrieveFn :: forall m. HasResourceManager m => m (Task v)
     retrieveFn = toTask <$> startRetrieveRequest
 
-observeToStream :: Observable v -> Stream v Void -> IO ()
+observeToStream :: HasResourceManager m => Observable v -> Stream v Void -> m ()
 observeToStream observable stream = do
-  disposable <- observe observable undefined
+  disposable <- liftIO $ observe observable undefined
   -- TODO: dispose when the stream is closed
   undefined

@@ -502,8 +502,8 @@ reportProtocolError worker message = do
   multiplexerClose_ ex worker
   throwIO ex
 
-channelReportProtocolError :: Channel -> String -> IO b
-channelReportProtocolError channel message = do
+channelReportProtocolError :: MonadIO m => Channel -> String -> m b
+channelReportProtocolError channel message = liftIO $ do
   let channelId = channel.channelId
   multiplexerSend channel.worker $ ChannelProtocolError channelId message
   let ex = ChannelProtocolException channelId message

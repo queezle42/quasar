@@ -30,12 +30,12 @@ $(makeRpc $ rpcApi "Example" $ do
     rpcFunction "fixedHandler42" $ do
       addArgument "arg" [t|Int|]
       addResult "result" [t|Bool|]
-      setFixedHandler [| pure . (== 42) |]
+      setFixedHandler [| pure . pure . (== 42) |]
 
     rpcFunction "fixedHandlerInc" $ do
       addArgument "arg" [t|Int|]
       addResult "result" [t|Int|]
-      setFixedHandler [| pure . (+ 1) |]
+      setFixedHandler [| pure . pure . (+ 1) |]
 
     rpcFunction "multiArgs" $ do
       addArgument "one" [t|Int|]
@@ -68,8 +68,8 @@ $(makeRpc $ rpcApi "ObservableExample" $ do
 
 exampleProtocolImpl :: ExampleProtocolImpl
 exampleProtocolImpl = ExampleProtocolImpl {
-  multiArgsImpl = \one two three -> pure (one + two, not three),
-  noArgsImpl = pure 42,
+  multiArgsImpl = \one two three -> pure $ pure (one + two, not three),
+  noArgsImpl = pure $ pure 42,
   noResponseImpl = \_foo -> pure (),
   noNothingImpl = pure ()
 }
