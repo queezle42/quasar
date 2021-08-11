@@ -21,11 +21,11 @@
       },
       "locked": {
         "host": "git.c3pb.de",
-        "lastModified": 1628533241,
-        "narHash": "sha256-nvAqgEzmdYhvwTb0y6Vico4EvyOT1ehgzZU7/LrnW2g=",
+        "lastModified": 1628734583,
+        "narHash": "sha256-iLO9Ebh6Et9a+2thcn6Y4Ni9IzodPck+2J/J5q5MVVY=",
         "owner": "jens",
         "repo": "quasar",
-        "rev": "894908377f0ee5cf626a6bdd8c4fdd29411b8e80",
+        "rev": "64c5b43d23951d0e539689847b683e844ea9d378",
         "type": "gitlab"
       },
       "original": {
