@@ -103,8 +103,8 @@ instance IsDisposable ResourceManager where
 
 
 -- | A task that is running asynchronously. It has a result and can fail.
--- The result (or exception) can be aquired by using the `Awaitable` class (e.g. by calling `await` or `awaitIO`).
--- It might be possible to cancel the task by using the `Disposable` class if the operation has not been completed.
+-- The result (or exception) can be aquired by using the `IsAwaitable` class (e.g. by calling `await` or `awaitIO`).
+-- It might be possible to cancel the task by using the `IsDisposable` class if the operation has not been completed.
 -- If the result is no longer required the task should be cancelled, to avoid leaking memory.
 newtype Task r = Task (Awaitable r)
 
