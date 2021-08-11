@@ -21,6 +21,7 @@ common shared-properties
   default-extensions:
     AllowAmbiguousTypes
     BangPatterns
+    BlockArguments
     DataKinds
     DefaultSignatures
     DeriveAnyClass
@@ -46,6 +47,7 @@ common shared-properties
     TupleSections
     TypeFamilies
     TypeOperators
+    ViewPatterns
     -- Required for the record-dot-preprocessor plugin
     DuplicateRecordFields
     TypeApplications
@@ -72,11 +74,21 @@ common shared-properties
     record-dot-preprocessor,
     record-hasfield,
   default-language: Haskell2010
-  ghc-options: -fwarn-unused-do-bind -fwarn-tabs -Wall -Wincomplete-uni-patterns -Wpartial-fields -fplugin=RecordDotPreprocessor
+  ghc-options:
+    -fplugin=RecordDotPreprocessor
+    -Weverything
+    -Wno-all-missed-specialisations
+    -Wno-missing-safe-haskell-mode
+    -Wno-missing-import-lists
+    -Wno-unsafe
+    -Werror=incomplete-patterns
+    -Werror=missing-methods
 
 common shared-executable-properties
   import: shared-properties
-  ghc-options: -fwarn-unused-do-bind -fwarn-tabs -Wall -Wincomplete-uni-patterns -Wpartial-fields -threaded -rtsopts "-with-rtsopts=-N -I0"
+  ghc-options:
+    -threaded
+    -rtsopts "-with-rtsopts=-N -I0"
 
 library
   import: shared-properties
