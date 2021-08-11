@@ -48,22 +48,18 @@ import System.IO (fixIO)
 data ObservableMessage a
   = ObservableUpdate a
   | ObservableLoading
-  | ObservableReconnecting SomeException
   | ObservableNotAvailable SomeException
   deriving stock (Show, Generic)
 
 instance Functor ObservableMessage where
   fmap fn (ObservableUpdate x) = ObservableUpdate (fn x)
   fmap _ ObservableLoading = ObservableLoading
-  fmap _ (ObservableReconnecting ex) = ObservableReconnecting ex
   fmap _ (ObservableNotAvailable ex) = ObservableNotAvailable ex
 
 instance Applicative ObservableMessage where
   pure = ObservableUpdate
   liftA2 _ (ObservableNotAvailable ex) _ = ObservableNotAvailable ex
   liftA2 _ _ (ObservableNotAvailable ex) = ObservableNotAvailable ex
-  liftA2 _ (ObservableReconnecting ex) _ = ObservableReconnecting ex
-  liftA2 _ _ (ObservableReconnecting ex) = ObservableReconnecting ex
   liftA2 _ ObservableLoading _ = ObservableLoading
   liftA2 _ _ ObservableLoading = ObservableLoading
   liftA2 fn (ObservableUpdate x) (ObservableUpdate y) = ObservableUpdate (fn x y)
@@ -196,7 +192,6 @@ instance IsObservable r (BindObservable r) where
         where
           outerMessageHandler key (ObservableUpdate x) = observe (fn x) (innerCallback key)
           outerMessageHandler key (ObservableLoading) = noDisposable <$ callback ObservableLoading
-          outerMessageHandler key (ObservableReconnecting ex) = noDisposable <$ callback (ObservableReconnecting ex)
           outerMessageHandler key (ObservableNotAvailable ex) = noDisposable <$ callback (ObservableNotAvailable ex)
 
           innerCallback :: Unique -> ObservableMessage r -> IO ()
