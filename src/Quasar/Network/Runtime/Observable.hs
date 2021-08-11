@@ -8,11 +8,11 @@ import Quasar.Observable
 import Quasar.Prelude
 
 newObservableStub
-  :: forall v. Binary v =>
-     (forall m. MonadIO m => m (Stream Void v))
-  -> (forall m. MonadIO m => m (Awaitable v))
+  :: forall v. Binary v
+  => (forall m. MonadIO m => m (Awaitable v))
+  -> (forall m. MonadIO m => m (Stream Void v))
   -> IO (Observable v)
-newObservableStub startObserveRequest startRetrieveRequest = pure uncachedObservable -- TODO cache
+newObservableStub startRetrieveRequest startObserveRequest = pure uncachedObservable -- TODO cache
   where
     uncachedObservable :: Observable v
     uncachedObservable = fnObservable observeFn retrieveFn
