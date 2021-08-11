@@ -40,6 +40,7 @@ import Quasar.Awaitable
 import Quasar.Core
 import Quasar.Disposable
 import Quasar.Prelude
+import System.IO (fixIO)
 
 
 data ObservableMessage a
@@ -81,10 +82,11 @@ class IsRetrievable v o => IsObservable v o | o -> v where
   mapObservable :: (v -> a) -> o -> Observable a
   mapObservable f = Observable . MappedObservable f
 
--- TODO needs a name
 -- | A variant of `observe` that passes the `Disposable` to the callback.
-observeWithDisposablePassedToTheCallback :: IsObservable v o => o -> (Disposable -> ObservableMessage v -> IO ()) -> IO Disposable
-observeWithDisposablePassedToTheCallback observable callback = mfix $ \disposable -> observe observable (callback disposable)
+--
+-- The disposable passed to the callback must not be used before `observeFixed` returns (otherwise an exception is thrown).
+observeFixed :: IsObservable v o => o -> (Disposable -> ObservableMessage v -> IO ()) -> IO Disposable
+observeFixed observable callback = fixIO $ \disposable -> observe observable (callback disposable)
 
 type ObservableCallback v = ObservableMessage v -> IO ()
 
