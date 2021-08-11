@@ -22,6 +22,7 @@ module Quasar.Observable (
   mergeObservable,
   joinObservable,
   bindObservable,
+  unsafeObservableIO,
 
   -- * Helper types
   ObservableCallback,
@@ -301,6 +302,21 @@ instance IsObservable a (ConstObservable a) where
 -- | Create an observable that contains a constant value.
 constObservable :: v -> Observable v
 constObservable = Observable . ConstObservable
+
+
+-- | Create an observable by simply running an IO action whenever a value is requested or a callback is registered.
+--
+-- There is no mechanism to send more than one update, so the resulting `Observable` will only be correct in specific
+-- situations.
+unsafeObservableIO :: forall v. IO v -> Observable v
+unsafeObservableIO action = synchronousFnObservable observeFn action
+  where
+    observeFn :: (ObservableMessage v -> IO ()) -> IO Disposable
+    observeFn callback = do
+      callback ObservableLoading
+      value <- (ObservableUpdate <$> action) `catchAll` (pure . ObservableNotAvailable @v)
+      callback value
+      pure noDisposable
 
 
 -- TODO implement
