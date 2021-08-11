@@ -1,4 +1,3 @@
-{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
 
 module Quasar.Observable (
@@ -93,16 +92,6 @@ observeFixed observable callback = fixIO $ \disposable -> observe observable (ca
 
 type ObservableCallback v = ObservableMessage v -> IO ()
 
-
-instance IsRetrievable v o => IsRetrievable v (IO o) where
-  retrieve :: HasResourceManager m => IO o -> m (Task v)
-  retrieve = retrieve <=< liftIO
-
-instance IsObservable v o => IsObservable v (IO o) where
-  observe :: IO o -> (ObservableMessage v -> IO ()) -> IO Disposable
-  observe getObservable callback = do
-    observable <- getObservable
-    observe observable callback
 
 
 -- | Existential quantification wrapper for the IsObservable type class.
@@ -219,7 +208,6 @@ instance IsObservable r (BindObservable r) where
               (atomically . putTMVar keyVar)
               -- Call callback when key is still valid
               (\currentKey -> when (Just key == currentKey) $ callback x)
-
 
 
 data CatchObservable e r = Exception e => CatchObservable (Observable r) (e -> Observable r)
