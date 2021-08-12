@@ -363,7 +363,7 @@ data RequestHandlerContext = RequestHandlerContext {
 
 generateObservable :: RpcApi -> RpcObservable -> Q Code
 generateObservable api observable = pure Code {
-  clientStubDecs = [],
+  clientStubDecs = observableStubDec,
   requests = [observeRequest, retrieveRequest],
   serverImplFields = [varDefaultBangType serverImplFieldName serverImplFieldSig]
 }
@@ -390,14 +390,20 @@ generateObservable api observable = pure Code {
       fields = [Field "result" observable.ty]
     }
     serverImplFieldName :: Name
-    serverImplFieldName = mkName observable.name
+    serverImplFieldName = mkName (observable.name <> "Impl")
     serverImplFieldSig :: Q Type
     serverImplFieldSig = [t|Observable $(observable.ty)|]
     observableE :: RequestHandlerContext -> Q Exp
     observableE ctx = [|$(varE serverImplFieldName) $(ctx.implRecordE)|]
     observableStubDec :: [Q Dec]
     observableStubDec = [
-      sigD (mkName observable.name) [t|$(clientType api) -> Observable $(observable.ty)|]
+      sigD (mkName observable.name) [t|$(clientType api) -> IO (Observable $(observable.ty))|],
+      do
+        clientName <- newName "client"
+        let clientE = varE clientName
+        funD (mkName observable.name) [
+          clause [varP clientName] (normalB [|newObservableStub ($(clientRequestStubE api retrieveRequest) $clientE) ($(clientRequestStubE api observeRequest) $clientE)|]) []
+          ]
       ]
     observeE :: Q Exp
     observeE = clientRequestStubE api observeRequest

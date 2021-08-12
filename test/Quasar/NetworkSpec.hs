@@ -11,19 +11,22 @@
 module Quasar.NetworkSpec where
 
 import Control.Concurrent.MVar
+import Control.Concurrent.STM
+import Control.Exception (toException)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Prelude
+import Quasar.Prelude
 import Quasar.Awaitable
 import Quasar.Core
 import Quasar.Network
 import Quasar.Network.Runtime (withStandaloneClient)
 import Quasar.Network.TH (makeRpc)
+import Quasar.Observable
 import Test.Hspec
 import Test.QuickCheck
 import Test.QuickCheck.Monadic
 
-shouldReturnAsync :: (HasCallStack, Show a, Eq a) => AsyncIO a -> a -> AsyncIO ()
-action `shouldReturnAsync` expected = action >>= liftIO . (`shouldBe` expected)
+shouldReturnAsync :: (HasCallStack, IsAwaitable r a, Show r, Eq r) => AsyncIO a -> r -> AsyncIO ()
+action `shouldReturnAsync` expected = action >>= await >>= liftIO . (`shouldBe` expected)
 
 
 $(makeRpc $ rpcApi "Example" $ do
@@ -87,6 +90,7 @@ streamExampleProtocolImpl = StreamExampleProtocolImpl {
       streamSetHandler stream1 $ streamSend stream1
       streamSetHandler stream2 $ streamSend stream2
 
+
 spec :: Spec
 spec = parallel $ do
   describe "Example" $ do
@@ -119,3 +123,33 @@ spec = parallel $ do
         liftIO $ streamSend stream (x, y)
         liftIO $ takeMVar resultMVar `shouldReturn` x * y
 
+  describe "ObservableExample" $ do
+    it "can retrieve values" $ do
+      var <- newObservableVar 42
+      withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
+        observable <- intObservable client
+        retrieveIO observable `shouldReturn` 42
+        setObservableVar var 13
+        retrieveIO observable `shouldReturn` 13
+
+    it "foobar" $ do
+      var <- newObservableVar 42
+      withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
+        resultVar <- newTVarIO ObservableLoading
+        observable <- intObservable client
+        void $ observe observable $ atomically . writeTVar resultVar
+        let latestShouldBe = \expected -> join $ atomically $ readTVar resultVar >>=
+              \case
+                -- Network might be slow, so this retries until the expected value is received.
+                -- Blocks forever if the wrong or no value is received.
+                ObservableUpdate x -> if (x == expected) then pure (pure ()) else retry
+                ObservableLoading -> retry
+                ObservableNotAvailable ex -> pure $ throwIO ex
+
+        latestShouldBe 42
+        setObservableVar var 13
+        latestShouldBe 13
+        setObservableVar var (-1)
+        latestShouldBe (-1)
+        setObservableVar var 42
+        latestShouldBe 42
