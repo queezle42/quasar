@@ -2,7 +2,7 @@ module Quasar.Disposable (
   IsDisposable(..),
   Disposable,
   disposeIO,
-  mkDisposable,
+  newDisposable,
   synchronousDisposable,
   noDisposable,
 ) where

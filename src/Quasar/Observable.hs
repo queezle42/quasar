@@ -309,7 +309,7 @@ instance IsObservable v (ObservableVar v) where
       -- Call listener
       callback (pure state)
       pure (state, HM.insert key callback subscribers)
-    pure $ synchronousDisposable (disposeFn key)
+    synchronousDisposable (disposeFn key)
     where
       disposeFn :: Unique -> IO ()
       disposeFn key = modifyMVar_ mvar (\(state, subscribers) -> pure (state, HM.delete key subscribers))

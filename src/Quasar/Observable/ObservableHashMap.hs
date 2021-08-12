@@ -47,7 +47,7 @@ instance IsObservable (HM.HashMap k v) (ObservableHashMap k v) where
         callback $ pure $ toHashMap handle
         unique <- newUnique
         let handle' = handle & set (_subscribers . at unique) (Just callback)
-        pure (handle', synchronousDisposable (unsubscribe unique))
+        (handle',) <$> synchronousDisposable (unsubscribe unique)
       unsubscribe :: Unique -> IO ()
       unsubscribe unique = modifyHandle_ (pure . set (_subscribers . at unique) Nothing) ohm
 
@@ -59,7 +59,7 @@ instance IsDeltaObservable k v (ObservableHashMap k v) where
         callback (Reset $ toHashMap handle)
         unique <- newUnique
         let handle' = handle & set (_deltaSubscribers . at unique) (Just callback)
-        pure (handle', synchronousDisposable (unsubscribe unique))
+        (handle',) <$> synchronousDisposable (unsubscribe unique)
       unsubscribe :: Unique -> IO ()
       unsubscribe unique = modifyHandle_ (pure . set (_deltaSubscribers . at unique) Nothing) ohm
 
@@ -123,7 +123,7 @@ observeKey key ohm@(ObservableHashMap mvar) = synchronousFnObservable observeFn 
     observeFn callback = do
       subscriptionKey <- newUnique
       modifyKeyHandle_ (subscribeFn' subscriptionKey) key ohm
-      pure $ synchronousDisposable (unsubscribe subscriptionKey)
+      synchronousDisposable (unsubscribe subscriptionKey)
       where
         subscribeFn' :: Unique -> KeyHandle v -> IO (KeyHandle v)
         subscribeFn' subKey keyHandle@KeyHandle{value} = do

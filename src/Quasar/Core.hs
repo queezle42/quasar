@@ -29,7 +29,7 @@ module Quasar.Core (
   IsDisposable(..),
   Disposable,
   disposeIO,
-  mkDisposable,
+  newDisposable,
   synchronousDisposable,
   noDisposable,
   disposeEventually,
@@ -99,7 +99,7 @@ data ResourceManager = ResourceManager {
 }
 
 instance IsDisposable ResourceManager where
-  dispose x = pure $ pure ()
+  toDisposable x = undefined
 
 
 -- | A task that is running asynchronously. It has a result and can fail.
@@ -112,7 +112,7 @@ instance IsAwaitable r (Task r) where
   toAwaitable (Task awaitable) = awaitable
 
 instance IsDisposable (Task r) where
-  dispose = undefined
+  toDisposable = undefined
 
 instance Functor Task where
   fmap fn (Task x) = Task (fn <$> x)
@@ -203,7 +203,7 @@ class IsDisposable a where
   dispose = dispose . toDisposable
 
   toDisposable :: a -> Disposable
-  toDisposable = mkDisposable . dispose
+  toDisposable = Disposable
 
   {-# MINIMAL toDisposable | dispose #-}
 
@@ -215,25 +215,52 @@ instance IsDisposable a => IsDisposable (Maybe a) where
   dispose = maybe (pure (pure ())) dispose
 
 
-newtype Disposable = Disposable (IO (Awaitable ()))
+
+data Disposable = forall a. IsDisposable a => Disposable a
 
 instance IsDisposable Disposable where
-  dispose (Disposable fn) = fn
+  dispose (Disposable x) = dispose x
   toDisposable = id
 
 instance Semigroup Disposable where
-  x <> y = mkDisposable $ liftA2 (<>) (dispose x) (dispose y)
+  x <> y = toDisposable $ CombinedDisposable x y
 
 instance Monoid Disposable where
-  mempty = mkDisposable $ pure $ pure ()
-  mconcat disposables = mkDisposable $ mconcat <$> traverse dispose disposables
+  mempty = toDisposable EmptyDisposable
+  mconcat = toDisposable . ListDisposable
 
 
-mkDisposable :: IO (Awaitable ()) -> Disposable
-mkDisposable = Disposable
+newtype FnDisposable = FnDisposable (IO (Awaitable ()))
 
-synchronousDisposable :: IO () -> Disposable
-synchronousDisposable = mkDisposable . fmap pure . liftIO
+instance IsDisposable FnDisposable where
+  dispose (FnDisposable fn) = fn
+
+
+data CombinedDisposable = CombinedDisposable Disposable Disposable
+
+instance IsDisposable CombinedDisposable where
+  dispose (CombinedDisposable x y) = liftA2 (<>) (dispose x) (dispose y)
+
+data ListDisposable = ListDisposable [Disposable]
+
+instance IsDisposable ListDisposable where
+  dispose (ListDisposable disposables) = mconcat <$> traverse dispose disposables
+
+
+
+
+data EmptyDisposable = EmptyDisposable
+
+instance IsDisposable EmptyDisposable where
+  dispose EmptyDisposable = pure $ pure ()
+
+
+
+newDisposable :: IO (Awaitable ()) -> IO Disposable
+newDisposable = pure . toDisposable . FnDisposable
+
+synchronousDisposable :: IO () -> IO Disposable
+synchronousDisposable = newDisposable . fmap pure . liftIO
 
 noDisposable :: Disposable
 noDisposable = mempty
