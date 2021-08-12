@@ -8,6 +8,7 @@ module Quasar.Network.Multiplexer (
   SentMessageResources(..),
   ReceivedMessageResources(..),
   MultiplexerException,
+  ChannelNotConnected,
   channelReportProtocolError,
   channelReportException,
   channelSend,
