@@ -255,8 +255,10 @@ boundDisposable action = do
   resourceManager <- askResourceManager
   attachDisposeAction resourceManager action
 
+-- | Creates an `Disposable` that is bound to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
 attachDisposeAction :: MonadIO m => ResourceManager -> IO (Awaitable ()) -> m Disposable
 attachDisposeAction = undefined
 
+-- | Attaches a dispose action to a ResourceManager. It will automatically be run when the resource manager is disposed.
 attachDisposeAction_ :: MonadIO m => ResourceManager -> IO (Awaitable ()) -> m ()
 attachDisposeAction_ resourceManager action = void $ attachDisposeAction resourceManager action
