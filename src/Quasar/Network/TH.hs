@@ -372,7 +372,7 @@ generateObservable api observable = pure Code {
     observeRequest = Request {
       name = observable.name <> "_observe",
       fields = [],
-      createdResources = [RequestCreateStream [t|Void|] observable.ty],
+      createdResources = [RequestCreateStream [t|Void|] [t|PackedObservableMessage $(observable.ty)|]],
       mResponse = Nothing,
       handlerE = \ctx -> [|observeToStream $(observableE ctx) $(ctx.resourceEs !! 0)|]
       }
