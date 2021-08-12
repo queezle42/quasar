@@ -10,6 +10,7 @@
 
 module Quasar.NetworkSpec where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Exception (toException)
@@ -27,7 +28,6 @@ import Test.QuickCheck.Monadic
 
 shouldReturnAsync :: (HasCallStack, IsAwaitable r a, Show r, Eq r) => AsyncIO a -> r -> AsyncIO ()
 action `shouldReturnAsync` expected = action >>= await >>= liftIO . (`shouldBe` expected)
-
 
 $(makeRpc $ rpcApi "Example" $ do
     rpcFunction "fixedHandler42" $ do
@@ -132,7 +132,24 @@ spec = parallel $ do
         setObservableVar var 13
         retrieveIO observable `shouldReturn` 13
 
-    it "foobar" $ do
+    it "receives the current value when calling observe" $ do
+      var <- newObservableVar 41
+
+      withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
+        resultVar <- newTVarIO ObservableLoading
+        observable <- intObservable client
+
+        -- Change the value before calling `observe`
+        setObservableVar var 42
+
+        void $ observe observable $ atomically . writeTVar resultVar
+        join $ atomically $ readTVar resultVar >>=
+          \case
+            ObservableUpdate x -> pure $ x `shouldBe` 42
+            ObservableLoading -> retry
+            ObservableNotAvailable ex -> pure $ throwIO ex
+
+    it "receives continuous updates when observing" $ do
       var <- newObservableVar 42
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
         resultVar <- newTVarIO ObservableLoading
@@ -140,7 +157,7 @@ spec = parallel $ do
         void $ observe observable $ atomically . writeTVar resultVar
         let latestShouldBe = \expected -> join $ atomically $ readTVar resultVar >>=
               \case
-                -- Network might be slow, so this retries until the expected value is received.
+                -- Send and receive are running asynchronously, so this retries until the expected value is received.
                 -- Blocks forever if the wrong or no value is received.
                 ObservableUpdate x -> if (x == expected) then pure (pure ()) else retry
                 ObservableLoading -> retry
@@ -153,3 +170,33 @@ spec = parallel $ do
         latestShouldBe (-1)
         setObservableVar var 42
         latestShouldBe 42
+
+    it "receives no further updates after disposing the callback registration" $ do
+      var <- newObservableVar 42
+      withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
+        resultVar <- newTVarIO ObservableLoading
+        observable <- intObservable client
+        disposable <- observe observable $ atomically . writeTVar resultVar
+        let latestShouldBe = \expected -> join $ atomically $ readTVar resultVar >>=
+              \case
+                -- Send and receive are running asynchronously, so this retries until the expected value is received.
+                -- Blocks forever if the wrong or no value is received.
+                ObservableUpdate x -> if (x < 0)
+                  then pure (fail "received a message after unsubscribing")
+                  else if (x == expected) then pure (pure ()) else retry
+                ObservableLoading -> retry
+                ObservableNotAvailable ex -> pure $ throwIO ex
+
+        latestShouldBe 42
+        setObservableVar var 13
+        latestShouldBe 13
+        setObservableVar var 42
+        latestShouldBe 42
+
+        disposeIO disposable
+
+        setObservableVar var (-1)
+        threadDelay 10000
+
+        latestShouldBe 42
+
