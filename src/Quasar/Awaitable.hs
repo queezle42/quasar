@@ -1,6 +1,7 @@
 module Quasar.Awaitable (
   -- * Awaitable
   IsAwaitable(..),
+  MonadQuerySTM(..),
   awaitIO,
   peekAwaitable,
   Awaitable,
@@ -34,7 +35,6 @@ import Control.Monad.Trans.Class
 import Control.Monad.Trans.Maybe
 import Data.Bifunctor (bimap)
 import Quasar.Prelude
-
 
 
 class IsAwaitable r a | a -> r where

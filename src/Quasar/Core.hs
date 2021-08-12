@@ -38,7 +38,7 @@ module Quasar.Core (
   attachDisposeAction_,
 ) where
 
-import Control.Concurrent (ThreadId, forkIOWithUnmask, myThreadId)
+import Control.Concurrent (ThreadId, forkIOWithUnmask)
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Reader
@@ -202,17 +202,20 @@ class IsDisposable a where
   dispose :: a -> IO (Awaitable ())
   dispose = dispose . toDisposable
 
+  isDisposed :: a -> Awaitable ()
+  isDisposed = isDisposed . toDisposable
+
   toDisposable :: a -> Disposable
   toDisposable = Disposable
 
-  {-# MINIMAL toDisposable | dispose #-}
+  {-# MINIMAL toDisposable | (dispose, isDisposed) #-}
 
 -- | Dispose a resource in the IO monad.
 disposeIO :: IsDisposable a => a -> IO ()
 disposeIO = awaitIO <=< dispose
 
 instance IsDisposable a => IsDisposable (Maybe a) where
-  dispose = maybe (pure (pure ())) dispose
+  toDisposable = maybe noDisposable toDisposable
 
 
 
@@ -229,35 +232,60 @@ instance Monoid Disposable where
   mempty = toDisposable EmptyDisposable
   mconcat = toDisposable . ListDisposable
 
+instance IsAwaitable () Disposable where
+  toAwaitable = isDisposed
 
-newtype FnDisposable = FnDisposable (IO (Awaitable ()))
+
+newtype FnDisposable = FnDisposable (TMVar (Either (IO (Awaitable ())) (Awaitable ())))
 
 instance IsDisposable FnDisposable where
-  dispose (FnDisposable fn) = fn
+  dispose (FnDisposable var) =
+    bracketOnError
+      do atomically $ takeTMVar var
+      do atomically . putTMVar var
+      \case
+        Left action -> do
+          awaitable <- action
+          atomically $ putTMVar var $ Right awaitable
+          pure awaitable
+        Right awaitable -> pure awaitable
+
+  isDisposed = toAwaitable
+
+instance IsAwaitable () FnDisposable where
+  runAwaitable :: (MonadQuerySTM m) => FnDisposable -> m (Either SomeException ())
+  runAwaitable (FnDisposable var) = do
+    -- Query if dispose has started
+    awaitable <- querySTM $ join . fmap rightToMaybe <$> tryReadTMVar var
+    -- Query if dispose is completed
+    runAwaitable awaitable
+
 
 
 data CombinedDisposable = CombinedDisposable Disposable Disposable
 
 instance IsDisposable CombinedDisposable where
   dispose (CombinedDisposable x y) = liftA2 (<>) (dispose x) (dispose y)
+  isDisposed (CombinedDisposable x y) = liftA2 (<>) (isDisposed x) (isDisposed y)
 
 data ListDisposable = ListDisposable [Disposable]
 
 instance IsDisposable ListDisposable where
   dispose (ListDisposable disposables) = mconcat <$> traverse dispose disposables
-
+  isDisposed (ListDisposable disposables) = traverse_ isDisposed disposables
 
 
 
 data EmptyDisposable = EmptyDisposable
 
 instance IsDisposable EmptyDisposable where
-  dispose EmptyDisposable = pure $ pure ()
+  dispose _ = pure $ pure ()
+  isDisposed _ = successfulAwaitable ()
 
 
 
 newDisposable :: IO (Awaitable ()) -> IO Disposable
-newDisposable = pure . toDisposable . FnDisposable
+newDisposable = fmap (toDisposable . FnDisposable) . newTMVarIO . Left
 
 synchronousDisposable :: IO () -> IO Disposable
 synchronousDisposable = newDisposable . fmap pure . liftIO
