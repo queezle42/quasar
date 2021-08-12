@@ -95,6 +95,7 @@ library
   exposed-modules:
     Quasar.Network
     Quasar.Network.Connection
+    Quasar.Network.Exception
     Quasar.Network.Multiplexer
     Quasar.Network.Runtime
     Quasar.Network.Runtime.Observable
@@ -107,9 +108,10 @@ test-suite quasar-network-test
   import: shared-executable-properties
   type: exitcode-stdio-1.0
   build-depends:
+    QuickCheck,
     hspec,
     quasar-network,
-    QuickCheck
+    stm,
   main-is: Spec.hs
   other-modules:
     Quasar.NetworkSpec
