@@ -172,6 +172,8 @@ spec = parallel $ do
         latestShouldBe 42
 
     it "receives no further updates after disposing the callback registration" $ do
+      pendingWith "not implemented"
+
       var <- newObservableVar 42
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
         resultVar <- newTVarIO ObservableLoading
