@@ -10,13 +10,15 @@
   let
     lib = nixpkgs.lib;
     systems = lib.platforms.unix;
-    forAllSystems = f: lib.genAttrs systems (system: f system);
+    forAllSystems = lib.genAttrs systems;
   in {
-    packages = forAllSystems (system: {
-      quasar-network = import ./. {
-        pkgs = import nixpkgs { inherit system; overlays = [ quasar.overlay ]; };
-      };
-    });
+    packages = forAllSystems (system:
+    let pkgs = import nixpkgs { inherit system; overlays = [
+        self.overlay
+        quasar.overlay
+      ]; };
+      in { inherit (pkgs.haskellPackages) quasar-network; }
+    );
 
     overlay = self: super: {
       haskell = super.haskell // {
