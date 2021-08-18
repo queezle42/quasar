@@ -2,13 +2,13 @@
   outputs = { self, nixpkgs }:
   with nixpkgs.lib;
   let
-    forAllSystems = genAttrs ["x86_64-linux" "aarch64-linux"];
-    pkgs = forAllSystems (system: import nixpkgs { inherit system; overlays = [ self.overlay ]; });
+    systems = platforms.unix;
+    forAllSystems = genAttrs systems;
   in {
-
-    devShell = forAllSystems (system: pkgs.${system}.haskellPackages.quasar.env);
-
-    defaultPackage = forAllSystems (system: pkgs.${system}.haskellPackages.quasar);
+    packages = forAllSystems (system:
+      let pkgs = import nixpkgs { inherit system; overlays = [ self.overlay ]; };
+      in { quasar = pkgs.haskellPackages.quasar; }
+    );
 
     overlay = final: prev: {
       haskell = prev.haskell // {
@@ -21,5 +21,8 @@
       };
     };
 
+    defaultPackage = forAllSystems (system: self.packages.${system}.quasar);
+
+    devShell = forAllSystems (system: self.packages.${system}.quasar.env);
   };
 }
