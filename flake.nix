@@ -26,6 +26,8 @@
       };
     };
 
+    overlays.quasar = quasar.overlay;
+
     defaultPackage = forAllSystems (system: self.packages.${system}.quasar-network);
 
     devShell = forAllSystems (system: self.packages.${system}.quasar-network.env);
