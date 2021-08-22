@@ -35,16 +35,12 @@ import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Except
-import Control.Monad.Reader
 import Control.Monad.Trans.Maybe
 import Data.HashMap.Strict qualified as HM
-import Data.IORef
 import Data.Unique
 import Quasar.Awaitable
 import Quasar.Core
-import Quasar.Disposable
 import Quasar.Prelude
-import System.IO (fixIO)
 
 
 data ObservableMessage a
@@ -85,11 +81,10 @@ class IsRetrievable v o => IsObservable v o | o -> v where
 -- | Observe until the callback returns `False`. The callback will also be unsubscribed when the `ResourceManager` is disposed.
 observeWhile :: (IsObservable v o, HasResourceManager m) => o -> (ObservableMessage v -> IO Bool) -> m Disposable
 observeWhile observable callback = do
-  resourceManager <- askResourceManager
   disposeVar <- liftIO $ newTVarIO False
 
   innerDisposable <- liftIO $ observe observable \msg -> do
-    disposeRequested <- atomically $ readTVar disposeVar
+    disposeRequested <- readTVarIO disposeVar
     unless disposeRequested do
       continue <- callback msg
       unless continue $ atomically $ writeTVar disposeVar True
@@ -170,7 +165,7 @@ instance IsRetrievable r (BindObservable r) where
     awaitResult $ retrieve $ fn x
 
 instance IsObservable r (BindObservable r) where
-  observe :: forall r. (BindObservable r) -> (ObservableMessage r -> IO ()) -> IO Disposable
+  observe :: BindObservable r -> (ObservableMessage r -> IO ()) -> IO Disposable
   observe (BindObservable fx fn) callback = do
     -- Create a resource manager to ensure all subscriptions are cleaned up when disposing.
     resourceManager <- newResourceManager unlimitedResourceManagerConfiguration
@@ -205,20 +200,20 @@ instance IsObservable r (BindObservable r) where
               pure $ do
                 disposeEventually resourceManager oldDisposable
 
-                newDisposable <-
+                disposable <-
                   unmask (outerMessageHandler key observableMessage)
                     `onException`
                       atomically (putTMVar disposableVar noDisposable)
 
-                atomically $ putTMVar disposableVar newDisposable
+                atomically $ putTMVar disposableVar disposable
 
             -- When already disposing no new handlers should be registered
             True -> pure $ pure ()
 
         where
           outerMessageHandler key (ObservableUpdate x) = observe (fn x) (innerCallback key)
-          outerMessageHandler key (ObservableLoading) = noDisposable <$ callback ObservableLoading
-          outerMessageHandler key (ObservableNotAvailable ex) = noDisposable <$ callback (ObservableNotAvailable ex)
+          outerMessageHandler _ ObservableLoading = noDisposable <$ callback ObservableLoading
+          outerMessageHandler _ (ObservableNotAvailable ex) = noDisposable <$ callback (ObservableNotAvailable ex)
 
           innerCallback :: Unique -> ObservableMessage r -> IO ()
           innerCallback key x = do
@@ -238,7 +233,7 @@ instance IsRetrievable r (CatchObservable e r) where
     awaitResult (retrieve fx) `catch` \ex -> awaitResult (retrieve (fn ex))
 
 instance IsObservable r (CatchObservable e r) where
-  observe :: forall e r. (CatchObservable e r) -> (ObservableMessage r -> IO ()) -> IO Disposable
+  observe :: CatchObservable e r -> (ObservableMessage r -> IO ()) -> IO Disposable
   observe (CatchObservable fx fn) callback = do
     -- Create a resource manager to ensure all subscriptions are cleaned up when disposing.
     resourceManager <- newResourceManager unlimitedResourceManagerConfiguration
@@ -273,19 +268,19 @@ instance IsObservable r (CatchObservable e r) where
               pure $ do
                 disposeEventually resourceManager oldDisposable
 
-                newDisposable <-
+                disposable <-
                   unmask (outerMessageHandler key observableMessage)
                     `onException`
                       atomically (putTMVar disposableVar noDisposable)
 
-                atomically $ putTMVar disposableVar newDisposable
+                atomically $ putTMVar disposableVar disposable
 
             -- When already disposing no new handlers should be registered
             True -> pure $ pure ()
 
         where
-          outerMessageHandler key msg@(ObservableNotAvailable (fromException -> Just ex)) = observe (fn ex) (innerCallback key)
-          outerMessageHandler key msg = noDisposable <$ callback msg
+          outerMessageHandler key (ObservableNotAvailable (fromException -> Just ex)) = observe (fn ex) (innerCallback key)
+          outerMessageHandler _ msg = noDisposable <$ callback msg
 
           innerCallback :: Unique -> ObservableMessage r -> IO ()
           innerCallback key x = do

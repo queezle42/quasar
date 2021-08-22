@@ -1,12 +1,11 @@
 module Quasar.Observable.ObservableHashMapSpec (spec) where
 
-import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Observable
 import Quasar.Observable.Delta
 import Quasar.Observable.ObservableHashMap qualified as OM
 
-import Control.Monad ((<=<), void)
+import Control.Monad (void)
 import Data.HashMap.Strict qualified as HM
 import Data.IORef
 import Prelude

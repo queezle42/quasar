@@ -14,7 +14,6 @@ import Data.HashMap.Strict qualified as HM
 import Data.Maybe (isJust)
 import Language.Haskell.TH.Syntax (mkName, nameBase)
 import Lens.Micro.Platform
-import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Observable
 import Quasar.Observable.Delta

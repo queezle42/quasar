@@ -1,7 +1,6 @@
 module Quasar.AsyncSpec (spec) where
 
 import Control.Concurrent
-import Control.Concurrent.STM
 import Control.Monad (void)
 import Control.Monad.IO.Class
 import Prelude
@@ -9,9 +8,6 @@ import Test.Hspec
 import Quasar.Awaitable
 import Quasar.Core
 import System.Timeout
-
-shouldSatisfyM :: (HasCallStack, Show a) => IO a -> (a -> Bool) -> Expectation
-shouldSatisfyM action expected = action >>= (`shouldSatisfy` expected)
 
 spec :: Spec
 spec = parallel $ do

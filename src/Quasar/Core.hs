@@ -43,7 +43,6 @@ import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Data.HashSet
-import Data.Sequence
 import Quasar.Awaitable
 import Quasar.Prelude
 
@@ -99,7 +98,7 @@ data ResourceManager = ResourceManager {
 }
 
 instance IsDisposable ResourceManager where
-  toDisposable x = undefined
+  toDisposable = undefined
 
 
 -- | A task that is running asynchronously. It has a result and can fail.
@@ -268,7 +267,7 @@ instance IsDisposable CombinedDisposable where
   dispose (CombinedDisposable x y) = liftA2 (<>) (dispose x) (dispose y)
   isDisposed (CombinedDisposable x y) = liftA2 (<>) (isDisposed x) (isDisposed y)
 
-data ListDisposable = ListDisposable [Disposable]
+newtype ListDisposable = ListDisposable [Disposable]
 
 instance IsDisposable ListDisposable where
   dispose (ListDisposable disposables) = mconcat <$> traverse dispose disposables
@@ -297,7 +296,7 @@ noDisposable = mempty
 --
 -- The synchronous part of the `dispose`-Function will be run immediately but the resulting `Awaitable` will be passed to the resource manager.
 disposeEventually :: (IsDisposable a, MonadIO m) => ResourceManager -> a -> m ()
-disposeEventually resourceManager disposable = liftIO $ do
+disposeEventually _resourceManager disposable = liftIO $ do
   disposeCompleted <- dispose disposable
   peekAwaitable disposeCompleted >>= \case
     Just (Left ex) -> throwIO ex
@@ -312,7 +311,7 @@ boundDisposable action = do
 
 -- | Creates an `Disposable` that is bound to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
 attachDisposeAction :: MonadIO m => ResourceManager -> IO (Awaitable ()) -> m Disposable
-attachDisposeAction = undefined
+attachDisposeAction _resourceManager _action = liftIO undefined
 
 -- | Attaches a dispose action to a ResourceManager. It will automatically be run when the resource manager is disposed.
 attachDisposeAction_ :: MonadIO m => ResourceManager -> IO (Awaitable ()) -> m ()

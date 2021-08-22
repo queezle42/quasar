@@ -8,6 +8,7 @@ module Quasar.Awaitable (
   successfulAwaitable,
   failedAwaitable,
   completedAwaitable,
+  simpleAwaitable,
 
   -- * Awaiting multiple awaitables
   cacheAwaitable,
@@ -29,11 +30,8 @@ module Quasar.Awaitable (
 
 import Control.Concurrent.STM
 import Control.Monad.Catch
-import Control.Monad.Fix (mfix)
 import Control.Monad.Reader
-import Control.Monad.Trans.Class
 import Control.Monad.Trans.Maybe
-import Data.Bifunctor (bimap)
 import Quasar.Prelude
 
 
@@ -102,9 +100,9 @@ instance Monad m => MonadQuerySTM (ReaderT (QueryFn m) m) where
     QueryFn querySTMFn <- ask
     lift $ querySTMFn query
 
-data QueryFn m = QueryFn (forall a. STM (Maybe a) -> m a)
+newtype QueryFn m = QueryFn (forall a. STM (Maybe a) -> m a)
 
-runQueryT :: forall m a. Monad m => (forall b. STM (Maybe b) -> m b) -> ReaderT (QueryFn m) m a -> m a
+runQueryT :: forall m a. (forall b. STM (Maybe b) -> m b) -> ReaderT (QueryFn m) m a -> m a
 runQueryT queryFn action = runReaderT action (QueryFn queryFn)
 
 
