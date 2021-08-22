@@ -9,6 +9,7 @@ module Quasar.Awaitable (
   failedAwaitable,
   completedAwaitable,
   simpleAwaitable,
+  mapAwaitable,
 
   -- * Awaiting multiple awaitables
   cacheAwaitable,
@@ -90,6 +91,9 @@ failedAwaitable = completedAwaitable . Left
 
 simpleAwaitable :: STM (Maybe (Either SomeException a)) -> Awaitable a
 simpleAwaitable query = Awaitable (querySTM query)
+
+mapAwaitable :: IsAwaitable i a => (Either SomeException i -> Either SomeException r) -> a -> Awaitable r
+mapAwaitable fn awaitable = Awaitable $ fn <$> runAwaitable awaitable
 
 
 class Monad m => MonadQuerySTM m where
