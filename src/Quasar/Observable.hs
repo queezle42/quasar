@@ -64,10 +64,10 @@ instance Applicative ObservableMessage where
 
 
 class IsRetrievable v a | a -> v where
-  retrieve :: HasResourceManager m => a -> m (Task v)
+  retrieve :: MonadAsync m => a -> m (Task v)
 
 retrieveIO :: IsRetrievable v a => a -> IO v
-retrieveIO x = awaitIO =<< withDefaultResourceManager (retrieve x)
+retrieveIO x = awaitIO =<< withDefaultAsyncManager (retrieve x)
 
 class IsRetrievable v o => IsObservable v o | o -> v where
   observe :: o -> (ObservableMessage v -> IO ()) -> IO Disposable
@@ -78,8 +78,8 @@ class IsRetrievable v o => IsObservable v o | o -> v where
   mapObservable :: (v -> a) -> o -> Observable a
   mapObservable f = Observable . MappedObservable f
 
--- | Observe until the callback returns `False`. The callback will also be unsubscribed when the `ResourceManager` is disposed.
-observeWhile :: (IsObservable v o, HasResourceManager m) => o -> (ObservableMessage v -> IO Bool) -> m Disposable
+-- | Observe until the callback returns `False`. The callback will also be unsubscribed when the `AsyncManager` is disposed.
+observeWhile :: (IsObservable v o, MonadAsync m) => o -> (ObservableMessage v -> IO Bool) -> m Disposable
 observeWhile observable callback = do
   --disposeVar <- liftIO $ newTVarIO False
 
@@ -104,7 +104,7 @@ observeWhile observable callback = do
 
 
 -- | Observe until the callback returns `False`. The callback will also be unsubscribed when the `ResourceManager` is disposed.
-observeWhile_ :: (IsObservable v o, HasResourceManager m) => o -> (ObservableMessage v -> IO Bool) -> m ()
+observeWhile_ :: (IsObservable v o, MonadAsync m) => o -> (ObservableMessage v -> IO Bool) -> m ()
 observeWhile_ observable callback =
   -- The disposable is already attached to the resource manager, so voiding it is safe.
   void $ observeWhile observable callback
@@ -170,7 +170,7 @@ instance IsObservable r (BindObservable r) where
   observe :: BindObservable r -> (ObservableMessage r -> IO ()) -> IO Disposable
   observe (BindObservable fx fn) callback = do
     -- Create a resource manager to ensure all subscriptions are cleaned up when disposing.
-    resourceManager <- newResourceManager unlimitedResourceManagerConfiguration
+    resourceManager <- newResourceManager
 
     isDisposingVar <- newTVarIO False
     disposableVar <- newTMVarIO noDisposable
@@ -238,7 +238,7 @@ instance IsObservable r (CatchObservable e r) where
   observe :: CatchObservable e r -> (ObservableMessage r -> IO ()) -> IO Disposable
   observe (CatchObservable fx fn) callback = do
     -- Create a resource manager to ensure all subscriptions are cleaned up when disposing.
-    resourceManager <- newResourceManager unlimitedResourceManagerConfiguration
+    resourceManager <- newResourceManager
 
     isDisposingVar <- newTVarIO False
     disposableVar <- newTMVarIO noDisposable
@@ -382,7 +382,7 @@ mergeObservable :: (IsObservable v0 o0, IsObservable v1 o1) => (v0 -> v1 -> r) -
 mergeObservable merge x y = Observable $ MergedObservable merge x y
 
 data FnObservable v = FnObservable {
-  retrieveFn :: forall m. HasResourceManager m => m (Task v),
+  retrieveFn :: forall m. MonadAsync m => m (Task v),
   observeFn :: (ObservableMessage v -> IO ()) -> IO Disposable
 }
 instance IsRetrievable v (FnObservable v) where
@@ -397,7 +397,7 @@ instance IsObservable v (FnObservable v) where
 -- | Implement an Observable by directly providing functions for `retrieve` and `subscribe`.
 fnObservable
   :: ((ObservableMessage v -> IO ()) -> IO Disposable)
-  -> (forall m. HasResourceManager m => m (Task v))
+  -> (forall m. MonadAsync m => m (Task v))
   -> Observable v
 fnObservable observeFn retrieveFn = toObservable FnObservable{observeFn, retrieveFn}
 
@@ -408,7 +408,7 @@ synchronousFnObservable
   -> Observable v
 synchronousFnObservable observeFn synchronousRetrieveFn = fnObservable observeFn retrieveFn
   where
-    retrieveFn :: (forall m. HasResourceManager m => m (Task v))
+    retrieveFn :: (forall m. MonadAsync m => m (Task v))
     retrieveFn = liftIO $ successfulTask <$> synchronousRetrieveFn
 
 
