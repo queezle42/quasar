@@ -38,6 +38,7 @@ import Control.Monad.Except
 import Control.Monad.Trans.Maybe
 import Data.HashMap.Strict qualified as HM
 import Data.Unique
+import Quasar.Async
 import Quasar.Awaitable
 import Quasar.Core
 import Quasar.Prelude

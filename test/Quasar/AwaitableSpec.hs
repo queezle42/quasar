@@ -1,12 +1,12 @@
-module Quasar.AsyncSpec (spec) where
+module Quasar.AwaitableSpec (spec) where
 
 import Control.Concurrent
 import Control.Monad (void)
 import Control.Monad.IO.Class
 import Prelude
 import Test.Hspec
+import Quasar.Async
 import Quasar.Awaitable
-import Quasar.Core
 import System.Timeout
 
 spec :: Spec
