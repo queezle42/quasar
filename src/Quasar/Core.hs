@@ -33,7 +33,7 @@ module Quasar.Core (
   synchronousDisposable,
   noDisposable,
   disposeEventually,
-  boundDisposable,
+  attachDisposable,
   attachDisposeAction,
   attachDisposeAction_,
 ) where
@@ -283,8 +283,8 @@ instance IsDisposable EmptyDisposable where
 
 
 
-newDisposable :: IO (Awaitable ()) -> IO Disposable
-newDisposable = fmap (toDisposable . FnDisposable) . newTMVarIO . Left
+newDisposable :: MonadIO m => IO (Awaitable ()) -> m Disposable
+newDisposable = liftIO . fmap (toDisposable . FnDisposable) . newTMVarIO . Left
 
 synchronousDisposable :: IO () -> IO Disposable
 synchronousDisposable = newDisposable . fmap pure . liftIO
@@ -303,15 +303,15 @@ disposeEventually _resourceManager disposable = liftIO $ do
     Just (Right ()) -> pure ()
     Nothing -> undefined -- TODO register on resourceManager
 
--- | Creates an `Disposable` that is bound to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
-boundDisposable :: HasResourceManager m => IO (Awaitable ()) -> m Disposable
-boundDisposable action = do
-  resourceManager <- askResourceManager
-  attachDisposeAction resourceManager action
+attachDisposable :: (IsDisposable a, MonadIO m) => ResourceManager -> a -> m ()
+attachDisposable _resourceManager disposable = undefined
 
 -- | Creates an `Disposable` that is bound to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
 attachDisposeAction :: MonadIO m => ResourceManager -> IO (Awaitable ()) -> m Disposable
-attachDisposeAction _resourceManager _action = liftIO undefined
+attachDisposeAction resourceManager action = do
+  disposable <- newDisposable action
+  attachDisposable resourceManager disposable
+  pure disposable
 
 -- | Attaches a dispose action to a ResourceManager. It will automatically be run when the resource manager is disposed.
 attachDisposeAction_ :: MonadIO m => ResourceManager -> IO (Awaitable ()) -> m ()

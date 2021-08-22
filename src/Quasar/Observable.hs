@@ -81,24 +81,26 @@ class IsRetrievable v o => IsObservable v o | o -> v where
 -- | Observe until the callback returns `False`. The callback will also be unsubscribed when the `ResourceManager` is disposed.
 observeWhile :: (IsObservable v o, HasResourceManager m) => o -> (ObservableMessage v -> IO Bool) -> m Disposable
 observeWhile observable callback = do
-  disposeVar <- liftIO $ newTVarIO False
+  --disposeVar <- liftIO $ newTVarIO False
 
-  innerDisposable <- liftIO $ observe observable \msg -> do
-    disposeRequested <- readTVarIO disposeVar
-    unless disposeRequested do
-      continue <- callback msg
-      unless continue $ atomically $ writeTVar disposeVar True
+  --innerDisposable <- liftIO $ observe observable \msg -> do
+  --  disposeRequested <- readTVarIO disposeVar
+  --  unless disposeRequested do
+  --    continue <- callback msg
+  --    unless continue $ atomically $ writeTVar disposeVar True
 
-  -- Bind the disposable to the ResourceManager, to prevent leaks if the `async` is disposed
-  disposable <- boundDisposable $ dispose innerDisposable
+  ---- Bind the disposable to the ResourceManager, to prevent leaks if the `async` is disposed
+  --disposable <- boundDisposable $ dispose innerDisposable
 
-  task <- async do
-    liftIO $ atomically do
-      disposeRequested <- readTVar disposeVar
-      unless disposeRequested retry
-    liftIO $ dispose disposable
+  --task <- async do
+  --  liftIO $ atomically do
+  --    disposeRequested <- readTVar disposeVar
+  --    unless disposeRequested retry
+  --  liftIO $ dispose disposable
 
-  pure (disposable <> (toDisposable task))
+  --pure (disposable <> (toDisposable task))
+
+  undefined -- TODO reimplement after ResouceManager API is changed
 
 
 -- | Observe until the callback returns `False`. The callback will also be unsubscribed when the `ResourceManager` is disposed.
