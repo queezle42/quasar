@@ -14,6 +14,7 @@ module Quasar.Awaitable (
   -- * Awaiting multiple awaitables
   cacheAwaitable,
   awaitEither,
+  awaitAny,
 
   -- * AsyncVar
   AsyncVar,
@@ -33,6 +34,9 @@ import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Control.Monad.Trans.Maybe
+import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
+import Data.Foldable (toList)
+import Data.Sequence
 import Quasar.Prelude
 
 
@@ -206,10 +210,7 @@ putAsyncVarEitherSTM_ var = void . putAsyncVarEitherSTM var
 -- * Awaiting multiple asyncs
 
 awaitEither :: (IsAwaitable ra a , IsAwaitable rb b, MonadIO m) => a -> b -> m (Awaitable (Either ra rb))
-awaitEither x y = liftIO $ do
-  let startX = runAwaitable x
-  let startY = runAwaitable y
-  pure $ Awaitable $ groupLefts <$> stepBoth startX startY
+awaitEither x y = pure $ Awaitable $ groupLefts <$> stepBoth (runAwaitable x) (runAwaitable y)
   where
     stepBoth :: MonadQuerySTM m => AwaitableStepM ra -> AwaitableStepM rb -> m (Either ra rb)
     stepBoth (AwaitableCompleted resultX) _ = pure $ Left resultX
@@ -218,6 +219,26 @@ awaitEither x y = liftIO $ do
       querySTM (peekEitherSTM transactionX transactionY) >>= \case
         Left resultX -> stepBoth (nextX resultX) stepY
         Right resultY -> stepBoth stepX (nextY resultY)
+
+
+awaitAny :: (IsAwaitable r a, MonadIO m) => NonEmpty a -> m (Awaitable r)
+awaitAny xs = pure $ Awaitable $ stepAll Empty Empty $ runAwaitable <$> fromList (toList xs)
+  where
+    stepAll
+      :: MonadQuerySTM m
+      => Seq (STM (Maybe (Seq (AwaitableStepM r))))
+      -> Seq (AwaitableStepM r)
+      -> Seq (AwaitableStepM r)
+      -> m r
+    stepAll _ _ (AwaitableCompleted result :<| _) = pure result
+    stepAll acc prevSteps (step@(AwaitableStep transaction next) :<| steps) =
+      stepAll
+        do acc |> ((\result -> (prevSteps |> next result) <> steps) <<$>> transaction)
+        do prevSteps |> step
+        steps
+    stepAll acc ps Empty = do
+      newAwaitableSteps <- querySTM $ maybe impossibleCodePathM peekAnySTM $ nonEmpty (toList acc)
+      stepAll Empty Empty newAwaitableSteps
 
 
 groupLefts :: Either (Either ex a) (Either ex b) -> Either ex (Either a b)
@@ -231,3 +252,9 @@ peekEitherSTM x y =
     Nothing -> y >>= \case
       Just r -> pure (Just (Right r))
       Nothing -> pure Nothing
+
+
+peekAnySTM :: NonEmpty (STM (Maybe a)) -> STM (Maybe a)
+peekAnySTM (x :| xs) = x >>= \case
+  r@(Just _) -> pure r
+  Nothing -> maybe (pure Nothing) peekAnySTM (nonEmpty xs)
