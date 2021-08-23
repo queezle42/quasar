@@ -91,6 +91,8 @@ instance IsAwaitable () FnDisposable where
     -- Query if dispose is completed
     runAwaitable awaitable
 
+  cacheAwaitable = cacheAwaitableDefaultImplementation
+
 
 
 data CombinedDisposable = CombinedDisposable Disposable Disposable
