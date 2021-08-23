@@ -80,7 +80,6 @@ library
   exposed-modules:
     Quasar.Async
     Quasar.Awaitable
-    Quasar.Core
     Quasar.Disposable
     Quasar.Observable
     Quasar.Observable.Delta

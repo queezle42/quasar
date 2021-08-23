@@ -32,7 +32,7 @@ import Control.Monad.Catch
 import Control.Monad.Reader
 import Data.HashSet
 import Quasar.Awaitable
-import Quasar.Core
+import Quasar.Disposable
 import Quasar.Prelude
 
 

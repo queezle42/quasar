@@ -40,7 +40,7 @@ import Data.HashMap.Strict qualified as HM
 import Data.Unique
 import Quasar.Async
 import Quasar.Awaitable
-import Quasar.Core
+import Quasar.Disposable
 import Quasar.Prelude
 
 
