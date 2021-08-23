@@ -8,6 +8,7 @@ import Prelude
 
 import Control.Applicative (liftA2)
 import Control.Concurrent (threadDelay)
+import Control.Monad.Catch (MonadThrow, throwM)
 import Control.Monad.State.Lazy as State
 import Data.Char qualified as Char
 import Data.HashMap.Strict qualified as HM
@@ -24,8 +25,8 @@ import Quasar.Utils.ExtraT
 impossibleCodePath :: GHC.Stack.Types.HasCallStack => a
 impossibleCodePath = error "Code path marked as impossible was reached"
 
-impossibleCodePathM :: MonadFail m => m a
-impossibleCodePathM = fail "Code path marked as impossible was reached"
+impossibleCodePathM :: MonadThrow m => m a
+impossibleCodePathM = throwM (userError "Code path marked as impossible was reached")
 
 intercalate :: (Foldable f, Monoid a) => a -> f a -> a
 intercalate inter = foldr1 (\a b -> a <> inter <> b)
