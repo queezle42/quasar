@@ -6,6 +6,7 @@ module Quasar.Disposable (
   newDisposable,
   synchronousDisposable,
   noDisposable,
+  alreadyDisposing,
 
   -- ** ResourceManager
   ResourceManager,
@@ -129,6 +130,19 @@ noDisposable = mempty
 
 
 data ResourceManager = ResourceManager
+newtype AlreadyDisposing = AlreadyDisposing (Awaitable ())
+
+instance IsDisposable AlreadyDisposing where
+  dispose x = pure (isDisposed x)
+  isDisposed (AlreadyDisposing awaitable) = awaitable
+
+-- | Create a `Disposable` from an `IsAwaitable`.
+--
+-- The disposable is considered to be already disposing (so `dispose` will be a no-op) and is considered disposed once
+-- the awaitable is completed.
+alreadyDisposing :: IsAwaitable () a => a -> Disposable
+alreadyDisposing someAwaitable = toDisposable $ AlreadyDisposing $ toAwaitable someAwaitable
+
 
 class HasResourceManager a where
   getResourceManager :: a -> ResourceManager
