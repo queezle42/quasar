@@ -190,7 +190,7 @@ unlimitedAsyncManagerConfiguration = AsyncManagerConfiguraiton {
 }
 
 withAsyncManager :: AsyncManagerConfiguraiton -> AsyncIO r -> IO r
-withAsyncManager configuration = bracket (newAsyncManager configuration) disposeAsyncManager . flip runOnAsyncManager
+withAsyncManager configuration = bracket (newAsyncManager configuration) (awaitIO <=< dispose) . flip runOnAsyncManager
 
 runOnAsyncManager :: AsyncManager -> AsyncIO r -> IO r
 runOnAsyncManager asyncManager (AsyncIO action) = runReaderT action asyncManager
@@ -210,8 +210,3 @@ newAsyncManager configuration = do
     configuration,
     threads
   }
-
-disposeAsyncManager :: AsyncManager -> IO ()
--- TODO resource management
-disposeAsyncManager = const (pure ())
-
