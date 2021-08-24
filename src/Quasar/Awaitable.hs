@@ -1,7 +1,7 @@
 module Quasar.Awaitable (
   -- * Awaitable
   IsAwaitable(..),
-  MonadQuerySTM(..),
+  MonadQuerySTM(querySTM),
   awaitIO,
   peekAwaitable,
   Awaitable,
@@ -52,7 +52,6 @@ class IsAwaitable r a | a -> r where
 
   toAwaitable :: a -> Awaitable r
   toAwaitable = Awaitable
-
 
   {-# MINIMAL toAwaitable | (runAwaitable, cacheAwaitable) #-}
 
@@ -114,24 +113,32 @@ successfulAwaitable = completedAwaitable . Right
 failedAwaitable :: SomeException -> Awaitable r
 failedAwaitable = completedAwaitable . Left
 
--- | Create an awaitable from a `STM` transaction.
+-- | Create an awaitable from an `STM` transaction.
 --
 -- Use `retry` to signal that the awaitable is not yet completed and `throwM`/`throwSTM` to set the awaitable to failed.
 simpleAwaitable :: STM a -> Awaitable a
 simpleAwaitable query = toAwaitable $ FnAwaitable $ querySTM do
-  (Just . Right <$> query) `orElse` pure Nothing
+  (Right <$> query)
     `catchAll`
-      \ex -> pure (Just (Left ex))
+      \ex -> pure (Left ex)
 
 mapAwaitable :: IsAwaitable i a => (Either SomeException i -> Either SomeException r) -> a -> Awaitable r
 mapAwaitable fn awaitable = toAwaitable $ FnAwaitable $  fn <$> runAwaitable awaitable
 
 
 class Monad m => MonadQuerySTM m where
-  querySTM :: (forall a. STM (Maybe a) -> m a)
+  -- | Run an `STM` transaction. `retry` can be used.
+  querySTM :: (forall a. STM a -> m a)
+  querySTM transaction = unsafeQuerySTM $ (Just <$> transaction) `orElse` pure Nothing
+
+  -- | Run an "STM` transaction. `retry` MUST NOT be used
+  unsafeQuerySTM :: (forall a. STM (Maybe a) -> m a)
+  unsafeQuerySTM transaction = querySTM $ maybe retry pure =<< transaction
+
+  {-# MINIMAL querySTM | unsafeQuerySTM #-}
 
 instance Monad m => MonadQuerySTM (ReaderT (QueryFn m) m) where
-  querySTM query = do
+  unsafeQuerySTM query = do
     QueryFn querySTMFn <- ask
     lift $ querySTMFn query
 
@@ -151,7 +158,7 @@ instance IsAwaitable r (CachedAwaitable r) where
   runAwaitable (CachedAwaitable tvar) = go
     where
       go :: m (Either SomeException r)
-      go = querySTM stepCacheTransaction >>= \case
+      go = unsafeQuerySTM stepCacheTransaction >>= \case
         AwaitableCompleted result -> pure result
         -- Cached operation is not yet completed
         _ -> go
@@ -191,7 +198,7 @@ instance Monad AwaitableStepM where
   (AwaitableStep query next) >>= fn = AwaitableStep query (next >=> fn)
 
 instance MonadQuerySTM AwaitableStepM where
-  querySTM query = AwaitableStep query AwaitableCompleted
+  unsafeQuerySTM query = AwaitableStep query AwaitableCompleted
 
 
 -- ** AsyncVar
@@ -200,7 +207,7 @@ instance MonadQuerySTM AwaitableStepM where
 newtype AsyncVar r = AsyncVar (TMVar (Either SomeException r))
 
 instance IsAwaitable r (AsyncVar r) where
-  runAwaitable (AsyncVar var) = querySTM $ tryReadTMVar var
+  runAwaitable (AsyncVar var) = unsafeQuerySTM $ tryReadTMVar var
   cacheAwaitable = pure . toAwaitable
 
 
@@ -247,7 +254,7 @@ awaitEither x y = toAwaitable $ FnAwaitable $ groupLefts <$> stepBoth (runAwaita
     stepBoth (AwaitableCompleted resultX) _ = pure $ Left resultX
     stepBoth _ (AwaitableCompleted resultY) = pure $ Right resultY
     stepBoth stepX@(AwaitableStep transactionX nextX) stepY@(AwaitableStep transactionY nextY) = do
-      querySTM (peekEitherSTM transactionX transactionY) >>= \case
+      unsafeQuerySTM (peekEitherSTM transactionX transactionY) >>= \case
         Left resultX -> stepBoth (nextX resultX) stepY
         Right resultY -> stepBoth stepX (nextY resultY)
 
@@ -268,7 +275,7 @@ awaitAny xs = toAwaitable $ FnAwaitable $ stepAll Empty Empty $ runAwaitable <$>
         do prevSteps |> step
         steps
     stepAll acc ps Empty = do
-      newAwaitableSteps <- querySTM $ maybe impossibleCodePathM peekAnySTM $ nonEmpty (toList acc)
+      newAwaitableSteps <- unsafeQuerySTM $ maybe impossibleCodePathM peekAnySTM $ nonEmpty (toList acc)
       stepAll Empty Empty newAwaitableSteps
 
 
