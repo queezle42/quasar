@@ -113,8 +113,14 @@ successfulAwaitable = completedAwaitable . Right
 failedAwaitable :: SomeException -> Awaitable r
 failedAwaitable = completedAwaitable . Left
 
-simpleAwaitable :: STM (Maybe (Either SomeException a)) -> Awaitable a
-simpleAwaitable query = toAwaitable $ FnAwaitable $ querySTM query
+-- | Create an awaitable from a `STM` transaction.
+--
+-- Use `retry` to signal that the awaitable is not yet completed and `throwM`/`throwSTM` to set the awaitable to failed.
+simpleAwaitable :: STM a -> Awaitable a
+simpleAwaitable query = toAwaitable $ FnAwaitable $ querySTM do
+  (Just . Right <$> query) `orElse` pure Nothing
+    `catchAll`
+      \ex -> pure (Just (Left ex))
 
 mapAwaitable :: IsAwaitable i a => (Either SomeException i -> Either SomeException r) -> a -> Awaitable r
 mapAwaitable fn awaitable = toAwaitable $ FnAwaitable $  fn <$> runAwaitable awaitable
