@@ -14,6 +14,7 @@ module Quasar.Awaitable (
   -- * Awaiting multiple awaitables
   awaitEither,
   awaitAny,
+  awaitAny2,
 
   -- * AsyncVar
   AsyncVar,
@@ -269,6 +270,10 @@ awaitAny xs = toAwaitable $ FnAwaitable $ stepAll Empty Empty $ runAwaitable <$>
     stepAll acc ps Empty = do
       newAwaitableSteps <- querySTM $ maybe impossibleCodePathM peekAnySTM $ nonEmpty (toList acc)
       stepAll Empty Empty newAwaitableSteps
+
+
+awaitAny2 :: IsAwaitable r a => a -> a -> Awaitable r
+awaitAny2 x y = awaitAny (x :| [y])
 
 
 groupLefts :: Either (Either ex a) (Either ex b) -> Either ex (Either a b)
