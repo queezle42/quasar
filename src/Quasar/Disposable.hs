@@ -10,11 +10,12 @@ module Quasar.Disposable (
   -- ** ResourceManager
   ResourceManager,
   HasResourceManager(..),
+  withResourceManager,
   newResourceManager,
-  disposeEventually,
   attachDisposable,
   attachDisposeAction,
   attachDisposeAction_,
+  disposeEventually,
 ) where
 
 import Control.Concurrent.STM
@@ -134,6 +135,9 @@ class HasResourceManager a where
 
 instance IsDisposable ResourceManager where
   toDisposable = undefined
+
+withResourceManager :: (ResourceManager -> IO a) -> IO a
+withResourceManager = bracket newResourceManager (awaitIO <=< dispose)
 
 newResourceManager :: IO ResourceManager
 newResourceManager = pure ResourceManager
