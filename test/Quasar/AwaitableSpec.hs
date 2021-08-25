@@ -74,6 +74,13 @@ spec = parallel $ do
     xit "can continue after awaiting an already finished operation" $ do
       withDefaultAsyncManager (await =<< async (pure 42 :: AsyncIO Int)) `shouldReturn` 42
 
+    it "can await the result of an async that is completed later" $ do
+      avar <- newAsyncVar :: IO (AsyncVar ())
+      void $ forkIO $ do
+        threadDelay 100000
+        putAsyncVar_ avar ()
+      withDefaultAsyncManager (await avar)
+
     it "can fmap the result of an already finished async" $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
       putAsyncVar_ avar ()
