@@ -3,6 +3,7 @@ module Quasar.Awaitable (
   IsAwaitable(..),
   MonadQuerySTM(querySTM),
   awaitIO,
+  tryAwaitIO,
   peekAwaitable,
   Awaitable,
   successfulAwaitable,
@@ -57,7 +58,10 @@ class IsAwaitable r a | a -> r where
 
 
 awaitIO :: (IsAwaitable r a, MonadIO m) => a -> m r
-awaitIO awaitable = liftIO $ either throwIO pure =<< runQueryT (atomically . (maybe retry pure =<<)) (runAwaitable awaitable)
+awaitIO awaitable = liftIO $ either throwIO pure =<< tryAwaitIO awaitable
+
+tryAwaitIO :: (IsAwaitable r a, MonadIO m) => a -> m (Either SomeException r)
+tryAwaitIO awaitable = liftIO $ runQueryT (atomically . (maybe retry pure =<<)) (runAwaitable awaitable)
 
 peekAwaitable :: (IsAwaitable r a, MonadIO m) => a -> m (Maybe (Either SomeException r))
 peekAwaitable awaitable = liftIO $ runMaybeT $ runQueryT (MaybeT . atomically) (runAwaitable awaitable)
