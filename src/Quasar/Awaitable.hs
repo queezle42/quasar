@@ -156,7 +156,7 @@ class Monad m => MonadQuerySTM m where
   querySTM :: (forall a. STM a -> m a)
   querySTM transaction = unsafeQuerySTM $ (Just <$> transaction) `orElse` pure Nothing
 
-  -- | Run an "STM` transaction. `retry` MUST NOT be used
+  -- | Run an "STM` transaction. `retry` MUST NOT be used.
   unsafeQuerySTM :: (forall a. STM (Maybe a) -> m a)
   unsafeQuerySTM transaction = querySTM $ maybe retry pure =<< transaction
 

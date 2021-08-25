@@ -24,6 +24,27 @@ spec = parallel $ do
         awaitIO (isDisposed noDisposable)
         pure () :: IO ()
 
+
+    describe "newDisposable" $ do
+      it "signals it's disposed state" $ do
+        disposable <- newDisposable $ pure $ pure ()
+        void $ forkIO $ threadDelay 100000 >> disposeIO disposable
+        awaitIO (isDisposed disposable)
+        pure () :: IO ()
+
+      it "can be disposed multiple times" $ do
+        disposable <- newDisposable $ pure $ pure ()
+        disposeIO disposable
+        disposeIO disposable
+        awaitIO (isDisposed disposable)
+
+      it "can be disposed in parallel" $ do
+        disposable <- newDisposable $ pure () <$ threadDelay 100000
+        void $ forkIO $ disposeIO disposable
+        disposeIO disposable
+        awaitIO (isDisposed disposable)
+
+
   describe "ResourceManager" $ do
     it "can be created" $ do
       void newResourceManager
@@ -75,3 +96,8 @@ spec = parallel $ do
           withResourceManager \resourceManager ->
             attachDisposeAction resourceManager $ throwIO $ TestException
         \TestException -> True
+
+    it "can attach an disposable that is disposed asynchronously" $ do
+      withResourceManager \resourceManager -> do
+        disposable <- attachDisposeAction resourceManager $ pure () <$ threadDelay 100000
+        void $ forkIO $ disposeIO disposable

@@ -22,7 +22,7 @@ spec = parallel $ do
       tryTakeMVar m1 `shouldReturn` Just ()
       tryTakeMVar m2 `shouldReturn` Just ()
 
-    xit "can continue after awaiting an already finished operation" $ do
+    it "can pass a value through async and await" $ do
       withDefaultAsyncManager (await =<< async (pure 42 :: AsyncIO Int)) `shouldReturn` 42
 
     it "can await the result of an async that is completed later" $ do
