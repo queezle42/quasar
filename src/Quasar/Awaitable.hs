@@ -34,6 +34,7 @@ module Quasar.Awaitable (
   cacheAwaitableDefaultImplementation,
 ) where
 
+import Control.Applicative (empty)
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Reader
@@ -92,6 +93,25 @@ instance Semigroup r => Semigroup (Awaitable r) where
 
 instance Monoid r => Monoid (Awaitable r) where
   mempty = pure mempty
+
+instance MonadThrow Awaitable where
+  throwM = failedAwaitable . toException
+
+instance MonadCatch Awaitable where
+  catch awaitable handler = toAwaitable $ FnAwaitable do
+    runAwaitable awaitable >>= \case
+      l@(Left ex) -> maybe (pure l) (runAwaitable . handler) $ fromException ex
+      Right value -> pure $ Right value
+
+instance MonadFail Awaitable where
+  fail = throwM . userError
+
+
+instance Alternative Awaitable where
+  x <|> y = x `catchAll` const y
+  empty = failedAwaitable $ toException $ userError "empty"
+
+instance MonadPlus Awaitable
 
 
 newtype FnAwaitable r = FnAwaitable (forall m. (MonadQuerySTM m) => m (Either SomeException r))
