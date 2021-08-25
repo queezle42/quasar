@@ -1,11 +1,10 @@
 module Quasar.Awaitable (
   -- * Awaitable
   IsAwaitable(..),
-  MonadQuerySTM(querySTM),
+  Awaitable,
   awaitIO,
   tryAwaitIO,
   peekAwaitable,
-  Awaitable,
   successfulAwaitable,
   failedAwaitable,
   completedAwaitable,
@@ -31,6 +30,7 @@ module Quasar.Awaitable (
   putAsyncVarEitherSTM_,
 
   -- * Implementation helpers
+  MonadQuerySTM(querySTM),
   cacheAwaitableDefaultImplementation,
 ) where
 
@@ -112,6 +112,7 @@ instance Alternative Awaitable where
   empty = failedAwaitable $ toException $ userError "empty"
 
 instance MonadPlus Awaitable
+
 
 
 newtype FnAwaitable r = FnAwaitable (forall m. (MonadQuerySTM m) => m (Either SomeException r))
