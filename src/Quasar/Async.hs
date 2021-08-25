@@ -86,7 +86,7 @@ asyncWithUnmask action = do
         Just threadId -> throwTo threadId CancelTask
 
       -- Wait for task completion or failure. Tasks must not ignore `CancelTask` or this will hang.
-      pure $ mapAwaitable (const $ pure ()) resultVar
+      pure $ void (toAwaitable resultVar) `catchAll` const (pure ())
 
 liftUnmask :: (IO a -> IO a) -> AsyncIO a -> AsyncIO a
 liftUnmask unmask action = do
