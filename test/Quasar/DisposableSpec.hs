@@ -29,6 +29,9 @@ spec = parallel $ do
     it "can be created and disposed" $ do
       withResourceManager \_ -> pure ()
 
+    it "can be created and disposed with a delay" $ do
+      withResourceManager \_ -> threadDelay 100000
+
     it "can \"dispose\" a noDisposable" $ do
       withResourceManager \resourceManager -> do
         attachDisposable resourceManager noDisposable
