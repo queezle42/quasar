@@ -56,10 +56,9 @@ spec = parallel $ do
         putAsyncVar_ avar ()
       withDefaultAsyncManager (await avar >>= pure)
 
-    xit "can terminate when encountering an asynchronous exception" $ do
+    it "can terminate when encountering an asynchronous exception" $ do
       never <- newAsyncVar :: IO (AsyncVar ())
 
       result <- timeout 100000 $ withDefaultAsyncManager $
-        -- Use bind to create an AsyncIOPlumbing, which is the interesting case that uses `uninterruptibleMask` when run
-        await never >>= pure
+        await never
       result `shouldBe` Nothing
