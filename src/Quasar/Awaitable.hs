@@ -78,14 +78,14 @@ instance IsAwaitable r (Awaitable r) where
   toAwaitable = id
 
 instance Functor Awaitable where
-  fmap fn (Awaitable x) = toAwaitable $ FnAwaitable $ fn <<$>> runAwaitable x
+  fmap fn (Awaitable x) = fnAwaitable $ fn <<$>> runAwaitable x
 
 instance Applicative Awaitable where
-  pure value = toAwaitable $ FnAwaitable $ pure (Right value)
-  liftA2 fn (Awaitable fx) (Awaitable fy) = toAwaitable $ FnAwaitable $ liftA2 (liftA2 fn) (runAwaitable fx) (runAwaitable fy)
+  pure value = fnAwaitable $ pure (Right value)
+  liftA2 fn (Awaitable fx) (Awaitable fy) = fnAwaitable $ liftA2 (liftA2 fn) (runAwaitable fx) (runAwaitable fy)
 
 instance Monad Awaitable where
-  (Awaitable fx) >>= fn = toAwaitable $ FnAwaitable $ do
+  (Awaitable fx) >>= fn = fnAwaitable $ do
     runAwaitable fx >>= \case
       Left ex -> pure $ Left ex
       Right x -> runAwaitable (fn x)
@@ -100,7 +100,7 @@ instance MonadThrow Awaitable where
   throwM = failedAwaitable . toException
 
 instance MonadCatch Awaitable where
-  catch awaitable handler = toAwaitable $ FnAwaitable do
+  catch awaitable handler = fnAwaitable do
     runAwaitable awaitable >>= \case
       l@(Left ex) -> maybe (pure l) (runAwaitable . handler) $ fromException ex
       Right value -> pure $ Right value
@@ -123,6 +123,9 @@ instance IsAwaitable r (FnAwaitable r) where
   runAwaitable (FnAwaitable x) = x
   cacheAwaitable = cacheAwaitableDefaultImplementation
 
+fnAwaitable :: (forall m. (MonadQuerySTM m) => m (Either SomeException r)) -> Awaitable r
+fnAwaitable fn = toAwaitable $ FnAwaitable fn
+
 
 newtype CompletedAwaitable r = CompletedAwaitable (Either SomeException r)
 
@@ -144,13 +147,13 @@ failedAwaitable = completedAwaitable . Left
 --
 -- Use `retry` to signal that the awaitable is not yet completed and `throwM`/`throwSTM` to set the awaitable to failed.
 simpleAwaitable :: STM a -> Awaitable a
-simpleAwaitable query = toAwaitable $ FnAwaitable $ querySTM do
+simpleAwaitable query = fnAwaitable $ querySTM do
   (Right <$> query)
     `catchAll`
       \ex -> pure (Left ex)
 
 mapAwaitable :: IsAwaitable i a => (Either SomeException i -> Either SomeException r) -> a -> Awaitable r
-mapAwaitable fn awaitable = toAwaitable $ FnAwaitable $  fn <$> runAwaitable awaitable
+mapAwaitable fn awaitable = fnAwaitable $  fn <$> runAwaitable awaitable
 
 
 class MonadThrow m => MonadQuerySTM m where
@@ -284,7 +287,7 @@ putAsyncVarEitherSTM_ var = void . putAsyncVarEitherSTM var
 -- * Awaiting multiple asyncs
 
 awaitEither :: (IsAwaitable ra a, IsAwaitable rb b) => a -> b -> Awaitable (Either ra rb)
-awaitEither x y = toAwaitable $ FnAwaitable $ groupLefts <$> stepBoth (runAwaitable x) (runAwaitable y)
+awaitEither x y = fnAwaitable $ groupLefts <$> stepBoth (runAwaitable x) (runAwaitable y)
   where
     stepBoth :: MonadQuerySTM m => AwaitableStepM ra -> AwaitableStepM rb -> m (Either ra rb)
     stepBoth (AwaitableCompleted resultX) _ = pure $ Left resultX
@@ -298,7 +301,7 @@ awaitEither x y = toAwaitable $ FnAwaitable $ groupLefts <$> stepBoth (runAwaita
 
 
 awaitAny :: IsAwaitable r a => NonEmpty a -> Awaitable r
-awaitAny xs = toAwaitable $ FnAwaitable $ stepAll Empty Empty $ runAwaitable <$> fromList (toList xs)
+awaitAny xs = fnAwaitable $ stepAll Empty Empty $ runAwaitable <$> fromList (toList xs)
   where
     stepAll
       :: MonadQuerySTM m
