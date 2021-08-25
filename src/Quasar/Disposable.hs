@@ -168,10 +168,8 @@ instance IsAwaitable () ResourceManagerEntry where
 
 newEntry :: IsDisposable a => a -> IO ResourceManagerEntry
 newEntry disposable = do
-  traceIO "newEntry"
-  awaitable <- cacheAwaitable (isDisposed disposable)
-  traceIO "newEntry: cached"
-  ResourceManagerEntry <$> newTMVarIO (awaitable, toDisposable disposable)
+  disposedAwaitable <- cacheAwaitable (isDisposed disposable)
+  ResourceManagerEntry <$> newTMVarIO (disposedAwaitable, toDisposable disposable)
 
 entryStartDispose :: ResourceManagerEntry -> IO ()
 entryStartDispose (ResourceManagerEntry var) =
@@ -206,7 +204,7 @@ class HasResourceManager a where
 
 instance IsDisposable ResourceManager where
   dispose resourceManager = mask \unmask ->
-    unmask dispose' `catchAll` \ex -> traceIO "ResourceManager.dispose: disposing failed" >> setException resourceManager ex >> throwIO ex
+    unmask dispose' `catchAll` \ex -> setException resourceManager ex >> throwIO ex
     where
       dispose' :: IO (Awaitable ())
       dispose' = do
@@ -217,7 +215,6 @@ instance IsDisposable ResourceManager where
             else pure Empty
 
         mapM_ entryStartDispose entries
-        traceIO "ResourceManager.dispose: dispose started, waiting for gc"
         pure $ isDisposed resourceManager
 
   isDisposed resourceManager =
@@ -244,17 +241,16 @@ newResourceManager = do
   }
 
   void $ mask_ $ forkIOWithUnmask \unmask ->
-    unmask (collectGarbage resourceManager) `catchAll` \ex -> traceIO ("gc: failure: " <> displayException ex) >> setException resourceManager ex
+    unmask (collectGarbage resourceManager) `catchAll` \ex -> setException resourceManager ex
 
   pure resourceManager
 
 
 collectGarbage :: ResourceManager -> IO ()
-collectGarbage resourceManager = go >> traceIO "gc: completed"
+collectGarbage resourceManager = go
   where
     go :: IO ()
     go = do
-      traceIO "gc: go"
       snapshot <- atomically $ readTVar entriesVar'
 
       let listChanged = simpleAwaitable do
@@ -267,17 +263,14 @@ collectGarbage resourceManager = go >> traceIO "gc: completed"
 
       -- Wait for any entry to complete or until a new entry is added
       let awaitables = (toAwaitable <$> toList snapshot)
-      awaitIO if Quasar.Prelude.null awaitables
+      -- GC fails here when an waitable throws an exception
+      void $ awaitIO if Quasar.Prelude.null awaitables
         then awaitAny2 listChanged isDisposing
         else awaitAny (listChanged :| awaitables)
-
-      traceIO "gc: change detected"
 
       -- Checking entries for completion has to be done in IO.
       -- Completion is then queried with `entryIsEmpty` during the following STM transaction.
       checkEntries =<< atomically (readTVar entriesVar')
-
-      traceIO "gc: entries checked"
 
       join $ atomically $ do
         disposing <- readTVar (disposingVar resourceManager)
@@ -307,10 +300,7 @@ setException resourceManager ex =
 -- | Attaches an `Disposable` to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
 attachDisposable :: (IsDisposable a, MonadIO m) => ResourceManager -> a -> m ()
 attachDisposable resourceManager disposable = liftIO $ mask \unmask -> do
-  traceIO "attachDisposable called"
   entry <- newEntry disposable
-
-  traceIO "attachDisposable: entry created"
 
   join $ atomically do
     mapM throwM =<< tryReadTMVar (exceptionVar resourceManager)
@@ -324,11 +314,8 @@ attachDisposable resourceManager disposable = liftIO $ mask \unmask -> do
 
     pure do
       -- IO that is run after the STM transaction is completed
-      traceIO "attachDisposable: transacton complete"
-      when disposing $ do
-        traceIO "attachDisposable: dispose"
+      when disposing $
         void $ unmask (dispose disposable) `catchAll` \ex -> setException resourceManager ex >> throwIO ex
-        traceIO "attachDisposable: disposed"
 
 -- | Creates an `Disposable` that is bound to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
 attachDisposeAction :: MonadIO m => ResourceManager -> IO (Awaitable ()) -> m Disposable
