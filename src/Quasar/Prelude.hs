@@ -3,7 +3,9 @@ module Quasar.Prelude
     module Quasar.PreludeExtras,
     (>=>),
     (<=<),
+    (<|>),
     Control.Applicative.liftA2,
+    Control.Applicative.Alternative,
     Data.Foldable.sequenceA_,
     Data.Foldable.traverse_,
     module Control.Concurrent.MVar,
@@ -68,6 +70,7 @@ import Prelude hiding
   )
 import Prelude qualified as P
 
+import Control.Applicative ((<|>))
 import Control.Applicative qualified
 import Control.Concurrent.MVar
 import Control.Exception qualified
