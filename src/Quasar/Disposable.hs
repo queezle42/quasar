@@ -273,7 +273,8 @@ collectGarbage resourceManager = go >> traceIO "gc: completed"
 
       traceIO "gc: change detected"
 
-      -- Check entries for completion. Completion will be queried with `entryIsEmpty` during the next STM transaction.
+      -- Checking entries for completion has to be done in IO.
+      -- Completion is then queried with `entryIsEmpty` during the following STM transaction.
       checkEntries =<< atomically (readTVar entriesVar')
 
       traceIO "gc: entries checked"

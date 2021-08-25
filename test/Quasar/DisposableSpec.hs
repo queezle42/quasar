@@ -1,11 +1,17 @@
 module Quasar.DisposableSpec (spec) where
 
+import Control.Exception
 import Control.Concurrent
 import Control.Monad (void)
 import Prelude
 import Test.Hspec
 import Quasar.Awaitable
 import Quasar.Disposable
+
+data TestException = TestException
+  deriving (Eq, Show)
+
+instance Exception TestException
 
 spec :: Spec
 spec = parallel $ do
@@ -36,6 +42,13 @@ spec = parallel $ do
       withResourceManager \resourceManager -> do
         attachDisposable resourceManager noDisposable
 
+    it "can attach an disposable" $ do
+      withResourceManager \resourceManager -> do
+        avar <- newAsyncVar :: IO (AsyncVar ())
+        attachDisposable resourceManager $ alreadyDisposing avar
+        putAsyncVar_ avar ()
+      pure () :: IO ()
+
     it "can dispose an awaitable that is completed asynchronously" $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
       void $ forkIO $ do
@@ -44,3 +57,21 @@ spec = parallel $ do
 
       withResourceManager \resourceManager -> do
         attachDisposable resourceManager (alreadyDisposing avar)
+
+    it "can call a trivial dispose action" $ do
+      withResourceManager \resourceManager ->
+        attachDisposeAction resourceManager $ pure $ pure ()
+      pure () :: IO ()
+
+    it "can call a dispose action" $ do
+      withResourceManager \resourceManager -> do
+        avar <- newAsyncVar :: IO (AsyncVar ())
+        attachDisposeAction resourceManager $ toAwaitable avar <$ putAsyncVar_ avar ()
+      pure () :: IO ()
+
+    it "re-throws an exception from a dispose action" $ do
+      shouldThrow
+        do
+          withResourceManager \resourceManager ->
+            attachDisposeAction resourceManager $ throwIO $ TestException
+        \TestException -> True
