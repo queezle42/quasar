@@ -255,19 +255,20 @@ collectGarbage resourceManager = go >> traceIO "gc: completed"
     go :: IO ()
     go = do
       traceIO "gc: go"
-      (snapshot, disposing) <- atomically $ do
-        snapshot <- readTVar entriesVar'
-        disposing <- readTVar (disposingVar resourceManager)
-        pure (snapshot, disposing)
+      snapshot <- atomically $ readTVar entriesVar'
 
-      let listChanged = simpleAwaitable $ do
+      let listChanged = simpleAwaitable do
             newLength <- Seq.length <$> readTVar entriesVar'
             when (newLength == Seq.length snapshot) retry
+
+          isDisposing = simpleAwaitable do
+            disposing <- readTVar (disposingVar resourceManager)
+            unless disposing retry
 
       -- Wait for any entry to complete or until a new entry is added
       let awaitables = (toAwaitable <$> toList snapshot)
       awaitIO if Quasar.Prelude.null awaitables
-        then unless disposing $ listChanged
+        then awaitAny2 listChanged isDisposing
         else awaitAny (listChanged :| awaitables)
 
       traceIO "gc: change detected"

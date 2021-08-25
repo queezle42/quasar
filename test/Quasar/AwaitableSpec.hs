@@ -30,7 +30,7 @@ spec = parallel $ do
 
       awaitIO avar
 
-    it "can be awaited and completed later" $ do
+    it "can be awaited when completed asynchronously" $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
       void $ forkIO $ do
         threadDelay 100000
@@ -86,7 +86,7 @@ spec = parallel $ do
       putAsyncVar_ avar ()
       withDefaultAsyncManager (id <$> await avar)
 
-    xit "can fmap the result of an async that is completed later" $ do
+    it "can fmap the result of an async that is completed later" $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
       void $ forkIO $ do
         threadDelay 100000
@@ -98,7 +98,7 @@ spec = parallel $ do
       putAsyncVar_ avar ()
       withDefaultAsyncManager (await avar >>= pure)
 
-    xit "can bind the result of an async that is completed later" $ do
+    it "can bind the result of an async that is completed later" $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
       void $ forkIO $ do
         threadDelay 100000
