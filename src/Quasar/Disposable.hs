@@ -80,13 +80,16 @@ instance IsAwaitable () Disposable where
 newtype FnDisposable = FnDisposable (TMVar (Either (IO (Awaitable ())) (Awaitable ())))
 
 instance IsDisposable FnDisposable where
-  dispose (FnDisposable var) =
-    bracketOnError
-      do atomically $ takeTMVar var
-      do atomically . putTMVar var
-      \case
-        Left action -> do
-          awaitable <- action
+  dispose (FnDisposable var) = do
+    mask \restore -> do
+      eitherVal <- atomically do
+        takeTMVar var >>= \case
+          l@(Left _action) -> pure l
+          -- If the var contains an awaitable its put back immediately to save a second transaction
+          r@(Right _awaitable) -> r <$ putTMVar var r
+      case eitherVal of
+        l@(Left action) -> do
+          awaitable <- restore action `onException` atomically (putTMVar var l)
           atomically $ putTMVar var $ Right awaitable
           pure awaitable
         Right awaitable -> pure awaitable
