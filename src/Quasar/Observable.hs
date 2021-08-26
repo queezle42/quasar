@@ -171,7 +171,7 @@ instance IsObservable r (BindObservable r) where
   observe :: BindObservable r -> (ObservableMessage r -> IO ()) -> IO Disposable
   observe (BindObservable fx fn) callback = do
     -- Create a resource manager to ensure all subscriptions are cleaned up when disposing.
-    resourceManager <- newResourceManager
+    resourceManager <- unsafeNewResourceManager
 
     isDisposingVar <- newTVarIO False
     disposableVar <- newTMVarIO noDisposable
@@ -239,7 +239,7 @@ instance IsObservable r (CatchObservable e r) where
   observe :: CatchObservable e r -> (ObservableMessage r -> IO ()) -> IO Disposable
   observe (CatchObservable fx fn) callback = do
     -- Create a resource manager to ensure all subscriptions are cleaned up when disposing.
-    resourceManager <- newResourceManager
+    resourceManager <- unsafeNewResourceManager
 
     isDisposingVar <- newTVarIO False
     disposableVar <- newTMVarIO noDisposable

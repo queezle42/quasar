@@ -111,6 +111,7 @@ instance MonadIO m => MonadAsync (ReaderT AsyncManager m) where
 awaitResult :: IsAwaitable r a => AsyncIO a -> AsyncIO r
 awaitResult = (await =<<)
 
+-- TODO rename to AsyncContext
 data AsyncManager = AsyncManager {
   resourceManager :: ResourceManager,
   configuration :: AsyncManagerConfiguraiton,
@@ -190,9 +191,10 @@ unlimitedAsyncManagerConfiguration = AsyncManagerConfiguraiton {
 }
 
 withAsyncManager :: AsyncManagerConfiguraiton -> AsyncIO r -> IO r
-withAsyncManager configuration = bracket (newAsyncManager configuration) (awaitIO <=< dispose) . flip runOnAsyncManager
+withAsyncManager configuration = bracket (unsafeNewAsyncManager configuration) (awaitIO <=< dispose) . flip runOnAsyncManager
 
 runOnAsyncManager :: AsyncManager -> AsyncIO r -> IO r
+-- TODO resource limits
 runOnAsyncManager asyncManager (AsyncIO action) = runReaderT action asyncManager
 
 withDefaultAsyncManager :: AsyncIO a -> IO a
@@ -201,9 +203,15 @@ withDefaultAsyncManager = withAsyncManager defaultAsyncManagerConfiguration
 withUnlimitedAsyncManager :: AsyncIO a -> IO a
 withUnlimitedAsyncManager = withAsyncManager unlimitedAsyncManagerConfiguration
 
-newAsyncManager :: AsyncManagerConfiguraiton -> IO AsyncManager
-newAsyncManager configuration = do
-  resourceManager <- newResourceManager
+newAsyncManager :: ResourceManager -> AsyncManagerConfiguraiton -> IO AsyncManager
+newAsyncManager parent configuraton = mask_ do
+  asyncManager <- unsafeNewAsyncManager configuraton
+  attachDisposable parent asyncManager
+  pure asyncManager
+
+unsafeNewAsyncManager :: AsyncManagerConfiguraiton -> IO AsyncManager
+unsafeNewAsyncManager configuration = do
+  resourceManager <- unsafeNewResourceManager
   threads <- newTVarIO mempty
   pure AsyncManager {
     resourceManager,

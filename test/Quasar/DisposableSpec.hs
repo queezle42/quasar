@@ -24,7 +24,6 @@ spec = parallel $ do
         awaitIO (isDisposed noDisposable)
         pure () :: IO ()
 
-
     describe "newDisposable" $ do
       it "signals it's disposed state" $ do
         disposable <- newDisposable $ pure $ pure ()
@@ -47,10 +46,10 @@ spec = parallel $ do
 
   describe "ResourceManager" $ do
     it "can be created" $ do
-      void newResourceManager
+      void unsafeNewResourceManager
 
     it "can be created and disposed" $ do
-      resourceManager <- newResourceManager
+      resourceManager <- unsafeNewResourceManager
       awaitIO =<< dispose resourceManager
 
     it "can be created and disposed" $ do

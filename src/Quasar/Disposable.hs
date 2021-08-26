@@ -13,6 +13,7 @@ module Quasar.Disposable (
   HasResourceManager(..),
   withResourceManager,
   newResourceManager,
+  unsafeNewResourceManager,
   attachDisposable,
   attachDisposeAction,
   attachDisposeAction_,
@@ -227,10 +228,16 @@ instance IsDisposable ResourceManager where
           ((\disposed -> unless disposed retry) =<< readTVar (disposedVar resourceManager))
 
 withResourceManager :: (ResourceManager -> IO a) -> IO a
-withResourceManager = bracket newResourceManager (awaitIO <=< dispose)
+withResourceManager = bracket unsafeNewResourceManager (awaitIO <=< dispose)
 
-newResourceManager :: IO ResourceManager
-newResourceManager = do
+newResourceManager :: ResourceManager -> IO ResourceManager
+newResourceManager parent = mask_ do
+  resourceManager <- unsafeNewResourceManager
+  attachDisposable parent resourceManager
+  pure resourceManager
+
+unsafeNewResourceManager :: IO ResourceManager
+unsafeNewResourceManager = do
   disposingVar <- newTVarIO False
   disposedVar <- newTVarIO False
   exceptionVar <- newEmptyTMVarIO

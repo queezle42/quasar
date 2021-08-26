@@ -138,7 +138,8 @@ successfulAwaitable = completedAwaitable . Right
 failedAwaitable :: SomeException -> Awaitable r
 failedAwaitable = completedAwaitable . Left
 
--- | Create an awaitable from an `STM` transaction. The STM transaction should not have visible side effects.
+-- | Create an awaitable from an `STM` transaction. The STM transaction must always return the same result and should
+-- not have visible side effects.
 --
 -- Use `retry` to signal that the awaitable is not yet completed and `throwM`/`throwSTM` to set the awaitable to failed.
 simpleAwaitable :: STM a -> Awaitable a
