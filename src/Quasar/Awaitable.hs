@@ -103,11 +103,14 @@ instance IsAwaitable r (Awaitable r) where
   cacheAwaitable (Awaitable x) = cacheAwaitable x
   toAwaitable = id
 
+instance MonadAwait Awaitable where
+  await = toAwaitable
+
 instance Functor Awaitable where
   fmap fn (Awaitable x) = fnAwaitable $ fn <$> runAwaitable x
 
 instance Applicative Awaitable where
-  pure value = fnAwaitable $ pure value
+  pure = successfulAwaitable
   liftA2 fn (Awaitable fx) (Awaitable fy) = fnAwaitable $ liftA2 fn (runAwaitable fx) (runAwaitable fy)
 
 instance Monad Awaitable where
@@ -158,6 +161,7 @@ instance IsAwaitable r (CompletedAwaitable r) where
 completedAwaitable :: Either SomeException r -> Awaitable r
 completedAwaitable result = toAwaitable $ CompletedAwaitable result
 
+-- | Alias for `pure`.
 successfulAwaitable :: r -> Awaitable r
 successfulAwaitable = completedAwaitable . Right
 
