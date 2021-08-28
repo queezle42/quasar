@@ -72,11 +72,13 @@ library
     exceptions,
     ghc-prim,
     hashable,
+    heaps,
     microlens-platform,
     mtl,
     record-hasfield,
     stm,
     template-haskell,
+    time,
     transformers,
     unordered-containers,
   exposed-modules:
@@ -89,6 +91,7 @@ library
     Quasar.Observable.ObservablePriority
     Quasar.Prelude
     Quasar.PreludeExtras
+    Quasar.Timer
     Quasar.Utils.ExtraT
   hs-source-dirs:
     src
