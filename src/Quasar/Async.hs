@@ -1,10 +1,7 @@
 module Quasar.Async (
   -- * Async/await
   MonadAsync(..),
-  AsyncIO,
   async,
-  await,
-  awaitResult,
 
   -- * Task
   Task,
@@ -15,15 +12,9 @@ module Quasar.Async (
   successfulTask,
   failedTask,
 
-  -- * AsyncManager
-  AsyncManager,
-  AsyncManagerConfiguraiton(..),
-  withAsyncManager,
-  withDefaultAsyncManager,
-  withUnlimitedAsyncManager,
-  newAsyncManager,
-  defaultAsyncManagerConfiguration,
-  unlimitedAsyncManagerConfiguration,
+  -- ** Task exceptions
+  CancelTask(..),
+  TaskDisposed(..),
 ) where
 
 import Control.Concurrent (ThreadId, forkIOWithUnmask, throwTo)
@@ -36,93 +27,60 @@ import Quasar.Disposable
 import Quasar.Prelude
 
 
--- | A monad for actions that run on a thread bound to a `AsyncManager`.
-newtype AsyncIO a = AsyncIO (ReaderT AsyncManager IO a)
-  deriving newtype (Functor, Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadMask)
+class (MonadAwait m, MonadResourceManager m, MonadCatch m) => MonadAsync m where
+  -- | TODO
+  async :: m r -> m (Task r)
+  async action = asyncWithUnmask ($ action)
 
+  -- | TODO
+  --
+  -- The action will be run with asynchronous exceptions masked and will be passed an action that can be used unmask.
+  asyncWithUnmask :: ((forall a. m a -> m a) -> m r) -> m (Task r)
 
--- | Run the synchronous part of an `AsyncIO` and then return an `Awaitable` that can be used to wait for completion of the synchronous part.
-async :: MonadAsync m => AsyncIO r -> m (Task r)
-async action = asyncWithUnmask (\unmask -> unmask action)
+instance MonadAsync (ReaderT ResourceManager IO) where
+  asyncWithUnmask action = do
+    resourceManager <- askResourceManager
 
--- | Run the synchronous part of an `AsyncIO` and then return an `Awaitable` that can be used to wait for completion of the synchronous part.
---
--- The action will be run with asynchronous exceptions masked and will be passed an action that can be used unmask.
-asyncWithUnmask :: MonadAsync m => ((forall a. AsyncIO a -> AsyncIO a) -> AsyncIO r) -> m (Task r)
--- TODO resource limits
-asyncWithUnmask action = do
-  asyncManager <- askAsyncManager
+    liftIO $ mask_ do
+      resultVar <- newAsyncVar
+      threadIdVar <- newEmptyTMVarIO
 
-  liftIO $ mask_ do
-    resultVar <- newAsyncVar
-    threadIdVar <- newEmptyTMVarIO
+      disposable <- attachDisposeAction resourceManager (disposeTask threadIdVar resultVar)
 
-    disposable <- attachDisposeAction (getResourceManager asyncManager) (disposeTask threadIdVar resultVar)
+      onException
+        do
+          atomically . putTMVar threadIdVar . Just =<<
+            forkIOWithUnmask \unmask -> do
+              result <- try $ catch
+                do runReaderT (action (liftUnmask unmask)) resourceManager
+                \CancelTask -> throwIO TaskDisposed
 
-    onException
-      do
-        atomically . putTMVar threadIdVar . Just =<<
-          forkIOWithUnmask \unmask -> do
-            result <- try $ catch
-              do runOnAsyncManager asyncManager (action (liftUnmask unmask))
-              \CancelTask -> throwIO TaskDisposed
+              putAsyncVarEither_ resultVar result
 
-            putAsyncVarEither_ resultVar result
+              -- Thread has completed work, "disarm" the disposable and fire it
+              void $ atomically $ swapTMVar threadIdVar Nothing
+              disposeIO disposable
 
-            -- Thread has completed work, "disarm" the disposable and fire it
-            void $ atomically $ swapTMVar threadIdVar Nothing
-            disposeIO disposable
+        do atomically $ putTMVar threadIdVar Nothing
 
-      do atomically $ putTMVar threadIdVar Nothing
+      pure $ Task disposable (toAwaitable resultVar)
+    where
+      disposeTask :: TMVar (Maybe ThreadId) -> AsyncVar r -> IO (Awaitable ())
+      disposeTask threadIdVar resultVar = mask_ do
+        -- Blocks until the thread is forked
+        atomically (swapTMVar threadIdVar Nothing) >>= \case
+          -- Thread completed or initialization failed
+          Nothing -> pure ()
+          Just threadId -> throwTo threadId CancelTask
 
-    pure $ Task disposable (toAwaitable resultVar)
-  where
-    disposeTask :: TMVar (Maybe ThreadId) -> AsyncVar r -> IO (Awaitable ())
-    disposeTask threadIdVar resultVar = mask_ do
-      -- Blocks until the thread is forked
-      atomically (swapTMVar threadIdVar Nothing) >>= \case
-        -- Thread completed or initialization failed
-        Nothing -> pure ()
-        Just threadId -> throwTo threadId CancelTask
+        -- Wait for task completion or failure. Tasks must not ignore `CancelTask` or this will hang.
+        pure $ void (toAwaitable resultVar) `catchAll` const (pure ())
 
-      -- Wait for task completion or failure. Tasks must not ignore `CancelTask` or this will hang.
-      pure $ void (toAwaitable resultVar) `catchAll` const (pure ())
+      liftUnmask :: (IO a -> IO a) -> (ReaderT ResourceManager IO) a -> (ReaderT ResourceManager IO) a
+      liftUnmask unmask action = do
+        resourceManager <- askResourceManager
+        liftIO $ unmask $ runReaderT action resourceManager
 
-liftUnmask :: (IO a -> IO a) -> AsyncIO a -> AsyncIO a
-liftUnmask unmask action = do
-  asyncManager <- askAsyncManager
-  liftIO $ unmask $ runOnAsyncManager asyncManager action
-
-await :: IsAwaitable r a => a -> AsyncIO r
--- TODO resource limits
-await = liftIO . awaitIO
-
-
-class MonadIO m => MonadAsync m where
-  askAsyncManager :: m AsyncManager
-
-instance MonadAsync AsyncIO where
-  askAsyncManager = AsyncIO ask
-
-instance MonadIO m => MonadAsync (ReaderT AsyncManager m) where
-  askAsyncManager = ask
-
-
-awaitResult :: IsAwaitable r a => AsyncIO a -> AsyncIO r
-awaitResult = (await =<<)
-
--- TODO rename to AsyncContext
-data AsyncManager = AsyncManager {
-  resourceManager :: ResourceManager,
-  configuration :: AsyncManagerConfiguraiton,
-  threads :: TVar (HashSet ThreadId)
-}
-
-instance IsDisposable AsyncManager where
-  toDisposable = toDisposable . getResourceManager
-
-instance HasResourceManager AsyncManager where
-  getResourceManager = resourceManager
 
 
 -- | A task that is running asynchronously. It has a result and can fail.
@@ -148,7 +106,7 @@ cancelTask :: Task r -> IO (Awaitable ())
 cancelTask = dispose
 
 cancelTaskIO :: Task r -> IO ()
-cancelTaskIO = awaitIO <=< dispose
+cancelTaskIO = await <=< dispose
 
 -- | Creates an `Task` from an `Awaitable`.
 -- The resulting task only depends on an external resource, so disposing it has no effect.
@@ -174,47 +132,3 @@ instance Exception CancelTask where
 data TaskDisposed = TaskDisposed
   deriving stock Show
 instance Exception TaskDisposed where
-
-
-data AsyncManagerConfiguraiton = AsyncManagerConfiguraiton {
-  maxThreads :: Maybe Int
-}
-
-defaultAsyncManagerConfiguration :: AsyncManagerConfiguraiton
-defaultAsyncManagerConfiguration = AsyncManagerConfiguraiton {
-  maxThreads = Just 1
-}
-
-unlimitedAsyncManagerConfiguration :: AsyncManagerConfiguraiton
-unlimitedAsyncManagerConfiguration = AsyncManagerConfiguraiton {
-  maxThreads = Nothing
-}
-
-withAsyncManager :: AsyncManagerConfiguraiton -> AsyncIO r -> IO r
-withAsyncManager configuration = bracket (unsafeNewAsyncManager configuration) (awaitIO <=< dispose) . flip runOnAsyncManager
-
-runOnAsyncManager :: AsyncManager -> AsyncIO r -> IO r
--- TODO resource limits
-runOnAsyncManager asyncManager (AsyncIO action) = runReaderT action asyncManager
-
-withDefaultAsyncManager :: AsyncIO a -> IO a
-withDefaultAsyncManager = withAsyncManager defaultAsyncManagerConfiguration
-
-withUnlimitedAsyncManager :: AsyncIO a -> IO a
-withUnlimitedAsyncManager = withAsyncManager unlimitedAsyncManagerConfiguration
-
-newAsyncManager :: ResourceManager -> AsyncManagerConfiguraiton -> IO AsyncManager
-newAsyncManager parent configuraton = mask_ do
-  asyncManager <- unsafeNewAsyncManager configuraton
-  attachDisposable parent asyncManager
-  pure asyncManager
-
-unsafeNewAsyncManager :: AsyncManagerConfiguraiton -> IO AsyncManager
-unsafeNewAsyncManager configuration = do
-  resourceManager <- unsafeNewResourceManager
-  threads <- newTVarIO mempty
-  pure AsyncManager {
-    resourceManager,
-    configuration,
-    threads
-  }

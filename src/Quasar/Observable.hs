@@ -68,7 +68,7 @@ class IsRetrievable v a | a -> v where
   retrieve :: MonadAsync m => a -> m (Task v)
 
 retrieveIO :: IsRetrievable v a => a -> IO v
-retrieveIO x = awaitIO =<< withDefaultAsyncManager (retrieve x)
+retrieveIO x = withOnResourceManager $ await =<< retrieve x
 
 class IsRetrievable v o => IsObservable v o | o -> v where
   observe :: o -> (ObservableMessage v -> IO ()) -> IO Disposable
@@ -79,7 +79,7 @@ class IsRetrievable v o => IsObservable v o | o -> v where
   mapObservable :: (v -> a) -> o -> Observable a
   mapObservable f = Observable . MappedObservable f
 
--- | Observe until the callback returns `False`. The callback will also be unsubscribed when the `AsyncManager` is disposed.
+-- | (TODO) Observe until the callback returns `False`. The callback will also be unsubscribed when the `ResourceManager` is disposed.
 observeWhile :: (IsObservable v o, MonadAsync m) => o -> (ObservableMessage v -> IO Bool) -> m Disposable
 observeWhile observable callback = do
   --disposeVar <- liftIO $ newTVarIO False

@@ -7,58 +7,32 @@ import Prelude
 import Test.Hspec
 import Quasar.Async
 import Quasar.Awaitable
+import Quasar.Disposable
 import System.Timeout
 
 spec :: Spec
 spec = parallel $ do
-  describe "AsyncIO" $ do
-    it "binds pure operations" $ do
-      withDefaultAsyncManager (pure () >>= \() -> pure ())
-
-    it "binds IO actions" $ do
-      m1 <- newEmptyMVar
-      m2 <- newEmptyMVar
-      withDefaultAsyncManager (liftIO (putMVar m1 ()) >>= \() -> liftIO (putMVar m2 ()))
-      tryTakeMVar m1 `shouldReturn` Just ()
-      tryTakeMVar m2 `shouldReturn` Just ()
+  describe "async" $ do
+    it "can pass a value through async and await" $ do
+      withOnResourceManager (await =<< async (pure 42)) `shouldReturn` (42 :: Int)
 
     it "can pass a value through async and await" $ do
-      withDefaultAsyncManager (await =<< async (pure 42 :: AsyncIO Int)) `shouldReturn` 42
+      withOnResourceManager (await =<< async (liftIO (threadDelay 100000) >> pure 42)) `shouldReturn` (42 :: Int)
 
+  describe "await" $ do
     it "can await the result of an async that is completed later" $ do
       avar <- newAsyncVar :: IO (AsyncVar ())
       void $ forkIO $ do
         threadDelay 100000
         putAsyncVar_ avar ()
-      withDefaultAsyncManager (await avar)
+      await avar
 
     it "can fmap the result of an already finished async" $ do
-      avar <- newAsyncVar :: IO (AsyncVar ())
-      putAsyncVar_ avar ()
-      withDefaultAsyncManager (id <$> await avar)
-
-    it "can fmap the result of an async that is completed later" $ do
-      avar <- newAsyncVar :: IO (AsyncVar ())
-      void $ forkIO $ do
-        threadDelay 100000
-        putAsyncVar_ avar ()
-      withDefaultAsyncManager (id <$> await avar)
-
-    it "can bind the result of an already finished async" $ do
-      avar <- newAsyncVar :: IO (AsyncVar ())
-      putAsyncVar_ avar ()
-      withDefaultAsyncManager (await avar >>= pure)
-
-    it "can bind the result of an async that is completed later" $ do
-      avar <- newAsyncVar :: IO (AsyncVar ())
-      void $ forkIO $ do
-        threadDelay 100000
-        putAsyncVar_ avar ()
-      withDefaultAsyncManager (await avar >>= pure)
+      await (pure () :: Awaitable ()) :: IO ()
 
     it "can terminate when encountering an asynchronous exception" $ do
       never <- newAsyncVar :: IO (AsyncVar ())
 
-      result <- timeout 100000 $ withDefaultAsyncManager $
+      result <- timeout 100000 $ withOnResourceManager $
         await never
       result `shouldBe` Nothing

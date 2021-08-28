@@ -9,56 +9,59 @@ import Quasar.Awaitable
 import Quasar.Disposable
 
 data TestException = TestException
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 instance Exception TestException
+
+io :: IO a -> IO a
+io = id
 
 spec :: Spec
 spec = parallel $ do
   describe "Disposable" $ do
     describe "noDisposable" $ do
       it "can be disposed" $ do
-        awaitIO =<< dispose noDisposable
+        await =<< dispose noDisposable
 
       it "can be awaited" $ do
-        awaitIO (isDisposed noDisposable)
+        await (isDisposed noDisposable)
         pure () :: IO ()
 
     describe "newDisposable" $ do
       it "signals it's disposed state" $ do
         disposable <- newDisposable $ pure $ pure ()
         void $ forkIO $ threadDelay 100000 >> disposeIO disposable
-        awaitIO (isDisposed disposable)
+        await (isDisposed disposable)
         pure () :: IO ()
 
       it "can be disposed multiple times" $ do
         disposable <- newDisposable $ pure $ pure ()
         disposeIO disposable
         disposeIO disposable
-        awaitIO (isDisposed disposable)
+        await (isDisposed disposable)
 
       it "can be disposed in parallel" $ do
         disposable <- newDisposable $ pure () <$ threadDelay 100000
         void $ forkIO $ disposeIO disposable
         disposeIO disposable
-        awaitIO (isDisposed disposable)
+        await (isDisposed disposable)
 
 
   describe "ResourceManager" $ do
-    it "can be created" $ do
+    it "can be created" $ io do
       void unsafeNewResourceManager
 
     it "can be created and disposed" $ do
       resourceManager <- unsafeNewResourceManager
-      awaitIO =<< dispose resourceManager
+      await =<< dispose resourceManager
 
-    it "can be created and disposed" $ do
+    it "can be created and disposed" $ io do
       withResourceManager \_ -> pure ()
 
     it "can be created and disposed with a delay" $ do
       withResourceManager \_ -> threadDelay 100000
 
-    it "can \"dispose\" a noDisposable" $ do
+    it "can \"dispose\" a noDisposable" $ io do
       withResourceManager \resourceManager -> do
         attachDisposable resourceManager noDisposable
 
@@ -80,13 +83,13 @@ spec = parallel $ do
 
     it "can call a trivial dispose action" $ do
       withResourceManager \resourceManager ->
-        attachDisposeAction resourceManager $ pure $ pure ()
+        attachDisposeAction_ resourceManager $ pure $ pure ()
       pure () :: IO ()
 
     it "can call a dispose action" $ do
       withResourceManager \resourceManager -> do
         avar <- newAsyncVar :: IO (AsyncVar ())
-        attachDisposeAction resourceManager $ toAwaitable avar <$ putAsyncVar_ avar ()
+        attachDisposeAction_ resourceManager $ toAwaitable avar <$ putAsyncVar_ avar ()
       pure () :: IO ()
 
     it "re-throws an exception from a dispose action" $ do

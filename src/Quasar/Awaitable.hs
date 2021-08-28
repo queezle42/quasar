@@ -2,8 +2,8 @@ module Quasar.Awaitable (
   -- * Awaitable
   IsAwaitable(..),
   Awaitable,
-  awaitIO,
-  tryAwaitIO,
+  MonadAwait(..),
+  awaitResult,
   peekAwaitable,
   successfulAwaitable,
   failedAwaitable,
@@ -70,11 +70,23 @@ class IsAwaitable r a | a -> r where
   {-# MINIMAL toAwaitable | (runAwaitable, cacheAwaitable) #-}
 
 
+
+class Monad m => MonadAwait m where
+  await :: IsAwaitable r a => a -> m r
+
+instance MonadAwait IO where
+  await = awaitIO
+
+instance MonadAwait m => MonadAwait (ReaderT a m) where
+  await = lift . await
+
+
+awaitResult :: (IsAwaitable r a, MonadAwait m) => m a -> m r
+awaitResult = (await =<<)
+
+
 awaitIO :: (IsAwaitable r a, MonadIO m) => a -> m r
 awaitIO awaitable = liftIO $ runQueryT atomically (runAwaitable awaitable)
-
-tryAwaitIO :: (IsAwaitable r a, MonadIO m) => a -> m (Either SomeException r)
-tryAwaitIO awaitable = liftIO $ try $ awaitIO awaitable
 
 peekAwaitable :: (IsAwaitable r a, MonadIO m) => a -> m (Maybe (Either SomeException r))
 peekAwaitable awaitable = liftIO $ runMaybeT $ try $ runQueryT queryFn (runAwaitable awaitable)

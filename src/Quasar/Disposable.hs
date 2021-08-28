@@ -11,9 +11,12 @@ module Quasar.Disposable (
   -- ** ResourceManager
   ResourceManager,
   HasResourceManager(..),
+  MonadResourceManager(..),
   withResourceManager,
+  withOnResourceManager,
   newResourceManager,
   unsafeNewResourceManager,
+  onResourceManager,
   attachDisposable,
   attachDisposeAction,
   attachDisposeAction_,
@@ -39,6 +42,7 @@ class IsDisposable a where
   -- TODO document laws: must not throw exceptions, is idempotent
 
   -- | Dispose a resource.
+  -- TODO MonadIO
   dispose :: a -> IO (Awaitable ())
   dispose = dispose . toDisposable
 
@@ -52,7 +56,7 @@ class IsDisposable a where
 
 -- | Dispose a resource in the IO monad.
 disposeIO :: IsDisposable a => a -> IO ()
-disposeIO = awaitIO <=< dispose
+disposeIO = await <=< dispose
 
 instance IsDisposable a => IsDisposable (Maybe a) where
   toDisposable = maybe noDisposable toDisposable
@@ -170,6 +174,7 @@ instance IsAwaitable () ResourceManagerEntry where
       Nothing -> pure ()
       Just (awaitable, _) -> awaitable
 
+
 newEntry :: IsDisposable a => a -> IO ResourceManagerEntry
 newEntry disposable = do
   disposedAwaitable <- cacheAwaitable (isDisposed disposable)
@@ -196,15 +201,30 @@ entryIsEmpty :: ResourceManagerEntry -> STM Bool
 entryIsEmpty (ResourceManagerEntry var) = isEmptyTMVar var
 
 
+class HasResourceManager a where
+  getResourceManager :: a -> ResourceManager
+
+instance HasResourceManager ResourceManager where
+  getResourceManager = id
+
+class MonadIO m => MonadResourceManager m where
+  askResourceManager :: m ResourceManager
+
+instance MonadIO m => MonadResourceManager (ReaderT ResourceManager m) where
+  askResourceManager = ask
+
+
+onResourceManager :: (HasResourceManager a, MonadIO m) => a -> ReaderT ResourceManager m r -> m r
+onResourceManager target action = runReaderT action (getResourceManager target)
+
+
+
 data ResourceManager = ResourceManager {
   disposingVar :: TVar Bool,
   disposedVar :: TVar Bool,
   exceptionVar :: TMVar SomeException,
   entriesVar :: TVar (Seq ResourceManagerEntry)
 }
-
-class HasResourceManager a where
-  getResourceManager :: a -> ResourceManager
 
 instance IsDisposable ResourceManager where
   dispose resourceManager = mask \unmask ->
@@ -227,17 +247,20 @@ instance IsDisposable ResourceManager where
         `orElse`
           ((\disposed -> unless disposed retry) =<< readTVar (disposedVar resourceManager))
 
-withResourceManager :: (ResourceManager -> IO a) -> IO a
-withResourceManager = bracket unsafeNewResourceManager (awaitIO <=< dispose)
+withResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => (ResourceManager -> m a) -> m a
+withResourceManager = bracket unsafeNewResourceManager (await <=< liftIO . dispose)
 
-newResourceManager :: ResourceManager -> IO ResourceManager
-newResourceManager parent = mask_ do
+withOnResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => (ReaderT ResourceManager m a) -> m a
+withOnResourceManager action = withResourceManager \resourceManager -> onResourceManager resourceManager action
+
+newResourceManager :: MonadIO m => ResourceManager -> m ResourceManager
+newResourceManager parent = liftIO $ mask_ do
   resourceManager <- unsafeNewResourceManager
   attachDisposable parent resourceManager
   pure resourceManager
 
-unsafeNewResourceManager :: IO ResourceManager
-unsafeNewResourceManager = do
+unsafeNewResourceManager :: MonadIO m => m ResourceManager
+unsafeNewResourceManager = liftIO do
   disposingVar <- newTVarIO False
   disposedVar <- newTVarIO False
   exceptionVar <- newEmptyTMVarIO
@@ -274,7 +297,7 @@ collectGarbage resourceManager = go
       -- Wait for any entry to complete or until a new entry is added
       let awaitables = (toAwaitable <$> toList snapshot)
       -- GC fails here when an waitable throws an exception
-      void $ awaitIO if Quasar.Prelude.null awaitables
+      void $ await if Quasar.Prelude.null awaitables
         then awaitAny2 listChanged isDisposing
         else awaitAny (listChanged :| awaitables)
 
