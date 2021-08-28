@@ -40,6 +40,7 @@ module Quasar.Awaitable (
   failAsyncVarSTM,
   failAsyncVarSTM_,
   putAsyncVarEitherSTM_,
+  readAsyncVarSTM,
 
   -- * Implementation helpers
   MonadQuerySTM(querySTM),
@@ -284,6 +285,11 @@ putAsyncVarEither var = liftIO . atomically . putAsyncVarEitherSTM var
 
 putAsyncVarEitherSTM :: AsyncVar a -> Either SomeException a -> STM Bool
 putAsyncVarEitherSTM (AsyncVar var) = tryPutTMVar var
+
+
+-- | Get the value of an `AsyncVar` in `STM`. Will retry until the AsyncVar is fulfilled.
+readAsyncVarSTM :: AsyncVar a -> STM a
+readAsyncVarSTM (AsyncVar var) = either throwM pure =<< readTMVar var
 
 
 putAsyncVar :: MonadIO m => AsyncVar a -> a -> m Bool

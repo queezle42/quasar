@@ -22,6 +22,7 @@ import Data.Heap
 import Data.Ord (comparing)
 import Data.Time.Clock (UTCTime, getCurrentTime, diffUTCTime, utctDayTime, addUTCTime)
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Data.Foldable (toList)
 import Quasar.Async
 import Quasar.Awaitable
 import Quasar.Disposable
@@ -111,6 +112,8 @@ startSchedulerThread scheduler = do
     resourceManager' = resourceManager scheduler
     heap' :: TVar (Heap Timer)
     heap' = heap scheduler
+    activeCount' = activeCount scheduler
+    cancelledCount' = cancelledCount scheduler
 
     schedulerThread :: IO ()
     schedulerThread = forever do
@@ -143,6 +146,8 @@ startSchedulerThread scheduler = do
     fireTimers :: UTCTime -> IO ()
     fireTimers now = atomically do
       writeTVar heap' =<< go =<< readTVar heap'
+      doCleanup <- liftA2 (>) (readTVar cancelledCount') (readTVar activeCount')
+      when doCleanup cleanup
       where
         go :: Heap Timer -> STM (Heap Timer)
         go timers = do
@@ -152,9 +157,22 @@ startSchedulerThread scheduler = do
               if (time timer) <= now
                 then do
                   result <- putAsyncVarSTM (completed timer) ()
-                  modifyTVar ((if result then activeCount else cancelledCount) scheduler) (+ (-1))
+                  modifyTVar (if result then activeCount' else cancelledCount') (+ (-1))
                   pure others
                  else pure timers
+
+    cleanup :: STM ()
+    cleanup = writeTVar heap' . fromList =<< mapMaybeM cleanupTimer =<< (toList <$> readTVar heap')
+
+    cleanupTimer :: Timer -> STM (Maybe Timer)
+    cleanupTimer timer = do
+      cancelled <- ((False <$ readAsyncVarSTM (completed timer)) `catch` \TimerCancelled -> pure True) `orElse` pure False
+      if cancelled
+        then do
+          modifyTVar cancelledCount' (+ (-1))
+          pure Nothing
+        else pure $ Just timer
+
 
 
 newTimer :: TimerScheduler -> UTCTime -> IO Timer
@@ -173,7 +191,6 @@ sleepUntil scheduler time = bracketOnError (newTimer scheduler time) disposeIO a
 
 
 
-
 -- | Can be awaited successfully after a given number of microseconds. Based on `threadDelay`, but provides an
 -- `IsAwaitable` and `IsDisposable` instance.
 newtype Delay = Delay (Task ())
@@ -184,3 +201,10 @@ instance IsAwaitable () Delay where
 
 newDelay :: ResourceManager -> Int -> IO Delay
 newDelay resourceManager microseconds = onResourceManager resourceManager $ Delay <$> async (liftIO (threadDelay microseconds))
+
+
+
+-- From package `extra`
+mapMaybeM :: Monad m => (a -> m (Maybe b)) -> [a] -> m [b]
+mapMaybeM op = foldr f (pure [])
+    where f x xs = do x <- op x; case x of Nothing -> xs; Just x -> do xs <- xs; pure $ x:xs
