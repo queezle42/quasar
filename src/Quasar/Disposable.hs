@@ -100,7 +100,7 @@ instance IsDisposable FnDisposable where
 instance IsAwaitable () FnDisposable where
   toAwaitable :: FnDisposable -> Awaitable ()
   toAwaitable (FnDisposable var) =
-    join $ simpleAwaitable do
+    join $ unsafeAwaitSTM do
       state <- readTMVar var
       case state of
         -- Wait until disposing has been started
@@ -164,7 +164,7 @@ newtype ResourceManagerEntry = ResourceManagerEntry (TMVar (Awaitable (), Dispos
 
 instance IsAwaitable () ResourceManagerEntry where
   toAwaitable (ResourceManagerEntry var) = do
-    varContents <- simpleAwaitable $ tryReadTMVar var
+    varContents <- unsafeAwaitSTM $ tryReadTMVar var
     case varContents of
       -- If the var is empty the Entry has already been disposed
       Nothing -> pure ()
@@ -222,7 +222,7 @@ instance IsDisposable ResourceManager where
         pure $ isDisposed resourceManager
 
   isDisposed resourceManager =
-    simpleAwaitable do
+    unsafeAwaitSTM do
       (throwM =<< readTMVar (exceptionVar resourceManager))
         `orElse`
           ((\disposed -> unless disposed retry) =<< readTVar (disposedVar resourceManager))
@@ -263,11 +263,11 @@ collectGarbage resourceManager = go
     go = do
       snapshot <- atomically $ readTVar entriesVar'
 
-      let listChanged = simpleAwaitable do
+      let listChanged = unsafeAwaitSTM do
             newLength <- Seq.length <$> readTVar entriesVar'
             when (newLength == Seq.length snapshot) retry
 
-          isDisposing = simpleAwaitable do
+          isDisposing = unsafeAwaitSTM do
             disposing <- readTVar (disposingVar resourceManager)
             unless disposing retry
 
