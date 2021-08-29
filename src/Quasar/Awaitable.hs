@@ -107,14 +107,14 @@ instance MonadAwait Awaitable where
   await = toAwaitable
 
 instance Functor Awaitable where
-  fmap fn (Awaitable x) = fnAwaitable $ fn <$> runAwaitable x
+  fmap fn (Awaitable x) = mkMonadicAwaitable $ fn <$> runAwaitable x
 
 instance Applicative Awaitable where
   pure = successfulAwaitable
-  liftA2 fn (Awaitable fx) (Awaitable fy) = fnAwaitable $ liftA2 fn (runAwaitable fx) (runAwaitable fy)
+  liftA2 fn (Awaitable fx) (Awaitable fy) = mkMonadicAwaitable $ liftA2 fn (runAwaitable fx) (runAwaitable fy)
 
 instance Monad Awaitable where
-  (Awaitable fx) >>= fn = fnAwaitable $ runAwaitable fx >>= runAwaitable . fn
+  (Awaitable fx) >>= fn = mkMonadicAwaitable $ runAwaitable fx >>= runAwaitable . fn
 
 instance Semigroup r => Semigroup (Awaitable r) where
   x <> y = liftA2 (<>) x y
@@ -126,7 +126,7 @@ instance MonadThrow Awaitable where
   throwM = failedAwaitable . toException
 
 instance MonadCatch Awaitable where
-  catch awaitable handler = fnAwaitable do
+  catch awaitable handler = mkMonadicAwaitable do
     runAwaitable awaitable `catch` \ex -> runAwaitable (handler ex)
 
 instance MonadFail Awaitable where
@@ -141,14 +141,14 @@ instance MonadPlus Awaitable
 
 
 
-newtype FnAwaitable r = FnAwaitable (forall m. (MonadQuerySTM m) => m r)
+newtype MonadicAwaitable r = MonadicAwaitable (forall m. (MonadQuerySTM m) => m r)
 
-instance IsAwaitable r (FnAwaitable r) where
-  runAwaitable (FnAwaitable x) = x
+instance IsAwaitable r (MonadicAwaitable r) where
+  runAwaitable (MonadicAwaitable x) = x
   cacheAwaitable = cacheAwaitableDefaultImplementation
 
-fnAwaitable :: (forall m. (MonadQuerySTM m) => m r) -> Awaitable r
-fnAwaitable fn = toAwaitable $ FnAwaitable fn
+mkMonadicAwaitable :: (forall m. (MonadQuerySTM m) => m r) -> Awaitable r
+mkMonadicAwaitable fn = toAwaitable $ MonadicAwaitable fn
 
 
 newtype CompletedAwaitable r = CompletedAwaitable (Either SomeException r)
@@ -182,7 +182,7 @@ awaitSTM = cacheAwaitable . unsafeAwaitSTM
 --
 -- Use `retry` to signal that the awaitable is not yet completed and `throwM`/`throwSTM` to set the awaitable to failed.
 unsafeAwaitSTM :: STM a -> Awaitable a
-unsafeAwaitSTM query = fnAwaitable $ querySTM query
+unsafeAwaitSTM query = mkMonadicAwaitable $ querySTM query
 
 
 class MonadCatch m => MonadQuerySTM m where
@@ -340,7 +340,7 @@ awaitSuccessOrFailure = fireAndForget . toAwaitable
 -- ** Awaiting multiple awaitables
 
 awaitEither :: (IsAwaitable ra a, IsAwaitable rb b) => a -> b -> Awaitable (Either ra rb)
-awaitEither x y = fnAwaitable $ stepBoth (runAwaitable x) (runAwaitable y)
+awaitEither x y = mkMonadicAwaitable $ stepBoth (runAwaitable x) (runAwaitable y)
   where
     stepBoth :: MonadQuerySTM m => AwaitableStepM ra -> AwaitableStepM rb -> m (Either ra rb)
     stepBoth (AwaitableCompleted resultX) _ = pure $ Left resultX
@@ -354,7 +354,7 @@ awaitEither x y = fnAwaitable $ stepBoth (runAwaitable x) (runAwaitable y)
 
 
 awaitAny :: IsAwaitable r a => NonEmpty a -> Awaitable r
-awaitAny xs = fnAwaitable $ stepAll Empty Empty $ runAwaitable <$> fromList (toList xs)
+awaitAny xs = mkMonadicAwaitable $ stepAll Empty Empty $ runAwaitable <$> fromList (toList xs)
   where
     stepAll
       :: MonadQuerySTM m
