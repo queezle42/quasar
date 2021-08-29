@@ -2,7 +2,6 @@ module Quasar.DisposableSpec (spec) where
 
 import Control.Exception
 import Control.Concurrent
-import Control.Monad (void)
 import Quasar.Prelude
 import Test.Hspec
 import Quasar.Awaitable

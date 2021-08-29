@@ -1,7 +1,6 @@
 module Quasar.Async (
   -- * Async/await
   MonadAsync(..),
-  async,
 
   -- * Task
   Task,
@@ -21,7 +20,6 @@ import Control.Concurrent (ThreadId, forkIOWithUnmask, throwTo)
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Reader
-import Data.HashSet
 import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Prelude
@@ -76,10 +74,11 @@ instance MonadAsync (ReaderT ResourceManager IO) where
         -- Wait for task completion or failure. Tasks must not ignore `CancelTask` or this will hang.
         pure $ void (toAwaitable resultVar) `catchAll` const (pure ())
 
-      liftUnmask :: (IO a -> IO a) -> (ReaderT ResourceManager IO) a -> (ReaderT ResourceManager IO) a
-      liftUnmask unmask action = do
-        resourceManager <- askResourceManager
-        liftIO $ unmask $ runReaderT action resourceManager
+-- | Lift an "unmask" action (e.g. from `mask`) into a `ReaderT`.
+liftUnmask :: (IO a -> IO a) -> (ReaderT r IO) a -> (ReaderT r IO) a
+liftUnmask unmask action = do
+  value <- ask
+  liftIO $ unmask $ runReaderT action value
 
 
 

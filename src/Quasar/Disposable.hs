@@ -28,7 +28,7 @@ import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Data.Foldable (toList)
-import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
+import Data.List.NonEmpty (NonEmpty(..))
 import Data.Maybe (isJust)
 import Data.Sequence
 import Data.Sequence qualified as Seq
@@ -214,7 +214,7 @@ instance MonadIO m => MonadResourceManager (ReaderT ResourceManager m) where
   askResourceManager = ask
 
 
-onResourceManager :: (HasResourceManager a, MonadIO m) => a -> ReaderT ResourceManager m r -> m r
+onResourceManager :: (HasResourceManager a) => a -> ReaderT ResourceManager m r -> m r
 onResourceManager target action = runReaderT action (getResourceManager target)
 
 
@@ -233,8 +233,8 @@ instance IsDisposable ResourceManager where
       dispose' :: IO (Awaitable ())
       dispose' = do
         entries <- atomically do
-          alreadyDisposing <- swapTVar (disposingVar resourceManager) True
-          if not alreadyDisposing
+          isAlreadyDisposing <- swapTVar (disposingVar resourceManager) True
+          if not isAlreadyDisposing
             then readTVar (entriesVar resourceManager)
             else pure Empty
 
@@ -310,7 +310,7 @@ collectGarbage resourceManager = go
 
         -- Filter completed entries
         allEntries <- readTVar entriesVar'
-        filteredEntries <- foldM (\acc entry -> entryIsEmpty entry >>= \empty -> pure if empty then acc else acc |> entry) Empty allEntries
+        filteredEntries <- foldM (\acc entry -> entryIsEmpty entry >>= \isEmpty -> pure if isEmpty then acc else acc |> entry) Empty allEntries
         writeTVar entriesVar' filteredEntries
 
         if disposing && Seq.null filteredEntries
@@ -336,7 +336,7 @@ attachDisposable resourceManager disposable = liftIO $ mask \unmask -> do
   entry <- newEntry disposable
 
   join $ atomically do
-    mapM throwM =<< tryReadTMVar (exceptionVar resourceManager)
+    mapM_ throwM =<< tryReadTMVar (exceptionVar resourceManager)
 
     disposed <- readTVar (disposedVar resourceManager)
     when disposed $ throwM (userError "Cannot attach a disposable to a disposed resource manager")

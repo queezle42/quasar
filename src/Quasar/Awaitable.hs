@@ -144,7 +144,7 @@ instance IsAwaitable r (MonadicAwaitable r) where
   runAwaitable (MonadicAwaitable x) = x
   cacheAwaitable = cacheAwaitableDefaultImplementation
 
-mkMonadicAwaitable :: MonadAwait m => (forall m. (MonadQuerySTM m) => m r) -> m r
+mkMonadicAwaitable :: MonadAwait m => (forall f. (MonadQuerySTM f) => f r) -> m r
 mkMonadicAwaitable fn = await $ MonadicAwaitable fn
 
 
@@ -239,7 +239,7 @@ data AwaitableStepM a
 
 instance Functor AwaitableStepM where
   fmap fn (AwaitableCompleted x) = AwaitableCompleted (fn x)
-  fmap fn (AwaitableFailed ex) = AwaitableFailed ex
+  fmap _ (AwaitableFailed ex) = AwaitableFailed ex
   fmap fn (AwaitableStep query next) = AwaitableStep query (fmap fn <$> next)
 
 instance Applicative AwaitableStepM where
@@ -248,7 +248,7 @@ instance Applicative AwaitableStepM where
 
 instance Monad AwaitableStepM where
   (AwaitableCompleted x) >>= fn = fn x
-  (AwaitableFailed ex) >>= fn = AwaitableFailed ex
+  (AwaitableFailed ex) >>= _ = AwaitableFailed ex
   (AwaitableStep query next) >>= fn = AwaitableStep query (next >=> fn)
 
 instance MonadQuerySTM AwaitableStepM where

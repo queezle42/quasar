@@ -19,9 +19,7 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Data.Heap
-import Data.Ord (comparing)
-import Data.Time.Clock (UTCTime, getCurrentTime, diffUTCTime, utctDayTime, addUTCTime)
-import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
+import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Foldable (toList)
 import Quasar.Async
 import Quasar.Awaitable
@@ -140,8 +138,8 @@ startSchedulerThread scheduler = do
       where
         nextTimerChanged :: Awaitable ()
         nextTimerChanged = unsafeAwaitSTM do
-          min <- Data.Heap.minimum <$> readTVar heap'
-          unless (min /= nextTimer) retry
+          minTimer <- Data.Heap.minimum <$> readTVar heap'
+          unless (minTimer /= nextTimer) retry
 
     fireTimers :: UTCTime -> IO ()
     fireTimers now = atomically do
@@ -207,4 +205,4 @@ newDelay resourceManager microseconds = onResourceManager resourceManager $ Dela
 -- From package `extra`
 mapMaybeM :: Monad m => (a -> m (Maybe b)) -> [a] -> m [b]
 mapMaybeM op = foldr f (pure [])
-    where f x xs = do x <- op x; case x of Nothing -> xs; Just x -> do xs <- xs; pure $ x:xs
+    where f x xs = do y <- op x; case y of Nothing -> xs; Just z -> do ys <- xs; pure $ z:ys
