@@ -76,7 +76,7 @@ class Monad m => MonadAwait m where
   await :: IsAwaitable r a => a -> m r
 
 instance MonadAwait IO where
-  await = awaitIO
+  await awaitable = liftIO $ runQueryT atomically (runAwaitable awaitable)
 
 instance MonadAwait m => MonadAwait (ReaderT a m) where
   await = lift . await
@@ -85,9 +85,6 @@ instance MonadAwait m => MonadAwait (ReaderT a m) where
 awaitResult :: (IsAwaitable r a, MonadAwait m) => m a -> m r
 awaitResult = (await =<<)
 
-
-awaitIO :: (IsAwaitable r a, MonadIO m) => a -> m r
-awaitIO awaitable = liftIO $ runQueryT atomically (runAwaitable awaitable)
 
 peekAwaitable :: (IsAwaitable r a, MonadIO m) => a -> m (Maybe (Either SomeException r))
 peekAwaitable awaitable = liftIO $ runMaybeT $ try $ runQueryT queryFn (runAwaitable awaitable)
