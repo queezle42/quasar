@@ -55,7 +55,6 @@ class IsDisposable a where
   {-# MINIMAL toDisposable | (dispose, isDisposed) #-}
 
 
--- | Dispose a resource in the IO monad.
 disposeAndAwait :: (MonadAwait m, MonadIO m) => IsDisposable a => a -> m ()
 disposeAndAwait disposable = await =<< liftIO (dispose disposable)
 
