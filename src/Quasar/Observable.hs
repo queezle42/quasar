@@ -94,7 +94,7 @@ class IsRetrievable v o => IsObservable v o | o -> v where
           atomically do
             readTVar calledIdVar >>= \called ->
               unless (called >= currentMessage) retry
-      do awaitDispose
+      do disposeAndAwait
       do
         const $ forever do
           (msgId, msg) <- liftIO $ atomically $ liftA2 (,) (readTVar idVar) (readTVar msgVar)

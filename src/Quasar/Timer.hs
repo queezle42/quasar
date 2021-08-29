@@ -177,7 +177,7 @@ newTimer scheduler time = do
 
 
 sleepUntil :: TimerScheduler -> UTCTime -> IO ()
-sleepUntil scheduler time = bracketOnError (newTimer scheduler time) awaitDispose await
+sleepUntil scheduler time = bracketOnError (newTimer scheduler time) disposeAndAwait await
 
 
 

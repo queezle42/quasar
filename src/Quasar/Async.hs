@@ -58,7 +58,7 @@ instance MonadAsync (ReaderT ResourceManager IO) where
 
               -- Thread has completed work, "disarm" the disposable and fire it
               void $ atomically $ swapTMVar threadIdVar Nothing
-              awaitDispose disposable
+              disposeAndAwait disposable
 
         do atomically $ putTMVar threadIdVar Nothing
 
