@@ -38,7 +38,7 @@ spec = parallel $ do
 
   describe "awaitAny" $ do
     it "works with completed awaitables" $ do
-      await (awaitAny2 (pure () :: Awaitable ()) (pure () :: Awaitable ())) :: IO ()
+      awaitAny2 (pure () :: Awaitable ()) (pure () :: Awaitable ()) :: IO ()
 
     it "can be completed later" $ do
       avar1 <- newAsyncVar :: IO (AsyncVar ())
@@ -46,7 +46,7 @@ spec = parallel $ do
       void $ forkIO $ do
         threadDelay 100000
         putAsyncVar_ avar1 ()
-      await (awaitAny2 avar1 avar2)
+      awaitAny2 avar1 avar2
 
     it "can be completed later by the second parameter" $ do
       avar1 <- newAsyncVar :: IO (AsyncVar ())
@@ -54,4 +54,4 @@ spec = parallel $ do
       void $ forkIO $ do
         threadDelay 100000
         putAsyncVar_ avar2 ()
-      await (awaitAny2 avar1 avar2)
+      awaitAny2 avar1 avar2

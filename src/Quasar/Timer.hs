@@ -136,7 +136,7 @@ startSchedulerThread scheduler = do
     wait :: Timer -> Int -> IO ()
     wait nextTimer microseconds = do
       delay <- toAwaitable <$> newDelay resourceManager' microseconds
-      await $ awaitAny2 delay nextTimerChanged
+      awaitAny2 delay nextTimerChanged
       where
         nextTimerChanged :: Awaitable ()
         nextTimerChanged = unsafeAwaitSTM do

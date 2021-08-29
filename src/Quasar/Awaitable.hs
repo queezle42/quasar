@@ -144,8 +144,8 @@ instance IsAwaitable r (MonadicAwaitable r) where
   runAwaitable (MonadicAwaitable x) = x
   cacheAwaitable = cacheAwaitableDefaultImplementation
 
-mkMonadicAwaitable :: (forall m. (MonadQuerySTM m) => m r) -> Awaitable r
-mkMonadicAwaitable fn = toAwaitable $ MonadicAwaitable fn
+mkMonadicAwaitable :: MonadAwait m => (forall m. (MonadQuerySTM m) => m r) -> m r
+mkMonadicAwaitable fn = await $ MonadicAwaitable fn
 
 
 newtype CompletedAwaitable r = CompletedAwaitable (Either SomeException r)
@@ -328,15 +328,17 @@ putAsyncVarEitherSTM_ var = void . putAsyncVarEitherSTM var
 -- * Utility functions
 
 -- | Create an awaitable that is completed successfully when the input awaitable is successful or failed.
-awaitSuccessOrFailure :: IsAwaitable r a => a -> Awaitable ()
-awaitSuccessOrFailure = fireAndForget . toAwaitable
+awaitSuccessOrFailure :: (IsAwaitable r a, MonadAwait m) => a -> m ()
+awaitSuccessOrFailure = await . fireAndForget . toAwaitable
   where
     fireAndForget :: MonadCatch m => m r -> m ()
     fireAndForget x = void x `catchAll` const (pure ())
 
 -- ** Awaiting multiple awaitables
 
-awaitEither :: (IsAwaitable ra a, IsAwaitable rb b) => a -> b -> Awaitable (Either ra rb)
+
+
+awaitEither :: (IsAwaitable ra a, IsAwaitable rb b, MonadAwait m) => a -> b -> m (Either ra rb)
 awaitEither x y = mkMonadicAwaitable $ stepBoth (runAwaitable x) (runAwaitable y)
   where
     stepBoth :: MonadQuerySTM m => AwaitableStepM ra -> AwaitableStepM rb -> m (Either ra rb)
@@ -350,7 +352,7 @@ awaitEither x y = mkMonadicAwaitable $ stepBoth (runAwaitable x) (runAwaitable y
         Right resultY -> stepBoth stepX (nextY resultY)
 
 
-awaitAny :: IsAwaitable r a => NonEmpty a -> Awaitable r
+awaitAny :: (IsAwaitable r a, MonadAwait m) => NonEmpty a -> m r
 awaitAny xs = mkMonadicAwaitable $ stepAll Empty Empty $ runAwaitable <$> fromList (toList xs)
   where
     stepAll
@@ -371,7 +373,7 @@ awaitAny xs = mkMonadicAwaitable $ stepAll Empty Empty $ runAwaitable <$> fromLi
       stepAll Empty Empty newAwaitableSteps
 
 
-awaitAny2 :: IsAwaitable r a => a -> a -> Awaitable r
+awaitAny2 :: (IsAwaitable r a, MonadAwait m) => a -> a -> m r
 awaitAny2 x y = awaitAny (x :| [y])
 
 

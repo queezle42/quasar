@@ -297,7 +297,7 @@ collectGarbage resourceManager = go
       -- Wait for any entry to complete or until a new entry is added
       let awaitables = (toAwaitable <$> toList snapshot)
       -- GC fails here when an waitable throws an exception
-      void $ await if Quasar.Prelude.null awaitables
+      void if Quasar.Prelude.null awaitables
         then awaitAny2 listChanged isDisposing
         else awaitAny (listChanged :| awaitables)
 
