@@ -105,7 +105,7 @@ class IsRetrievable v o => IsObservable v o | o -> v where
   unsafeAsyncObserveIO observable callback = do
     resourceManager <- unsafeNewResourceManager
     onResourceManager resourceManager do
-      asyncObserve observable (liftIO . callback)
+      asyncObserve_ observable (liftIO . callback)
 
     pure (toDisposable resourceManager)
 
@@ -126,7 +126,7 @@ asyncObserve_ observable callback = async_ (observe observable callback)
 
 
 data ObserveWhileCompleted = ObserveWhileCompleted
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 instance Exception ObserveWhileCompleted
 
@@ -362,28 +362,31 @@ newObservableVar :: v -> IO (ObservableVar v)
 newObservableVar initialValue = do
   ObservableVar <$> newMVar (initialValue, HM.empty)
 
-setObservableVar :: ObservableVar v -> v -> IO ()
-setObservableVar (ObservableVar mvar) value = modifyMVar_ mvar $ \(_, subscribers) -> do
+setObservableVar :: MonadIO m => ObservableVar v -> v -> m ()
+setObservableVar (ObservableVar mvar) value = liftIO $ modifyMVar_ mvar $ \(_, subscribers) -> do
   mapM_ (\callback -> callback (pure value)) subscribers
   pure (value, subscribers)
 
 
-modifyObservableVar :: ObservableVar v -> (v -> IO (v, a)) -> IO a
+-- TODO change inner monad to `m` after reimplementing ObservableVar
+modifyObservableVar :: MonadIO m => ObservableVar v -> (v -> IO (v, a)) -> m a
 modifyObservableVar (ObservableVar mvar) f =
-  modifyMVar mvar $ \(oldState, subscribers) -> do
+  liftIO $ modifyMVar mvar $ \(oldState, subscribers) -> do
     (newState, result) <- f oldState
     mapM_ (\callback -> callback (pure newState)) subscribers
     pure ((newState, subscribers), result)
 
-modifyObservableVar_ :: ObservableVar v -> (v -> IO v) -> IO ()
+-- TODO change inner monad to `m` after reimplementing ObservableVar
+modifyObservableVar_ :: MonadIO m => ObservableVar v -> (v -> IO v) -> m ()
 modifyObservableVar_ (ObservableVar mvar) f =
-  modifyMVar_ mvar $ \(oldState, subscribers) -> do
+  liftIO $ modifyMVar_ mvar $ \(oldState, subscribers) -> do
     newState <- f oldState
     mapM_ (\callback -> callback (pure newState)) subscribers
     pure (newState, subscribers)
 
-withObservableVar :: ObservableVar v -> (v -> IO a) -> IO a
-withObservableVar (ObservableVar mvar) f = withMVar mvar (f . fst)
+-- TODO change inner monad to `m` after reimplementing ObservableVar
+withObservableVar :: MonadIO m => ObservableVar v -> (v -> IO a) -> m a
+withObservableVar (ObservableVar mvar) f = liftIO $ withMVar mvar (f . fst)
 
 
 
