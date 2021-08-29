@@ -30,7 +30,7 @@ mergeObservableSpec = do
 
       let mergedObservable = mergeObservable (,) a b
       (latestRef :: IORef (ObservableMessage (String, String))) <- newIORef (ObservableUpdate ("", ""))
-      void $ observe mergedObservable (writeIORef latestRef)
+      void $ unsafeAsyncObserveIO mergedObservable (writeIORef latestRef)
       let latestShouldBe expected = do
             (ObservableUpdate x) <- readIORef latestRef
             x `shouldBe` expected

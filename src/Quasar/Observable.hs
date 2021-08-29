@@ -7,6 +7,7 @@ module Quasar.Observable (
   IsObservable(..),
   Observable(..),
   ObservableMessage(..),
+  asyncObserve,
 
   -- * ObservableVar
   ObservableVar,
@@ -70,14 +71,51 @@ class IsRetrievable v a | a -> v where
 retrieveIO :: IsRetrievable v a => a -> IO v
 retrieveIO x = withOnResourceManager $ await =<< retrieve x
 
+{-# DEPRECATED unsafeAsyncObserveIO "Old implementation of `observe`." #-}
 class IsRetrievable v o => IsObservable v o | o -> v where
-  observe :: o -> (ObservableMessage v -> IO ()) -> IO Disposable
+  observe :: (MonadAwait m, MonadCatch m, MonadResourceManager m) => o -> (ObservableMessage v -> m ()) -> m a
+  observe observable callback = do
+    msgVar <- liftIO $ newTVarIO ObservableLoading
+    idVar <- liftIO $ newTVarIO (0 :: Word64)
+    calledIdVar <- liftIO $ newTVarIO (0 :: Word64)
+
+    bracketOnError
+      do
+        liftIO $ unsafeAsyncObserveIO observable \msg -> do
+          currentMessage <- atomically do
+            writeTVar msgVar msg
+            stateTVar idVar (dup . (+ 1))
+          -- Wait for `callback` to complete
+          atomically do
+            readTVar calledIdVar >>= \called ->
+              unless (called >= currentMessage) retry
+      do awaitDispose
+      do
+        const $ forever do
+          (msgId, msg) <- liftIO $ atomically $ liftA2 (,) (readTVar idVar) (readTVar msgVar)
+          callback msg
+          liftIO $ atomically $ writeTVar calledIdVar msgId
+
+  unsafeAsyncObserveIO :: o -> (ObservableMessage v -> IO ()) -> IO Disposable
+  unsafeAsyncObserveIO observable callback = do
+    resourceManager <- unsafeNewResourceManager
+    onResourceManager resourceManager do
+      asyncObserve observable (liftIO . callback)
+
+    pure (toDisposable resourceManager)
 
   toObservable :: o -> Observable v
   toObservable = Observable
 
   mapObservable :: (v -> a) -> o -> Observable a
   mapObservable f = Observable . MappedObservable f
+
+  {-# MINIMAL observe | unsafeAsyncObserveIO #-}
+
+
+asyncObserve :: IsObservable v o => MonadAsync m => o -> (ObservableMessage v -> m ()) -> m Disposable
+asyncObserve observable callback = toDisposable <$> async (observe observable callback)
+
 
 -- | (TODO) Observe until the callback returns `False`. The callback will also be unsubscribed when the `ResourceManager` is disposed.
 observeWhile :: (IsObservable v o, MonadAsync m) => o -> (ObservableMessage v -> IO Bool) -> m Disposable
@@ -120,6 +158,7 @@ instance IsRetrievable v (Observable v) where
   retrieve (Observable o) = retrieve o
 instance IsObservable v (Observable v) where
   observe (Observable o) = observe o
+  unsafeAsyncObserveIO (Observable o) = unsafeAsyncObserveIO o
   toObservable = id
   mapObservable f (Observable o) = mapObservable f o
 
@@ -156,6 +195,7 @@ instance IsRetrievable v (MappedObservable v) where
   retrieve (MappedObservable f observable) = f <<$>> retrieve observable
 instance IsObservable v (MappedObservable v) where
   observe (MappedObservable f observable) callback = observe observable (callback . fmap f)
+  unsafeAsyncObserveIO (MappedObservable f observable) callback = unsafeAsyncObserveIO observable (callback . fmap f)
   mapObservable f1 (MappedObservable f2 upstream) = Observable $ MappedObservable (f1 . f2) upstream
 
 
@@ -168,8 +208,8 @@ instance IsRetrievable r (BindObservable r) where
     awaitResult $ retrieve $ fn x
 
 instance IsObservable r (BindObservable r) where
-  observe :: BindObservable r -> (ObservableMessage r -> IO ()) -> IO Disposable
-  observe (BindObservable fx fn) callback = do
+  unsafeAsyncObserveIO :: BindObservable r -> (ObservableMessage r -> IO ()) -> IO Disposable
+  unsafeAsyncObserveIO (BindObservable fx fn) callback = do
     -- Create a resource manager to ensure all subscriptions are cleaned up when disposing.
     resourceManager <- unsafeNewResourceManager
 
@@ -177,7 +217,7 @@ instance IsObservable r (BindObservable r) where
     disposableVar <- newTMVarIO noDisposable
     keyVar <- newTMVarIO Nothing
 
-    leftDisposable <- observe fx (outerCallback resourceManager isDisposingVar disposableVar keyVar)
+    leftDisposable <- unsafeAsyncObserveIO fx (outerCallback resourceManager isDisposingVar disposableVar keyVar)
 
     attachDisposeAction_ resourceManager $ do
       atomically $ writeTVar isDisposingVar True
@@ -214,7 +254,7 @@ instance IsObservable r (BindObservable r) where
             True -> pure $ pure ()
 
         where
-          outerMessageHandler key (ObservableUpdate x) = observe (fn x) (innerCallback key)
+          outerMessageHandler key (ObservableUpdate x) = unsafeAsyncObserveIO (fn x) (innerCallback key)
           outerMessageHandler _ ObservableLoading = noDisposable <$ callback ObservableLoading
           outerMessageHandler _ (ObservableNotAvailable ex) = noDisposable <$ callback (ObservableNotAvailable ex)
 
@@ -236,8 +276,8 @@ instance IsRetrievable r (CatchObservable e r) where
     awaitResult (retrieve fx) `catch` \ex -> awaitResult (retrieve (fn ex))
 
 instance IsObservable r (CatchObservable e r) where
-  observe :: CatchObservable e r -> (ObservableMessage r -> IO ()) -> IO Disposable
-  observe (CatchObservable fx fn) callback = do
+  unsafeAsyncObserveIO :: CatchObservable e r -> (ObservableMessage r -> IO ()) -> IO Disposable
+  unsafeAsyncObserveIO (CatchObservable fx fn) callback = do
     -- Create a resource manager to ensure all subscriptions are cleaned up when disposing.
     resourceManager <- unsafeNewResourceManager
 
@@ -245,7 +285,7 @@ instance IsObservable r (CatchObservable e r) where
     disposableVar <- newTMVarIO noDisposable
     keyVar <- newTMVarIO Nothing
 
-    leftDisposable <- observe fx (outerCallback resourceManager isDisposingVar disposableVar keyVar)
+    leftDisposable <- unsafeAsyncObserveIO fx (outerCallback resourceManager isDisposingVar disposableVar keyVar)
 
     attachDisposeAction_ resourceManager $ do
       atomically $ writeTVar isDisposingVar True
@@ -282,7 +322,7 @@ instance IsObservable r (CatchObservable e r) where
             True -> pure $ pure ()
 
         where
-          outerMessageHandler key (ObservableNotAvailable (fromException -> Just ex)) = observe (fn ex) (innerCallback key)
+          outerMessageHandler key (ObservableNotAvailable (fromException -> Just ex)) = unsafeAsyncObserveIO (fn ex) (innerCallback key)
           outerMessageHandler _ msg = noDisposable <$ callback msg
 
           innerCallback :: Unique -> ObservableMessage r -> IO ()
@@ -301,7 +341,7 @@ newtype ObservableVar v = ObservableVar (MVar (v, HM.HashMap Unique (ObservableC
 instance IsRetrievable v (ObservableVar v) where
   retrieve (ObservableVar mvar) = liftIO $ successfulTask . fst <$> readMVar mvar
 instance IsObservable v (ObservableVar v) where
-  observe (ObservableVar mvar) callback = do
+  unsafeAsyncObserveIO (ObservableVar mvar) callback = do
     key <- newUnique
     modifyMVar_ mvar $ \(state, subscribers) -> do
       -- Call listener
@@ -356,11 +396,11 @@ data MergedObservable r o0 v0 o1 v1 = MergedObservable (v0 -> v1 -> r) o0 o1
 instance forall r o0 v0 o1 v1. (IsRetrievable v0 o0, IsRetrievable v1 o1) => IsRetrievable r (MergedObservable r o0 v0 o1 v1) where
   retrieve (MergedObservable merge obs0 obs1) = liftA2 (liftA2 merge) (retrieve obs0) (retrieve obs1)
 instance forall r o0 v0 o1 v1. (IsObservable v0 o0, IsObservable v1 o1) => IsObservable r (MergedObservable r o0 v0 o1 v1) where
-  observe (MergedObservable merge obs0 obs1) callback = do
+  unsafeAsyncObserveIO (MergedObservable merge obs0 obs1) callback = do
     var0 <- newTVarIO Nothing
     var1 <- newTVarIO Nothing
-    d0 <- observe obs0 (mergeCallback var0 var1 . writeTVar var0 . Just)
-    d1 <- observe obs1 (mergeCallback var0 var1 . writeTVar var1 . Just)
+    d0 <- unsafeAsyncObserveIO obs0 (mergeCallback var0 var1 . writeTVar var0 . Just)
+    d1 <- unsafeAsyncObserveIO obs1 (mergeCallback var0 var1 . writeTVar var1 . Just)
     pure $ mconcat [d0, d1]
     where
       mergeCallback :: TVar (Maybe (ObservableMessage v0)) -> TVar (Maybe (ObservableMessage v1)) -> STM () -> IO ()
@@ -389,7 +429,7 @@ data FnObservable v = FnObservable {
 instance IsRetrievable v (FnObservable v) where
   retrieve o = retrieveFn o
 instance IsObservable v (FnObservable v) where
-  observe o = observeFn o
+  unsafeAsyncObserveIO o = observeFn o
   mapObservable f FnObservable{retrieveFn, observeFn} = Observable $ FnObservable {
     retrieveFn = f <<$>> retrieveFn,
     observeFn = \listener -> observeFn (listener . fmap f)
@@ -417,7 +457,7 @@ newtype ConstObservable v = ConstObservable v
 instance IsRetrievable v (ConstObservable v) where
   retrieve (ConstObservable x) = pure $ pure x
 instance IsObservable v (ConstObservable v) where
-  observe (ConstObservable x) callback = do
+  unsafeAsyncObserveIO (ConstObservable x) callback = do
     callback $ ObservableUpdate x
     pure noDisposable
 
@@ -426,7 +466,7 @@ newtype FailedObservable v = FailedObservable SomeException
 instance IsRetrievable v (FailedObservable v) where
   retrieve (FailedObservable ex) = liftIO $ throwIO ex
 instance IsObservable v (FailedObservable v) where
-  observe (FailedObservable ex) callback = do
+  unsafeAsyncObserveIO (FailedObservable ex) callback = do
     callback $ ObservableNotAvailable ex
     pure noDisposable
 

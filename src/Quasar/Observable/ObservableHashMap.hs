@@ -39,7 +39,7 @@ makeLensesWith (lensField .~ (\_ _ -> pure . TopName . mkName . ("_" <>) . nameB
 instance IsRetrievable (HM.HashMap k v) (ObservableHashMap k v) where
   retrieve (ObservableHashMap mvar) = liftIO $ pure . HM.mapMaybe value . keyHandles <$> readMVar mvar
 instance IsObservable (HM.HashMap k v) (ObservableHashMap k v) where
-  observe ohm callback = liftIO $ modifyHandle update ohm
+  unsafeAsyncObserveIO ohm callback = liftIO $ modifyHandle update ohm
     where
       update :: Handle k v -> IO (Handle k v, Disposable)
       update handle = do

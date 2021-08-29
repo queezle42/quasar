@@ -25,7 +25,7 @@ instance IsRetrievable (Maybe v) (ObservablePriority p v) where
       getValueFromInternals Internals{current=Nothing} = Nothing
       getValueFromInternals Internals{current=Just (_, _, value)} = Just value
 instance IsObservable (Maybe v) (ObservablePriority p v) where
-  observe (ObservablePriority mvar) callback = do
+  unsafeAsyncObserveIO (ObservablePriority mvar) callback = do
     key <- newUnique
     modifyMVar_ mvar $ \internals@Internals{subscribers} -> do
       -- Call listener

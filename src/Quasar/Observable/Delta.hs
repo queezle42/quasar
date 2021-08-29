@@ -50,6 +50,7 @@ instance IsRetrievable (HM.HashMap k v) (DeltaObservable k v) where
   retrieve (DeltaObservable o) = retrieve o
 instance IsObservable (HM.HashMap k v) (DeltaObservable k v) where
   observe (DeltaObservable o) = observe o
+  unsafeAsyncObserveIO (DeltaObservable o) = unsafeAsyncObserveIO o
 instance IsDeltaObservable k v (DeltaObservable k v) where
   subscribeDelta (DeltaObservable o) = subscribeDelta o
 instance Functor (DeltaObservable k) where
@@ -61,5 +62,6 @@ instance IsRetrievable (HM.HashMap k b) (MappedDeltaObservable k b) where
   retrieve (MappedDeltaObservable f o) = fmap f <<$>> retrieve o
 instance IsObservable (HM.HashMap k b) (MappedDeltaObservable k b) where
   observe (MappedDeltaObservable f o) callback = observe o (callback . fmap (fmap f))
+  unsafeAsyncObserveIO (MappedDeltaObservable f o) callback = unsafeAsyncObserveIO o (callback . fmap (fmap f))
 instance IsDeltaObservable k b (MappedDeltaObservable k b) where
   subscribeDelta (MappedDeltaObservable f o) callback = subscribeDelta o (callback . fmap f)
