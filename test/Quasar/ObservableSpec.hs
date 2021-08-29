@@ -1,16 +1,27 @@
 module Quasar.ObservableSpec (spec) where
 
-import Quasar.Observable
-
-import Control.Monad (void)
 import Data.IORef
-import Prelude
+import Quasar.Prelude
+import Quasar.Disposable
+import Quasar.Observable
 import Test.Hspec
 
 
 spec :: Spec
 spec = do
+  observableSpec
   mergeObservableSpec
+
+observableSpec :: Spec
+observableSpec = parallel do
+  describe "Observable" do
+    it "works" $ io do
+      shouldReturn
+        do
+          withOnResourceManager do
+            observeWhile (pure () :: Observable ()) toObservableUpdate
+        ()
+
 
 mergeObservableSpec :: Spec
 mergeObservableSpec = do

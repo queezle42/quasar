@@ -88,11 +88,18 @@ spec = parallel $ do
         attachDisposeAction_ resourceManager $ toAwaitable avar <$ putAsyncVar_ avar ()
       pure () :: IO ()
 
+    it "re-throws an exception" $ do
+      shouldThrow
+        do
+          withResourceManager \_ ->
+            throwIO TestException
+        \TestException -> True
+
     it "re-throws an exception from a dispose action" $ do
       shouldThrow
         do
           withResourceManager \resourceManager ->
-            attachDisposeAction resourceManager $ throwIO $ TestException
+            attachDisposeAction resourceManager $ throwIO TestException
         \TestException -> True
 
     it "can attach an disposable that is disposed asynchronously" $ do
