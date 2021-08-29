@@ -9,6 +9,7 @@ module Quasar.Observable (
   Observable(..),
   ObservableMessage(..),
   asyncObserve,
+  asyncObserve_,
 
   -- * ObservableVar
   ObservableVar,
@@ -119,6 +120,9 @@ class IsRetrievable v o => IsObservable v o | o -> v where
 
 asyncObserve :: IsObservable v o => MonadAsync m => o -> (ObservableMessage v -> m ()) -> m Disposable
 asyncObserve observable callback = toDisposable <$> async (observe observable callback)
+
+asyncObserve_ :: IsObservable v o => MonadAsync m => o -> (ObservableMessage v -> m ()) -> m ()
+asyncObserve_ observable callback = async_ (observe observable callback)
 
 
 data ObserveWhileCompleted = ObserveWhileCompleted
