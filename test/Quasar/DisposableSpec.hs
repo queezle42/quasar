@@ -3,7 +3,7 @@ module Quasar.DisposableSpec (spec) where
 import Control.Exception
 import Control.Concurrent
 import Control.Monad (void)
-import Prelude
+import Quasar.Prelude
 import Test.Hspec
 import Quasar.Awaitable
 import Quasar.Disposable
@@ -12,9 +12,6 @@ data TestException = TestException
   deriving stock (Eq, Show)
 
 instance Exception TestException
-
-io :: IO a -> IO a
-io = id
 
 spec :: Spec
 spec = parallel $ do

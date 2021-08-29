@@ -22,6 +22,9 @@ import GHC.TypeLits (Symbol)
 import Lens.Micro.Platform (Lens', lens)
 import Quasar.Utils.ExtraT
 
+io :: IO a -> IO a
+io = id
+
 impossibleCodePath :: GHC.Stack.Types.HasCallStack => a
 impossibleCodePath = error "Code path marked as impossible was reached"
 
