@@ -2,7 +2,7 @@ module Quasar.Disposable (
   -- * Disposable
   IsDisposable(..),
   Disposable,
-  disposeIO,
+  awaitDispose,
   newDisposable,
   synchronousDisposable,
   noDisposable,
@@ -54,9 +54,12 @@ class IsDisposable a where
 
   {-# MINIMAL toDisposable | (dispose, isDisposed) #-}
 
+
 -- | Dispose a resource in the IO monad.
-disposeIO :: IsDisposable a => a -> IO ()
-disposeIO = await <=< dispose
+awaitDispose :: (MonadAwait m, MonadIO m) => IsDisposable a => a -> m ()
+awaitDispose disposable = await =<< liftIO (dispose disposable)
+
+
 
 instance IsDisposable a => IsDisposable (Maybe a) where
   toDisposable = maybe noDisposable toDisposable
