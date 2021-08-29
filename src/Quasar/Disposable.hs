@@ -210,10 +210,10 @@ class HasResourceManager a where
 instance HasResourceManager ResourceManager where
   getResourceManager = id
 
-class MonadIO m => MonadResourceManager m where
+class (MonadMask m, MonadIO m) => MonadResourceManager m where
   askResourceManager :: m ResourceManager
 
-instance MonadIO m => MonadResourceManager (ReaderT ResourceManager m) where
+instance (MonadMask m, MonadIO m) => MonadResourceManager (ReaderT ResourceManager m) where
   askResourceManager = ask
 
 

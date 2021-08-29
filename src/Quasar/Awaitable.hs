@@ -72,7 +72,7 @@ class IsAwaitable r a | a -> r where
 
 
 
-class Monad m => MonadAwait m where
+class (MonadCatch m, MonadPlus m) => MonadAwait m where
   await :: IsAwaitable r a => a -> m r
 
 instance MonadAwait IO where
