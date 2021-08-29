@@ -9,7 +9,6 @@ module Quasar.Timer (
   newTimerScheduler,
 
   TimerCancelled,
-  NegativeTimeJump,
 
   Delay,
   newDelay,
@@ -31,13 +30,6 @@ data TimerCancelled = TimerCancelled
   deriving stock (Eq, Show)
 
 instance Exception TimerCancelled
-
-
-data NegativeTimeJump = NegativeTimeJump
-  deriving stock (Eq, Show)
-
-instance Exception NegativeTimeJump
-
 
 
 data Timer = Timer {

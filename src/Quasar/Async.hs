@@ -26,11 +26,10 @@ import Quasar.Prelude
 
 
 class (MonadAwait m, MonadResourceManager m, MonadMask m) => MonadAsync m where
-  -- | TODO
   async :: m r -> m (Task r)
   async action = asyncWithUnmask ($ action)
 
-  -- | TODO
+  -- | TODO: Documentation
   --
   -- The action will be run with asynchronous exceptions masked and will be passed an action that can be used unmask.
   asyncWithUnmask :: ((forall a. m a -> m a) -> m r) -> m (Task r)

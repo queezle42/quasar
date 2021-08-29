@@ -1,8 +1,8 @@
 module Quasar.Awaitable (
   -- * Awaitable
+  MonadAwait(..),
   IsAwaitable(..),
   Awaitable,
-  MonadAwait(..),
   awaitResult,
   peekAwaitable,
   successfulAwaitable,
