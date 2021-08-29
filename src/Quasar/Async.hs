@@ -1,6 +1,8 @@
 module Quasar.Async (
   -- * Async/await
   MonadAsync(..),
+  async_,
+  asyncWithUnmask_,
 
   -- * Task
   Task,
@@ -78,6 +80,14 @@ liftUnmask :: (IO a -> IO a) -> (ReaderT r IO) a -> (ReaderT r IO) a
 liftUnmask unmask action = do
   value <- ask
   liftIO $ unmask $ runReaderT action value
+
+
+async_ :: MonadAsync m => m () -> m ()
+async_ = void . async
+
+asyncWithUnmask_ :: MonadAsync m => ((forall a. m a -> m a) -> m ()) -> m ()
+asyncWithUnmask_ action = void $ asyncWithUnmask action
+
 
 
 
