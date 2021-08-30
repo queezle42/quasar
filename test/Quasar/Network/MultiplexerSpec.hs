@@ -13,7 +13,7 @@ import Network.Socket
 import Test.Hspec
 
 spec :: Spec
-spec = describe "runMultiplexerProtocol" $ parallel $ do
+spec = describe "runMultiplexer" $ parallel $ do
   it "can be closed from the channelSetupHook" $ do
     (x, _) <- newDummySocketPair
     runMultiplexer MultiplexerSideA channelClose x

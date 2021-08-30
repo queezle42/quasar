@@ -160,7 +160,7 @@ data MultiplexerSide = MultiplexerSideA | MultiplexerSideB
 newMultiplexer :: (IsConnection a) => MultiplexerSide -> a -> IO Channel
 newMultiplexer side x = do
   channelMVar <- newEmptyMVar
-  -- 'runMultiplexerProtcol' needs to be interruptible (so it can terminate when it is closed), so 'interruptible' is used to ensure that this function also works when used in 'bracket'
+  -- 'runMultiplexer' needs to be interruptible (so it can terminate when it is closed), so 'interruptible' is used to ensure that this function also works when used in 'bracket'
   mask_ $ link =<< async (interruptible (runMultiplexer side (putMVar channelMVar) (toSocketConnection x)))
   takeMVar channelMVar
 
