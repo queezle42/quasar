@@ -62,11 +62,11 @@ instance Functor ObservableMessage where
 
 instance Applicative ObservableMessage where
   pure = ObservableUpdate
-  liftA2 _ (ObservableNotAvailable ex) _ = ObservableNotAvailable ex
-  liftA2 _ _ (ObservableNotAvailable ex) = ObservableNotAvailable ex
-  liftA2 _ ObservableLoading _ = ObservableLoading
-  liftA2 _ _ ObservableLoading = ObservableLoading
   liftA2 fn (ObservableUpdate x) (ObservableUpdate y) = ObservableUpdate (fn x y)
+  liftA2 _ (ObservableNotAvailable ex) _ = ObservableNotAvailable ex
+  liftA2 _ ObservableLoading _ = ObservableLoading
+  liftA2 _ _ (ObservableNotAvailable ex) = ObservableNotAvailable ex
+  liftA2 _ _ ObservableLoading = ObservableLoading
 
 
 toObservableUpdate :: MonadThrow m => ObservableMessage a -> m (Maybe a)
