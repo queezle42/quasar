@@ -211,9 +211,11 @@ instance HasResourceManager ResourceManager where
 
 class (MonadMask m, MonadIO m) => MonadResourceManager m where
   askResourceManager :: m ResourceManager
+  localResourceManager :: ResourceManager -> m a -> m a
 
 instance (MonadMask m, MonadIO m) => MonadResourceManager (ReaderT ResourceManager m) where
   askResourceManager = ask
+  localResourceManager = local . const
 
 
 onResourceManager :: (HasResourceManager a) => a -> ReaderT ResourceManager m r -> m r
