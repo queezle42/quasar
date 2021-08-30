@@ -49,6 +49,8 @@ newObservableStub startRetrieveRequest startObserveRequest = pure uncachedObserv
     retrieveFn = toTask <$> startRetrieveRequest
 
 observeToStream :: (Binary v, MonadAsync m) => Observable v -> Stream (PackedObservableMessage v) Void -> m ()
-observeToStream observable stream =
-  asyncObserve_ observable \msg ->
+observeToStream observable stream = do
+  disposable <- asyncObserve observable \msg ->
     streamSend stream $ packObservableMessage msg
+
+  attachDisposable (getResourceManager stream) disposable
