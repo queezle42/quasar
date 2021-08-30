@@ -83,6 +83,7 @@ common shared-properties
     -Wno-missing-import-lists
     -Wno-unsafe
     -Werror=incomplete-patterns
+    -Werror=missing-fields
     -Werror=missing-methods
 
 common shared-executable-properties
