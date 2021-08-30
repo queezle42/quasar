@@ -370,6 +370,5 @@ disposeEventually :: (IsDisposable a, MonadIO m) => ResourceManager -> a -> m ()
 disposeEventually resourceManager disposable = liftIO $ do
   disposeCompleted <- dispose disposable
   peekAwaitable disposeCompleted >>= \case
-    Just (Left ex) -> throwIO ex
-    Just (Right ()) -> pure ()
+    Just () -> pure ()
     Nothing -> attachDisposable resourceManager disposable

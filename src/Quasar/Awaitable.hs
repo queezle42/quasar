@@ -86,8 +86,10 @@ awaitResult :: (IsAwaitable r a, MonadAwait m) => m a -> m r
 awaitResult = (await =<<)
 
 
-peekAwaitable :: (IsAwaitable r a, MonadIO m) => a -> m (Maybe (Either SomeException r))
-peekAwaitable awaitable = liftIO $ runMaybeT $ try $ runQueryT queryFn (runAwaitable awaitable)
+-- | Returns the result (in a `Just`) when the awaitable is completed, throws an `Exception` when the awaitable is
+-- failed and returns `Nothing` otherwise.
+peekAwaitable :: (IsAwaitable r a, MonadIO m) => a -> m (Maybe r)
+peekAwaitable awaitable = liftIO $ runMaybeT $ runQueryT queryFn (runAwaitable awaitable)
   where
     queryFn :: STM a -> MaybeT IO a
     queryFn transaction = MaybeT $ atomically $ (Just <$> transaction) `orElse` pure Nothing
