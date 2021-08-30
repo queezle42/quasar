@@ -146,6 +146,7 @@ serverHandleChannelMessage protocolImpl channel resources msg = case decodeOrFai
 
 
 newtype Stream up down = Stream Channel
+  deriving newtype (IsDisposable, HasResourceManager)
 
 newStream :: MonadIO m => Channel -> m (Stream up down)
 newStream = liftIO . pure . Stream
