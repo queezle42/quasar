@@ -105,13 +105,12 @@ spec = parallel $ do
   describe "StreamExample" $ do
     it "can open and close a stream" $ do
       withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
-        streamClose =<< createMultiplyStream client
+        await =<< streamClose =<< createMultiplyStream client
 
     it "can open multiple streams in a single rpc call" $ do
       withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
         (stream1, stream2) <- createStreams client
-        streamClose stream1
-        streamClose stream2
+        await =<< liftA2 (<>) (streamClose stream1) (streamClose stream2)
 
     aroundAll (\x -> withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
         resultMVar <- liftIO newEmptyMVar
@@ -175,9 +174,7 @@ spec = parallel $ do
           setObservableVar var 42
           latestShouldBe 42
 
-    it "receives no further updates after disposing the callback registration" $ do
-      pendingWith "not implemented"
-
+    it "receives no further updates after unsubscribing" $ do
       var <- newObservableVar 42
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
         resultVar <- newTVarIO ObservableLoading

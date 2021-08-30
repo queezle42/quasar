@@ -25,7 +25,8 @@ module Quasar.Network.Multiplexer (
 
 
 import Control.Concurrent.Async (AsyncCancelled(..), async, link, race_, wait, waitAnyCancel, withAsync, withAsyncWithUnmask)
-import Control.Exception (Exception(..), Handler(..), MaskingState(Unmasked), SomeException(..), catch, catches, handle, interruptible, getMaskingState, mask_)
+import Control.Exception (MaskingState(Unmasked), interruptible, getMaskingState)
+import Control.Monad.Catch
 import Control.Monad.State (StateT, execStateT, runStateT, lift)
 import qualified Control.Monad.State as State
 import Control.Concurrent.MVar
@@ -37,6 +38,8 @@ import qualified Data.ByteString.Lazy as BSL
 import qualified Data.HashMap.Strict as HM
 import Data.Tuple (swap)
 import Data.Word
+import Quasar.Awaitable
+import Quasar.Disposable
 import Quasar.Network.Connection
 import Quasar.Prelude
 import System.IO (hPutStrLn, stderr)
@@ -119,6 +122,7 @@ instance HasResourceManager Channel where
   getResourceManager channel = channel.resourceManager
 
 data ChannelState = ChannelState {
+  resourceManager :: ResourceManager,
   connectionState :: ChannelConnectivity,
   children :: [Channel]
 }
@@ -172,7 +176,7 @@ newMultiplexer side x = do
 -- | Starts a new multiplexer on the provided connection and blocks until it is closed.
 -- The channel is provided to a setup action and can be closed by calling 'closeChannel'; otherwise the multiplexer will run until the underlying connection is closed.
 runMultiplexer :: (IsConnection a) => MultiplexerSide -> (Channel -> IO ()) -> a -> IO ()
-runMultiplexer side channelSetupHook connection = do
+runMultiplexer side channelSetupHook connection = withResourceManager \resourceManager -> do
   -- Running in masked state, this thread (running the receive-function) cannot be interrupted when closing the connection
   maskingState <- getMaskingState
   when (maskingState /= Unmasked) (fail "'runMultiplexer' cannot run in masked thread state.")
@@ -193,7 +197,7 @@ runMultiplexer side channelSetupHook connection = do
     }
     run :: IO (MultiplexerException, Bool)
     run = do
-      rootChannel <- withMultiplexerState worker (newChannel worker 0 Connected)
+      rootChannel <- withMultiplexerState worker (newChannel resourceManager worker 0 Connected)
       channelSetupHook rootChannel
       withAsync (receiveThread worker) $ \receiveTask ->
         withAsync (throwIO =<< multiplexerWaitUntilClosed worker) $ \waitForCloseTask -> do
@@ -424,21 +428,32 @@ multiplexerSwitchChannel worker channelId = do
 
 -- | Closes a channel and all it's children: After the function completes, the channel callback will no longer be called on received messages and sending messages on the channel will fail.
 -- Calling close on a closed channel is a noop.
-channelClose :: Channel -> IO ()
-channelClose channel = do
-  -- Change channel state of all unclosed channels in the tree to closed
-  channelWasClosed <- channelClose' channel
+--
+-- Alias for `dispose`.
+channelClose :: Channel -> IO (Awaitable ())
+channelClose = dispose
 
-  when channelWasClosed $
-    -- Closing a channel on a Connection that is no longer connected should not throw an exception (channelClose is a resource management operation and is supposed to be idempotent)
-    handle (\(_ :: MultiplexerException) -> pure ()) $ do
-      -- Send close message
-      withMultiplexerState worker $ do
-        multiplexerSwitchChannel worker channel.channelId
-        multiplexerStateSend worker CloseChannel
+instance IsDisposable Channel where
+  toDisposable channel = toDisposable channel.resourceManager
 
-      -- Terminate the worker when the root channel is closed
-      when (channel.channelId == 0) $ multiplexerClose_ ConnectionClosed worker
+disposeChannel :: Channel -> IO (Awaitable ())
+disposeChannel channel = do
+    -- Change channel state of all unclosed channels in the tree to closed
+    channelWasClosed <- channelClose' channel
+
+    when channelWasClosed $
+      -- Closing a channel on a Connection that is no longer connected should not throw an exception (channelClose is a resource management operation and is supposed to be idempotent)
+      handle (\(_ :: MultiplexerException) -> pure ()) $ do
+        -- Send close message
+        withMultiplexerState worker $ do
+          multiplexerSwitchChannel worker channel.channelId
+          multiplexerStateSend worker CloseChannel
+
+        -- Terminate the worker when the root channel is closed
+        when (channel.channelId == 0) $ multiplexerClose_ ConnectionClosed worker
+
+    -- Return completed awaitabe (so this can be inserted into a ResourceManager)
+    pure $ pure ()
   where
     worker = channel.worker
     channelClose' :: Channel -> IO Bool
@@ -529,7 +544,7 @@ newSubChannel :: MultiplexerWorker -> ChannelId -> (StateT ChannelState (StateT 
 newSubChannel worker channelId = do
   parentChannelState <- State.get
   -- Holding the parents channelState while initializing the channel will ensure the ChannelConnectivity is inherited atomically
-  createdChannel <- lift $ newChannel worker channelId parentChannelState.connectionState
+  createdChannel <- lift $ newChannel parentChannelState.resourceManager worker channelId parentChannelState.connectionState
 
   let newParentState = parentChannelState{
     children = createdChannel : parentChannelState.children
@@ -537,9 +552,11 @@ newSubChannel worker channelId = do
   State.put newParentState
   pure createdChannel
 
-newChannel :: MultiplexerWorker -> ChannelId -> ChannelConnectivity -> StateT MultiplexerWorkerState IO Channel
-newChannel worker channelId connectionState = do
+newChannel :: ResourceManager -> MultiplexerWorker -> ChannelId -> ChannelConnectivity -> StateT MultiplexerWorkerState IO Channel
+newChannel parentResourceManager worker channelId connectionState = do
+  resourceManager <- newResourceManager parentResourceManager
   stateMVar <- liftIO $ newMVar ChannelState {
+    resourceManager,
     connectionState,
     children = []
   }
@@ -551,6 +568,7 @@ newChannel worker channelId connectionState = do
   }
   handlerAtVar <- liftIO newEmptyAtVar
   let channel = Channel {
+    resourceManager,
     worker,
     channelId,
     stateMVar,
@@ -558,6 +576,7 @@ newChannel worker channelId connectionState = do
     receiveStateMVar,
     handlerAtVar
   }
+  attachDisposeAction resourceManager (disposeChannel channel)
   State.modify $ \multiplexerState -> multiplexerState{channels = HM.insert channelId channel multiplexerState.channels}
   pure channel
 

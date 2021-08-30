@@ -6,9 +6,11 @@ import Control.Concurrent.MVar
 import Control.Exception (bracket, mask_)
 import Control.Monad (forever, void, unless)
 import qualified Data.ByteString.Lazy as BSL
-import Prelude
+import Quasar.Awaitable
+import Quasar.Disposable
 import Quasar.Network.Multiplexer
 import Quasar.Network.Connection
+import Quasar.Prelude
 import Network.Socket
 import Test.Hspec
 
@@ -16,17 +18,29 @@ spec :: Spec
 spec = describe "runMultiplexer" $ parallel $ do
   it "can be closed from the channelSetupHook" $ do
     (x, _) <- newDummySocketPair
-    runMultiplexer MultiplexerSideA channelClose x
+    runMultiplexer MultiplexerSideA (await <=< channelClose) x
 
   it "fails when run in masked state" $ do
     (x, _) <- newDummySocketPair
-    mask_ $ runMultiplexer MultiplexerSideA channelClose x `shouldThrow` anyException
+    mask_ $ runMultiplexer MultiplexerSideA (await <=< channelClose) x `shouldThrow` anyException
 
   it "closes when the remote is closed" $ do
     (x, y) <- newDummySocketPair
     concurrently_
       (runMultiplexer MultiplexerSideA (const (pure ())) x)
-      (runMultiplexer MultiplexerSideB channelClose y)
+      (runMultiplexer MultiplexerSideB (await <=< channelClose) y)
+
+  it "can dispose a resource" $ do
+    var <- newAsyncVar
+    (x, _) <- newDummySocketPair
+    runMultiplexer
+      do MultiplexerSideA
+      do
+        \channel -> do
+          attachDisposeAction_ channel.resourceManager (pure () <$ putAsyncVar_ var ())
+          await =<< channelClose channel
+      do x
+    peekAwaitable var `shouldReturn` Just ()
 
   it "can send and receive simple messages" $ do
     recvMVar <- newEmptyMVar
@@ -110,7 +124,7 @@ withEchoServer fn = bracket setup closePair (\(channel, _) -> fn channel)
       configureEchoHandler echoChannel
       pure (mainChannel, echoChannel)
     closePair :: (Channel, Channel) -> IO ()
-    closePair (x, y) = channelClose x >> channelClose y
+    closePair (x, y) = await =<< liftA2 (<>) (channelClose x) (channelClose y)
     configureEchoHandler :: Channel -> IO ()
     configureEchoHandler channel = channelSetHandler channel (echoHandler channel)
     echoHandler :: Channel -> ReceivedMessageResources -> BSL.ByteString -> IO ()

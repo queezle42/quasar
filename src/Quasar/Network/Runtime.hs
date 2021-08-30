@@ -117,7 +117,7 @@ clientHandleChannelMessage client resources msg = case decodeOrFail msg of
           Nothing -> channelReportProtocolError client.channel ("Received response with invalid request id " <> show requestId)
       callback resp
 
-clientClose :: Client p -> IO ()
+clientClose :: Client p -> IO (Awaitable ())
 clientClose client = channelClose client.channel
 
 clientReportProtocolError :: Client p -> String -> IO a
@@ -156,7 +156,7 @@ streamSend (Stream channel) value = liftIO $ channelSendSimple channel (encode v
 streamSetHandler :: (Binary down, MonadIO m) => Stream up down -> (down -> IO ()) -> m ()
 streamSetHandler (Stream channel) handler = liftIO $ channelSetSimpleHandler channel handler
 
-streamClose :: MonadIO m => Stream up down -> m ()
+streamClose :: MonadIO m => Stream up down -> m (Awaitable ())
 streamClose (Stream channel) = liftIO $ channelClose channel
 
 -- ** Running client and server

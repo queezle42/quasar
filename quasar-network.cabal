@@ -63,6 +63,7 @@ common shared-properties
     async,
     binary,
     bytestring,
+    exceptions,
     hashable,
     mtl,
     network,

@@ -44,7 +44,7 @@ newObservableStub startRetrieveRequest startObserveRequest = pure uncachedObserv
       -- TODO send updates about the connection status
       stream <- startObserveRequest
       streamSetHandler stream (callback . unpackObservableMessage)
-      synchronousDisposable $ streamClose stream
+      newDisposable $ streamClose stream
     retrieveFn :: forall m. MonadAsync m => m (Task v)
     retrieveFn = toTask <$> startRetrieveRequest
 
