@@ -47,8 +47,9 @@ import Data.Binary (Binary, encode, decodeOrFail)
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.HashMap.Strict as HM
 import qualified Network.Socket as Socket
+import Quasar.Async
 import Quasar.Awaitable
-import Quasar.Core
+import Quasar.Disposable
 import Quasar.Network.Connection
 import Quasar.Network.Multiplexer
 import Quasar.Prelude
@@ -65,7 +66,7 @@ type ProtocolResponseWrapper p = (MessageId, ProtocolResponse p)
 
 class RpcProtocol p => HasProtocolImpl p where
   type ProtocolImpl p
-  handleRequest :: HasResourceManager m => ProtocolImpl p -> Channel -> ProtocolRequest p -> [Channel] -> m (Maybe (Task (ProtocolResponse p)))
+  handleRequest :: MonadAsync m => ProtocolImpl p -> Channel -> ProtocolRequest p -> [Channel] -> m (Maybe (Task (ProtocolResponse p)))
 
 
 data Client p = Client {
@@ -131,8 +132,7 @@ serverHandleChannelMessage protocolImpl channel resources msg = case decodeOrFai
   where
     serverHandleChannelRequest :: [Channel] -> ProtocolRequest p -> IO ()
     serverHandleChannelRequest channels req = do
-      -- TODO resource manager should belong to the current channel/api
-      withDefaultResourceManager $
+      onResourceManager channel $
         handleRequest @p protocolImpl channel req channels >>= \case
           Nothing -> pure ()
           Just task -> do

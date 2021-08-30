@@ -5,8 +5,9 @@ module Quasar.Network.Runtime.Observable (
 ) where
 
 import Data.Binary (Binary)
+import Quasar.Async
 import Quasar.Awaitable
-import Quasar.Core
+import Quasar.Disposable
 import Quasar.Network.Exception
 import Quasar.Network.Runtime
 import Quasar.Observable
@@ -44,11 +45,10 @@ newObservableStub startRetrieveRequest startObserveRequest = pure uncachedObserv
       stream <- startObserveRequest
       streamSetHandler stream (callback . unpackObservableMessage)
       synchronousDisposable $ streamClose stream
-    retrieveFn :: forall m. HasResourceManager m => m (Task v)
+    retrieveFn :: forall m. MonadAsync m => m (Task v)
     retrieveFn = toTask <$> startRetrieveRequest
 
-observeToStream :: (Binary v, HasResourceManager m) => Observable v -> Stream (PackedObservableMessage v) Void -> m ()
-observeToStream observable stream = do
-  _disposable <- liftIO $ observe observable $ streamSend stream . packObservableMessage
-  -- TODO: dispose when the stream is closed
-  pure ()
+observeToStream :: (Binary v, MonadAsync m) => Observable v -> Stream (PackedObservableMessage v) Void -> m ()
+observeToStream observable stream =
+  asyncObserve_ observable \msg ->
+    streamSend stream $ packObservableMessage msg

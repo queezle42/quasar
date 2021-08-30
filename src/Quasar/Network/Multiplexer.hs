@@ -107,12 +107,17 @@ instance Exception MultiplexerException
 
 data Channel = Channel {
   channelId :: ChannelId,
+  resourceManager :: ResourceManager,
   worker :: MultiplexerWorker,
   stateMVar :: MVar ChannelState,
   sendStateMVar :: MVar ChannelSendState,
   receiveStateMVar :: MVar ChannelReceiveState,
   handlerAtVar :: AtVar InternalChannelMessageHandler
 }
+
+instance HasResourceManager Channel where
+  getResourceManager channel = channel.resourceManager
+
 data ChannelState = ChannelState {
   connectionState :: ChannelConnectivity,
   children :: [Channel]

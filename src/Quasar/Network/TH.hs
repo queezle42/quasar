@@ -24,8 +24,8 @@ import Data.Maybe (isJust, isNothing)
 import GHC.Records.Compat (HasField)
 import Language.Haskell.TH hiding (interruptible)
 import Language.Haskell.TH.Syntax
+import Quasar.Async
 import Quasar.Awaitable
-import Quasar.Core
 import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
 import Quasar.Network.Runtime.Observable
@@ -559,7 +559,7 @@ createResource RequestCreateChannel channelE = [|pure $channelE|]
 createResource (RequestCreateStream up down) channelE = [|newStream $channelE|]
 
 implResultType :: Request -> Q Type
-implResultType req = [t|forall m. HasResourceManager m => m $(resultType)|]
+implResultType req = [t|forall m. MonadAsync m => m $(resultType)|]
   where
     resultType = case req.mResponse of
       Nothing -> [t|()|]
