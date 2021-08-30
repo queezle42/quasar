@@ -8,6 +8,7 @@ module Quasar.Observable (
   IsObservable(..),
   Observable(..),
   ObservableMessage(..),
+  toObservableUpdate,
   asyncObserve,
   asyncObserve_,
 
@@ -66,6 +67,12 @@ instance Applicative ObservableMessage where
   liftA2 _ ObservableLoading _ = ObservableLoading
   liftA2 _ _ ObservableLoading = ObservableLoading
   liftA2 fn (ObservableUpdate x) (ObservableUpdate y) = ObservableUpdate (fn x y)
+
+
+toObservableUpdate :: MonadThrow m => ObservableMessage a -> m (Maybe a)
+toObservableUpdate (ObservableUpdate value) = pure $ Just value
+toObservableUpdate ObservableLoading = pure Nothing
+toObservableUpdate (ObservableNotAvailable ex) = throwM ex
 
 
 class IsRetrievable v a | a -> v where
