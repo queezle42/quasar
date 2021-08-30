@@ -436,8 +436,8 @@ channelClose = dispose
 instance IsDisposable Channel where
   toDisposable channel = toDisposable channel.resourceManager
 
-disposeChannel :: Channel -> IO (Awaitable ())
-disposeChannel channel = do
+channelCloseInternal :: Channel -> IO (Awaitable ())
+channelCloseInternal channel = do
     -- Change channel state of all unclosed channels in the tree to closed
     channelWasClosed <- channelClose' channel
 
@@ -576,7 +576,7 @@ newChannel parentResourceManager worker channelId connectionState = do
     receiveStateMVar,
     handlerAtVar
   }
-  attachDisposeAction resourceManager (disposeChannel channel)
+  attachDisposeAction resourceManager (channelCloseInternal channel)
   State.modify $ \multiplexerState -> multiplexerState{channels = HM.insert channelId channel multiplexerState.channels}
   pure channel
 
