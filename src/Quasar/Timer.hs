@@ -125,7 +125,7 @@ startSchedulerThread scheduler = do
 
     wait :: Timer -> Int -> IO ()
     wait nextTimer microseconds = do
-      delay <- toAwaitable <$> newDelay resourceManager' microseconds
+      delay <- onResourceManager resourceManager' $ toAwaitable <$> newDelay microseconds
       awaitAny2 delay nextTimerChanged
       where
         nextTimerChanged :: Awaitable ()
@@ -189,8 +189,13 @@ newtype Delay = Delay (Task ())
 instance IsAwaitable () Delay where
   toAwaitable (Delay task) = toAwaitable task `catch` \TaskDisposed -> throwM TimerCancelled
 
-newDelay :: ResourceManager -> Int -> IO Delay
-newDelay resourceManager microseconds = onResourceManager resourceManager $ Delay <$> async (liftIO (threadDelay microseconds))
+newDelay :: MonadResourceManager m => Int -> m Delay
+newDelay microseconds = do
+  resourceManager <- askResourceManager
+  mask_ do
+    delay <- Delay <$> forkTask (liftIO (threadDelay microseconds))
+    attachDisposable resourceManager delay
+    pure delay
 
 
 

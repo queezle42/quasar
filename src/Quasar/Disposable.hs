@@ -217,6 +217,12 @@ instance (MonadMask m, MonadIO m) => MonadResourceManager (ReaderT ResourceManag
   askResourceManager = ask
   localResourceManager = local . const
 
+instance {-# OVERLAPPABLE #-} MonadResourceManager m => MonadResourceManager (ReaderT r m) where
+  askResourceManager = lift askResourceManager
+  localResourceManager resourceManager action = do
+    x <- ask
+    lift $ localResourceManager resourceManager $ runReaderT action x
+
 
 onResourceManager :: (HasResourceManager a) => a -> ReaderT ResourceManager m r -> m r
 onResourceManager target action = runReaderT action (getResourceManager target)

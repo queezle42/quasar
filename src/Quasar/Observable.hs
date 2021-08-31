@@ -10,7 +10,6 @@ module Quasar.Observable (
   ObservableMessage(..),
   toObservableUpdate,
   asyncObserve,
-  asyncObserve_,
 
   -- * ObservableVar
   ObservableVar,
@@ -76,7 +75,7 @@ toObservableUpdate (ObservableNotAvailable ex) = throwM ex
 
 
 class IsRetrievable v a | a -> v where
-  retrieve :: MonadAsync m => a -> m (Task v)
+  retrieve :: (MonadResourceManager m, MonadAwait m) => a -> m (Awaitable v)
 
 retrieveIO :: IsRetrievable v a => a -> IO v
 retrieveIO x = withOnResourceManager $ await =<< retrieve x
@@ -94,10 +93,8 @@ class IsRetrievable v o => IsObservable v o | o -> v where
     resourceManager <- askResourceManager
     bracketOnError
       do
-        -- HACK: use async to fork on MonadResourceManager
-        -- This should use MonadAsync instead, but this implementation is a temporary compatability wrapper and the
-        -- constraints are based on the new design.
-        liftIO $ onResourceManager resourceManager $ async do
+        -- This implementation is a temporary compatability wrapper and forking isn't necessary with the new design.
+        forkTask do
           attachDisposable resourceManager =<< liftIO do
             unsafeAsyncObserveIO observable \msg -> do
               currentMsgId <- atomically do
@@ -119,11 +116,7 @@ class IsRetrievable v o => IsObservable v o | o -> v where
 
   unsafeAsyncObserveIO :: o -> (ObservableMessage v -> IO ()) -> IO Disposable
   unsafeAsyncObserveIO observable callback = do
-    resourceManager <- unsafeNewResourceManager
-    onResourceManager resourceManager do
-      asyncObserve_ observable (liftIO . callback)
-
-    pure (toDisposable resourceManager)
+    forkTask_ $ withOnResourceManager $ observe observable (liftIO . callback)
 
   toObservable :: o -> Observable v
   toObservable = Observable
@@ -134,11 +127,8 @@ class IsRetrievable v o => IsObservable v o | o -> v where
   {-# MINIMAL observe | unsafeAsyncObserveIO #-}
 
 
-asyncObserve :: IsObservable v o => MonadAsync m => o -> (ObservableMessage v -> m ()) -> m Disposable
-asyncObserve observable callback = toDisposable <$> async (observe observable callback)
-
-asyncObserve_ :: IsObservable v o => MonadAsync m => o -> (ObservableMessage v -> m ()) -> m ()
-asyncObserve_ observable callback = async_ (observe observable callback)
+asyncObserve :: IsObservable v o => MonadAsync m => o -> (ObservableMessage v -> m ()) -> m ()
+asyncObserve observable callback = async_ (observe observable callback)
 
 
 data ObserveWhileCompleted = ObserveWhileCompleted
@@ -225,9 +215,9 @@ instance IsObservable v (MappedObservable v) where
 data BindObservable r = forall a. BindObservable (Observable a) (a -> Observable r)
 
 instance IsRetrievable r (BindObservable r) where
-  retrieve (BindObservable fx fn) = async $ do
-    x <- awaitResult $ retrieve fx
-    awaitResult $ retrieve $ fn x
+  retrieve (BindObservable fx fn) = do
+    x <- await =<< retrieve fx
+    retrieve $ fn x
 
 instance IsObservable r (BindObservable r) where
   unsafeAsyncObserveIO :: BindObservable r -> (ObservableMessage r -> IO ()) -> IO Disposable
@@ -294,8 +284,7 @@ instance IsObservable r (BindObservable r) where
 data CatchObservable e r = Exception e => CatchObservable (Observable r) (e -> Observable r)
 
 instance IsRetrievable r (CatchObservable e r) where
-  retrieve (CatchObservable fx fn) = async $
-    awaitResult (retrieve fx) `catch` \ex -> awaitResult (retrieve (fn ex))
+  retrieve (CatchObservable fx fn) = retrieve fx `catch` \ex -> retrieve (fn ex)
 
 instance IsObservable r (CatchObservable e r) where
   unsafeAsyncObserveIO :: CatchObservable e r -> (ObservableMessage r -> IO ()) -> IO Disposable
@@ -361,7 +350,7 @@ instance IsObservable r (CatchObservable e r) where
 
 newtype ObservableVar v = ObservableVar (MVar (v, HM.HashMap Unique (ObservableCallback v)))
 instance IsRetrievable v (ObservableVar v) where
-  retrieve (ObservableVar mvar) = liftIO $ successfulTask . fst <$> readMVar mvar
+  retrieve (ObservableVar mvar) = liftIO $ pure . fst <$> readMVar mvar
 instance IsObservable v (ObservableVar v) where
   unsafeAsyncObserveIO (ObservableVar mvar) callback = do
     key <- newUnique
@@ -448,7 +437,7 @@ mergeObservable :: (IsObservable v0 o0, IsObservable v1 o1) => (v0 -> v1 -> r) -
 mergeObservable merge x y = Observable $ MergedObservable merge x y
 
 data FnObservable v = FnObservable {
-  retrieveFn :: forall m. MonadAsync m => m (Task v),
+  retrieveFn :: forall m. (MonadResourceManager m, MonadAwait m) => m (Awaitable v),
   observeFn :: (ObservableMessage v -> IO ()) -> IO Disposable
 }
 instance IsRetrievable v (FnObservable v) where
@@ -463,7 +452,7 @@ instance IsObservable v (FnObservable v) where
 -- | Implement an Observable by directly providing functions for `retrieve` and `subscribe`.
 fnObservable
   :: ((ObservableMessage v -> IO ()) -> IO Disposable)
-  -> (forall m. MonadAsync m => m (Task v))
+  -> (forall m. (MonadResourceManager m, MonadAwait m) => m (Awaitable v))
   -> Observable v
 fnObservable observeFn retrieveFn = toObservable FnObservable{observeFn, retrieveFn}
 
@@ -474,8 +463,8 @@ synchronousFnObservable
   -> Observable v
 synchronousFnObservable observeFn synchronousRetrieveFn = fnObservable observeFn retrieveFn
   where
-    retrieveFn :: (forall m. MonadAsync m => m (Task v))
-    retrieveFn = liftIO $ successfulTask <$> synchronousRetrieveFn
+    retrieveFn :: (forall m. (MonadResourceManager m, MonadAwait m) => m (Awaitable v))
+    retrieveFn = liftIO $ pure <$> synchronousRetrieveFn
 
 
 newtype ConstObservable v = ConstObservable v
