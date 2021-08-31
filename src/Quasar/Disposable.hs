@@ -232,10 +232,11 @@ class (MonadAwait m, MonadMask m, MonadIO m) => MonadResourceManager m where
 
   localResourceManager :: ResourceManager -> m a -> m a
 
+  -- | Get the underlying resource manager. This is intended to fork the Monad (e.g. in the `async`-Function) and must
+  -- not be used to dispose the resource manager (also doing so is a deadlock).
+  --
+  -- Might be replaced with an alternative mechanism in the future.
   askResourceManager :: m ResourceManager
-
-  -- TODO askResourceManager could maybe be replaced with
-  --withRunResourceContextInIO :: (((forall f. MonadResourceManager f => f a) -> IO a) -> m b) -> m b
 
 
 instance (MonadAwait m, MonadMask m, MonadIO m) => MonadResourceManager (ReaderT ResourceManager m) where
