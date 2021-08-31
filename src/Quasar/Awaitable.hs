@@ -59,7 +59,7 @@ import Data.Sequence
 import Quasar.Prelude
 
 
-class (MonadCatch m, MonadPlus m) => MonadAwait m where
+class (MonadCatch m, MonadFail m, MonadPlus m) => MonadAwait m where
   -- | Wait until an awaitable is completed and then return it's value (or throw an exception).
   await :: IsAwaitable r a => a -> m r
 
@@ -194,7 +194,7 @@ awaitableFromSTM :: forall m a. MonadIO m => STM a -> m (Awaitable a)
 awaitableFromSTM transaction = cacheAwaitable (unsafeAwaitSTM transaction :: Awaitable a)
 
 
-instance {-# OVERLAPS #-} (MonadCatch m, MonadPlus m) => MonadAwait (ReaderT (QueryFn m) m) where
+instance {-# OVERLAPS #-} (MonadCatch m, MonadFail m, MonadPlus m) => MonadAwait (ReaderT (QueryFn m) m) where
   await = runAwaitable
   unsafeAwaitSTM transaction = do
     QueryFn querySTMFn <- ask
@@ -270,6 +270,9 @@ instance MonadCatch AwaitableStepM where
   catch result@(AwaitableCompleted _) _ = result
   catch result@(AwaitableFailed ex) handler = maybe result handler $ fromException ex
   catch (AwaitableStep query next) handler = AwaitableStep query (\x -> next x `catch` handler)
+
+instance MonadFail AwaitableStepM where
+  fail = throwM . userError
 
 instance Alternative AwaitableStepM where
   x <|> y = x `catchAll` const y
