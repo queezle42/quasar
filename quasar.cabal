@@ -101,8 +101,10 @@ test-suite quasar-test
   type: exitcode-stdio-1.0
   build-depends:
     base >=4.7 && <5,
+    exceptions,
     hspec,
     quasar,
+    stm,
     unordered-containers,
   main-is: Spec.hs
   other-modules:
