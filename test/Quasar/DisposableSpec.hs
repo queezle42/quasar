@@ -16,19 +16,17 @@ spec :: Spec
 spec = parallel $ do
   describe "Disposable" $ do
     describe "noDisposable" $ do
-      it "can be disposed" $ do
+      it "can be disposed" $ io do
         await =<< dispose noDisposable
 
-      it "can be awaited" $ do
+      it "can be awaited" $ io do
         await (isDisposed noDisposable)
-        pure () :: IO ()
 
     describe "newDisposable" $ do
-      it "signals it's disposed state" $ do
+      it "signals it's disposed state" $ io do
         disposable <- newDisposable $ pure $ pure ()
         void $ forkIO $ threadDelay 100000 >> disposeAndAwait disposable
         await (isDisposed disposable)
-        pure () :: IO ()
 
       it "can be disposed multiple times" $ io do
         disposable <- newDisposable $ pure $ pure ()
@@ -47,7 +45,7 @@ spec = parallel $ do
     it "can be created" $ io do
       void unsafeNewResourceManager
 
-    it "can be created and disposed" $ do
+    it "can be created and disposed" $ io do
       resourceManager <- unsafeNewResourceManager
       await =<< dispose resourceManager
 

@@ -46,7 +46,7 @@ instance Ord Timer where
   x `compare` y = time x `compare` time y
 
 instance IsDisposable Timer where
-  dispose self = do
+  dispose self = liftIO do
     atomically do
       cancelled <- failAsyncVarSTM (completed self) TimerCancelled
       when cancelled do

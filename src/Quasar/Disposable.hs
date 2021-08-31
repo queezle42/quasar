@@ -56,7 +56,7 @@ class IsDisposable a where
 
   -- | Dispose a resource.
   -- TODO MonadIO
-  dispose :: a -> IO (Awaitable ())
+  dispose :: MonadIO m => a -> m (Awaitable ())
   dispose = dispose . toDisposable
 
   isDisposed :: a -> Awaitable ()
@@ -100,7 +100,7 @@ instance IsAwaitable () Disposable where
 newtype FnDisposable = FnDisposable (TMVar (Either (IO (Awaitable ())) (Awaitable ())))
 
 instance IsDisposable FnDisposable where
-  dispose (FnDisposable var) = do
+  dispose (FnDisposable var) = liftIO do
     mask \restore -> do
       eitherVal <- atomically do
         takeTMVar var >>= \case
@@ -272,7 +272,7 @@ data ResourceManager = ResourceManager {
 }
 
 instance IsDisposable ResourceManager where
-  dispose resourceManager = mask \unmask ->
+  dispose resourceManager = liftIO $ mask \unmask ->
     unmask dispose' `catchAll` \ex -> setException resourceManager ex >> throwIO ex
     where
       dispose' :: IO (Awaitable ())
