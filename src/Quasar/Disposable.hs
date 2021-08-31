@@ -13,6 +13,8 @@ module Quasar.Disposable (
   disposeEventually,
   withOnResourceManager,
   onResourceManager,
+  captureDisposable,
+  captureDisposable_,
 
   -- ** ResourceManager
   IsResourceManager(..),
@@ -264,6 +266,21 @@ instance {-# OVERLAPPABLE #-} MonadResourceManager m => MonadResourceManager (Re
 
 onResourceManager :: (IsResourceManager a) => a -> ReaderT ResourceManager m r -> m r
 onResourceManager target action = runReaderT action (toResourceManager target)
+
+
+captureDisposable :: MonadResourceManager m => m (Awaitable a) -> m (Task a)
+captureDisposable action = do
+  -- TODO improve performance by only creating a new resource manager when two or more disposables are attached
+  resourceManager <- newResourceManager
+  awaitable <- localResourceManager resourceManager $ action
+  pure $ Task (toDisposable resourceManager) awaitable
+
+captureDisposable_ :: MonadResourceManager m => m () -> m Disposable
+captureDisposable_ action = do
+  -- TODO improve performance by only creating a new resource manager when two or more disposables are attached
+  resourceManager <- newResourceManager
+  localResourceManager resourceManager action
+  pure $ toDisposable resourceManager
 
 
 
