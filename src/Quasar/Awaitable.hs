@@ -18,9 +18,9 @@ module Quasar.Awaitable (
   awaitSuccessOrFailure,
 
   -- ** Awaiting multiple awaitables
-  awaitEither,
   awaitAny,
   awaitAny2,
+  awaitEither,
 
   -- * AsyncVar
   AsyncVar,
@@ -60,6 +60,7 @@ import Quasar.Prelude
 
 
 class (MonadCatch m, MonadPlus m) => MonadAwait m where
+  -- | Wait until an awaitable is completed and then return it's value (or throw an exception).
   await :: IsAwaitable r a => a -> m r
 
   -- | Await an `STM` transaction. The STM transaction must always return the same result and should not have visible
@@ -93,6 +94,11 @@ peekAwaitable awaitable = liftIO $ runMaybeT $ runQueryT queryFn (runAwaitable a
 
 
 class IsAwaitable r a | a -> r where
+  -- | Run the awaitable. You probably want to use `await` instead, `runAwaitable` is exposed to implement an instance
+  -- of `IsAwaitable`.
+  --
+  -- The implementation of `async` calls `runAwaitable` in most monads, so the implementation of `runAwaitable` must
+  -- not call `async` without deconstructing first.
   runAwaitable :: (MonadAwait m) => a -> m r
   runAwaitable self = runAwaitable (toAwaitable self)
 
@@ -336,7 +342,7 @@ putAsyncVarEitherSTM_ var = void . putAsyncVarEitherSTM var
 
 -- * Utility functions
 
--- | Create an awaitable that is completed successfully when the input awaitable is successful or failed.
+-- | Await success or failure of another awaitable, then return `()`.
 awaitSuccessOrFailure :: (IsAwaitable r a, MonadAwait m) => a -> m ()
 awaitSuccessOrFailure = await . fireAndForget . toAwaitable
   where
@@ -346,7 +352,7 @@ awaitSuccessOrFailure = await . fireAndForget . toAwaitable
 -- ** Awaiting multiple awaitables
 
 
-
+-- | Completes as soon as either awaitable completes.
 awaitEither :: (IsAwaitable ra a, IsAwaitable rb b, MonadAwait m) => a -> b -> m (Either ra rb)
 awaitEither x y = mkMonadicAwaitable $ stepBoth (runAwaitable x) (runAwaitable y)
   where
@@ -360,7 +366,13 @@ awaitEither x y = mkMonadicAwaitable $ stepBoth (runAwaitable x) (runAwaitable y
         Left resultX -> stepBoth (nextX resultX) stepY
         Right resultY -> stepBoth stepX (nextY resultY)
 
+-- | Helper for `awaitEither`
+eitherSTM :: STM a -> STM b -> STM (Either a b)
+eitherSTM x y = fmap Left x `orElse` fmap Right y
 
+
+-- Completes as soon as any awaitable in the list is completed and then returns the left-most completed result
+-- (or exception).
 awaitAny :: (IsAwaitable r a, MonadAwait m) => NonEmpty a -> m r
 awaitAny xs = mkMonadicAwaitable $ stepAll Empty Empty $ runAwaitable <$> fromList (toList xs)
   where
@@ -381,13 +393,11 @@ awaitAny xs = mkMonadicAwaitable $ stepAll Empty Empty $ runAwaitable <$> fromLi
       newAwaitableSteps <- unsafeAwaitSTM $ maybe impossibleCodePathM anySTM $ nonEmpty (toList acc)
       stepAll Empty Empty newAwaitableSteps
 
-
-awaitAny2 :: (IsAwaitable r a, MonadAwait m) => a -> a -> m r
-awaitAny2 x y = awaitAny (x :| [y])
-
-
-eitherSTM :: STM a -> STM b -> STM (Either a b)
-eitherSTM x y = fmap Left x `orElse` fmap Right y
-
+-- | Helper for `awaitAny`
 anySTM :: NonEmpty (STM a) -> STM a
 anySTM (x :| xs) = x `orElse` maybe retry anySTM (nonEmpty xs)
+
+
+-- | Like `awaitAny` with two awaitables.
+awaitAny2 :: (IsAwaitable r a, MonadAwait m) => a -> a -> m r
+awaitAny2 x y = awaitAny (x :| [y])
