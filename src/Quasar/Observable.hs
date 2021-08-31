@@ -249,8 +249,9 @@ instance IsObservable r (BindObservable r) where
               oldDisposable <- takeTMVar disposableVar
 
               -- IO action that will run after the STM transaction
-              pure $ do
-                disposeEventually resourceManager oldDisposable
+              pure do
+                onResourceManager resourceManager do
+                  disposeEventually oldDisposable
 
                 disposable <-
                   unmask (outerMessageHandler key observableMessage)
@@ -316,8 +317,9 @@ instance IsObservable r (CatchObservable e r) where
               oldDisposable <- takeTMVar disposableVar
 
               -- IO action that will run after the STM transaction
-              pure $ do
-                disposeEventually resourceManager oldDisposable
+              pure do
+                onResourceManager resourceManager do
+                  disposeEventually oldDisposable
 
                 disposable <-
                   unmask (outerMessageHandler key observableMessage)

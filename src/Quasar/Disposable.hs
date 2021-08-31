@@ -406,15 +406,17 @@ attachDisposeAction resourceManager action = liftIO $ mask_ $ do
 attachDisposeAction_ :: MonadIO m => ResourceManager -> IO (Awaitable ()) -> m ()
 attachDisposeAction_ resourceManager action = void $ attachDisposeAction resourceManager action
 
--- | Start disposing a resource but instead of waiting for the operation to complete, pass the responsibility to a `ResourceManager`.
+-- | Start disposing a resource but instead of waiting for the operation to complete, pass the responsibility to a
+-- `MonadResourceManager`.
 --
--- The synchronous part of the `dispose`-Function will be run immediately but the resulting `Awaitable` will be passed to the resource manager.
-disposeEventually :: (IsDisposable a, MonadIO m) => ResourceManager -> a -> m ()
-disposeEventually resourceManager disposable = liftIO $ do
+-- The synchronous part of the `dispose`-Function will be run immediately but the resulting `Awaitable` will be passed
+-- to the resource manager.
+disposeEventually :: (IsDisposable a, MonadResourceManager m) => a -> m ()
+disposeEventually disposable = do
   disposeCompleted <- dispose disposable
   peekAwaitable disposeCompleted >>= \case
     Just () -> pure ()
-    Nothing -> attachDisposable resourceManager disposable
+    Nothing -> registerDisposable disposable
 
 
 
