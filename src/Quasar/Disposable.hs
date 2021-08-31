@@ -21,6 +21,19 @@ module Quasar.Disposable (
   attachDisposeAction,
   attachDisposeAction_,
   disposeEventually,
+
+  -- * Task
+  Task(..),
+  cancelTask,
+  toTask,
+  completedTask,
+  successfulTask,
+  failedTask,
+
+  -- ** Task exceptions
+  CancelTask(..),
+  TaskDisposed(..),
+
 ) where
 
 import Control.Concurrent (forkIOWithUnmask)
@@ -402,3 +415,57 @@ disposeEventually resourceManager disposable = liftIO $ do
   peekAwaitable disposeCompleted >>= \case
     Just () -> pure ()
     Nothing -> attachDisposable resourceManager disposable
+
+
+
+
+
+
+-- | A task is an operation (e.g. a thread or a network request) that is running asynchronously and can be cancelled.
+-- It has a result and can fail.
+--
+-- The result (or exception) can be aquired by using the `IsAwaitable` class (e.g. by calling `await` or `awaitIO`).
+-- It is possible to cancel the task by using `dispose` or `cancelTask` if the operation has not been completed.
+data Task r = Task Disposable (Awaitable r)
+
+instance IsAwaitable r (Task r) where
+  toAwaitable (Task _ awaitable) = awaitable
+
+instance IsDisposable (Task r) where
+  toDisposable (Task disposable _) = disposable
+
+instance Functor Task where
+  fmap fn (Task disposable awaitable) = Task disposable (fn <$> awaitable)
+
+instance Applicative Task where
+  pure value = Task noDisposable (pure value)
+  liftA2 fn (Task dx fx) (Task dy fy) = Task (dx <> dy) $ liftA2 fn fx fy
+
+-- | Alias for `dispose`.
+cancelTask :: Task r -> IO (Awaitable ())
+cancelTask = dispose
+
+-- | Creates an `Task` from an `Awaitable`.
+-- The resulting task only depends on an external resource, so disposing it has no effect.
+toTask :: IsAwaitable r a => a -> Task r
+toTask result = Task noDisposable (toAwaitable result)
+
+completedTask :: Either SomeException r -> Task r
+completedTask result = Task noDisposable (completedAwaitable result)
+
+-- | Alias for `pure`
+successfulTask :: r -> Task r
+successfulTask = pure
+
+failedTask :: SomeException -> Task r
+failedTask ex = Task noDisposable (failedAwaitable ex)
+
+
+
+data CancelTask = CancelTask
+  deriving stock Show
+instance Exception CancelTask where
+
+data TaskDisposed = TaskDisposed
+  deriving stock Show
+instance Exception TaskDisposed where

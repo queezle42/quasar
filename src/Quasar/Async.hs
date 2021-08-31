@@ -5,19 +5,6 @@ module Quasar.Async (
   async_,
   asyncWithUnmask_,
 
-  -- * Task
-  Task,
-  cancelTask,
-  cancelTaskIO,
-  toTask,
-  completedTask,
-  successfulTask,
-  failedTask,
-
-  -- ** Task exceptions
-  CancelTask(..),
-  TaskDisposed(..),
-
   -- * Unmanaged forking
   forkTask,
   forkTask_,
@@ -155,52 +142,3 @@ forkTaskWithUnmask_ action = toDisposable <$> forkTaskWithUnmask action
 
 
 
--- | A task that is running asynchronously. It has a result and can fail.
--- The result (or exception) can be aquired by using the `IsAwaitable` class (e.g. by calling `await` or `awaitIO`).
--- It might be possible to cancel the task by using the `IsDisposable` class if the operation has not been completed.
--- If the result is no longer required the task should be cancelled, to avoid leaking memory.
-data Task r = Task Disposable (Awaitable r)
-
-instance IsAwaitable r (Task r) where
-  toAwaitable (Task _ awaitable) = awaitable
-
-instance IsDisposable (Task r) where
-  toDisposable (Task disposable _) = disposable
-
-instance Functor Task where
-  fmap fn (Task disposable awaitable) = Task disposable (fn <$> awaitable)
-
-instance Applicative Task where
-  pure value = Task noDisposable (pure value)
-  liftA2 fn (Task dx fx) (Task dy fy) = Task (dx <> dy) $ liftA2 fn fx fy
-
-cancelTask :: Task r -> IO (Awaitable ())
-cancelTask = dispose
-
-cancelTaskIO :: Task r -> IO ()
-cancelTaskIO = await <=< dispose
-
--- | Creates an `Task` from an `Awaitable`.
--- The resulting task only depends on an external resource, so disposing it has no effect.
-toTask :: IsAwaitable r a => a -> Task r
-toTask result = Task noDisposable (toAwaitable result)
-
-completedTask :: Either SomeException r -> Task r
-completedTask result = Task noDisposable (completedAwaitable result)
-
--- | Alias for `pure`
-successfulTask :: r -> Task r
-successfulTask = pure
-
-failedTask :: SomeException -> Task r
-failedTask ex = Task noDisposable (failedAwaitable ex)
-
-
-
-data CancelTask = CancelTask
-  deriving stock Show
-instance Exception CancelTask where
-
-data TaskDisposed = TaskDisposed
-  deriving stock Show
-instance Exception TaskDisposed where
