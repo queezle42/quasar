@@ -209,19 +209,39 @@ class HasResourceManager a where
 instance HasResourceManager ResourceManager where
   getResourceManager = id
 
-class (MonadMask m, MonadIO m) => MonadResourceManager m where
-  askResourceManager :: m ResourceManager
+class (MonadAwait m, MonadMask m, MonadIO m) => MonadResourceManager m where
+  registerDisposable :: IsDisposable a => a -> m ()
+
+  registerDisposeAction :: IO (Awaitable ()) -> m ()
+  registerDisposeAction disposeAction = mask_ $ registerDisposable =<< newDisposable disposeAction
+
   localResourceManager :: ResourceManager -> m a -> m a
 
-instance (MonadMask m, MonadIO m) => MonadResourceManager (ReaderT ResourceManager m) where
+  askResourceManager :: m ResourceManager
+
+  -- TODO askResourceManager could maybe be replaced with
+  --withRunResourceContextInIO :: (((forall f. MonadResourceManager f => f a) -> IO a) -> m b) -> m b
+
+
+instance (MonadAwait m, MonadMask m, MonadIO m) => MonadResourceManager (ReaderT ResourceManager m) where
+  registerDisposable disposable = do
+    resourceManager <- ask
+    attachDisposable resourceManager disposable
+
+  localResourceManager resourceManager = local (const resourceManager)
+
   askResourceManager = ask
-  localResourceManager = local . const
+
 
 instance {-# OVERLAPPABLE #-} MonadResourceManager m => MonadResourceManager (ReaderT r m) where
-  askResourceManager = lift askResourceManager
+  registerDisposable disposable = lift $ registerDisposable disposable
+
   localResourceManager resourceManager action = do
     x <- ask
     lift $ localResourceManager resourceManager $ runReaderT action x
+
+  askResourceManager = lift askResourceManager
+
 
 
 onResourceManager :: (HasResourceManager a) => a -> ReaderT ResourceManager m r -> m r
@@ -362,7 +382,7 @@ attachDisposable resourceManager disposable = liftIO $ mask \unmask -> do
 
 -- | Creates an `Disposable` that is bound to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
 attachDisposeAction :: MonadIO m => ResourceManager -> IO (Awaitable ()) -> m Disposable
-attachDisposeAction resourceManager action = do
+attachDisposeAction resourceManager action = liftIO $ mask_ $ do
   disposable <- newDisposable action
   attachDisposable resourceManager disposable
   pure disposable

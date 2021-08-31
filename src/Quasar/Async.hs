@@ -86,9 +86,9 @@ newtype UnlimitedAsync r = UnlimitedAsync { unUnlimitedAsync :: (ReaderT Resourc
 instance MonadAsync UnlimitedAsync where
   asyncWithUnmask action = do
     resourceManager <- askResourceManager
-    liftIO $ mask_ $ do
-      task <- forkTaskWithUnmask (\unmask -> runReaderT (unUnlimitedAsync (action (liftUnmask unmask))) resourceManager)
-      attachDisposable resourceManager task
+    mask_ $ do
+      task <- liftIO $ forkTaskWithUnmask (\unmask -> runReaderT (unUnlimitedAsync (action (liftUnmask unmask))) resourceManager)
+      registerDisposable task
       pure $ toAwaitable task
     where
       liftUnmask :: (forall b. IO b -> IO b) -> UnlimitedAsync a -> UnlimitedAsync a

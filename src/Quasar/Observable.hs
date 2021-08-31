@@ -80,7 +80,7 @@ class IsRetrievable v a | a -> v where
 retrieveIO :: IsRetrievable v a => a -> IO v
 retrieveIO x = withOnResourceManager $ await =<< retrieve x
 
-type MonadObserve m = (MonadAwait m, MonadResourceManager m)
+type MonadObserve m = MonadResourceManager m
 
 {-# DEPRECATED unsafeAsyncObserveIO "Old implementation of `observe`." #-}
 class IsRetrievable v o => IsObservable v o | o -> v where

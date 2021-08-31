@@ -190,12 +190,10 @@ instance IsAwaitable () Delay where
   toAwaitable (Delay task) = toAwaitable task `catch` \TaskDisposed -> throwM TimerCancelled
 
 newDelay :: MonadResourceManager m => Int -> m Delay
-newDelay microseconds = do
-  resourceManager <- askResourceManager
-  mask_ do
-    delay <- Delay <$> forkTask (liftIO (threadDelay microseconds))
-    attachDisposable resourceManager delay
-    pure delay
+newDelay microseconds = mask_ do
+  delay <- Delay <$> forkTask (liftIO (threadDelay microseconds))
+  registerDisposable delay
+  pure delay
 
 
 
