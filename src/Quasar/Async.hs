@@ -21,7 +21,7 @@ import Quasar.Disposable
 import Quasar.Prelude
 
 
-class (MonadAwait m, MonadResourceManager m) => MonadAsync m where
+class MonadResourceManager m => MonadAsync m where
   async :: m r -> m (Awaitable r)
   async action = asyncWithUnmask ($ action)
 

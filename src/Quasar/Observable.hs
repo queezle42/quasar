@@ -74,7 +74,7 @@ toObservableUpdate (ObservableNotAvailable ex) = throwM ex
 
 
 class IsRetrievable v a | a -> v where
-  retrieve :: (MonadResourceManager m, MonadAwait m) => a -> m (Awaitable v)
+  retrieve :: MonadResourceManager m => a -> m (Awaitable v)
 
 retrieveIO :: IsRetrievable v a => a -> IO v
 retrieveIO x = withOnResourceManager $ await =<< retrieve x
@@ -436,7 +436,7 @@ mergeObservable :: (IsObservable v0 o0, IsObservable v1 o1) => (v0 -> v1 -> r) -
 mergeObservable merge x y = Observable $ MergedObservable merge x y
 
 data FnObservable v = FnObservable {
-  retrieveFn :: forall m. (MonadResourceManager m, MonadAwait m) => m (Awaitable v),
+  retrieveFn :: forall m. MonadResourceManager m => m (Awaitable v),
   observeFn :: (ObservableMessage v -> IO ()) -> IO Disposable
 }
 instance IsRetrievable v (FnObservable v) where
@@ -451,7 +451,7 @@ instance IsObservable v (FnObservable v) where
 -- | Implement an Observable by directly providing functions for `retrieve` and `subscribe`.
 fnObservable
   :: ((ObservableMessage v -> IO ()) -> IO Disposable)
-  -> (forall m. (MonadResourceManager m, MonadAwait m) => m (Awaitable v))
+  -> (forall m. MonadResourceManager m => m (Awaitable v))
   -> Observable v
 fnObservable observeFn retrieveFn = toObservable FnObservable{observeFn, retrieveFn}
 
