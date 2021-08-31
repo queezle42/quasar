@@ -462,7 +462,7 @@ synchronousFnObservable
   -> Observable v
 synchronousFnObservable observeFn synchronousRetrieveFn = fnObservable observeFn retrieveFn
   where
-    retrieveFn :: (forall m. (MonadResourceManager m, MonadAwait m) => m (Awaitable v))
+    retrieveFn :: (forall m. MonadResourceManager m => m (Awaitable v))
     retrieveFn = liftIO $ pure <$> synchronousRetrieveFn
 
 

@@ -34,16 +34,16 @@ class (MonadAwait m, MonadResourceManager m) => MonadAsync m where
 
 
 instance MonadAsync m => MonadAsync (ReaderT r m) where
-  asyncWithUnmask :: MonadAsync m => ((forall b. ReaderT r m b -> ReaderT r m b) -> ReaderT r m a) -> ReaderT r m (Awaitable a)
+  asyncWithUnmask :: ((forall b. ReaderT r m b -> ReaderT r m b) -> ReaderT r m a) -> ReaderT r m (Awaitable a)
   asyncWithUnmask action = do
     x <- ask
     lift $ asyncWithUnmask \unmask -> runReaderT (action (liftUnmask unmask)) x
     where
       -- | Lift an "unmask" action (e.g. from `mask`) into a `ReaderT`.
       liftUnmask :: (m a -> m a) -> (ReaderT r m) a -> (ReaderT r m) a
-      liftUnmask unmask action = do
+      liftUnmask unmask innerAction = do
         value <- ask
-        lift $ unmask $ runReaderT action value
+        lift $ unmask $ runReaderT innerAction value
 
 
 async_ :: MonadAsync m => m () -> m ()
@@ -79,9 +79,9 @@ instance MonadAsync UnlimitedAsync where
       pure $ toAwaitable task
     where
       liftUnmask :: (forall b. IO b -> IO b) -> UnlimitedAsync a -> UnlimitedAsync a
-      liftUnmask unmask (UnlimitedAsync action) = UnlimitedAsync do
+      liftUnmask unmask (UnlimitedAsync innerAction) = UnlimitedAsync do
         resourceManager <- ask
-        liftIO $ unmask $ runReaderT action resourceManager
+        liftIO $ unmask $ runReaderT innerAction resourceManager
 
 
 -- | Run a computation in `MonadAsync` where `async` is implemented without any thread limits (i.e. every `async` will
