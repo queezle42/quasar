@@ -97,6 +97,8 @@ instance MonadAsync UnlimitedAsync where
         liftIO $ unmask $ runReaderT action resourceManager
 
 
+-- | Run a computation in `MonadAsync` where `async` is implemented without any thread limits (i.e. every `async` will
+-- fork a new (RTS) thread).
 runUnlimitedAsync :: (MonadResourceManager m) => (forall f. MonadAsync f => f r) -> m r
 runUnlimitedAsync action = do
   resourceManager <- askResourceManager
