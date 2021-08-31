@@ -8,19 +8,21 @@ module Quasar.Disposable (
   noDisposable,
   alreadyDisposing,
 
-  -- ** ResourceManager
-  ResourceManager,
-  IsResourceManager(..),
+  -- * MonadResourceManager
   MonadResourceManager(..),
-  withResourceManager,
+  disposeEventually,
   withOnResourceManager,
+  onResourceManager,
+
+  -- ** ResourceManager
+  IsResourceManager(..),
+  ResourceManager,
+  withResourceManager,
   newResourceManager,
   unsafeNewResourceManager,
-  onResourceManager,
   attachDisposable,
   attachDisposeAction,
   attachDisposeAction_,
-  disposeEventually,
 
   -- * Task
   Task(..),

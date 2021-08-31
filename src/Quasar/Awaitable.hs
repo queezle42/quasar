@@ -1,10 +1,12 @@
 module Quasar.Awaitable (
-  -- * Awaitable
+  -- * MonadAwaitable
   MonadAwait(..),
-  IsAwaitable(..),
-  Awaitable,
   awaitResult,
   peekAwaitable,
+
+  -- * Awaitable
+  IsAwaitable(..),
+  Awaitable,
   successfulAwaitable,
   failedAwaitable,
   completedAwaitable,
@@ -58,20 +60,6 @@ import Data.Sequence
 import Quasar.Prelude
 
 
-class IsAwaitable r a | a -> r where
-  runAwaitable :: (MonadQuerySTM m) => a -> m r
-  runAwaitable self = runAwaitable (toAwaitable self)
-
-  cacheAwaitable :: MonadIO m => a -> m (Awaitable r)
-  cacheAwaitable self = cacheAwaitable (toAwaitable self)
-
-  toAwaitable :: a -> Awaitable r
-  toAwaitable = Awaitable
-
-  {-# MINIMAL toAwaitable | (runAwaitable, cacheAwaitable) #-}
-
-
-
 class (MonadCatch m, MonadPlus m) => MonadAwait m where
   await :: IsAwaitable r a => a -> m r
 
@@ -93,6 +81,20 @@ peekAwaitable awaitable = liftIO $ runMaybeT $ runQueryT queryFn (runAwaitable a
   where
     queryFn :: STM a -> MaybeT IO a
     queryFn transaction = MaybeT $ atomically $ (Just <$> transaction) `orElse` pure Nothing
+
+
+
+class IsAwaitable r a | a -> r where
+  runAwaitable :: (MonadQuerySTM m) => a -> m r
+  runAwaitable self = runAwaitable (toAwaitable self)
+
+  cacheAwaitable :: MonadIO m => a -> m (Awaitable r)
+  cacheAwaitable self = cacheAwaitable (toAwaitable self)
+
+  toAwaitable :: a -> Awaitable r
+  toAwaitable = Awaitable
+
+  {-# MINIMAL toAwaitable | (runAwaitable, cacheAwaitable) #-}
 
 
 data Awaitable r = forall a. IsAwaitable r a => Awaitable a
