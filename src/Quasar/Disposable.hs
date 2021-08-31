@@ -10,7 +10,7 @@ module Quasar.Disposable (
 
   -- ** ResourceManager
   ResourceManager,
-  HasResourceManager(..),
+  IsResourceManager(..),
   MonadResourceManager(..),
   withResourceManager,
   withOnResourceManager,
@@ -203,11 +203,13 @@ entryIsEmpty :: ResourceManagerEntry -> STM Bool
 entryIsEmpty (ResourceManagerEntry var) = isEmptyTMVar var
 
 
-class HasResourceManager a where
-  getResourceManager :: a -> ResourceManager
+class IsResourceManager a where
+  toResourceManager :: a -> ResourceManager
+  -- TODO move to class
+  --attachDisposable :: (IsDisposable b, MonadIO m) => a -> b -> m ()
 
-instance HasResourceManager ResourceManager where
-  getResourceManager = id
+instance IsResourceManager ResourceManager where
+  toResourceManager = id
 
 class (MonadAwait m, MonadMask m, MonadIO m) => MonadResourceManager m where
   registerDisposable :: IsDisposable a => a -> m ()
@@ -244,8 +246,8 @@ instance {-# OVERLAPPABLE #-} MonadResourceManager m => MonadResourceManager (Re
 
 
 
-onResourceManager :: (HasResourceManager a) => a -> ReaderT ResourceManager m r -> m r
-onResourceManager target action = runReaderT action (getResourceManager target)
+onResourceManager :: (IsResourceManager a) => a -> ReaderT ResourceManager m r -> m r
+onResourceManager target action = runReaderT action (toResourceManager target)
 
 
 
