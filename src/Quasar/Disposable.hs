@@ -283,10 +283,10 @@ withResourceManager = bracket unsafeNewResourceManager (await <=< liftIO . dispo
 withOnResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => (ReaderT ResourceManager m a) -> m a
 withOnResourceManager action = withResourceManager \resourceManager -> onResourceManager resourceManager action
 
-newResourceManager :: MonadIO m => ResourceManager -> m ResourceManager
-newResourceManager parent = liftIO $ mask_ do
+newResourceManager :: MonadResourceManager m => m ResourceManager
+newResourceManager = mask_ do
   resourceManager <- unsafeNewResourceManager
-  attachDisposable parent resourceManager
+  registerDisposable resourceManager
   pure resourceManager
 
 unsafeNewResourceManager :: MonadIO m => m ResourceManager

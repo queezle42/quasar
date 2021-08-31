@@ -75,28 +75,27 @@ data TimerSchedulerDisposed = TimerSchedulerDisposed
 
 instance Exception TimerSchedulerDisposed
 
-newTimerScheduler :: ResourceManager -> IO TimerScheduler
-newTimerScheduler parentResourceManager = do
-  heap <- newTVarIO empty
-  activeCount <- newTVarIO 0
-  cancelledCount <- newTVarIO 0
-  resourceManager <- newResourceManager parentResourceManager
-  let scheduler = TimerScheduler {
-          heap,
-          activeCount,
-          cancelledCount,
-          resourceManager
-        }
-  startSchedulerThread scheduler
-  pure scheduler
+newTimerScheduler :: MonadResourceManager m => m TimerScheduler
+newTimerScheduler = do
+  resourceManager <- newResourceManager
+  liftIO do
+    heap <- newTVarIO empty
+    activeCount <- newTVarIO 0
+    cancelledCount <- newTVarIO 0
+    let scheduler = TimerScheduler {
+            heap,
+            activeCount,
+            cancelledCount,
+            resourceManager
+          }
+    startSchedulerThread scheduler
+    pure scheduler
 
 startSchedulerThread :: TimerScheduler -> IO ()
 startSchedulerThread scheduler = do
   mask_ do
-    threadId <- forkIOWithUnmask ($ schedulerThread)
-    attachDisposeAction_ (resourceManager scheduler) do
-      throwTo threadId TimerSchedulerDisposed
-      pure $ pure ()
+    onResourceManager (resourceManager scheduler) do
+      registerDisposable =<< forkTask schedulerThread
   where
     resourceManager' :: ResourceManager
     resourceManager' = resourceManager scheduler
