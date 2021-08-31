@@ -4,7 +4,6 @@ module Quasar.Observable (
   -- * Observable core types
   IsRetrievable(..),
   retrieveIO,
-  MonadObserve,
   IsObservable(..),
   Observable(..),
   ObservableMessage(..),
@@ -80,11 +79,9 @@ class IsRetrievable v a | a -> v where
 retrieveIO :: IsRetrievable v a => a -> IO v
 retrieveIO x = withOnResourceManager $ await =<< retrieve x
 
-type MonadObserve m = MonadResourceManager m
-
 {-# DEPRECATED unsafeAsyncObserveIO "Old implementation of `observe`." #-}
 class IsRetrievable v o => IsObservable v o | o -> v where
-  observe :: MonadObserve m => o -> (ObservableMessage v -> m ()) -> m a
+  observe :: MonadResourceManager m => o -> (ObservableMessage v -> m ()) -> m a
   observe observable callback = do
     msgVar <- liftIO $ newTVarIO ObservableLoading
     idVar <- liftIO $ newTVarIO (0 :: Word64)
@@ -137,7 +134,7 @@ data ObserveWhileCompleted = ObserveWhileCompleted
 instance Exception ObserveWhileCompleted
 
 -- | Observe until the callback returns `Just`.
-observeWhile :: (IsObservable v o, MonadObserve m) => o -> (ObservableMessage v -> m (Maybe a)) -> m a
+observeWhile :: (IsObservable v o, MonadResourceManager m) => o -> (ObservableMessage v -> m (Maybe a)) -> m a
 observeWhile observable callback = do
   resultVar <- liftIO $ newIORef impossibleCodePath
   observeWhile_ observable \msg -> do
@@ -151,7 +148,7 @@ observeWhile observable callback = do
 
 
 -- | Observe until the callback returns `False`.
-observeWhile_ :: (IsObservable v o, MonadObserve m) => o -> (ObservableMessage v -> m Bool) -> m ()
+observeWhile_ :: (IsObservable v o, MonadResourceManager m) => o -> (ObservableMessage v -> m Bool) -> m ()
 observeWhile_ observable callback =
   catch
     do
