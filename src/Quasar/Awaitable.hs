@@ -52,6 +52,9 @@ import Control.Applicative (empty)
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Reader
+import Control.Monad.Writer (WriterT)
+import Control.Monad.State (StateT)
+import Control.Monad.RWS (RWST)
 import Control.Monad.Trans.Maybe
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import Data.Foldable (toList)
@@ -78,6 +81,22 @@ instance MonadAwait m => MonadAwait (ReaderT a m) where
   await = lift . await
   unsafeAwaitSTM = lift . unsafeAwaitSTM
 
+instance (MonadAwait m, Monoid a) => MonadAwait (WriterT a m) where
+  await = lift . await
+  unsafeAwaitSTM = lift . unsafeAwaitSTM
+
+instance MonadAwait m => MonadAwait (StateT a m) where
+  await = lift . await
+  unsafeAwaitSTM = lift . unsafeAwaitSTM
+
+instance (MonadAwait m, Monoid w) => MonadAwait (RWST r w s m) where
+  await = lift . await
+  unsafeAwaitSTM = lift . unsafeAwaitSTM
+
+instance MonadAwait m => MonadAwait (MaybeT m) where
+  await = lift . await
+  unsafeAwaitSTM = lift . unsafeAwaitSTM
+
 
 awaitResult :: (IsAwaitable r a, MonadAwait m) => m a -> m r
 awaitResult = (await =<<)
@@ -94,7 +113,7 @@ peekAwaitable awaitable = liftIO $ runMaybeT $ runQueryT queryFn (runAwaitable a
 
 
 class IsAwaitable r a | a -> r where
-  -- | Run the awaitable. You probably want to use `await` instead, `runAwaitable` is exposed to implement an instance
+  -- | Run the awaitable. When interacting with an awaitable you usually want to use `await` instead. `runAwaitable` is exposed to manually implement an instance
   -- of `IsAwaitable`.
   --
   -- The implementation of `async` calls `runAwaitable` in most monads, so the implementation of `runAwaitable` must
