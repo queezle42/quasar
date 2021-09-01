@@ -26,6 +26,7 @@ import Language.Haskell.TH hiding (interruptible)
 import Language.Haskell.TH.Syntax
 import Quasar.Async
 import Quasar.Awaitable
+import Quasar.Disposable
 import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
 import Quasar.Network.Runtime.Observable
@@ -563,7 +564,7 @@ implResultType req = [t|forall m. MonadAsync m => m $(resultType)|]
   where
     resultType = case req.mResponse of
       Nothing -> [t|()|]
-      Just resp -> [t|Task $(buildTupleType (sequence ((.ty) <$> resp.fields)))|]
+      Just resp -> [t|Awaitable $(buildTupleType (sequence ((.ty) <$> resp.fields)))|]
 
 -- * Template Haskell helper functions
 

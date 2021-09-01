@@ -13,8 +13,6 @@ module Quasar.NetworkSpec where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
-import Control.Exception (toException)
-import Control.Monad.IO.Class (MonadIO, liftIO)
 import Quasar.Prelude
 import Quasar.Async
 import Quasar.Awaitable
@@ -141,8 +139,8 @@ spec = parallel $ do
         -- Change the value before calling `observe`
         setObservableVar var 42
 
-        withOnResourceManager do
-          asyncObserve_ observable $ liftIO . atomically . writeTVar resultVar
+        withOnResourceManager $ runUnlimitedAsync do
+          asyncObserve observable $ liftIO . atomically . writeTVar resultVar
 
           liftIO $ join $ atomically $ readTVar resultVar >>=
             \case
@@ -155,7 +153,7 @@ spec = parallel $ do
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
         resultVar <- newTVarIO ObservableLoading
         observable <- intObservable client
-        withOnResourceManager do
+        withOnResourceManager $ runUnlimitedAsync do
           void $ asyncObserve observable $ liftIO . atomically . writeTVar resultVar
 
           let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=
@@ -179,8 +177,8 @@ spec = parallel $ do
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
         resultVar <- newTVarIO ObservableLoading
         observable <- intObservable client
-        withOnResourceManager do
-          disposable <- asyncObserve observable $ liftIO . atomically . writeTVar resultVar
+        withOnResourceManager $ runUnlimitedAsync do
+          disposable <- captureDisposable $ asyncObserve observable $ liftIO . atomically . writeTVar resultVar
 
           let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=
                 \case

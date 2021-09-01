@@ -118,8 +118,8 @@ data Channel = Channel {
   handlerAtVar :: AtVar InternalChannelMessageHandler
 }
 
-instance HasResourceManager Channel where
-  getResourceManager channel = channel.resourceManager
+instance IsResourceManager Channel where
+  toResourceManager channel = channel.resourceManager
 
 data ChannelState = ChannelState {
   resourceManager :: ResourceManager,
@@ -554,7 +554,7 @@ newSubChannel worker channelId = do
 
 newChannel :: ResourceManager -> MultiplexerWorker -> ChannelId -> ChannelConnectivity -> StateT MultiplexerWorkerState IO Channel
 newChannel parentResourceManager worker channelId connectionState = do
-  resourceManager <- newResourceManager parentResourceManager
+  resourceManager <- onResourceManager parentResourceManager newResourceManager
   stateMVar <- liftIO $ newMVar ChannelState {
     resourceManager,
     connectionState,

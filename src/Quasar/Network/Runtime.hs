@@ -66,7 +66,7 @@ type ProtocolResponseWrapper p = (MessageId, ProtocolResponse p)
 
 class RpcProtocol p => HasProtocolImpl p where
   type ProtocolImpl p
-  handleRequest :: MonadAsync m => ProtocolImpl p -> Channel -> ProtocolRequest p -> [Channel] -> m (Maybe (Task (ProtocolResponse p)))
+  handleRequest :: MonadAsync m => ProtocolImpl p -> Channel -> ProtocolRequest p -> [Channel] -> m (Maybe (Awaitable (ProtocolResponse p)))
 
 
 data Client p = Client {
@@ -132,7 +132,8 @@ serverHandleChannelMessage protocolImpl channel resources msg = case decodeOrFai
   where
     serverHandleChannelRequest :: [Channel] -> ProtocolRequest p -> IO ()
     serverHandleChannelRequest channels req = do
-      onResourceManager channel $
+      -- TODO runUnlimitedAsync should be replaced with a per-connection limited async context
+      onResourceManager channel $ runUnlimitedAsync $
         handleRequest @p protocolImpl channel req channels >>= \case
           Nothing -> pure ()
           Just task -> do
@@ -146,7 +147,7 @@ serverHandleChannelMessage protocolImpl channel resources msg = case decodeOrFai
 
 
 newtype Stream up down = Stream Channel
-  deriving newtype (IsDisposable, HasResourceManager)
+  deriving newtype (IsDisposable, IsResourceManager)
 
 newStream :: MonadIO m => Channel -> m (Stream up down)
 newStream = liftIO . pure . Stream
