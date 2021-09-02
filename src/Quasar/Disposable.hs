@@ -10,6 +10,8 @@ module Quasar.Disposable (
 
   -- * MonadResourceManager
   MonadResourceManager(..),
+  registerDisposable,
+  registerDisposeAction,
   disposeEventually,
   withOnResourceManager,
   onResourceManager,
@@ -37,7 +39,6 @@ module Quasar.Disposable (
   -- ** Task exceptions
   CancelTask(..),
   TaskDisposed(..),
-
 ) where
 
 import Control.Concurrent (forkIOWithUnmask)
@@ -225,42 +226,42 @@ class IsResourceManager a where
   -- TODO move to class
   --attachDisposable :: (IsDisposable b, MonadIO m) => a -> b -> m ()
 
+  --subResourceManager :: MonadResourceManager m => m (DisposableResourceThingy)
+
+
 instance IsResourceManager ResourceManager where
   toResourceManager = id
 
 class (MonadAwait m, MonadMask m, MonadIO m) => MonadResourceManager m where
-  registerDisposable :: IsDisposable a => a -> m ()
+  -- | Get the underlying resource manager.
+  askResourceManager :: m ResourceManager
 
-  registerDisposeAction :: IO (Awaitable ()) -> m ()
-  registerDisposeAction disposeAction = mask_ $ registerDisposable =<< newDisposable disposeAction
-
+  -- | Replace the resource manager for a computation.
   localResourceManager :: ResourceManager -> m a -> m a
 
-  -- | Get the underlying resource manager. This is intended to fork the Monad (e.g. in the `async`-Function) and must
-  -- not be used to dispose the resource manager (also doing so is a deadlock).
-  --
-  -- Might be replaced with an alternative mechanism in the future.
-  askResourceManager :: m ResourceManager
+
+registerDisposable :: (IsDisposable a, MonadResourceManager m) => a -> m ()
+registerDisposable disposable = do
+  resourceManager <- askResourceManager
+  attachDisposable resourceManager disposable
+
+
+registerDisposeAction :: MonadResourceManager m => IO (Awaitable ()) -> m ()
+registerDisposeAction disposeAction = mask_ $ registerDisposable =<< newDisposable disposeAction
 
 
 instance (MonadAwait m, MonadMask m, MonadIO m) => MonadResourceManager (ReaderT ResourceManager m) where
-  registerDisposable disposable = do
-    resourceManager <- ask
-    attachDisposable resourceManager disposable
-
   localResourceManager resourceManager = local (const resourceManager)
 
   askResourceManager = ask
 
 
 instance {-# OVERLAPPABLE #-} MonadResourceManager m => MonadResourceManager (ReaderT r m) where
-  registerDisposable disposable = lift $ registerDisposable disposable
+  askResourceManager = lift askResourceManager
 
   localResourceManager resourceManager action = do
     x <- ask
     lift $ localResourceManager resourceManager $ runReaderT action x
-
-  askResourceManager = lift askResourceManager
 
 
 onResourceManager :: (IsResourceManager a) => a -> ReaderT ResourceManager m r -> m r
@@ -271,7 +272,7 @@ captureTask :: MonadResourceManager m => m (Awaitable a) -> m (Task a)
 captureTask action = do
   -- TODO improve performance by only creating a new resource manager when two or more disposables are attached
   resourceManager <- newResourceManager
-  awaitable <- localResourceManager resourceManager $ action
+  awaitable <- localResourceManager resourceManager action
   pure $ Task (toDisposable resourceManager) awaitable
 
 captureDisposable :: MonadResourceManager m => m () -> m Disposable
