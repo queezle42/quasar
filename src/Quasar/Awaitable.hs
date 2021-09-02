@@ -11,7 +11,6 @@ module Quasar.Awaitable (
   failedAwaitable,
   completedAwaitable,
   awaitableFromSTM,
-  unsafeAwaitSTM,
 
   -- * Awaitable helpers
 
