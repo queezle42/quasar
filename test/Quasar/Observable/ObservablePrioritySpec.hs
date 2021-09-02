@@ -33,7 +33,7 @@ spec = do
             x `shouldBe` expected
 
       (op :: ObservablePriority Int String) <- OP.create
-      _s <- unsafeAsyncObserveIO op (modifyIORef result . (:))
+      _s <- oldObserve op (modifyIORef result . (:))
       mostRecentShouldBe Nothing
       p2 <- OP.insertValue op 2 "p2"
 

@@ -28,7 +28,7 @@ spec = parallel $ do
       lastCallbackValue <- newIORef undefined
 
       om <- OM.new :: IO (OM.ObservableHashMap String String)
-      subscriptionHandle <- unsafeAsyncObserveIO om $ writeIORef lastCallbackValue
+      subscriptionHandle <- oldObserve om $ writeIORef lastCallbackValue
       let lastCallbackShouldBe expected = do
             (ObservableUpdate update) <- readIORef lastCallbackValue
             update `shouldBe` expected
@@ -85,7 +85,7 @@ spec = parallel $ do
 
       om <- OM.new :: IO (OM.ObservableHashMap String String)
 
-      void $ unsafeAsyncObserveIO (OM.observeKey "key1" om) (writeIORef value1)
+      void $ oldObserve (OM.observeKey "key1" om) (writeIORef value1)
       let v1ShouldBe expected = do
             (ObservableUpdate update) <- readIORef value1
             update `shouldBe` expected
@@ -98,7 +98,7 @@ spec = parallel $ do
       OM.insert "key2" "value2" om
       v1ShouldBe $ Just "value1"
 
-      handle2 <- unsafeAsyncObserveIO (OM.observeKey "key2" om) (writeIORef value2)
+      handle2 <- oldObserve (OM.observeKey "key2" om) (writeIORef value2)
       let v2ShouldBe expected = do
             (ObservableUpdate update) <- readIORef value2
             update `shouldBe` expected
