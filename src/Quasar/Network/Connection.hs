@@ -7,12 +7,12 @@ module Quasar.Network.Connection (
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (Async, async, cancel, link, waitCatch, withAsync)
 import Control.Concurrent.MVar
-import Control.Exception (Exception(..), SomeException, bracketOnError, catch, interruptible, finally, bracketOnError, onException)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BSL
-import qualified Network.Socket as Socket
-import qualified Network.Socket.ByteString as Socket
-import qualified Network.Socket.ByteString.Lazy as SocketL
+import Control.Exception (Exception(..), bracketOnError, catch, interruptible, finally, bracketOnError, onException)
+import Data.ByteString qualified as BS
+import Data.ByteString.Lazy qualified as BSL
+import Network.Socket qualified as Socket
+import Network.Socket.ByteString qualified as Socket
+import Network.Socket.ByteString.Lazy qualified as SocketL
 import Quasar.Prelude
 
 -- | Abstraction over a bidirectional stream connection (e.g. a socket), to be able to switch to different communication channels (e.g. stdin/stdout or a dummy implementation for unit tests).
@@ -36,7 +36,7 @@ instance IsConnection Socket.Socket where
 
 
 newtype ConnectingFailed = ConnectingFailed [(Socket.AddrInfo, SomeException)]
-  deriving (Show)
+  deriving stock (Show)
 instance Exception ConnectingFailed where
   displayException (ConnectingFailed attemts) = "Connection attempts failed:\n" <> intercalate "\n" (map (\(addr, err) -> show (Socket.addrAddress addr) <> ": " <> displayException err) attemts)
 

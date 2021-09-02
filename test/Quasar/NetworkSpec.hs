@@ -8,7 +8,7 @@
 -- Print generated rpc code during build
 {-# OPTIONS_GHC -ddump-splices #-}
 
-module Quasar.NetworkSpec where
+module Quasar.NetworkSpec (spec) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar
@@ -97,6 +97,7 @@ spec = parallel $ do
         (await =<< fixedHandler42 client 42) `shouldReturn` True
         (await =<< fixedHandlerInc client 41) `shouldReturn` 42
         (await =<< multiArgs client 10 3 False) `shouldReturn` (13, True)
+        (await =<< noArgs client) `shouldReturn` 42
         noResponse client 1337
         noNothing client
 

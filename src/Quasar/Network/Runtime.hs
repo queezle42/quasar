@@ -44,9 +44,9 @@ import Control.Concurrent.Async (cancel, link, withAsync, mapConcurrently_)
 import Control.Exception (bracket, bracketOnError, bracketOnError, interruptible, mask_)
 import Control.Concurrent.MVar
 import Data.Binary (Binary, encode, decodeOrFail)
-import qualified Data.ByteString.Lazy as BSL
-import qualified Data.HashMap.Strict as HM
-import qualified Network.Socket as Socket
+import Data.ByteString.Lazy qualified as BSL
+import Data.HashMap.Strict qualified as HM
+import Network.Socket qualified as Socket
 import Quasar.Async
 import Quasar.Awaitable
 import Quasar.Disposable
@@ -124,7 +124,7 @@ clientReportProtocolError :: Client p -> String -> IO a
 clientReportProtocolError client = channelReportProtocolError client.channel
 
 
-serverHandleChannelMessage :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Channel -> ReceivedMessageResources -> BSL.ByteString -> IO ()
+serverHandleChannelMessage :: forall p. (HasProtocolImpl p) => ProtocolImpl p -> Channel -> ReceivedMessageResources -> BSL.ByteString -> IO ()
 serverHandleChannelMessage protocolImpl channel resources msg = case decodeOrFail msg of
     Left (_, _, errMsg) -> channelReportProtocolError channel errMsg
     Right ("", _, req) -> serverHandleChannelRequest resources.createdChannels req
@@ -186,7 +186,7 @@ withClient connection = withClientBracket (newClient connection)
 newClient :: forall p a. (IsConnection a, RpcProtocol p) => a -> IO (Client p)
 newClient connection = newChannelClient =<< newMultiplexer MultiplexerSideA (toSocketConnection connection)
 
-withClientBracket :: forall p a. (RpcProtocol p) => IO (Client p) -> (Client p -> IO a) -> IO a
+withClientBracket :: IO (Client p) -> (Client p -> IO a) -> IO a
 withClientBracket createClient = bracket createClient clientClose
 
 
@@ -209,10 +209,10 @@ data Server p = Server {
   protocolImpl :: ProtocolImpl p
 }
 
-newServer :: forall p. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> IO (Server p)
+newServer :: ProtocolImpl p -> IO (Server p)
 newServer protocolImpl = pure Server { protocolImpl }
 
-execServer :: forall p a. (RpcProtocol p, HasProtocolImpl p) => Server p -> [Listener] -> IO a
+execServer :: forall p a. (HasProtocolImpl p) => Server p -> [Listener] -> IO a
 execServer server listeners = mapConcurrently_ runListener listeners >> fail "Server failed: All listeners stopped unexpectedly"
   where
     runListener :: Listener -> IO ()
@@ -220,22 +220,22 @@ execServer server listeners = mapConcurrently_ runListener listeners >> fail "Se
     runListener (UnixSocket path) = runUnixSocketListener server path
     runListener (ListenSocket socket) = runListenerOnBoundSocket server socket
 
-runServer :: forall p a. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> [Listener] -> IO a
+runServer :: forall p a. (HasProtocolImpl p) => ProtocolImpl p -> [Listener] -> IO a
 runServer _ [] = fail "Tried to start a server without any listeners attached"
 runServer protocolImpl listener = do
   server <- newServer @p protocolImpl
   execServer server listener
 
-withServer :: forall p a. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> [Listener] -> (Server p -> IO a) -> IO a
+withServer :: forall p a. HasProtocolImpl p => ProtocolImpl p -> [Listener] -> (Server p -> IO a) -> IO a
 withServer protocolImpl [] action = action =<< newServer @p protocolImpl
 withServer protocolImpl listeners action = do
   server <- newServer @p protocolImpl
   withAsync (execServer server listeners) (\x -> link x >> action server <* cancel x)
 
-listenTCP :: forall p a. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Maybe Socket.HostName -> Socket.ServiceName -> IO a
+listenTCP :: forall p a. HasProtocolImpl p => ProtocolImpl p -> Maybe Socket.HostName -> Socket.ServiceName -> IO a
 listenTCP impl mhost port = runServer @p impl [TcpPort mhost port]
 
-runTCPListener :: forall p a. (RpcProtocol p, HasProtocolImpl p) => Server p -> Maybe Socket.HostName -> Socket.ServiceName -> IO a
+runTCPListener :: forall p a. HasProtocolImpl p => Server p -> Maybe Socket.HostName -> Socket.ServiceName -> IO a
 runTCPListener server mhost port = do
   addr <- resolve
   bracket (open addr) Socket.close (runListenerOnBoundSocket server)
@@ -251,10 +251,10 @@ runTCPListener server mhost port = do
       Socket.bind sock (Socket.addrAddress addr)
       pure sock
 
-listenUnix :: forall p a. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> FilePath -> IO a
+listenUnix :: forall p a. HasProtocolImpl p => ProtocolImpl p -> FilePath -> IO a
 listenUnix impl path = runServer @p impl [UnixSocket path]
 
-runUnixSocketListener :: forall p a. (RpcProtocol p, HasProtocolImpl p) => Server p -> FilePath -> IO a
+runUnixSocketListener :: forall p a. HasProtocolImpl p => Server p -> FilePath -> IO a
 runUnixSocketListener server socketPath = do
   bracket create Socket.close (runListenerOnBoundSocket server)
   where
@@ -273,17 +273,17 @@ runUnixSocketListener server socketPath = do
         pure sock
 
 -- | Listen and accept connections on an already bound socket.
-listenOnBoundSocket :: forall p a. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> Socket.Socket -> IO a
+listenOnBoundSocket :: forall p a. HasProtocolImpl p => ProtocolImpl p -> Socket.Socket -> IO a
 listenOnBoundSocket protocolImpl socket = runServer @p protocolImpl [ListenSocket socket]
 
-runListenerOnBoundSocket :: forall p a. (RpcProtocol p, HasProtocolImpl p) => Server p -> Socket.Socket -> IO a
+runListenerOnBoundSocket :: forall p a. HasProtocolImpl p => Server p -> Socket.Socket -> IO a
 runListenerOnBoundSocket server sock = do
   Socket.listen sock 1024
   forever $ mask_ $ do
     (conn, _sockAddr) <- Socket.accept sock
     connectToServer server conn
 
-connectToServer :: forall p a. (RpcProtocol p, HasProtocolImpl p, IsConnection a) => Server p -> a -> IO ()
+connectToServer :: forall p a. (HasProtocolImpl p, IsConnection a) => Server p -> a -> IO ()
 connectToServer server conn = void $ forkFinally (interruptible (runServerHandler @p server.protocolImpl connection)) socketFinalization
   where
     connection :: Connection
@@ -296,17 +296,17 @@ connectToServer server conn = void $ forkFinally (interruptible (runServerHandle
     socketFinalization (Right ()) = do
       connection.close
 
-runServerHandler :: forall p a. (RpcProtocol p, HasProtocolImpl p, IsConnection a) => ProtocolImpl p -> a -> IO ()
+runServerHandler :: forall p a. (HasProtocolImpl p, IsConnection a) => ProtocolImpl p -> a -> IO ()
 runServerHandler protocolImpl = runMultiplexer MultiplexerSideB registerChannelServerHandler . toSocketConnection
   where
     registerChannelServerHandler :: Channel -> IO ()
     registerChannelServerHandler channel = channelSetHandler channel (serverHandleChannelMessage @p protocolImpl channel)
 
 
-withLocalClient :: forall p m a. (RpcProtocol p, HasProtocolImpl p) => Server p -> (Client p -> IO a) -> IO a
+withLocalClient :: forall p a. HasProtocolImpl p => Server p -> (Client p -> IO a) -> IO a
 withLocalClient server = bracket (newLocalClient server) clientClose
 
-newLocalClient :: forall p. (RpcProtocol p, HasProtocolImpl p) => Server p -> IO (Client p)
+newLocalClient :: forall p. HasProtocolImpl p => Server p -> IO (Client p)
 newLocalClient server = do
   unless Socket.isUnixDomainSocketAvailable $ fail "Unix domain sockets are not available"
   mask_ $ do
@@ -316,5 +316,5 @@ newLocalClient server = do
 
 -- ** Test implementation
 
-withStandaloneClient :: forall p a. (RpcProtocol p, HasProtocolImpl p) => ProtocolImpl p -> (Client p -> IO a) -> IO a
+withStandaloneClient :: forall p a. HasProtocolImpl p => ProtocolImpl p -> (Client p -> IO a) -> IO a
 withStandaloneClient impl runClientHook = withServer impl [] $ \server -> withLocalClient server runClientHook

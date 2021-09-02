@@ -28,14 +28,14 @@ import Control.Concurrent.Async (AsyncCancelled(..), async, link, race_, wait, w
 import Control.Exception (MaskingState(Unmasked), interruptible, getMaskingState)
 import Control.Monad.Catch
 import Control.Monad.State (StateT, execStateT, runStateT, lift)
-import qualified Control.Monad.State as State
+import Control.Monad.State qualified as State
 import Control.Concurrent.MVar
 import Data.Binary (Binary, encode)
-import qualified Data.Binary as Binary
+import Data.Binary qualified as Binary
 import Data.Binary.Get (Get, Decoder(..), runGetIncremental, pushChunk, pushEndOfInput)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BSL
-import qualified Data.HashMap.Strict as HM
+import Data.ByteString qualified as BS
+import Data.ByteString.Lazy qualified as BSL
+import Data.HashMap.Strict qualified as HM
 import Data.Tuple (swap)
 import Data.Word
 import Quasar.Awaitable
@@ -56,11 +56,13 @@ data MultiplexerMessage
   | CloseChannel
   | ProtocolError String
   | ChannelProtocolError ChannelId String
-  deriving (Binary, Generic, Show)
+  deriving stock (Generic, Show)
+  deriving anyclass (Binary)
 
 -- | Low level network protocol message header type
 data MultiplexerMessageHeader = CreateChannel
-  deriving (Binary, Generic, Show)
+  deriving stock (Generic, Show)
+  deriving anyclass (Binary)
 
 data MessageConfiguration = MessageConfiguration {
   createChannels :: Int
@@ -104,7 +106,7 @@ data MultiplexerException =
   | RemoteException String
   | ProtocolException String
   | ChannelProtocolException ChannelId String
-  deriving Show
+  deriving stock Show
 instance Exception MultiplexerException
 
 
@@ -134,10 +136,10 @@ data ChannelReceiveState = ChannelReceiveState {
 }
 
 data ChannelConnectivity = Connected | Closed | CloseConfirmed
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 data ChannelNotConnected = ChannelNotConnected
-  deriving Show
+  deriving stock Show
 instance Exception ChannelNotConnected
 
 type InternalChannelMessageHandler = ReceivedMessageResources -> Decoder (IO ())
@@ -162,7 +164,7 @@ instance ChannelMessageHandler (ReceivedMessageResources -> BSL.ByteString -> IO
           done = Done "" (BSL.length acc) (handler result acc)
 
 data MultiplexerSide = MultiplexerSideA | MultiplexerSideB
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 -- | Starts a new multiplexer on an existing connection.
 -- This starts a thread which runs until 'channelClose' is called on the resulting 'Channel' (use e.g. 'bracket' to ensure the channel is closed).
@@ -576,7 +578,7 @@ newChannel parentResourceManager worker channelId connectionState = do
     receiveStateMVar,
     handlerAtVar
   }
-  attachDisposeAction resourceManager (channelCloseInternal channel)
+  attachDisposeAction_ resourceManager (channelCloseInternal channel)
   State.modify $ \multiplexerState -> multiplexerState{channels = HM.insert channelId channel multiplexerState.channels}
   pure channel
 

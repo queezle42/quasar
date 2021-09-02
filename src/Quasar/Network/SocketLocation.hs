@@ -1,4 +1,8 @@
-module Quasar.Network.SocketLocation where
+module Quasar.Network.SocketLocation (
+  systemSocketPath,
+  userSocketPath,
+  sessionSocketPath,
+) where
 
 import Control.Exception (handle)
 import Quasar.Prelude

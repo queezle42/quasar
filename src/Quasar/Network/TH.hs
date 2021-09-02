@@ -18,7 +18,7 @@ module Quasar.Network.TH (
 ) where
 
 import Control.Monad.State (State, execState)
-import qualified Control.Monad.State as State
+import Control.Monad.State qualified as State
 import Data.Binary (Binary)
 import Data.Maybe (isJust, isNothing)
 import GHC.Records.Compat (HasField)
@@ -26,7 +26,6 @@ import Language.Haskell.TH hiding (interruptible)
 import Language.Haskell.TH.Syntax
 import Quasar.Async
 import Quasar.Awaitable
-import Quasar.Disposable
 import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
 import Quasar.Network.Runtime.Observable
@@ -186,10 +185,10 @@ clientRequestStub api req = do
         clientStubPrimeDecs :: [Q Dec]
         clientStubPrimeDecs = [
           sigD clientStubPrimeName (makeStubSig (liftA2 (<>) optionalResultType (sequence [[t|[Channel]|]]))),
-          funD clientStubPrimeName (clientStubPrimeClauses req)
+          funD clientStubPrimeName clientStubPrimeClauses
           ]
-        clientStubPrimeClauses :: Request -> [Q Clause]
-        clientStubPrimeClauses req = [mainClause, invalidChannelCountClause]
+        clientStubPrimeClauses :: [Q Clause]
+        clientStubPrimeClauses = [mainClause, invalidChannelCountClause]
           where
             mainClause :: Q Clause
             mainClause = do
@@ -243,7 +242,7 @@ clientRequestStub api req = do
         typedRequest = appTypeE (varE 'clientRequest) (protocolType api)
 
 makeServer :: RpcApi -> Code -> Q [Dec]
-makeServer api@RpcApi{functions} code = sequence [protocolImplDec, logicInstanceDec]
+makeServer api code = sequence [protocolImplDec, logicInstanceDec]
   where
     protocolImplDec :: Q Dec
     protocolImplDec = do
@@ -403,7 +402,7 @@ generateObservable api observable = pure Code {
         clientName <- newName "client"
         let clientE = varE clientName
         funD (mkName observable.name) [
-          clause [varP clientName] (normalB [|newObservableStub ($(clientRequestStubE api retrieveRequest) $clientE) ($(clientRequestStubE api observeRequest) $clientE)|]) []
+          clause [varP clientName] (normalB [|newObservableStub ($retrieveE $clientE) ($observeE $clientE)|]) []
           ]
       ]
     observeE :: Q Exp
@@ -456,7 +455,6 @@ generateFunction api fun = do
 
     clientFunctionStub :: Q [Q Dec]
     clientFunctionStub = do
-      funArgTypes <- functionArgumentTypes fun
       pure [
         sigD funName (clientRequestStubSig api request),
         funD funName [clause [] (normalB (clientRequestStubE api request)) []]
@@ -468,9 +466,6 @@ generateFunction api fun = do
 
 functionArgumentTypes :: RpcFunction -> Q [Type]
 functionArgumentTypes fun = sequence $ (.ty) <$> fun.arguments
-
-functionResultTypes :: RpcFunction -> Q [Type]
-functionResultTypes fun = sequence $ (.ty) <$> fun.results
 
 hasResult :: RpcFunction -> Bool
 hasResult fun = not (null fun.results)
@@ -498,9 +493,6 @@ responseTypeIdentifier RpcApi{name} = name <> "ProtocolResponse"
 
 responseTypeName :: RpcApi -> Name
 responseTypeName = mkName . responseTypeIdentifier
-
-responseFunctionCtorName :: RpcApi -> RpcFunction -> Name
-responseFunctionCtorName api fun = mkName (responseTypeIdentifier api <> "_" <> fun.name)
 
 responseConName :: RpcApi -> Response -> Name
 responseConName api resp = mkName (responseTypeIdentifier api <> "_" <> resp.name)
@@ -557,7 +549,7 @@ resourceNamePrefix (RequestCreateStream _ _) = "stream"
 
 createResource :: RequestCreateResource -> Q Exp -> Q Exp
 createResource RequestCreateChannel channelE = [|pure $channelE|]
-createResource (RequestCreateStream up down) channelE = [|newStream $channelE|]
+createResource (RequestCreateStream _up _down) channelE = [|newStream $channelE|]
 
 implResultType :: Request -> Q Type
 implResultType req = [t|forall m. MonadAsync m => m $(resultType)|]
@@ -582,17 +574,6 @@ buildTupleType fields = buildTupleType' =<< fields
     go :: Type -> [Type] -> Type
     go t [] = t
     go t (f:fs) = go (AppT t f) fs
-
--- | [a, b, c] -> (a, b, c)
--- [a] -> a
--- [] -> ()
-buildTuple :: Q [Exp] -> Q Exp
-buildTuple fields = buildTuple' =<< fields
-  where
-    buildTuple' :: [Exp] -> Q Exp
-    buildTuple' [] = [|()|]
-    buildTuple' [single] = pure single
-    buildTuple' fs = pure $ TupE (Just <$> fs)
 
 -- | [m a, m b, m c] -> m (a, b, c)
 -- [m a] -> m a
