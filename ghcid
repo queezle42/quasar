@@ -10,7 +10,7 @@ nix develop -c cabal clean
         --warnings \
         "--command=cabal repl lib:quasar" \
         "--test=:! \
-          cabal test --test-show-details=direct --ghc-option -fdiagnostics-color=always && \
-          cabal build --ghc-option -fdiagnostics-color=always && \
+          cabal test --disable-optimisation --enable-debug-info=2 --test-show-details=direct --ghc-option -fdiagnostics-color=always && \
+          cabal build --disable-optimisation --enable-debug-info=2 --ghc-option -fdiagnostics-color=always && \
           zsh -c 'print -P %F{green}Build and tests passed%f' \
         "
