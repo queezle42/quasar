@@ -14,10 +14,10 @@ spec :: Spec
 spec = parallel $ do
   describe "async" $ do
     it "can pass a value through async and await" $ do
-      withOnResourceManager (runUnlimitedAsync (await =<< async (pure 42))) `shouldReturn` (42 :: Int)
+      withResourceManagerM (runUnlimitedAsync (await =<< async (pure 42))) `shouldReturn` (42 :: Int)
 
     it "can pass a value through async and await" $ do
-      withOnResourceManager (runUnlimitedAsync (await =<< async (liftIO (threadDelay 100000) >> pure 42))) `shouldReturn` (42 :: Int)
+      withResourceManagerM (runUnlimitedAsync (await =<< async (liftIO (threadDelay 100000) >> pure 42))) `shouldReturn` (42 :: Int)
 
   describe "await" $ do
     it "can await the result of an async that is completed later" $ do
@@ -33,6 +33,6 @@ spec = parallel $ do
     it "can terminate when encountering an asynchronous exception" $ do
       never <- newAsyncVar :: IO (AsyncVar ())
 
-      result <- timeout 100000 $ withOnResourceManager $
+      result <- timeout 100000 $ withResourceManagerM $
         await never
       result `shouldBe` Nothing

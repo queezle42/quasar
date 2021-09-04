@@ -78,7 +78,7 @@ class IsRetrievable v a | a -> v where
   retrieve :: MonadResourceManager m => a -> m (Awaitable v)
 
 retrieveIO :: IsRetrievable v a => a -> IO v
-retrieveIO x = withOnResourceManager $ await =<< retrieve x
+retrieveIO x = withResourceManagerM $ await =<< retrieve x
 
 class IsRetrievable v o => IsObservable v o | o -> v where
   observe

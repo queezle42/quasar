@@ -13,7 +13,8 @@ module Quasar.Disposable (
   registerDisposable,
   registerDisposeAction,
   disposeEventually,
-  withOnResourceManager,
+  withResourceManagerM,
+  withSubResourceManagerM,
   onResourceManager,
   captureDisposable,
   captureTask,
@@ -255,6 +256,11 @@ registerDisposeAction :: MonadResourceManager m => IO (Awaitable ()) -> m ()
 registerDisposeAction disposeAction = mask_ $ registerDisposable =<< newDisposable disposeAction
 
 
+withSubResourceManagerM :: MonadResourceManager m => m a -> m a
+withSubResourceManagerM action =
+  bracket newResourceManager (await <=< dispose) \scope -> localResourceManager scope action
+
+
 instance (MonadAwait m, MonadMask m, MonadIO m) => MonadResourceManager (ReaderT ResourceManager m) where
   localResourceManager resourceManager = local (const resourceManager)
 
@@ -320,8 +326,8 @@ instance IsDisposable ResourceManager where
 withResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => (ResourceManager -> m a) -> m a
 withResourceManager = bracket unsafeNewResourceManager (await <=< liftIO . dispose)
 
-withOnResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => (ReaderT ResourceManager m a) -> m a
-withOnResourceManager action = withResourceManager \resourceManager -> onResourceManager resourceManager action
+withResourceManagerM :: (MonadAwait m, MonadMask m, MonadIO m) => (ReaderT ResourceManager m a) -> m a
+withResourceManagerM action = withResourceManager \resourceManager -> onResourceManager resourceManager action
 
 newResourceManager :: MonadResourceManager m => m ResourceManager
 newResourceManager = mask_ do
