@@ -52,6 +52,7 @@ import Data.Sequence
 import Data.Sequence qualified as Seq
 import Quasar.Awaitable
 import Quasar.Prelude
+import System.IO (hPutStrLn, stderr)
 
 
 -- * Disposable
@@ -228,9 +229,13 @@ class IsResourceManager a where
 
   --subResourceManager :: MonadResourceManager m => m (DisposableResourceThingy)
 
+  throwToResourceManager :: Exception e => a -> e -> IO ()
+
 
 instance IsResourceManager ResourceManager where
   toResourceManager = id
+  -- TODO delegate to parent
+  throwToResourceManager _ ex = hPutStrLn stderr $ displayException ex
 
 class (MonadAwait m, MonadMask m, MonadIO m) => MonadResourceManager m where
   -- | Get the underlying resource manager.
