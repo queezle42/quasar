@@ -4,6 +4,7 @@ import Data.IORef
 import Quasar.Prelude
 import Quasar.Disposable
 import Quasar.Observable
+import Quasar.ResourceManager
 import Test.Hspec
 
 

@@ -6,6 +6,7 @@ import Quasar.Prelude
 import Test.Hspec
 import Quasar.Awaitable
 import Quasar.Disposable
+import Quasar.ResourceManager
 
 data TestException = TestException
   deriving stock (Eq, Show)

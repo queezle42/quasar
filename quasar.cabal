@@ -92,6 +92,7 @@ library
     Quasar.Observable.ObservablePriority
     Quasar.Prelude
     Quasar.PreludeExtras
+    Quasar.ResourceManager
     Quasar.Timer
     Quasar.Utils.ExtraT
   hs-source-dirs:

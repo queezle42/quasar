@@ -24,6 +24,7 @@ import Quasar.Async
 import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Prelude
+import Quasar.ResourceManager
 
 
 data TimerCancelled = TimerCancelled

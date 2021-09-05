@@ -26,6 +26,7 @@ import Control.Monad.Reader
 import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Prelude
+import Quasar.ResourceManager
 
 
 

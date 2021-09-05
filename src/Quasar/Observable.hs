@@ -42,10 +42,10 @@ import Control.Monad.Trans.Maybe
 import Data.HashMap.Strict qualified as HM
 import Data.IORef
 import Data.Unique
-import Quasar.Async
 import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Prelude
+import Quasar.ResourceManager
 
 data ObservableMessage a
   = ObservableUpdate a
