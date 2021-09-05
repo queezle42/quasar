@@ -8,7 +8,6 @@ module Quasar.Observable (
   Observable(..),
   ObservableMessage(..),
   toObservableUpdate,
-  asyncObserve,
 
   -- * ObservableVar
   ObservableVar,
@@ -128,9 +127,6 @@ observeBlocking observable callback = do
       callback msg
       putAsyncVar_ cbCompletedVar ()
 
-
-asyncObserve :: IsObservable v o => MonadAsync m => o -> (ObservableMessage v -> m ()) -> m ()
-asyncObserve observable callback = async_ (observeBlocking observable callback)
 
 
 data ObserveWhileCompleted = ObserveWhileCompleted
