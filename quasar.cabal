@@ -83,6 +83,7 @@ library
     transformers,
     unordered-containers,
   exposed-modules:
+    Quasar
     Quasar.Async
     Quasar.Awaitable
     Quasar.Disposable
