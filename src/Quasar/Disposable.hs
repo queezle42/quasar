@@ -245,7 +245,7 @@ class (MonadAwait m, MonadMask m, MonadIO m) => MonadResourceManager m where
   askResourceManager :: m ResourceManager
 
   -- | Replace the resource manager for a computation.
-  localResourceManager :: ResourceManager -> m a -> m a
+  localResourceManager :: IsResourceManager a => a -> m r -> m r
 
 
 registerDisposable :: (IsDisposable a, MonadResourceManager m) => a -> m ()
@@ -264,7 +264,7 @@ withSubResourceManagerM action =
 
 
 instance (MonadAwait m, MonadMask m, MonadIO m) => MonadResourceManager (ReaderT ResourceManager m) where
-  localResourceManager resourceManager = local (const resourceManager)
+  localResourceManager resourceManager = local (const (toResourceManager resourceManager))
 
   askResourceManager = ask
 
@@ -275,6 +275,9 @@ instance {-# OVERLAPPABLE #-} MonadResourceManager m => MonadResourceManager (Re
   localResourceManager resourceManager action = do
     x <- ask
     lift $ localResourceManager resourceManager $ runReaderT action x
+
+
+-- TODO MonadResourceManager instances for StateT, WriterT, RWST, MaybeT, ...
 
 
 onResourceManager :: (IsResourceManager a) => a -> ReaderT ResourceManager m r -> m r
