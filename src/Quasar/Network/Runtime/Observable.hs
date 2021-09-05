@@ -5,10 +5,12 @@ module Quasar.Network.Runtime.Observable (
 ) where
 
 import Data.Binary (Binary)
+import Control.Monad.Catch
 import Quasar.Async
 import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Network.Exception
+import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
 import Quasar.Observable
 import Quasar.Prelude
@@ -50,6 +52,11 @@ newObservableStub startRetrieveRequest startObserveRequest = pure uncachedObserv
 
 observeToStream :: (Binary v, MonadAsync m) => Observable v -> Stream (PackedObservableMessage v) Void -> m ()
 observeToStream observable stream = do
-  localResourceManager (toResourceManager stream) do
-    asyncObserve observable \msg ->
-      streamSend stream $ packObservableMessage msg
+  localResourceManager stream do
+    observe observable \msg -> do
+      catch
+        do streamSend stream $ packObservableMessage msg
+        \ChannelNotConnected -> pure ()
+
+      -- TODO streamSend is blocking, but the IO portion of the callback should return immediately
+      pure $ pure ()

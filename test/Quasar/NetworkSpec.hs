@@ -140,8 +140,8 @@ spec = parallel $ do
         -- Change the value before calling `observe`
         setObservableVar var 42
 
-        withOnResourceManager $ runUnlimitedAsync do
-          asyncObserve observable $ liftIO . atomically . writeTVar resultVar
+        withResourceManagerM $ runUnlimitedAsync do
+          observe observable $ \msg -> pure () <$ (liftIO $ atomically $ writeTVar resultVar msg)
 
           liftIO $ join $ atomically $ readTVar resultVar >>=
             \case
@@ -154,8 +154,8 @@ spec = parallel $ do
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
         resultVar <- newTVarIO ObservableLoading
         observable <- intObservable client
-        withOnResourceManager $ runUnlimitedAsync do
-          void $ asyncObserve observable $ liftIO . atomically . writeTVar resultVar
+        withResourceManagerM $ runUnlimitedAsync do
+          observe observable $ \msg -> pure () <$ (liftIO $ atomically $ writeTVar resultVar msg)
 
           let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=
                 \case
@@ -178,8 +178,8 @@ spec = parallel $ do
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
         resultVar <- newTVarIO ObservableLoading
         observable <- intObservable client
-        withOnResourceManager $ runUnlimitedAsync do
-          disposable <- captureDisposable $ asyncObserve observable $ liftIO . atomically . writeTVar resultVar
+        withResourceManagerM $ runUnlimitedAsync do
+          disposable <- captureDisposable $ observe observable $ \msg -> pure () <$ (liftIO $ atomically $ writeTVar resultVar msg)
 
           let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=
                 \case
