@@ -225,12 +225,14 @@ entryIsEmpty (ResourceManagerEntry var) = isEmptyTMVar var
 
 class IsResourceManager a where
   toResourceManager :: a -> ResourceManager
+
   -- TODO move to class
   --attachDisposable :: (IsDisposable b, MonadIO m) => a -> b -> m ()
 
   --subResourceManager :: MonadResourceManager m => m (DisposableResourceThingy)
 
   throwToResourceManager :: Exception e => a -> e -> IO ()
+  throwToResourceManager = throwToResourceManager . toResourceManager
 
 
 instance IsResourceManager ResourceManager where
