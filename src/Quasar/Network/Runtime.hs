@@ -53,6 +53,7 @@ import Quasar.Disposable
 import Quasar.Network.Connection
 import Quasar.Network.Multiplexer
 import Quasar.Prelude
+import Quasar.ResourceManager
 import System.Posix.Files (getFileStatus, isSocket, fileExist, removeLink)
 
 

@@ -11,6 +11,7 @@ import Quasar.Disposable
 import Quasar.Network.Multiplexer
 import Quasar.Network.Connection
 import Quasar.Prelude
+import Quasar.ResourceManager
 import Network.Socket
 import Test.Hspec
 

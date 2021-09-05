@@ -21,6 +21,7 @@ import Quasar.Network
 import Quasar.Network.Runtime (withStandaloneClient)
 import Quasar.Network.TH (makeRpc)
 import Quasar.Observable
+import Quasar.ResourceManager
 import Test.Hspec
 import Test.QuickCheck
 import Test.QuickCheck.Monadic

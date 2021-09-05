@@ -42,6 +42,7 @@ import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Network.Connection
 import Quasar.Prelude
+import Quasar.ResourceManager
 import System.IO (hPutStrLn, stderr)
 
 -- NOTE this module got more complicated than expected and should be refactored to encode the core protocol interactions in pure code, with an IO wrapper that handles usage, callbacks and sending/receiving.

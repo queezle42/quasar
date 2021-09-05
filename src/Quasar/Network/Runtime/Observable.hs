@@ -14,6 +14,7 @@ import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
 import Quasar.Observable
 import Quasar.Prelude
+import Quasar.ResourceManager
 
 data PackedObservableMessage v
   = PackedObservableUpdate v
