@@ -1,17 +1,16 @@
 module Quasar.Async (
   -- * Async/await
   MonadAsync(..),
-  runUnlimitedAsync,
   async,
   async_,
   asyncWithUnmask,
   asyncWithUnmask_,
+  runUnlimitedAsync,
 
   -- ** Async context
   IsAsyncContext(..),
   AsyncContext,
   unlimitedAsyncContext,
-  runUnlimitedAsync,
 
   -- * Unmanaged forking
   forkTask,
@@ -31,7 +30,7 @@ import Quasar.Prelude
 
 
 class IsAsyncContext a where
-  asyncOnContextWithUnmask :: MonadResourceManager m => a -> (forall f. MonadAsync f => (forall a. f a -> f a) -> f r) -> m (Awaitable r)
+  asyncOnContextWithUnmask :: MonadResourceManager m => a -> (forall f. MonadAsync f => (forall b. f b -> f b) -> f r) -> m (Awaitable r)
   asyncOnContextWithUnmask self = asyncOnContextWithUnmask (toAsyncContext self)
 
   toAsyncContext :: a -> AsyncContext
@@ -106,7 +105,7 @@ asyncWithUnmask_ action = void $ asyncWithUnmask action
 
 -- | Run a computation in `MonadAsync` where `async` is implemented without any thread limits (i.e. every `async` will
 -- fork a new (RTS) thread).
-runUnlimitedAsync :: (MonadResourceManager m) => ReaderT AsyncContext m a -> m a
+runUnlimitedAsync :: ReaderT AsyncContext m a -> m a
 runUnlimitedAsync action = do
   runReaderT action unlimitedAsyncContext
 
