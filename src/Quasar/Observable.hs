@@ -80,6 +80,14 @@ retrieveIO :: IsRetrievable v a => a -> IO v
 retrieveIO x = withResourceManagerM $ await =<< retrieve x
 
 class IsRetrievable v o => IsObservable v o | o -> v where
+  -- | Register a callback to observe changes. The callback is called when the value changes, but depending on the
+  -- delivery method (e.g. network) intermediate values may be skipped.
+  --
+  -- A correct implementation of observe will call the callback during registration (if no value is available
+  -- immediately an `ObservableLoading` will be delivered).
+  --
+  -- The callback must return without blocking, otherwise other callbacks will be delayed. If the value can't be
+  -- processed immediately, use `observeBlocking` instead or manually pass the value e.g. by using STM.
   observe
     :: MonadResourceManager m
     => o -- ^ observable
@@ -91,6 +99,7 @@ class IsRetrievable v o => IsObservable v o | o -> v where
     disposable <- liftIO $ oldObserve observable (\msg -> runReaderT (await =<< callback msg) resourceManager)
     registerDisposable disposable
 
+  -- | Old signature of `observe`, will be removed from the class once it's no longer used for implementations.
   oldObserve :: o -> (ObservableMessage v -> IO ()) -> IO Disposable
   oldObserve observable callback = do
     resourceManager <- unsafeNewResourceManager
@@ -109,9 +118,14 @@ class IsRetrievable v o => IsObservable v o | o -> v where
 {-# DEPRECATED oldObserve "Old implementation of `observe`." #-}
 
 
--- | Observes an observable by handling updates on the current thread.
+-- | Observe an observable by handling updates on the current thread.
+--
+-- `observeBlocking` will run the handler whenever the observable changes (forever / until an exception is encountered).
+--
+-- The handler is allowed to block. When the value changes while the handler is running the handler will be run again
+-- after it completes; when the value changes multiple times it will only be executed once (with the latest value).
 observeBlocking :: (IsObservable v o, MonadResourceManager m) => o -> (ObservableMessage v -> m ()) -> m a
-observeBlocking observable callback = do
+observeBlocking observable handler = do
   withSubResourceManagerM do
     var <- liftIO newEmptyTMVarIO
     observe observable \msg -> do
