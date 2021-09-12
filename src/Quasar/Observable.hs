@@ -91,12 +91,12 @@ class IsRetrievable v o => IsObservable v o | o -> v where
   observe
     :: MonadResourceManager m
     => o -- ^ observable
-    -> (forall f. MonadResourceManager f => ObservableMessage v -> f (Awaitable ())) -- ^ callback
+    -> (forall f. MonadResourceManager f => ObservableMessage v -> f ()) -- ^ callback
     -> m ()
   -- NOTE Compatability implementation, has to be removed when `oldObserve` is removed
   observe observable callback = mask_ do
     resourceManager <- askResourceManager
-    disposable <- liftIO $ oldObserve observable (\msg -> runReaderT (await =<< callback msg) resourceManager)
+    disposable <- liftIO $ oldObserve observable (\msg -> runReaderT (callback msg) resourceManager)
     registerDisposable disposable
 
   -- | Old signature of `observe`, will be removed from the class once it's no longer used for implementations.
@@ -104,7 +104,7 @@ class IsRetrievable v o => IsObservable v o | o -> v where
   oldObserve observable callback = do
     resourceManager <- unsafeNewResourceManager
     onResourceManager resourceManager do
-      observe observable $ \msg -> liftIO (callback msg) >> pure (pure ())
+      observe observable $ \msg -> liftIO (callback msg)
     pure $ toDisposable resourceManager
 
   toObservable :: o -> Observable v
@@ -126,21 +126,16 @@ class IsRetrievable v o => IsObservable v o | o -> v where
 -- after it completes; when the value changes multiple times it will only be executed once (with the latest value).
 observeBlocking :: (IsObservable v o, MonadResourceManager m) => o -> (ObservableMessage v -> m ()) -> m a
 observeBlocking observable handler = do
+  -- `withSubResourceManagerM` removes the `observe` callback when the `handler` fails.
   withSubResourceManagerM do
     var <- liftIO newEmptyTMVarIO
-    observe observable \msg -> do
-      liftIO $ atomically do
-        cbCompletedVar <- tryTakeTMVar var >>= \case
-          Nothing ->  newAsyncVarSTM
-          Just (_, cbCompletedVar) -> pure cbCompletedVar
-        putTMVar var (msg, cbCompletedVar)
-        pure $ toAwaitable cbCompletedVar
+    observe observable \msg -> liftIO $ atomically do
+      void $ tryTakeTMVar var
+      putTMVar var msg
 
     forever do
-      (msg, cbCompletedVar) <- liftIO $ atomically $ takeTMVar var
-      callback msg
-      putAsyncVar_ cbCompletedVar ()
-
+      msg <- liftIO $ atomically $ takeTMVar var
+      handler msg
 
 
 data ObserveWhileCompleted = ObserveWhileCompleted
@@ -486,7 +481,7 @@ instance IsRetrievable v (ConstObservable v) where
   retrieve (ConstObservable x) = pure $ pure x
 instance IsObservable v (ConstObservable v) where
   observe (ConstObservable x) callback = do
-    void $ callback $ ObservableUpdate x
+    callback $ ObservableUpdate x
 
 
 newtype FailedObservable v = FailedObservable SomeException
@@ -494,7 +489,7 @@ instance IsRetrievable v (FailedObservable v) where
   retrieve (FailedObservable ex) = liftIO $ throwIO ex
 instance IsObservable v (FailedObservable v) where
   observe (FailedObservable ex) callback = do
-    void $ callback $ ObservableNotAvailable ex
+    callback $ ObservableNotAvailable ex
 
 
 -- | Create an observable by simply running an IO action whenever a value is requested or a callback is registered.
