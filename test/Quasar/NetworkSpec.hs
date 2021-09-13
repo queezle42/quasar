@@ -142,7 +142,7 @@ spec = parallel $ do
         setObservableVar var 42
 
         withResourceManagerM $ runUnlimitedAsync do
-          observe observable $ \msg -> pure () <$ (liftIO $ atomically $ writeTVar resultVar msg)
+          observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
 
           liftIO $ join $ atomically $ readTVar resultVar >>=
             \case
@@ -156,7 +156,7 @@ spec = parallel $ do
         resultVar <- newTVarIO ObservableLoading
         observable <- intObservable client
         withResourceManagerM $ runUnlimitedAsync do
-          observe observable $ \msg -> pure () <$ (liftIO $ atomically $ writeTVar resultVar msg)
+          observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
 
           let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=
                 \case
@@ -180,7 +180,7 @@ spec = parallel $ do
         resultVar <- newTVarIO ObservableLoading
         observable <- intObservable client
         withResourceManagerM $ runUnlimitedAsync do
-          disposable <- captureDisposable $ observe observable $ \msg -> pure () <$ (liftIO $ atomically $ writeTVar resultVar msg)
+          disposable <- captureDisposable $ observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
 
           let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=
                 \case

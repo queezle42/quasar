@@ -56,8 +56,6 @@ observeToStream observable stream = do
   localResourceManager stream do
     observe observable \msg -> do
       catch
+        -- TODO streamSend is blocking, but the callback should return immediately
         do streamSend stream $ packObservableMessage msg
         \ChannelNotConnected -> pure ()
-
-      -- TODO streamSend is blocking, but the IO portion of the callback should return immediately
-      pure $ pure ()
