@@ -42,8 +42,8 @@ instance Exception ConnectingFailed where
 
 -- | Open a TCP connection to target host and port. Will start multiple connection attempts (i.e. retry quickly and then try other addresses) but only return the first successful connection.
 -- Throws a 'ConnectionFailed' on failure, which contains the exceptions from all failed connection attempts.
-connectTCP :: Socket.HostName -> Socket.ServiceName -> IO Socket.Socket
-connectTCP host port = do
+connectTCP :: MonadIO m => Socket.HostName -> Socket.ServiceName -> m Socket.Socket
+connectTCP host port = liftIO do
   -- 'getAddrInfo' either pures a non-empty list or throws an exception
   (best:others) <- Socket.getAddrInfo (Just hints) (Just host) (Just port)
 

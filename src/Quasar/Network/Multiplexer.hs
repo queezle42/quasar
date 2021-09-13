@@ -169,8 +169,8 @@ data MultiplexerSide = MultiplexerSideA | MultiplexerSideB
 
 -- | Starts a new multiplexer on an existing connection.
 -- This starts a thread which runs until 'channelClose' is called on the resulting 'Channel' (use e.g. 'bracket' to ensure the channel is closed).
-newMultiplexer :: (IsConnection a) => MultiplexerSide -> a -> IO Channel
-newMultiplexer side x = do
+newMultiplexer :: (IsConnection a, MonadIO m) => MultiplexerSide -> a -> m Channel
+newMultiplexer side x = liftIO do
   channelMVar <- newEmptyMVar
   -- 'runMultiplexer' needs to be interruptible (so it can terminate when it is closed), so 'interruptible' is used to ensure that this function also works when used in 'bracket'
   mask_ $ link =<< async (interruptible (runMultiplexer side (putMVar channelMVar) (toSocketConnection x)))
@@ -433,7 +433,7 @@ multiplexerSwitchChannel worker channelId = do
 -- Calling close on a closed channel is a noop.
 --
 -- Alias for `dispose`.
-channelClose :: Channel -> IO (Awaitable ())
+channelClose :: MonadIO m => Channel -> m (Awaitable ())
 channelClose = dispose
 
 instance IsDisposable Channel where
@@ -583,7 +583,7 @@ newChannel parentResourceManager worker channelId connectionState = do
   State.modify $ \multiplexerState -> multiplexerState{channels = HM.insert channelId channel multiplexerState.channels}
   pure channel
 
-channelSetHandler :: ChannelMessageHandler a => Channel -> a -> IO ()
+channelSetHandler :: MonadIO m => ChannelMessageHandler a => Channel -> a -> m ()
 channelSetHandler channel = writeAtVar channel.handlerAtVar . toInternalChannelMessageHandler
 
 -- | Sets a simple channel message handler, which cannot handle sub-resurces (e.g. new channels). When a resource is received the channel will be terminated with a channel protocol error.
@@ -606,8 +606,8 @@ newEmptyAtVar = do
   guardMVar <- newMVar AtVarIsEmpty
   pure $ AtVar valueMVar guardMVar
 
-writeAtVar :: AtVar a -> a -> IO ()
-writeAtVar (AtVar valueMVar guardMVar) value = modifyMVar_ guardMVar $ \case
+writeAtVar :: MonadIO m => AtVar a -> a -> m ()
+writeAtVar (AtVar valueMVar guardMVar) value = liftIO $ modifyMVar_ guardMVar $ \case
   AtVarIsEmpty -> putMVar valueMVar value >> pure AtVarHasValue
   AtVarHasValue -> modifyMVar_ valueMVar (const (pure value)) >> pure AtVarHasValue
 

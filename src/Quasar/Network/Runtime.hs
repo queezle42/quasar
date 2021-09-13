@@ -41,8 +41,9 @@ module Quasar.Network.Runtime (
 
 import Control.Concurrent (forkFinally)
 import Control.Concurrent.Async (cancel, link, withAsync, mapConcurrently_)
-import Control.Exception (bracket, bracketOnError, bracketOnError, interruptible, mask_)
 import Control.Concurrent.MVar
+import Control.Exception (interruptible)
+import Control.Monad.Catch
 import Data.Binary (Binary, encode, decodeOrFail)
 import Data.ByteString.Lazy qualified as BSL
 import Data.HashMap.Strict qualified as HM
@@ -118,7 +119,7 @@ clientHandleChannelMessage client resources msg = case decodeOrFail msg of
           Nothing -> channelReportProtocolError client.channel ("Received response with invalid request id " <> show requestId)
       callback resp
 
-clientClose :: Client p -> IO (Awaitable ())
+clientClose :: MonadIO m => Client p -> m (Awaitable ())
 clientClose client = channelClose client.channel
 
 clientReportProtocolError :: Client p -> String -> IO a
@@ -164,36 +165,36 @@ streamClose (Stream channel) = liftIO $ channelClose channel
 
 -- ** Running client and server
 
-withClientTCP :: RpcProtocol p => Socket.HostName -> Socket.ServiceName -> (Client p -> IO a) -> IO a
+withClientTCP :: (RpcProtocol p, MonadIO m, MonadMask m) => Socket.HostName -> Socket.ServiceName -> (Client p -> m a) -> m a
 withClientTCP host port = withClientBracket (newClientTCP host port)
 
-newClientTCP :: forall p. RpcProtocol p => Socket.HostName -> Socket.ServiceName -> IO (Client p)
+newClientTCP :: (RpcProtocol p, MonadIO m) => Socket.HostName -> Socket.ServiceName -> m (Client p)
 newClientTCP host port = newClient =<< connectTCP host port
 
 
-withClientUnix :: RpcProtocol p => FilePath -> (Client p -> IO a) -> IO a
+withClientUnix :: (RpcProtocol p, MonadIO m, MonadMask m) => FilePath -> (Client p -> m a) -> m a
 withClientUnix socketPath = withClientBracket (newClientUnix socketPath)
 
-newClientUnix :: RpcProtocol p => FilePath -> IO (Client p)
-newClientUnix socketPath = bracketOnError (Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol) Socket.close $ \sock -> do
+newClientUnix :: MonadIO m => RpcProtocol p => FilePath -> m (Client p)
+newClientUnix socketPath = liftIO $ bracketOnError (Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol) Socket.close $ \sock -> do
   Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
   Socket.connect sock $ Socket.SockAddrUnix socketPath
   newClient sock
 
 
-withClient :: forall p a b. (IsConnection a, RpcProtocol p) => a -> (Client p -> IO b) -> IO b
+withClient :: forall p a m b. (IsConnection a, RpcProtocol p, MonadIO m, MonadMask m) => a -> (Client p -> m b) -> m b
 withClient connection = withClientBracket (newClient connection)
 
-newClient :: forall p a. (IsConnection a, RpcProtocol p) => a -> IO (Client p)
+newClient :: forall p a m. (IsConnection a, RpcProtocol p, MonadIO m) => a -> m (Client p)
 newClient connection = newChannelClient =<< newMultiplexer MultiplexerSideA (toSocketConnection connection)
 
-withClientBracket :: IO (Client p) -> (Client p -> IO a) -> IO a
+withClientBracket :: (MonadIO m, MonadMask m) => m (Client p) -> (Client p -> m a) -> m a
 withClientBracket createClient = bracket createClient clientClose
 
 
-newChannelClient :: RpcProtocol p => Channel -> IO (Client p)
+newChannelClient :: MonadIO m => RpcProtocol p => Channel -> m (Client p)
 newChannelClient channel = do
-  stateMVar <- newMVar emptyClientState
+  stateMVar <- liftIO $ newMVar emptyClientState
   let client = Client {
     channel,
     stateMVar
