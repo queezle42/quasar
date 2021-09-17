@@ -15,7 +15,7 @@ module Quasar.ResourceManager (
   ResourceManager,
   withResourceManager,
   newResourceManager,
-  unsafeNewResourceManager,
+  newUnmanagedResourceManager,
   attachDisposable,
   attachDisposeAction,
   attachDisposeAction_,
@@ -182,19 +182,19 @@ instance IsDisposable ResourceManager where
           ((\disposed -> unless disposed retry) =<< readTVar (disposedVar resourceManager))
 
 withResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => (ResourceManager -> m a) -> m a
-withResourceManager = bracket unsafeNewResourceManager (await <=< liftIO . dispose)
+withResourceManager = bracket newUnmanagedResourceManager (await <=< liftIO . dispose)
 
 withResourceManagerM :: (MonadAwait m, MonadMask m, MonadIO m) => (ReaderT ResourceManager m a) -> m a
 withResourceManagerM action = withResourceManager \resourceManager -> onResourceManager resourceManager action
 
 newResourceManager :: MonadResourceManager m => m ResourceManager
 newResourceManager = mask_ do
-  resourceManager <- unsafeNewResourceManager
+  resourceManager <- newUnmanagedResourceManager
   registerDisposable resourceManager
   pure resourceManager
 
-unsafeNewResourceManager :: MonadIO m => m ResourceManager
-unsafeNewResourceManager = liftIO do
+newUnmanagedResourceManager :: MonadIO m => m ResourceManager
+newUnmanagedResourceManager = liftIO do
   disposingVar <- newTVarIO False
   disposedVar <- newTVarIO False
   exceptionVar <- newEmptyTMVarIO

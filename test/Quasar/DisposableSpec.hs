@@ -44,10 +44,10 @@ spec = parallel $ do
 
   describe "ResourceManager" $ do
     it "can be created" $ io do
-      void unsafeNewResourceManager
+      void newUnmanagedResourceManager
 
     it "can be created and disposed" $ io do
-      resourceManager <- unsafeNewResourceManager
+      resourceManager <- newUnmanagedResourceManager
       await =<< dispose resourceManager
 
     it "can be created and disposed" $ io do
