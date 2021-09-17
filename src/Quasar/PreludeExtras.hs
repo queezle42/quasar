@@ -89,6 +89,10 @@ infixl 4 <<$>>
 (<<$>>) :: (Functor f, Functor g) => (a -> b) -> f (g a) -> f (g b)
 (<<$>>) = fmap . fmap
 
+infixl 4 <<*>>
+(<<*>>) :: (Applicative f, Applicative g) => f (g (a -> b)) -> f (g a) -> f (g b)
+(<<*>>) = liftA2 (<*>)
+
 infixr 6 <<>>
 (<<>>) :: (Applicative f, Semigroup a) => f a -> f a -> f a
 (<<>>) = liftA2 (<>)
