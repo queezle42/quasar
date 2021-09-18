@@ -4,7 +4,6 @@ module Quasar.ResourceManager (
   registerDisposable,
   registerDisposeAction,
   disposeEventually,
-  withResourceManagerM,
   withSubResourceManagerM,
   onResourceManager,
   captureDisposable,
@@ -13,12 +12,22 @@ module Quasar.ResourceManager (
   -- ** ResourceManager
   IsResourceManager(..),
   ResourceManager,
-  withResourceManager,
   newResourceManager,
-  newUnmanagedResourceManager,
-  attachDisposable,
   attachDisposeAction,
   attachDisposeAction_,
+
+  -- ** Initialization
+  withRootResourceManager,
+  withRootResourceManagerM,
+
+  -- ** Resource manager implementations
+  newUnmanagedRootResourceManager,
+  --newUnmanagedDefaultResourceManager,
+
+  -- ** Deprecated
+  withResourceManager,
+  withResourceManagerM,
+  newUnmanagedResourceManager,
 ) where
 
 
@@ -34,7 +43,7 @@ import Data.Sequence qualified as Seq
 import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Prelude
-import System.IO (hPutStrLn, stderr)
+import System.IO (fixIO, hPutStrLn, stderr)
 
 
 
@@ -76,22 +85,30 @@ entryIsEmpty :: ResourceManagerEntry -> STM Bool
 entryIsEmpty (ResourceManagerEntry var) = isEmptyTMVar var
 
 
-class IsResourceManager a where
+class IsDisposable a => IsResourceManager a where
   toResourceManager :: a -> ResourceManager
+  toResourceManager = ResourceManager
 
-  -- TODO move to class
-  --attachDisposable :: (IsDisposable b, MonadIO m) => a -> b -> m ()
+  -- | Attaches an `Disposable` to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
+  attachDisposable :: (IsDisposable b, MonadIO m) => a -> b -> m ()
+  attachDisposable self = attachDisposable (toResourceManager self)
 
   --subResourceManager :: MonadResourceManager m => m (DisposableResourceThingy)
 
+  -- | Forward an exception that happened asynchronously.
   throwToResourceManager :: Exception e => a -> e -> IO ()
   throwToResourceManager = throwToResourceManager . toResourceManager
 
+  {-# MINIMAL toResourceManager | (attachDisposable, throwToResourceManager) #-}
 
+
+data ResourceManager = forall a. IsResourceManager a => ResourceManager a
 instance IsResourceManager ResourceManager where
   toResourceManager = id
-  -- TODO delegate to parent
-  throwToResourceManager _ ex = hPutStrLn stderr $ displayException ex
+  attachDisposable (ResourceManager x) = attachDisposable x
+  throwToResourceManager (ResourceManager x) = throwToResourceManager x
+instance IsDisposable ResourceManager where
+  toDisposable (ResourceManager x) = toDisposable x
 
 class (MonadAwait m, MonadMask m, MonadIO m, MonadFix m) => MonadResourceManager m where
   -- | Get the underlying resource manager.
@@ -153,16 +170,66 @@ captureDisposable action = do
 
 
 
-data ResourceManager = ResourceManager {
+-- * Resource manager implementations
+
+
+data RootResourceManager = RootResourceManager ResourceManager (TMVar SomeException)
+
+instance IsResourceManager RootResourceManager where
+  attachDisposable (RootResourceManager child _) disposable = attachDisposable child disposable
+  throwToResourceManager (RootResourceManager child storedException) ex = do
+    liftIO $ atomically $ void $ tryPutTMVar storedException (toException ex)
+    -- TODO fix log merging bug
+    hPutStrLn stderr $ displayException ex
+    void $ dispose child
+
+instance IsDisposable RootResourceManager where
+  dispose (RootResourceManager child _) = dispose child
+  isDisposed (RootResourceManager child _) = isDisposed child
+
+withRootResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => (ResourceManager -> m a) -> m a
+-- TODO abort thread on resource manager exception (that behavior should also be generalized)
+withRootResourceManager = bracket newUnmanagedRootResourceManager (await <=< liftIO . dispose)
+
+withRootResourceManagerM :: (MonadAwait m, MonadMask m, MonadIO m) => ReaderT ResourceManager m a -> m a
+withRootResourceManagerM action = withResourceManager (`onResourceManager` action)
+
+newUnmanagedRootResourceManager :: MonadIO m => m ResourceManager
+newUnmanagedRootResourceManager = liftIO $ fixIO \self -> do
+  var <- liftIO newEmptyTMVarIO
+  childResourceManager <- newUnmanagedDefaultResourceManager self
+  pure $ toResourceManager (RootResourceManager childResourceManager var)
+
+
+data DefaultResourceManager = DefaultResourceManager {
+  parentResourceManager :: ResourceManager,
   disposingVar :: TVar Bool,
   disposedVar :: TVar Bool,
-  exceptionVar :: TMVar SomeException,
   entriesVar :: TVar (Seq ResourceManagerEntry)
 }
 
-instance IsDisposable ResourceManager where
+instance IsResourceManager DefaultResourceManager where
+  throwToResourceManager DefaultResourceManager{parentResourceManager} = throwToResourceManager parentResourceManager
+
+  attachDisposable resourceManager disposable = liftIO $ mask \unmask -> do
+    entry <- newEntry disposable
+
+    join $ atomically do
+      disposed <- readTVar (disposedVar resourceManager)
+      when disposed $ throwM (userError "Cannot attach a disposable to a disposed resource manager")
+
+      modifyTVar (entriesVar resourceManager) (|> entry)
+
+      disposing <- readTVar (disposingVar resourceManager)
+
+      pure do
+        -- IO that is run after the STM transaction is completed
+        when disposing $
+          unmask (void (dispose disposable)) `catchAll` throwToResourceManager resourceManager
+
+instance IsDisposable DefaultResourceManager where
   dispose resourceManager = liftIO $ mask \unmask ->
-    unmask dispose' `catchAll` \ex -> setException resourceManager ex >> throwIO ex
+    unmask dispose' `catchAll` \ex -> pure () <$ throwToResourceManager resourceManager ex
     where
       dispose' :: IO (Awaitable ())
       dispose' = do
@@ -177,44 +244,50 @@ instance IsDisposable ResourceManager where
 
   isDisposed resourceManager =
     unsafeAwaitSTM do
-      (throwM =<< readTMVar (exceptionVar resourceManager))
-        `orElse`
-          ((\disposed -> unless disposed retry) =<< readTVar (disposedVar resourceManager))
+      disposed <- readTVar (disposedVar resourceManager)
+      unless disposed retry
 
+{-# DEPRECATED withResourceManager "Use withRootResourceManager insted" #-}
 withResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => (ResourceManager -> m a) -> m a
-withResourceManager = bracket newUnmanagedResourceManager (await <=< liftIO . dispose)
+withResourceManager = withRootResourceManager
 
-withResourceManagerM :: (MonadAwait m, MonadMask m, MonadIO m) => (ReaderT ResourceManager m a) -> m a
-withResourceManagerM action = withResourceManager \resourceManager -> onResourceManager resourceManager action
+{-# DEPRECATED withResourceManagerM "Use withRootResourceManagerM insted" #-}
+withResourceManagerM :: (MonadAwait m, MonadMask m, MonadIO m) => ReaderT ResourceManager m a -> m a
+withResourceManagerM = withResourceManagerM
+
+{-# DEPRECATED newUnmanagedResourceManager "Use newUnmanagedRootResourceManager insted" #-}
+newUnmanagedResourceManager :: MonadIO m => m ResourceManager
+newUnmanagedResourceManager = newUnmanagedRootResourceManager
 
 newResourceManager :: MonadResourceManager m => m ResourceManager
 newResourceManager = mask_ do
-  resourceManager <- newUnmanagedResourceManager
+  parent <- askResourceManager
+  -- TODO: return efficent resource manager
+  resourceManager <- newUnmanagedDefaultResourceManager parent
   registerDisposable resourceManager
   pure resourceManager
 
-newUnmanagedResourceManager :: MonadIO m => m ResourceManager
-newUnmanagedResourceManager = liftIO do
+newUnmanagedDefaultResourceManager :: MonadIO m => ResourceManager -> m ResourceManager
+newUnmanagedDefaultResourceManager parentResourceManager = liftIO do
   disposingVar <- newTVarIO False
   disposedVar <- newTVarIO False
-  exceptionVar <- newEmptyTMVarIO
   entriesVar <- newTVarIO Empty
 
-  let resourceManager = ResourceManager {
+  let resourceManager = DefaultResourceManager {
+    parentResourceManager,
     disposingVar,
     disposedVar,
-    exceptionVar,
     entriesVar
   }
 
   void $ mask_ $ forkIOWithUnmask \unmask ->
-    unmask (collectGarbage resourceManager) `catchAll` \ex -> setException resourceManager ex
+    unmask (freeGarbage resourceManager) `catchAll` throwToResourceManager resourceManager
 
-  pure resourceManager
+  pure $ toResourceManager resourceManager
 
 
-collectGarbage :: ResourceManager -> IO ()
-collectGarbage resourceManager = go
+freeGarbage :: DefaultResourceManager -> IO ()
+freeGarbage resourceManager = go
   where
     go :: IO ()
     go = do
@@ -256,33 +329,6 @@ collectGarbage resourceManager = go
     entriesVar' :: TVar (Seq ResourceManagerEntry)
     entriesVar' = entriesVar resourceManager
 
-
-setException :: ResourceManager -> SomeException -> IO ()
-setException resourceManager ex =
-  -- TODO re-throw exception unchanged or wrap it?
-  atomically $ void $ tryPutTMVar (exceptionVar resourceManager) ex
-
-
-
--- | Attaches an `Disposable` to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
-attachDisposable :: (IsDisposable a, MonadIO m) => ResourceManager -> a -> m ()
-attachDisposable resourceManager disposable = liftIO $ mask \unmask -> do
-  entry <- newEntry disposable
-
-  join $ atomically do
-    mapM_ throwM =<< tryReadTMVar (exceptionVar resourceManager)
-
-    disposed <- readTVar (disposedVar resourceManager)
-    when disposed $ throwM (userError "Cannot attach a disposable to a disposed resource manager")
-
-    modifyTVar (entriesVar resourceManager) (|> entry)
-
-    disposing <- readTVar (disposingVar resourceManager)
-
-    pure do
-      -- IO that is run after the STM transaction is completed
-      when disposing $
-        void $ unmask (dispose disposable) `catchAll` \ex -> setException resourceManager ex >> throwIO ex
 
 -- | Creates an `Disposable` that is bound to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
 attachDisposeAction :: MonadIO m => ResourceManager -> IO (Awaitable ()) -> m Disposable
