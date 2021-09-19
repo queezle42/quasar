@@ -19,7 +19,6 @@ import Data.Maybe qualified as Maybe
 import GHC.Records.Compat (HasField, getField, setField)
 import GHC.Stack.Types qualified
 import GHC.TypeLits (Symbol)
-import Lens.Micro.Platform (Lens', lens)
 import Quasar.Utils.ExtraT
 
 io :: IO a -> IO a
@@ -109,9 +108,6 @@ splitOn :: (a -> Bool) -> [a] -> [[a]]
 splitOn p s = case break p s of
   (w, []) -> [w]
   (w, _:r) -> w : splitOn p r
-
-fieldLens :: forall (x :: Symbol) r a. HasField x r a => Lens' r a
-fieldLens = lens (getField @x) (setField @x)
 
 sleepForever :: IO a
 sleepForever = forever $ threadDelay 1000000000000

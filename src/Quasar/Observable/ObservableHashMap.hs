@@ -13,7 +13,6 @@ module Quasar.Observable.ObservableHashMap (
 import Data.HashMap.Strict qualified as HM
 import Data.Maybe (isJust)
 import Language.Haskell.TH.Syntax (mkName, nameBase)
-import Lens.Micro.Platform
 import Quasar.Disposable
 import Quasar.Observable
 import Quasar.Observable.Delta
@@ -33,9 +32,6 @@ data KeyHandle v = KeyHandle {
   keySubscribers :: HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ())
 }
 
-makeLensesWith (lensField .~ (\_ _ -> pure . TopName . mkName . ("_" <>) . nameBase) $ lensRules) ''Handle
-makeLensesWith (lensField .~ (\_ _ -> pure . TopName . mkName . ("_" <>) . nameBase) $ lensRules) ''KeyHandle
-
 instance IsRetrievable (HM.HashMap k v) (ObservableHashMap k v) where
   retrieve (ObservableHashMap mvar) = liftIO $ pure . HM.mapMaybe value . keyHandles <$> readMVar mvar
 instance IsObservable (HM.HashMap k v) (ObservableHashMap k v) where
@@ -44,11 +40,11 @@ instance IsObservable (HM.HashMap k v) (ObservableHashMap k v) where
       update :: Handle k v -> IO (Handle k v, Disposable)
       update handle = do
         callback $ pure $ toHashMap handle
-        unique <- newUnique
-        let handle' = handle & set (_subscribers . at unique) (Just callback)
-        (handle',) <$> synchronousDisposable (unsubscribe unique)
+        key <- newUnique
+        let handle' = handle {subscribers = HM.insert key callback (subscribers handle)}
+        (handle',) <$> synchronousDisposable (unsubscribe key)
       unsubscribe :: Unique -> IO ()
-      unsubscribe unique = modifyHandle_ (pure . set (_subscribers . at unique) Nothing) ohm
+      unsubscribe key = modifyHandle_ (\handle -> pure handle {subscribers = HM.delete key (subscribers handle)}) ohm
 
 instance IsDeltaObservable k v (ObservableHashMap k v) where
   subscribeDelta ohm callback = modifyHandle update ohm
@@ -56,11 +52,11 @@ instance IsDeltaObservable k v (ObservableHashMap k v) where
       update :: Handle k v -> IO (Handle k v, Disposable)
       update handle = do
         callback (Reset $ toHashMap handle)
-        unique <- newUnique
-        let handle' = handle & set (_deltaSubscribers . at unique) (Just callback)
-        (handle',) <$> synchronousDisposable (unsubscribe unique)
+        key <- newUnique
+        let handle' = handle {deltaSubscribers = HM.insert key callback (deltaSubscribers handle)}
+        (handle',) <$> synchronousDisposable (unsubscribe key)
       unsubscribe :: Unique -> IO ()
-      unsubscribe unique = modifyHandle_ (pure . set (_deltaSubscribers . at unique) Nothing) ohm
+      unsubscribe key = modifyHandle_ (\handle -> pure handle {deltaSubscribers = HM.delete key (deltaSubscribers handle)}) ohm
 
 
 toHashMap :: Handle k v -> HM.HashMap k v
@@ -79,7 +75,9 @@ modifyKeyHandle_ :: forall k v. (Eq k, Hashable k) => (KeyHandle v -> IO (KeyHan
 modifyKeyHandle_ f = modifyKeyHandle (fmap (,()) . f)
 
 updateKeyHandle :: forall k v a. (Eq k, Hashable k) => (KeyHandle v -> IO (KeyHandle v, a)) -> k -> Handle k v -> IO (Handle k v, a)
-updateKeyHandle f k = runExtraT . (_keyHandles (HM.alterF updateMaybe k))
+updateKeyHandle f k handle = do
+  (keyHandles', result) <- runExtraT $ HM.alterF updateMaybe k (keyHandles handle)
+  pure (handle {keyHandles = keyHandles'}, result)
   where
     updateMaybe :: Maybe (KeyHandle v) -> ExtraT a IO (Maybe (KeyHandle v))
     updateMaybe = fmap toMaybe . (ExtraT . f) . fromMaybe emptyKeyHandle
@@ -108,7 +106,7 @@ notifySubscribers handle@Handle{deltaSubscribers, subscribers} (Just delta) = do
   mapM_ ($ pure (toHashMap handle)) $ HM.elems subscribers
 
 modifyKeySubscribers :: (HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ()) -> HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ())) -> KeyHandle v -> KeyHandle v
-modifyKeySubscribers = over _keySubscribers
+modifyKeySubscribers fn keyHandle = keyHandle {keySubscribers = fn (keySubscribers keyHandle)}
 
 new :: IO (ObservableHashMap k v)
 new = ObservableHashMap <$> newMVar Handle{keyHandles=HM.empty, subscribers=HM.empty, deltaSubscribers=HM.empty}
@@ -117,7 +115,9 @@ observeKey :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> Ob
 observeKey key ohm@(ObservableHashMap mvar) = synchronousFnObservable observeFn retrieveFn
   where
     retrieveFn :: IO (Maybe v)
-    retrieveFn = liftIO $ join . preview (_keyHandles . at key . _Just . _value) <$> readMVar mvar
+    retrieveFn = liftIO do
+      handle <- readMVar mvar
+      pure $ join $ fmap value $ HM.lookup key $ keyHandles handle
     observeFn :: ((ObservableMessage (Maybe v) -> IO ()) -> IO Disposable)
     observeFn callback = do
       subscriptionKey <- newUnique
