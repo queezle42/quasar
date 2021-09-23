@@ -114,6 +114,7 @@ class IsRetrievable v o => IsObservable v o | o -> v where
   mapObservable f = Observable . MappedObservable f
 
   {-# MINIMAL observe | oldObserve #-}
+  -- TODO the goal: {-# MINIMAL toObservable | observe #-}
 
 {-# DEPRECATED oldObserve "Old implementation of `observe`." #-}
 
@@ -372,8 +373,8 @@ instance IsObservable v (ObservableVar v) where
       disposeFn :: Unique -> IO ()
       disposeFn key = modifyMVar_ mvar (\(state, subscribers) -> pure (state, HM.delete key subscribers))
 
-newObservableVar :: v -> IO (ObservableVar v)
-newObservableVar initialValue = do
+newObservableVar :: MonadIO m => v -> m (ObservableVar v)
+newObservableVar initialValue = liftIO do
   ObservableVar <$> newMVar (initialValue, HM.empty)
 
 setObservableVar :: MonadIO m => ObservableVar v -> v -> m ()
@@ -382,7 +383,7 @@ setObservableVar (ObservableVar mvar) value = liftIO $ modifyMVar_ mvar $ \(_, s
   pure (value, subscribers)
 
 
--- TODO change inner monad to `m` after reimplementing ObservableVar
+-- TODO change function signature to pure or STM; swap v and a
 modifyObservableVar :: MonadIO m => ObservableVar v -> (v -> IO (v, a)) -> m a
 modifyObservableVar (ObservableVar mvar) f =
   liftIO $ modifyMVar mvar $ \(oldState, subscribers) -> do
@@ -390,7 +391,7 @@ modifyObservableVar (ObservableVar mvar) f =
     mapM_ (\callback -> callback (pure newState)) subscribers
     pure ((newState, subscribers), result)
 
--- TODO change inner monad to `m` after reimplementing ObservableVar
+-- TODO change update function signature to pure or STM
 modifyObservableVar_ :: MonadIO m => ObservableVar v -> (v -> IO v) -> m ()
 modifyObservableVar_ (ObservableVar mvar) f =
   liftIO $ modifyMVar_ mvar $ \(oldState, subscribers) -> do
