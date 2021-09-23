@@ -93,7 +93,7 @@ instance IsResourceManager ResourceManager where
   -- TODO delegate to parent
   throwToResourceManager _ ex = hPutStrLn stderr $ displayException ex
 
-class (MonadAwait m, MonadMask m, MonadIO m) => MonadResourceManager m where
+class (MonadAwait m, MonadMask m, MonadIO m, MonadFix m) => MonadResourceManager m where
   -- | Get the underlying resource manager.
   askResourceManager :: m ResourceManager
 
@@ -116,7 +116,7 @@ withSubResourceManagerM action =
   bracket newResourceManager (await <=< dispose) \scope -> localResourceManager scope action
 
 
-instance (MonadAwait m, MonadMask m, MonadIO m) => MonadResourceManager (ReaderT ResourceManager m) where
+instance (MonadAwait m, MonadMask m, MonadIO m, MonadFix m) => MonadResourceManager (ReaderT ResourceManager m) where
   localResourceManager resourceManager = local (const (toResourceManager resourceManager))
 
   askResourceManager = ask
