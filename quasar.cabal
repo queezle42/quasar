@@ -93,6 +93,7 @@ library
     Quasar.Prelude
     Quasar.PreludeExtras
     Quasar.ResourceManager
+    Quasar.Subscribable
     Quasar.Timer
     Quasar.Utils.ExtraT
   hs-source-dirs:
@@ -116,5 +117,6 @@ test-suite quasar-test
     Quasar.ObservableSpec
     Quasar.Observable.ObservableHashMapSpec
     Quasar.Observable.ObservablePrioritySpec
+    Quasar.SubscribableSpec
   hs-source-dirs:
     test
