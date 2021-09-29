@@ -20,6 +20,7 @@ import Quasar.ResourceManager
 data SubscribableMessage r
   = SubscribableUpdate r
   | SubscribableNotAvailable SomeException
+  deriving stock (Show, Generic)
 instance Functor SubscribableMessage where
   fmap fn (SubscribableUpdate r) = SubscribableUpdate (fn r)
   fmap _ (SubscribableNotAvailable ex) = SubscribableNotAvailable ex
