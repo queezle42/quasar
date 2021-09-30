@@ -94,12 +94,15 @@ spec = parallel $ do
             throwIO TestException
         \TestException -> True
 
-    it "re-throws an exception from a dispose action" $ do
+    it "cancels the main thread when a dispose action fails" $ do
       shouldThrow
         do
-          withResourceManager \resourceManager ->
-            attachDisposeAction resourceManager $ throwIO TestException
-        \TestException -> True
+          withRootResourceManagerM do
+            withSubResourceManagerM do
+              registerDisposeAction $ throwIO TestException
+            liftIO $ threadDelay 100000
+            fail "Did not stop main thread on failing dispose action"
+        \TaskDisposed -> True
 
     it "can attach an disposable that is disposed asynchronously" $ do
       withResourceManager \resourceManager -> do

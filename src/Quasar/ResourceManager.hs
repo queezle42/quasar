@@ -31,7 +31,7 @@ module Quasar.ResourceManager (
 ) where
 
 
-import Control.Concurrent (forkIOWithUnmask)
+import Control.Concurrent (ThreadId, forkIOWithUnmask, myThreadId, throwTo, forkIO)
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Reader
@@ -63,12 +63,6 @@ newEntry :: IsDisposable a => a -> IO ResourceManagerEntry
 newEntry disposable = do
   disposedAwaitable <- cacheAwaitable (isDisposed disposable)
   ResourceManagerEntry <$> newTMVarIO (disposedAwaitable, toDisposable disposable)
-
-entryStartDispose :: ResourceManagerEntry -> IO ()
-entryStartDispose (ResourceManagerEntry var) =
-  atomically (tryReadTMVar var) >>= \case
-    Nothing -> pure ()
-    Just (_, disposable) -> void $ dispose disposable
 
 checkEntries :: Seq ResourceManagerEntry -> IO ()
 checkEntries = mapM_ checkEntry
@@ -169,18 +163,61 @@ captureDisposable action = do
   pure $ toDisposable resourceManager
 
 
+-- * ExceptionHandler
+
+type ExceptionHandler = SomeException -> IO ()
+
+loggingExceptionHandler :: ExceptionHandler
+loggingExceptionHandler ex = hPutStrLn stderr $ displayException ex
+
+
+data CancelHelper = CancelHelper
+  deriving stock Show
+  deriving anyclass Exception
+
+
+withLinkedExceptionHandler :: (MonadAwait m, MonadMask m, MonadIO m) => ExceptionHandler -> (ExceptionHandler -> m a) -> m a
+withLinkedExceptionHandler parentExceptionHandler action = do
+  shouldCancelVar <- liftIO $ newTVarIO False
+  let
+    exceptionHandler :: ExceptionHandler
+    exceptionHandler ex = do
+      parentExceptionHandler ex
+      atomically $ writeTVar shouldCancelVar True
+    cancelThread :: ThreadId -> (IO () -> IO ()) -> IO ()
+    cancelThread mainThreadId unmask =
+      do
+        unmask do
+          atomically $ check =<< readTVar shouldCancelVar
+          throwTo mainThreadId CancelTask
+      `catch`
+      \CancelHelper -> pure ()
+
+  mainThreadId <- liftIO myThreadId
+  mask \unmask ->
+    do
+      bracket
+        do liftIO $ forkIOWithUnmask $ cancelThread mainThreadId
+        do \cancelThreadId -> liftIO $ throwTo cancelThreadId CancelHelper
+        do \_ -> unmask $ action exceptionHandler
+    `catch`
+    \CancelTask -> throwM TaskDisposed
+
+
+
+withRootExceptionHandler :: (MonadAwait m, MonadMask m, MonadIO m) => (ExceptionHandler -> m a) -> m a
+withRootExceptionHandler = withLinkedExceptionHandler loggingExceptionHandler
+
 
 -- * Resource manager implementations
 
 
-data RootResourceManager = RootResourceManager ResourceManager (TMVar SomeException)
+data RootResourceManager = RootResourceManager ResourceManager ExceptionHandler
 
 instance IsResourceManager RootResourceManager where
   attachDisposable (RootResourceManager child _) disposable = attachDisposable child disposable
-  throwToResourceManager (RootResourceManager child storedException) ex = do
-    liftIO $ atomically $ void $ tryPutTMVar storedException (toException ex)
-    -- TODO fix log merging bug
-    hPutStrLn stderr $ displayException ex
+  throwToResourceManager (RootResourceManager child exceptionHandler) ex = do
+    exceptionHandler (toException ex)
     void $ dispose child
 
 instance IsDisposable RootResourceManager where
@@ -188,17 +225,17 @@ instance IsDisposable RootResourceManager where
   isDisposed (RootResourceManager child _) = isDisposed child
 
 withRootResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => (ResourceManager -> m a) -> m a
--- TODO abort thread on resource manager exception (that behavior should also be generalized)
-withRootResourceManager = bracket newUnmanagedRootResourceManager (await <=< liftIO . dispose)
+withRootResourceManager action = withRootExceptionHandler \exceptionHandler ->
+  bracket (newUnmanagedRootResourceManager exceptionHandler) (await <=< liftIO . dispose) action
 
 withRootResourceManagerM :: (MonadAwait m, MonadMask m, MonadIO m) => ReaderT ResourceManager m a -> m a
-withRootResourceManagerM action = withResourceManager (`onResourceManager` action)
+withRootResourceManagerM action = withRootResourceManager (`onResourceManager` action)
 
-newUnmanagedRootResourceManager :: MonadIO m => m ResourceManager
-newUnmanagedRootResourceManager = liftIO $ fixIO \self -> do
+newUnmanagedRootResourceManager :: MonadIO m => ExceptionHandler -> m ResourceManager
+newUnmanagedRootResourceManager exceptionHandler = liftIO $ fixIO \self -> do
   var <- liftIO newEmptyTMVarIO
   childResourceManager <- newUnmanagedDefaultResourceManager self
-  pure $ toResourceManager (RootResourceManager childResourceManager var)
+  pure $ toResourceManager (RootResourceManager childResourceManager exceptionHandler)
 
 
 data DefaultResourceManager = DefaultResourceManager {
@@ -228,19 +265,29 @@ instance IsResourceManager DefaultResourceManager where
           unmask (void (dispose disposable)) `catchAll` throwToResourceManager resourceManager
 
 instance IsDisposable DefaultResourceManager where
-  dispose resourceManager = liftIO $ mask \unmask ->
-    unmask dispose' `catchAll` \ex -> pure () <$ throwToResourceManager resourceManager ex
-    where
-      dispose' :: IO (Awaitable ())
-      dispose' = do
-        entries <- atomically do
-          isAlreadyDisposing <- swapTVar (disposingVar resourceManager) True
-          if not isAlreadyDisposing
-            then readTVar (entriesVar resourceManager)
-            else pure Empty
+  dispose resourceManager = liftIO $ mask \unmask -> do
+    entries <- atomically do
+      isAlreadyDisposing <- swapTVar (disposingVar resourceManager) True
+      if not isAlreadyDisposing
+        then readTVar (entriesVar resourceManager)
+        else pure Empty
 
-        mapM_ entryStartDispose entries
-        pure $ isDisposed resourceManager
+    mapM_ (entryStartDispose unmask) entries
+    pure $ isDisposed resourceManager
+    where
+      entryStartDispose :: (IO () -> IO ()) -> ResourceManagerEntry -> IO ()
+      entryStartDispose unmask (ResourceManagerEntry var) =
+        atomically (tryReadTMVar var) >>= \case
+          Nothing -> pure ()
+          Just (_, disposable) ->
+            unmask (void $ dispose disposable)
+            `catchAll`
+            \ex -> do
+              -- Disposable failed so it should be removed
+              atomically (void $ tryTakeTMVar var)
+              throwToResourceManager resourceManager ex
+              pure ()
+
 
   isDisposed resourceManager =
     unsafeAwaitSTM do
@@ -253,11 +300,11 @@ withResourceManager = withRootResourceManager
 
 {-# DEPRECATED withResourceManagerM "Use withRootResourceManagerM insted" #-}
 withResourceManagerM :: (MonadAwait m, MonadMask m, MonadIO m) => ReaderT ResourceManager m a -> m a
-withResourceManagerM = withResourceManagerM
+withResourceManagerM = withRootResourceManagerM
 
 {-# DEPRECATED newUnmanagedResourceManager "Use newUnmanagedRootResourceManager insted" #-}
 newUnmanagedResourceManager :: MonadIO m => m ResourceManager
-newUnmanagedResourceManager = newUnmanagedRootResourceManager
+newUnmanagedResourceManager = newUnmanagedRootResourceManager loggingExceptionHandler
 
 newResourceManager :: MonadResourceManager m => m ResourceManager
 newResourceManager = mask_ do
