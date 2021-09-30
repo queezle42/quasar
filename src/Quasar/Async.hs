@@ -89,7 +89,7 @@ instance {-# OVERLAPPABLE #-} MonadAsync m => MonadAsync (ReaderT r m) where
 --
 -- TODO change signature to `Awaitable`
 async :: MonadAsync m => (forall f. MonadAsync f => f a) -> m (Awaitable a)
-async action = asyncWithUnmask ($ action)
+async action = asyncWithUnmask \unmask -> unmask action
 
 asyncWithUnmask :: MonadAsync m => (forall f. MonadAsync f => (forall a. f a -> f a) -> f r) -> m (Awaitable r)
 asyncWithUnmask action = do
@@ -113,7 +113,7 @@ runUnlimitedAsync action = do
 
 
 forkTask :: MonadIO m => IO a -> m (Task a)
-forkTask action = forkTaskWithUnmask ($ action)
+forkTask action = forkTaskWithUnmask \unmask -> unmask action
 
 forkTask_ :: MonadIO m => IO () -> m Disposable
 forkTask_ action = toDisposable <$> forkTask action
