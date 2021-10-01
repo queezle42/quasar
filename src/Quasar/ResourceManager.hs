@@ -197,7 +197,7 @@ withLinkedExceptionHandler parentExceptionHandler action = do
   mask \unmask ->
     do
       bracket
-        do liftIO $ forkIOWithUnmask $ cancelThread mainThreadId
+        do liftIO $ forkIOWithUnmask \unmask -> cancelThread mainThreadId unmask
         do \cancelThreadId -> liftIO $ throwTo cancelThreadId CancelHelper
         do \_ -> unmask $ action exceptionHandler
     `catch`
