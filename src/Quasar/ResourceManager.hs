@@ -122,6 +122,9 @@ registerDisposable disposable = do
 registerDisposeAction :: MonadResourceManager m => IO (Awaitable ()) -> m ()
 registerDisposeAction disposeAction = mask_ $ registerDisposable =<< newDisposable disposeAction
 
+registerDisposeAction' :: MonadResourceManager m => IO () -> m ()
+registerDisposeAction' disposeAction = registerDisposeAction (pure () <$ disposeAction)
+
 
 withSubResourceManagerM :: MonadResourceManager m => m a -> m a
 withSubResourceManagerM action =
@@ -145,8 +148,8 @@ instance {-# OVERLAPPABLE #-} MonadResourceManager m => MonadResourceManager (Re
 -- TODO MonadResourceManager instances for StateT, WriterT, RWST, MaybeT, ...
 
 
-onResourceManager :: (IsResourceManager a) => a -> ReaderT ResourceManager m r -> m r
-onResourceManager target action = runReaderT action (toResourceManager target)
+onResourceManager :: (IsResourceManager a, MonadIO m) => a -> ReaderT ResourceManager IO r -> m r
+onResourceManager target action = liftIO $ runReaderT action (toResourceManager target)
 
 
 captureDisposable :: MonadResourceManager m => m a -> m (a, Disposable)
@@ -230,7 +233,7 @@ withRootResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => (ResourceMa
 withRootResourceManager action = withRootExceptionHandler \exceptionHandler ->
   bracket (newUnmanagedRootResourceManager exceptionHandler) (await <=< liftIO . dispose) action
 
-withRootResourceManagerM :: (MonadAwait m, MonadMask m, MonadIO m) => ReaderT ResourceManager m a -> m a
+withRootResourceManagerM :: (MonadAwait m, MonadMask m, MonadIO m) => ReaderT ResourceManager IO a -> m a
 withRootResourceManagerM action = withRootResourceManager (`onResourceManager` action)
 
 newUnmanagedRootResourceManager :: MonadIO m => ExceptionHandler -> m ResourceManager
@@ -301,7 +304,7 @@ withResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => (ResourceManage
 withResourceManager = withRootResourceManager
 
 {-# DEPRECATED withResourceManagerM "Use withRootResourceManagerM insted" #-}
-withResourceManagerM :: (MonadAwait m, MonadMask m, MonadIO m) => ReaderT ResourceManager m a -> m a
+withResourceManagerM :: (MonadAwait m, MonadMask m, MonadIO m) => ReaderT ResourceManager IO a -> m a
 withResourceManagerM = withRootResourceManagerM
 
 {-# DEPRECATED newUnmanagedResourceManager "Use newUnmanagedRootResourceManager insted" #-}
