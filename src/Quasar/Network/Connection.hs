@@ -45,6 +45,8 @@ instance Exception ConnectingFailed where
 connectTCP :: MonadIO m => Socket.HostName -> Socket.ServiceName -> m Socket.Socket
 connectTCP host port = liftIO do
   -- 'getAddrInfo' either pures a non-empty list or throws an exception
+  -- TODO simultaneous v4 and v6 resolution (see RFC 8305)
+  -- TODO sort responses (e.g. give private range IPs priority)
   (best:others) <- Socket.getAddrInfo (Just hints) (Just host) (Just port)
 
   connectTasksMVar <- newMVar []
@@ -62,6 +64,7 @@ connectTCP host port = liftIO do
       spawnConnectTask best
       threadDelay 100000
       -- Try to connect to all other resolved addresses to prevent waiting for e.g. a long IPv6 connection timeout
+      -- TODO space out further connections (see RFC 8305)
       forM_ others spawnConnectTask
       -- Wait for all tasks to complete, throw an exception if all connections failed
       connectTasks <- readMVar connectTasksMVar

@@ -12,7 +12,8 @@ import Quasar.Network.Multiplexer
 import Quasar.Network.Connection
 import Quasar.Prelude
 import Quasar.ResourceManager
-import Network.Socket
+import Network.Socket qualified as Socket
+import Network.Socket (Socket)
 import Test.Hspec
 
 spec :: Spec
@@ -135,5 +136,5 @@ withEchoServer fn = bracket setup closePair (\(channel, _) -> fn channel)
 
 newDummySocketPair :: IO (Socket, Socket)
 newDummySocketPair = do
-  unless isUnixDomainSocketAvailable $ pendingWith "Unix domain sockets are not available"
-  socketPair AF_UNIX Stream defaultProtocol
+  unless Socket.isUnixDomainSocketAvailable $ pendingWith "Unix domain sockets are not available"
+  Socket.socketPair Socket.AF_UNIX Socket.Stream Socket.defaultProtocol
