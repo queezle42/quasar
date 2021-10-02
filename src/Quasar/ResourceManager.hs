@@ -7,6 +7,7 @@ module Quasar.ResourceManager (
   withSubResourceManagerM,
   onResourceManager,
   captureDisposable,
+  captureDisposable_,
   captureTask,
 
   -- ** ResourceManager
@@ -148,19 +149,20 @@ onResourceManager :: (IsResourceManager a) => a -> ReaderT ResourceManager m r -
 onResourceManager target action = runReaderT action (toResourceManager target)
 
 
-captureTask :: MonadResourceManager m => m (Awaitable a) -> m (Task a)
-captureTask action = do
-  -- TODO improve performance by only creating a new resource manager when two or more disposables are attached
-  resourceManager <- newResourceManager
-  awaitable <- localResourceManager resourceManager action
-  pure $ Task (toDisposable resourceManager) awaitable
-
-captureDisposable :: MonadResourceManager m => m () -> m Disposable
+captureDisposable :: MonadResourceManager m => m a -> m (a, Disposable)
 captureDisposable action = do
   -- TODO improve performance by only creating a new resource manager when two or more disposables are attached
   resourceManager <- newResourceManager
-  localResourceManager resourceManager action
-  pure $ toDisposable resourceManager
+  result <- localResourceManager resourceManager action
+  pure $ (result, toDisposable resourceManager)
+
+captureDisposable_ :: MonadResourceManager m => m () -> m Disposable
+captureDisposable_ = snd <<$>> captureDisposable
+
+captureTask :: MonadResourceManager m => m (Awaitable a) -> m (Task a)
+captureTask action = do
+  (awaitable, disposable) <- captureDisposable action
+  pure $ Task disposable awaitable
 
 
 -- * ExceptionHandler
