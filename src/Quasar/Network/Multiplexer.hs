@@ -24,7 +24,8 @@ module Quasar.Network.Multiplexer (
 ) where
 
 
-import Control.Concurrent.Async (AsyncCancelled(..), async, link, race_, wait, waitAnyCancel, withAsync, withAsyncWithUnmask)
+import Control.Concurrent.Async qualified as Async
+import Control.Concurrent.Async (AsyncCancelled(..), race_, wait, waitAnyCancel, withAsync, withAsyncWithUnmask)
 import Control.Exception (MaskingState(Unmasked), interruptible, getMaskingState)
 import Control.Monad.Catch
 import Control.Monad.State (StateT, execStateT, runStateT, lift)
@@ -38,6 +39,7 @@ import Data.ByteString.Lazy qualified as BSL
 import Data.HashMap.Strict qualified as HM
 import Data.Tuple (swap)
 import Data.Word
+import Quasar.Async
 import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Network.Connection
@@ -169,22 +171,23 @@ data MultiplexerSide = MultiplexerSideA | MultiplexerSideB
 
 -- | Starts a new multiplexer on an existing connection.
 -- This starts a thread which runs until 'channelClose' is called on the resulting 'Channel' (use e.g. 'bracket' to ensure the channel is closed).
-newMultiplexer :: (IsConnection a, MonadIO m) => MultiplexerSide -> a -> m Channel
-newMultiplexer side x = liftIO do
-  channelMVar <- newEmptyMVar
-  -- 'runMultiplexer' needs to be interruptible (so it can terminate when it is closed), so 'interruptible' is used to ensure that this function also works when used in 'bracket'
-  mask_ $ link =<< async (interruptible (runMultiplexer side (putMVar channelMVar) (toSocketConnection x)))
-  takeMVar channelMVar
+newMultiplexer :: (IsConnection a, MonadResourceManager m) => MultiplexerSide -> a -> m Channel
+newMultiplexer side connection = do
+  channelMVar <- liftIO newEmptyMVar
+  runUnlimitedAsync $ async $ runMultiplexer side (liftIO . putMVar channelMVar) (toSocketConnection connection)
+  liftIO $ takeMVar channelMVar
 
 -- | Starts a new multiplexer on the provided connection and blocks until it is closed.
 -- The channel is provided to a setup action and can be closed by calling 'closeChannel'; otherwise the multiplexer will run until the underlying connection is closed.
-runMultiplexer :: (IsConnection a) => MultiplexerSide -> (Channel -> IO ()) -> a -> IO ()
-runMultiplexer side channelSetupHook connection = withResourceManager \resourceManager -> do
+runMultiplexer :: (IsConnection a, MonadResourceManager m) => MultiplexerSide -> (Channel -> m ()) -> a -> m ()
+runMultiplexer side channelSetupHook connection = do
+  resourceManager <- askResourceManager
+
   -- Running in masked state, this thread (running the receive-function) cannot be interrupted when closing the connection
-  maskingState <- getMaskingState
+  maskingState <- liftIO $ getMaskingState
   when (maskingState /= Unmasked) (fail "'runMultiplexer' cannot run in masked thread state.")
 
-  stateMVar <- newMVar $ MultiplexerWorkerState {
+  stateMVar <- liftIO $ newMVar $ MultiplexerWorkerState {
     socketConnection = Right (toSocketConnection connection),
     channels = HM.empty,
     sendChannel = 0,
@@ -198,27 +201,32 @@ runMultiplexer side channelSetupHook connection = withResourceManager \resourceM
       stateMVar,
       multiplexerClosedAtVar
     }
-    run :: IO (MultiplexerException, Bool)
-    run = do
-      rootChannel <- withMultiplexerState worker (newChannel resourceManager worker 0 Connected)
-      channelSetupHook rootChannel
-      withAsync (receiveThread worker) $ \receiveTask ->
-        withAsync (throwIO =<< multiplexerWaitUntilClosed worker) $ \waitForCloseTask -> do
-          void $ waitAnyCancel [receiveTask, waitForCloseTask]
-      pure (ConnectionClosed, False)
 
-  (exception, isAsyncCancelled) <- run `catches` [
-    Handler (\(ex :: MultiplexerException) -> pure (ex, False)),
-    Handler (\(ex :: AsyncCancelled) -> pure (LocalException (SomeException ex), True)),
-    Handler (\(ex :: SomeException) -> pure (LocalException ex, False))
-    ]
+  rootChannel <- withMultiplexerState worker (newChannel resourceManager worker 0 Connected)
 
-  storedException <- multiplexerClose exception worker
+  channelSetupHook rootChannel
+
+  (exception, isAsyncCancelled) <-
+    catches
+      do
+        liftIO do
+          withAsync (receiveThread worker) $ \receiveTask -> do
+            attachDisposeAction_ resourceManager $ pure () <$ Async.cancel receiveTask
+            withAsync (throwIO =<< multiplexerWaitUntilClosed worker) $ \waitForCloseTask -> do
+              void $ waitAnyCancel [receiveTask, waitForCloseTask]
+          pure (ConnectionClosed, False)
+      do [
+          Handler (\(ex :: MultiplexerException) -> pure (ex, False)),
+          Handler (\(ex :: AsyncCancelled) -> pure (LocalException (SomeException ex), True)),
+          Handler (\(ex :: SomeException) -> pure (LocalException ex, False))
+          ]
+
+  storedException <- liftIO $ multiplexerClose exception worker
   if isAsyncCancelled
-    then throwIO AsyncCancelled
+    then throwM AsyncCancelled
     else case storedException of
       ConnectionClosed -> pure ()
-      ex -> throwIO ex
+      ex -> throwM ex
 
 receiveThread :: MultiplexerWorker -> IO a
 receiveThread worker = receiveThreadLoop multiplexerDecoder
@@ -342,8 +350,8 @@ closedChannelMessageHandler result = discardMessageDecoder closeSubChannels
         done :: Decoder (IO ())
         done = Done "" 0 action
 
-withMultiplexerState :: MultiplexerWorker -> StateT MultiplexerWorkerState IO a -> IO a
-withMultiplexerState worker action = modifyMVar worker.stateMVar $ fmap swap . runStateT action
+withMultiplexerState :: MonadIO m => MultiplexerWorker -> StateT MultiplexerWorkerState IO a -> m a
+withMultiplexerState worker action = liftIO $ modifyMVar worker.stateMVar $ fmap swap . runStateT action
 
 withMultiplexerState2 :: MultiplexerWorker -> StateT ChannelState (StateT MultiplexerWorkerState IO) a -> StateT ChannelState IO a
 withMultiplexerState2 worker action = do
@@ -373,8 +381,8 @@ multiplexerStateSendRaw worker rawMsg = do
         (throwIO =<< multiplexerWaitUntilClosed worker)
         (connection.send rawMsg `catch` \ex -> throwIO =<< multiplexerClose (ConnectionLost ex) worker)
 
-channelSend :: Channel -> MessageConfiguration -> BSL.ByteString -> (MessageId -> IO ()) -> IO SentMessageResources
-channelSend channel configuration msg callback = do
+channelSend :: MonadIO m => Channel -> MessageConfiguration -> BSL.ByteString -> (MessageId -> IO ()) -> m SentMessageResources
+channelSend channel configuration msg callback = liftIO do
   modifyMVar channel.sendStateMVar $ \channelSendState -> do
     -- Don't send on closed channels
     withChannelState channel $ do
@@ -414,11 +422,11 @@ channelSend channel configuration msg callback = do
       State.modify $ \resources -> resources{createdChannels = resources.createdChannels <> [createdChannel]}
       pure CreateChannel
 
-channelSend_ :: Channel -> MessageConfiguration -> BSL.ByteString -> IO SentMessageResources
+channelSend_ :: MonadIO m => Channel -> MessageConfiguration -> BSL.ByteString -> m SentMessageResources
 channelSend_ channel configuration msg = channelSend channel configuration msg (const (pure ()))
 
-channelSendSimple :: Channel -> BSL.ByteString -> IO ()
-channelSendSimple channel msg = do
+channelSendSimple :: MonadIO m => Channel -> BSL.ByteString -> m ()
+channelSendSimple channel msg = liftIO do
   -- We are not sending headers, so no channels can be created
   SentMessageResources{createdChannels=[]} <- channelSend channel defaultMessageConfiguration msg (const (pure ()))
   pure ()
@@ -600,8 +608,8 @@ channelSetSimpleHandler channel handler = channelSetHandler channel innerHandler
 data AtVar a = AtVar (MVar a) (MVar AtVarState)
 data AtVarState = AtVarIsEmpty | AtVarHasValue
 
-newEmptyAtVar :: IO (AtVar a)
-newEmptyAtVar = do
+newEmptyAtVar :: MonadIO m => m (AtVar a)
+newEmptyAtVar = liftIO do
   valueMVar <- newEmptyMVar
   guardMVar <- newMVar AtVarIsEmpty
   pure $ AtVar valueMVar guardMVar

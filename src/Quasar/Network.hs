@@ -29,7 +29,6 @@ module Quasar.Network (
   Server,
   Listener(..),
   runServer,
-  withServer,
   withLocalClient,
   listenTCP,
   listenUnix,

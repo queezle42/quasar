@@ -13,6 +13,7 @@ module Quasar.NetworkSpec (spec) where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
+import Control.Monad.Reader (ReaderT)
 import Quasar.Prelude
 import Quasar.Async
 import Quasar.Awaitable
@@ -22,9 +23,19 @@ import Quasar.Network.Runtime (withStandaloneClient)
 import Quasar.Network.TH (makeRpc)
 import Quasar.Observable
 import Quasar.ResourceManager
-import Test.Hspec
+import Test.Hspec.Core.Spec
+import Test.Hspec.Expectations.Lifted
+import Test.Hspec qualified as Hspec
 import Test.QuickCheck
 import Test.QuickCheck.Monadic
+
+rm :: (forall m. MonadResourceManager m => m a) -> IO a
+rm = withRootResourceManagerM
+
+shouldThrow :: (HasCallStack, Exception e, MonadResourceManager m) => (ReaderT ResourceManager IO a) -> Hspec.Selector e -> m ()
+shouldThrow action expected = do
+  rm <- askResourceManager
+  liftIO $ (onResourceManager rm action) `Hspec.shouldThrow` expected
 
 
 $(makeRpc $ rpcApi "Example" $ do
@@ -92,7 +103,7 @@ streamExampleProtocolImpl = StreamExampleProtocolImpl {
 spec :: Spec
 spec = parallel $ do
   describe "Example" $ do
-    it "works" $ do
+    it "works" $ rm do
       withStandaloneClient @ExampleProtocol exampleProtocolImpl $ \client -> do
         (await =<< fixedHandler42 client 5) `shouldReturn` False
         (await =<< fixedHandler42 client 42) `shouldReturn` True
@@ -103,16 +114,16 @@ spec = parallel $ do
         noNothing client
 
   describe "StreamExample" $ do
-    it "can open and close a stream" $ do
+    it "can open and close a stream" $ rm do
       withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
         await =<< streamClose =<< createMultiplyStream client
 
-    it "can open multiple streams in a single rpc call" $ do
+    it "can open multiple streams in a single rpc call" $ rm do
       withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
         (stream1, stream2) <- createStreams client
         await =<< liftA2 (<>) (streamClose stream1) (streamClose stream2)
 
-    aroundAll (\x -> withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
+    Hspec.aroundAll (\x -> rm $ withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
         resultMVar <- liftIO newEmptyMVar
         stream <- createMultiplyStream client
         streamSetHandler stream $ putMVar resultMVar
@@ -122,21 +133,21 @@ spec = parallel $ do
         liftIO $ takeMVar resultMVar `shouldReturn` x * y
 
   describe "ObservableExample" $ do
-    it "can retrieve values" $ do
+    it "can retrieve values" $ rm do
       var <- newObservableVar 42
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
-        observable <- intObservable client
-        retrieveIO observable `shouldReturn` 42
+        observable <- liftIO $ intObservable client
+        (retrieve observable >>= await) `shouldReturn` 42
         setObservableVar var 13
-        retrieveIO observable `shouldReturn` 13
+        (retrieve observable >>= await) `shouldReturn` 13
 
-    it "receives the current value when calling observe" $ do
+    it "receives the current value when calling observe" $ rm do
       var <- newObservableVar 41
 
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
 
-        resultVar <- newTVarIO ObservableLoading
-        observable <- intObservable client
+        resultVar <- liftIO $ newTVarIO ObservableLoading
+        observable <- liftIO $ intObservable client
 
         -- Change the value before calling `observe`
         setObservableVar var 42
@@ -150,11 +161,11 @@ spec = parallel $ do
               ObservableLoading -> retry
               ObservableNotAvailable ex -> pure $ throwIO ex
 
-    it "receives continuous updates when observing" $ do
+    it "receives continuous updates when observing" $ rm do
       var <- newObservableVar 42
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
-        resultVar <- newTVarIO ObservableLoading
-        observable <- intObservable client
+        resultVar <- liftIO $ newTVarIO ObservableLoading
+        observable <- liftIO $ intObservable client
         withResourceManagerM $ runUnlimitedAsync do
           observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
 
@@ -174,13 +185,13 @@ spec = parallel $ do
           setObservableVar var 42
           latestShouldBe 42
 
-    it "receives no further updates after unsubscribing" $ do
+    it "receives no further updates after unsubscribing" $ rm do
       var <- newObservableVar 42
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
-        resultVar <- newTVarIO ObservableLoading
-        observable <- intObservable client
+        resultVar <- liftIO $ newTVarIO ObservableLoading
+        observable <- liftIO $ intObservable client
         withResourceManagerM $ runUnlimitedAsync do
-          disposable <- captureDisposable $ observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
+          disposable <- captureDisposable_ $ observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
 
           let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=
                 \case
@@ -198,7 +209,7 @@ spec = parallel $ do
           setObservableVar var 42
           latestShouldBe 42
 
-          disposeAndAwait disposable
+          await =<< dispose disposable
 
           setObservableVar var (-1)
           liftIO $ threadDelay 10000

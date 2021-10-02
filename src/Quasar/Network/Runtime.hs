@@ -14,7 +14,8 @@ module Quasar.Network.Runtime (
   Server,
   Listener(..),
   runServer,
-  withServer,
+  addListener,
+  addListener_,
   withLocalClient,
   newLocalClient,
   listenTCP,
@@ -165,30 +166,35 @@ streamClose (Stream channel) = liftIO $ channelClose channel
 
 -- ** Running client and server
 
-withClientTCP :: (RpcProtocol p, MonadIO m, MonadMask m) => Socket.HostName -> Socket.ServiceName -> (Client p -> m a) -> m a
+withClientTCP :: (RpcProtocol p, MonadResourceManager m) => Socket.HostName -> Socket.ServiceName -> (Client p -> m a) -> m a
 withClientTCP host port = withClientBracket (newClientTCP host port)
 
-newClientTCP :: (RpcProtocol p, MonadIO m) => Socket.HostName -> Socket.ServiceName -> m (Client p)
+newClientTCP :: (RpcProtocol p, MonadResourceManager m) => Socket.HostName -> Socket.ServiceName -> m (Client p)
 newClientTCP host port = newClient =<< connectTCP host port
 
 
-withClientUnix :: (RpcProtocol p, MonadIO m, MonadMask m) => FilePath -> (Client p -> m a) -> m a
+withClientUnix :: (RpcProtocol p, MonadResourceManager m) => FilePath -> (Client p -> m a) -> m a
 withClientUnix socketPath = withClientBracket (newClientUnix socketPath)
 
-newClientUnix :: MonadIO m => RpcProtocol p => FilePath -> m (Client p)
-newClientUnix socketPath = liftIO $ bracketOnError (Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol) Socket.close $ \sock -> do
-  Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
-  Socket.connect sock $ Socket.SockAddrUnix socketPath
-  newClient sock
+newClientUnix :: (MonadResourceManager m, RpcProtocol p) => FilePath -> m (Client p)
+newClientUnix socketPath =
+  bracketOnError
+    do liftIO $ Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol
+    do liftIO . Socket.close
+    \sock -> do
+      liftIO do
+        Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
+        Socket.connect sock $ Socket.SockAddrUnix socketPath
+      newClient sock
 
 
-withClient :: forall p a m b. (IsConnection a, RpcProtocol p, MonadIO m, MonadMask m) => a -> (Client p -> m b) -> m b
+withClient :: forall p a m b. (IsConnection a, RpcProtocol p, MonadResourceManager m) => a -> (Client p -> m b) -> m b
 withClient connection = withClientBracket (newClient connection)
 
-newClient :: forall p a m. (IsConnection a, RpcProtocol p, MonadIO m) => a -> m (Client p)
+newClient :: forall p a m. (IsConnection a, RpcProtocol p, MonadResourceManager m) => a -> m (Client p)
 newClient connection = newChannelClient =<< newMultiplexer MultiplexerSideA (toSocketConnection connection)
 
-withClientBracket :: (MonadIO m, MonadMask m) => m (Client p) -> (Client p -> m a) -> m a
+withClientBracket :: (MonadResourceManager m) => m (Client p) -> (Client p -> m a) -> m a
 withClientBracket createClient = bracket createClient clientClose
 
 
@@ -208,39 +214,51 @@ data Listener =
   ListenSocket Socket.Socket
 
 data Server p = Server {
+  resourceManager :: ResourceManager,
   protocolImpl :: ProtocolImpl p
 }
 
-newServer :: ProtocolImpl p -> IO (Server p)
-newServer protocolImpl = pure Server { protocolImpl }
+instance IsResourceManager (Server p) where
+  toResourceManager server = server.resourceManager
 
-execServer :: forall p a. (HasProtocolImpl p) => Server p -> [Listener] -> IO a
-execServer server listeners = mapConcurrently_ runListener listeners >> fail "Server failed: All listeners stopped unexpectedly"
+instance IsDisposable (Server p) where
+  toDisposable = toDisposable . toResourceManager
+
+
+newServer :: forall p m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> [Listener] -> m (Server p)
+newServer protocolImpl listeners = do
+  resourceManager <- newResourceManager
+  let server = Server { resourceManager, protocolImpl }
+  mapM_ (addListener_ server) listeners
+  pure server
+
+addListener :: (HasProtocolImpl p, MonadIO m) => Server p -> Listener -> m Disposable
+addListener server listener =
+  onResourceManager server $
+    captureDisposable_ $
+      runUnlimitedAsync $ async_ $ runListener listener
   where
-    runListener :: Listener -> IO ()
+    runListener :: MonadResourceManager f => Listener -> f a
     runListener (TcpPort mhost port) = runTCPListener server mhost port
     runListener (UnixSocket path) = runUnixSocketListener server path
     runListener (ListenSocket socket) = runListenerOnBoundSocket server socket
 
-runServer :: forall p a. (HasProtocolImpl p) => ProtocolImpl p -> [Listener] -> IO a
+addListener_ :: (HasProtocolImpl p, MonadIO m) => Server p -> Listener -> m ()
+addListener_ server listener = void $ addListener server listener
+
+runServer :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> [Listener] -> m ()
 runServer _ [] = fail "Tried to start a server without any listeners attached"
 runServer protocolImpl listener = do
-  server <- newServer @p protocolImpl
-  execServer server listener
+  server <- newServer @p protocolImpl listener
+  await $ isDisposed server
 
-withServer :: forall p a. HasProtocolImpl p => ProtocolImpl p -> [Listener] -> (Server p -> IO a) -> IO a
-withServer protocolImpl [] action = action =<< newServer @p protocolImpl
-withServer protocolImpl listeners action = do
-  server <- newServer @p protocolImpl
-  withAsync (execServer server listeners) (\x -> link x >> action server <* cancel x)
-
-listenTCP :: forall p a. HasProtocolImpl p => ProtocolImpl p -> Maybe Socket.HostName -> Socket.ServiceName -> IO a
+listenTCP :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> Maybe Socket.HostName -> Socket.ServiceName -> m ()
 listenTCP impl mhost port = runServer @p impl [TcpPort mhost port]
 
-runTCPListener :: forall p a. HasProtocolImpl p => Server p -> Maybe Socket.HostName -> Socket.ServiceName -> IO a
+runTCPListener :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> Maybe Socket.HostName -> Socket.ServiceName -> m a
 runTCPListener server mhost port = do
-  addr <- resolve
-  bracket (open addr) Socket.close (runListenerOnBoundSocket server)
+  addr <- liftIO resolve
+  bracket (liftIO (open addr)) (liftIO . Socket.close) (runListenerOnBoundSocket server)
   where
     resolve :: IO Socket.AddrInfo
     resolve = do
@@ -253,15 +271,15 @@ runTCPListener server mhost port = do
       Socket.bind sock (Socket.addrAddress addr)
       pure sock
 
-listenUnix :: forall p a. HasProtocolImpl p => ProtocolImpl p -> FilePath -> IO a
+listenUnix :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> FilePath -> m ()
 listenUnix impl path = runServer @p impl [UnixSocket path]
 
-runUnixSocketListener :: forall p a. HasProtocolImpl p => Server p -> FilePath -> IO a
+runUnixSocketListener :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> FilePath -> m a
 runUnixSocketListener server socketPath = do
-  bracket create Socket.close (runListenerOnBoundSocket server)
+  bracket create (liftIO . Socket.close) (runListenerOnBoundSocket server)
   where
-    create :: IO Socket.Socket
-    create = do
+    create :: m Socket.Socket
+    create = liftIO do
       fileExistsAtPath <- fileExist socketPath
       when fileExistsAtPath $ do
         fileStatus <- getFileStatus socketPath
@@ -275,48 +293,50 @@ runUnixSocketListener server socketPath = do
         pure sock
 
 -- | Listen and accept connections on an already bound socket.
-listenOnBoundSocket :: forall p a. HasProtocolImpl p => ProtocolImpl p -> Socket.Socket -> IO a
+listenOnBoundSocket :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> Socket.Socket -> m ()
 listenOnBoundSocket protocolImpl socket = runServer @p protocolImpl [ListenSocket socket]
 
-runListenerOnBoundSocket :: forall p a. HasProtocolImpl p => Server p -> Socket.Socket -> IO a
+runListenerOnBoundSocket :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> Socket.Socket -> m a
 runListenerOnBoundSocket server sock = do
-  Socket.listen sock 1024
+  liftIO $ Socket.listen sock 1024
   forever $ mask_ $ do
-    (conn, _sockAddr) <- Socket.accept sock
+    (conn, _sockAddr) <- liftIO $ Socket.accept sock
     connectToServer server conn
 
-connectToServer :: forall p a. (HasProtocolImpl p, IsConnection a) => Server p -> a -> IO ()
-connectToServer server conn = void $ forkFinally (interruptible (runServerHandler @p server.protocolImpl connection)) socketFinalization
+connectToServer :: forall p a m. (HasProtocolImpl p, IsConnection a, MonadIO m) => Server p -> a -> m ()
+connectToServer server conn =
+  onResourceManager server do
+    registerDisposeAction $ pure () <$ connection.close
+    runUnlimitedAsync $ async_ $ runServerHandler @p server.protocolImpl connection
   where
     connection :: Connection
     connection = toSocketConnection conn
-    socketFinalization :: Either SomeException () -> IO ()
-    socketFinalization (Left _err) = do
-      -- TODO: log error
-      --logStderr $ "Client connection closed with error " <> show err
-      connection.close
-    socketFinalization (Right ()) = do
-      connection.close
 
-runServerHandler :: forall p a. (HasProtocolImpl p, IsConnection a) => ProtocolImpl p -> a -> IO ()
+runServerHandler :: forall p a m. (HasProtocolImpl p, IsConnection a, MonadResourceManager m) => ProtocolImpl p -> a -> m ()
 runServerHandler protocolImpl = runMultiplexer MultiplexerSideB registerChannelServerHandler . toSocketConnection
   where
-    registerChannelServerHandler :: Channel -> IO ()
-    registerChannelServerHandler channel = channelSetHandler channel (serverHandleChannelMessage @p protocolImpl channel)
+    registerChannelServerHandler :: Channel -> m ()
+    registerChannelServerHandler channel = liftIO $
+      channelSetHandler channel (serverHandleChannelMessage @p protocolImpl channel)
 
 
-withLocalClient :: forall p a. HasProtocolImpl p => Server p -> (Client p -> IO a) -> IO a
-withLocalClient server = bracket (newLocalClient server) clientClose
+withLocalClient :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> (Client p -> m a) -> m a
+withLocalClient server action =
+  withSubResourceManagerM do
+    client <- newLocalClient server
+    action client
 
-newLocalClient :: forall p. HasProtocolImpl p => Server p -> IO (Client p)
+newLocalClient :: forall p m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> m (Client p)
 newLocalClient server = do
   unless Socket.isUnixDomainSocketAvailable $ fail "Unix domain sockets are not available"
   mask_ $ do
-    (clientSocket, serverSocket) <- Socket.socketPair Socket.AF_UNIX Socket.Stream Socket.defaultProtocol
+    (clientSocket, serverSocket) <- liftIO $ Socket.socketPair Socket.AF_UNIX Socket.Stream Socket.defaultProtocol
     connectToServer server serverSocket
     newClient @p clientSocket
 
 -- ** Test implementation
 
-withStandaloneClient :: forall p a. HasProtocolImpl p => ProtocolImpl p -> (Client p -> IO a) -> IO a
-withStandaloneClient impl runClientHook = withServer impl [] $ \server -> withLocalClient server runClientHook
+withStandaloneClient :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> (Client p -> m a) -> m a
+withStandaloneClient impl runClientHook = do
+  server <- newServer impl []
+  withLocalClient server runClientHook
