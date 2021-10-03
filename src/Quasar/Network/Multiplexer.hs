@@ -25,7 +25,7 @@ module Quasar.Network.Multiplexer (
 
 
 import Control.Concurrent.Async qualified as Async
-import Control.Concurrent.Async (AsyncCancelled(..), race_, wait, waitAnyCancel, withAsync, withAsyncWithUnmask)
+import Control.Concurrent.Async (race_, wait, waitAnyCancel, withAsync, withAsyncWithUnmask)
 import Control.Exception (MaskingState(Unmasked), interruptible, getMaskingState)
 import Control.Monad.Catch
 import Control.Monad.State (StateT, execStateT, runStateT, lift)
@@ -180,13 +180,7 @@ newMultiplexer side connection = do
 -- | Starts a new multiplexer on the provided connection and blocks until it is closed.
 -- The channel is provided to a setup action and can be closed by calling 'closeChannel'; otherwise the multiplexer will run until the underlying connection is closed.
 runMultiplexer :: (IsConnection a, MonadResourceManager m) => MultiplexerSide -> (Channel -> m ()) -> a -> m ()
-runMultiplexer side channelSetupHook connection = do
-  resourceManager <- askResourceManager
-
-  -- Running in masked state, this thread (running the receive-function) cannot be interrupted when closing the connection
-  maskingState <- liftIO $ getMaskingState
-  when (maskingState /= Unmasked) (fail "'runMultiplexer' cannot run in masked thread state.")
-
+runMultiplexer side channelSetupHook connection = withSubResourceManagerM do
   stateMVar <- liftIO $ newMVar $ MultiplexerWorkerState {
     socketConnection = Right (toSocketConnection connection),
     channels = HM.empty,
@@ -202,34 +196,31 @@ runMultiplexer side channelSetupHook connection = do
       multiplexerClosedAtVar
     }
 
+  resourceManager <- askResourceManager
+
   rootChannel <- withMultiplexerState worker (newChannel resourceManager worker 0 Connected)
 
   channelSetupHook rootChannel
 
-  (exception, isAsyncCancelled) <-
-    catches
-      do
-        liftIO do
-          withAsync (receiveThread worker) $ \receiveTask -> do
-            attachDisposeAction_ resourceManager $ pure () <$ Async.cancel receiveTask
-            withAsync (throwIO =<< multiplexerWaitUntilClosed worker) $ \waitForCloseTask -> do
-              void $ waitAnyCancel [receiveTask, waitForCloseTask]
-          pure (ConnectionClosed, False)
-      do [
-          Handler (\(ex :: MultiplexerException) -> pure (ex, False)),
-          Handler (\(ex :: AsyncCancelled) -> pure (LocalException (SomeException ex), True)),
-          Handler (\(ex :: SomeException) -> pure (LocalException ex, False))
-          ]
+  -- TODO this is a race condition; handle "tried to register on disposed resource manager" instead (that's a userError
+  -- currently, that has to be changed as well)
+  closed <- (== Just ()) <$> peekAwaitable (isDisposed rootChannel)
+  unless closed do
 
-  storedException <- liftIO $ multiplexerClose exception worker
-  if isAsyncCancelled
-    then throwM AsyncCancelled
-    else case storedException of
+    runUnlimitedAsync $ async_ do
+      receiveThread worker `catches` [
+        Handler (\(ex :: MultiplexerException) -> throwM ex),
+        Handler (\(ex :: SomeException) -> throwM (LocalException ex))
+        ]
+
+    resultException <- multiplexerWaitUntilClosed worker
+    case resultException of
       ConnectionClosed -> pure ()
       ex -> throwM ex
 
-receiveThread :: MultiplexerWorker -> IO a
-receiveThread worker = receiveThreadLoop multiplexerDecoder
+
+receiveThread :: MonadResourceManager m => MultiplexerWorker -> m a
+receiveThread worker = liftIO $ receiveThreadLoop multiplexerDecoder
   where
     multiplexerDecoder :: Decoder MultiplexerMessage
     multiplexerDecoder = runGetIncremental Binary.get
@@ -478,7 +469,7 @@ channelCloseInternal channel = do
         Closed -> pure (state, False)
         CloseConfirmed -> pure (state, False)
 
-multiplexerWaitUntilClosed :: MultiplexerWorker -> IO MultiplexerException
+multiplexerWaitUntilClosed :: MonadIO m => MultiplexerWorker -> m MultiplexerException
 multiplexerWaitUntilClosed worker = readAtVar worker.multiplexerClosedAtVar
 
 -- Called on a channel when a ChannelClose message is received
@@ -554,8 +545,9 @@ channelReportException channel exception = do
 newSubChannel :: MultiplexerWorker -> ChannelId -> (StateT ChannelState (StateT MultiplexerWorkerState IO)) Channel
 newSubChannel worker channelId = do
   parentChannelState <- State.get
+  resourceManager <- onResourceManager parentChannelState.resourceManager newResourceManager
   -- Holding the parents channelState while initializing the channel will ensure the ChannelConnectivity is inherited atomically
-  createdChannel <- lift $ newChannel parentChannelState.resourceManager worker channelId parentChannelState.connectionState
+  createdChannel <- lift $ newChannel resourceManager worker channelId parentChannelState.connectionState
 
   let newParentState = parentChannelState{
     children = createdChannel : parentChannelState.children
@@ -564,8 +556,7 @@ newSubChannel worker channelId = do
   pure createdChannel
 
 newChannel :: ResourceManager -> MultiplexerWorker -> ChannelId -> ChannelConnectivity -> StateT MultiplexerWorkerState IO Channel
-newChannel parentResourceManager worker channelId connectionState = do
-  resourceManager <- onResourceManager parentResourceManager newResourceManager
+newChannel resourceManager worker channelId connectionState = do
   stateMVar <- liftIO $ newMVar ChannelState {
     resourceManager,
     connectionState,
@@ -619,5 +610,5 @@ writeAtVar (AtVar valueMVar guardMVar) value = liftIO $ modifyMVar_ guardMVar $ 
   AtVarIsEmpty -> putMVar valueMVar value >> pure AtVarHasValue
   AtVarHasValue -> modifyMVar_ valueMVar (const (pure value)) >> pure AtVarHasValue
 
-readAtVar :: AtVar a -> IO a
-readAtVar (AtVar valueMVar _) = readMVar valueMVar
+readAtVar :: MonadIO m => AtVar a -> m a
+readAtVar (AtVar valueMVar _) = liftIO $ readMVar valueMVar

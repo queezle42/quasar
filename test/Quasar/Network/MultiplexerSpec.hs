@@ -33,10 +33,6 @@ spec = describe "runMultiplexer" $ parallel $ do
     (x, _) <- newDummySocketPair
     runMultiplexer MultiplexerSideA (await <=< channelClose) x
 
-  it "fails when run in masked state" $ rm do
-    (x, _) <- newDummySocketPair
-    mask_ $ runMultiplexer MultiplexerSideA (await <=< channelClose) x `shouldThrow` Hspec.anyException
-
   it "closes when the remote is closed" $ do
     (x, y) <- newDummySocketPair
     concurrently_
