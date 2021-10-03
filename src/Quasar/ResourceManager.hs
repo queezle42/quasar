@@ -267,45 +267,48 @@ data DefaultResourceManager = DefaultResourceManager {
 instance IsResourceManager DefaultResourceManager where
   throwToResourceManager DefaultResourceManager{parentResourceManager} = throwToResourceManager parentResourceManager
 
-  attachDisposable resourceManager disposable = liftIO $ mask \unmask -> do
+  attachDisposable resourceManager disposable = liftIO $ mask_ do
     entry <- newEntry disposable
 
     join $ atomically do
       disposed <- readTVar (disposedVar resourceManager)
-      when disposed $ throwM (userError "Cannot attach a disposable to a disposed resource manager")
 
-      modifyTVar (entriesVar resourceManager) (|> entry)
+      unless disposed $ modifyTVar (entriesVar resourceManager) (|> entry)
 
       disposing <- readTVar (disposingVar resourceManager)
 
-      pure do
-        -- IO that is run after the STM transaction is completed
-        when disposing $
-          unmask (void (dispose disposable)) `catchAll` throwToResourceManager resourceManager
+      -- IO that is run after the STM transaction is completed
+      pure $ (`catchAll` throwToResourceManager resourceManager) do
+        if disposed
+          then do
+            traceIO "Attached a disposable to a disposed resource manager"
+            await =<< dispose disposable
+          else when disposing do
+            void (dispose disposable)
 
 instance IsDisposable DefaultResourceManager where
-  dispose resourceManager = liftIO $ mask \unmask -> do
+  dispose resourceManager = liftIO $ mask_ do
     entries <- atomically do
       isAlreadyDisposing <- swapTVar (disposingVar resourceManager) True
       if not isAlreadyDisposing
         then readTVar (entriesVar resourceManager)
         else pure Empty
 
-    mapM_ (entryStartDispose unmask) entries
+    mapM_ entryStartDispose entries
     pure $ isDisposed resourceManager
     where
-      entryStartDispose :: (IO () -> IO ()) -> ResourceManagerEntry -> IO ()
-      entryStartDispose unmask (ResourceManagerEntry var) =
+      entryStartDispose :: ResourceManagerEntry -> IO ()
+      entryStartDispose (ResourceManagerEntry var) =
         atomically (tryReadTMVar var) >>= \case
           Nothing -> pure ()
           Just (_, disposable) ->
-            unmask (void $ dispose disposable)
-            `catchAll`
-            \ex -> do
-              -- Disposable failed so it should be removed
-              atomically (void $ tryTakeTMVar var)
-              throwToResourceManager resourceManager ex
-              pure ()
+            catchAll
+              do void (dispose disposable)
+              \ex -> do
+                -- Disposable failed so it should be removed
+                atomically (void $ tryTakeTMVar var)
+                throwToResourceManager resourceManager ex
+                pure ()
 
 
   isDisposed resourceManager =
