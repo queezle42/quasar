@@ -76,6 +76,7 @@ toObservableUpdate (ObservableNotAvailable ex) = throwM ex
 class IsRetrievable v a | a -> v where
   retrieve :: MonadResourceManager m => a -> m (Awaitable v)
 
+-- TODO remove
 retrieveIO :: IsRetrievable v a => a -> IO v
 retrieveIO x = withResourceManagerM $ await =<< retrieve x
 

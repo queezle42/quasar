@@ -3,6 +3,7 @@ module Quasar.ResourceManager (
   MonadResourceManager(..),
   registerDisposable,
   registerDisposeAction,
+  registerSimpleDisposeAction,
   disposeEventually,
   withSubResourceManagerM,
   onResourceManager,
@@ -20,6 +21,9 @@ module Quasar.ResourceManager (
   -- ** Initialization
   withRootResourceManager,
   withRootResourceManagerM,
+
+  CancelLinkedThread(..),
+  LinkedThreadDisposed(..),
 
   -- ** Resource manager implementations
   newUnmanagedRootResourceManager,
@@ -122,10 +126,11 @@ registerDisposable disposable = do
 registerDisposeAction :: MonadResourceManager m => IO (Awaitable ()) -> m ()
 registerDisposeAction disposeAction = mask_ $ registerDisposable =<< newDisposable disposeAction
 
-registerDisposeAction' :: MonadResourceManager m => IO () -> m ()
-registerDisposeAction' disposeAction = registerDisposeAction (pure () <$ disposeAction)
+registerSimpleDisposeAction :: MonadResourceManager m => IO () -> m ()
+registerSimpleDisposeAction disposeAction = registerDisposeAction (pure () <$ disposeAction)
 
 
+-- TODO rename to withResourceScope?
 withSubResourceManagerM :: MonadResourceManager m => m a -> m a
 withSubResourceManagerM action =
   bracket newResourceManager (await <=< dispose) \scope -> localResourceManager scope action
@@ -173,7 +178,16 @@ captureTask action = do
 type ExceptionHandler = SomeException -> IO ()
 
 loggingExceptionHandler :: ExceptionHandler
-loggingExceptionHandler ex = hPutStrLn stderr $ displayException ex
+loggingExceptionHandler ex = traceIO $ displayException ex
+
+
+data CancelLinkedThread = CancelLinkedThread
+  deriving stock Show
+  deriving anyclass Exception
+
+data LinkedThreadDisposed = LinkedThreadDisposed
+  deriving stock Show
+  deriving anyclass Exception
 
 
 data CancelHelper = CancelHelper
@@ -194,7 +208,7 @@ withLinkedExceptionHandler parentExceptionHandler action = do
       do
         unmask do
           atomically $ check =<< readTVar shouldCancelVar
-          throwTo mainThreadId CancelTask
+          throwTo mainThreadId CancelLinkedThread
       `catch`
       \CancelHelper -> pure ()
 
@@ -206,7 +220,7 @@ withLinkedExceptionHandler parentExceptionHandler action = do
         do \cancelThreadId -> liftIO $ throwTo cancelThreadId CancelHelper
         do \_ -> unmask $ action exceptionHandler
     `catch`
-    \CancelTask -> throwM TaskDisposed
+    \CancelLinkedThread -> throwM LinkedThreadDisposed
 
 
 
