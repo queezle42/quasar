@@ -22,19 +22,12 @@ module Quasar.ResourceManager (
 
   -- ** Initialization
   withRootResourceManager,
-  withRootResourceManagerM,
 
-  CancelLinkedThread(..),
-  LinkedThreadDisposed(..),
+  CancelLinkedThread,
 
   -- ** Resource manager implementations
   newUnmanagedRootResourceManager,
   --newUnmanagedDefaultResourceManager,
-
-  -- ** Deprecated
-  withResourceManager,
-  withResourceManagerM,
-  newUnmanagedResourceManager,
 ) where
 
 
@@ -58,7 +51,7 @@ data FailedToRegisterResource = FailedToRegisterResource
 
 instance Exception FailedToRegisterResource where
   displayException FailedToRegisterResource =
-    "Failed to register a resource to a resource manager. This might result in leaked resources if left unhandled."
+    "FailedToRegisterResource: Failed to register a resource to a resource manager. This might result in leaked resources if left unhandled."
 
 -- | Internal entry of `ResourceManager`. The `TMVar` will be set to `Nothing` when the disposable has completed disposing.
 newtype ResourceManagerEntry = ResourceManagerEntry (TMVar (Awaitable (), Disposable))
@@ -195,55 +188,22 @@ loggingExceptionHandler :: ExceptionHandler
 loggingExceptionHandler ex = traceIO $ displayException ex
 
 
-data CancelLinkedThread = CancelLinkedThread
-  deriving stock Show
+-- | A computation bound to a resource manager with 'linkThread' should be canceled.
+data CancelLinkedThread = CancelLinkedThread Unique
   deriving anyclass Exception
 
-data LinkedThreadDisposed = LinkedThreadDisposed
-  deriving stock Show
-  deriving anyclass Exception
+instance Show CancelLinkedThread where
+  show _ = "CancelLinkedThread"
 
 
-data CancelHelper = CancelHelper
-  deriving stock Show
-  deriving anyclass Exception
-
-
-withLinkedExceptionHandler :: (MonadAwait m, MonadMask m, MonadIO m) => ExceptionHandler -> (ExceptionHandler -> m a) -> m a
-withLinkedExceptionHandler parentExceptionHandler action = do
-  shouldCancelVar <- liftIO $ newTVarIO False
-  let
-    exceptionHandler :: ExceptionHandler
-    exceptionHandler ex = do
-      parentExceptionHandler ex
-      atomically $ writeTVar shouldCancelVar True
-    cancelThread :: ThreadId -> (IO () -> IO ()) -> IO ()
-    cancelThread mainThreadId unmask =
-      do
-        unmask do
-          atomically $ check =<< readTVar shouldCancelVar
-          throwTo mainThreadId CancelLinkedThread
-      `catch`
-      \CancelHelper -> pure ()
-
-  mainThreadId <- liftIO myThreadId
-  mask \unmask ->
-    do
-      bracket
-        do liftIO $ forkIOWithUnmask \unmask -> cancelThread mainThreadId unmask
-        do \cancelThreadId -> liftIO $ throwTo cancelThreadId CancelHelper
-        do \_ -> unmask $ action exceptionHandler
-    `catch`
-    \CancelLinkedThread -> throwM LinkedThreadDisposed
-
-
-
-withRootExceptionHandler :: (MonadAwait m, MonadMask m, MonadIO m) => (ExceptionHandler -> m a) -> m a
-withRootExceptionHandler = withLinkedExceptionHandler loggingExceptionHandler
+data LinkState = LinkStateLinked ThreadId | LinkStateThrowing | LinkStateCompleted
+  deriving Eq
 
 
 -- * Resource manager implementations
 
+
+newtype CombinedException = CombinedException [SomeException]
 
 data RootResourceManager = RootResourceManager ResourceManager ExceptionHandler
 
@@ -257,18 +217,19 @@ instance IsDisposable RootResourceManager where
   dispose (RootResourceManager child _) = dispose child
   isDisposed (RootResourceManager child _) = isDisposed child
 
-withRootResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => (ResourceManager -> m a) -> m a
-withRootResourceManager action = withRootExceptionHandler \exceptionHandler ->
-  bracket (newUnmanagedRootResourceManager exceptionHandler) (await <=< liftIO . dispose) action
+withRootResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => ReaderT ResourceManager IO a -> m a
+withRootResourceManager action =
+  bracket
+    newUnmanagedRootResourceManager
+    (await <=< liftIO . dispose)
+    (`onResourceManager` action)
 
-withRootResourceManagerM :: (MonadAwait m, MonadMask m, MonadIO m) => ReaderT ResourceManager IO a -> m a
-withRootResourceManagerM action = withRootResourceManager (`onResourceManager` action)
 
-newUnmanagedRootResourceManager :: MonadIO m => ExceptionHandler -> m ResourceManager
-newUnmanagedRootResourceManager exceptionHandler = liftIO $ fixIO \self -> do
+newUnmanagedRootResourceManager :: MonadIO m => m ResourceManager
+newUnmanagedRootResourceManager = liftIO $ fixIO \self -> do
   var <- liftIO newEmptyTMVarIO
   childResourceManager <- newUnmanagedDefaultResourceManager self
-  pure $ toResourceManager (RootResourceManager childResourceManager exceptionHandler)
+  pure $ toResourceManager (RootResourceManager childResourceManager loggingExceptionHandler)
 
 
 data DefaultResourceManager = DefaultResourceManager {
@@ -324,18 +285,6 @@ instance IsDisposable DefaultResourceManager where
     unsafeAwaitSTM do
       disposed <- readTVar (disposedVar resourceManager)
       unless disposed retry
-
-{-# DEPRECATED withResourceManager "Use withRootResourceManager insted" #-}
-withResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => (ResourceManager -> m a) -> m a
-withResourceManager = withRootResourceManager
-
-{-# DEPRECATED withResourceManagerM "Use withRootResourceManagerM insted" #-}
-withResourceManagerM :: (MonadAwait m, MonadMask m, MonadIO m) => ReaderT ResourceManager IO a -> m a
-withResourceManagerM = withRootResourceManagerM
-
-{-# DEPRECATED newUnmanagedResourceManager "Use newUnmanagedRootResourceManager insted" #-}
-newUnmanagedResourceManager :: MonadIO m => m ResourceManager
-newUnmanagedResourceManager = newUnmanagedRootResourceManager loggingExceptionHandler
 
 newResourceManager :: MonadResourceManager m => m ResourceManager
 newResourceManager = mask_ do

@@ -13,7 +13,7 @@ spec :: Spec
 spec = do
   describe "SubscribableEvent" $ parallel do
 
-    it "can be subscribed" $ io $ withResourceManagerM do
+    it "can be subscribed" $ io $ withRootResourceManager do
       event <- newSubscribableEvent
       resultVar <- liftIO newEmptyTMVarIO
       subscribe event $ liftIO . \case
@@ -22,7 +22,7 @@ spec = do
       raiseSubscribableEvent event (42 :: Int)
       liftIO $ atomically (tryTakeTMVar resultVar) `shouldReturn` Just 42
 
-    it "stops calling the callback after the subscription is disposed" $ io $ withResourceManagerM do
+    it "stops calling the callback after the subscription is disposed" $ io $ withRootResourceManager do
       event <- newSubscribableEvent
       resultVar <- liftIO $ newEmptyTMVarIO
       withSubResourceManagerM do
@@ -34,7 +34,7 @@ spec = do
       raiseSubscribableEvent event (21 :: Int)
       liftIO $ atomically (tryTakeTMVar resultVar) `shouldReturn` Nothing
 
-    it "can be fmap'ed" $ io $ withResourceManagerM do
+    it "can be fmap'ed" $ io $ withRootResourceManager do
       event <- newSubscribableEvent
       let subscribable = (* 2) <$> toSubscribable event
       resultVar <- liftIO $ newEmptyTMVarIO
@@ -44,7 +44,7 @@ spec = do
       raiseSubscribableEvent event (21 :: Int)
       liftIO $ atomically (tryTakeTMVar resultVar) `shouldReturn` Just 42
 
-    it "can be combined with other events" $ io $ withResourceManagerM do
+    it "can be combined with other events" $ io $ withRootResourceManager do
       event1 <- newSubscribableEvent
       event2 <- newSubscribableEvent
       let subscribable = toSubscribable event1 <> toSubscribable event2

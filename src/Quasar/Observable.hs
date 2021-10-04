@@ -78,7 +78,7 @@ class IsRetrievable v a | a -> v where
 
 -- TODO remove
 retrieveIO :: IsRetrievable v a => a -> IO v
-retrieveIO x = withResourceManagerM $ await =<< retrieve x
+retrieveIO x = withRootResourceManager $ await =<< retrieve x
 
 class IsRetrievable v o => IsObservable v o | o -> v where
   -- | Register a callback to observe changes. The callback is called when the value changes, but depending on the
@@ -103,7 +103,7 @@ class IsRetrievable v o => IsObservable v o | o -> v where
   -- | Old signature of `observe`, will be removed from the class once it's no longer used for implementations.
   oldObserve :: o -> (ObservableMessage v -> IO ()) -> IO Disposable
   oldObserve observable callback = do
-    resourceManager <- newUnmanagedResourceManager
+    resourceManager <- newUnmanagedRootResourceManager
     onResourceManager resourceManager do
       observe observable $ \msg -> liftIO (callback msg)
     pure $ toDisposable resourceManager
@@ -232,7 +232,7 @@ instance IsObservable r (BindObservable r) where
   oldObserve :: BindObservable r -> (ObservableMessage r -> IO ()) -> IO Disposable
   oldObserve (BindObservable fx fn) callback = do
     -- Create a resource manager to ensure all subscriptions are cleaned up when disposing.
-    resourceManager <- newUnmanagedResourceManager
+    resourceManager <- newUnmanagedRootResourceManager
 
     isDisposingVar <- newTVarIO False
     disposableVar <- newTMVarIO noDisposable
@@ -300,7 +300,7 @@ instance IsObservable r (CatchObservable e r) where
   oldObserve :: CatchObservable e r -> (ObservableMessage r -> IO ()) -> IO Disposable
   oldObserve (CatchObservable fx fn) callback = do
     -- Create a resource manager to ensure all subscriptions are cleaned up when disposing.
-    resourceManager <- newUnmanagedResourceManager
+    resourceManager <- newUnmanagedRootResourceManager
 
     isDisposingVar <- newTVarIO False
     disposableVar <- newTMVarIO noDisposable

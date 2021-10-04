@@ -19,7 +19,7 @@ observableSpec = parallel do
     it "works" $ io do
       shouldReturn
         do
-          withResourceManagerM do
+          withRootResourceManager do
             observeWhile (pure () :: Observable ()) toObservableUpdate
         ()
 
