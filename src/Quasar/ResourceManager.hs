@@ -1,6 +1,7 @@
 module Quasar.ResourceManager (
   -- * MonadResourceManager
   MonadResourceManager(..),
+  FailedToRegisterResource,
   registerDisposable,
   registerDisposeAction,
   registerSimpleDisposeAction,
@@ -51,6 +52,12 @@ import Quasar.Prelude
 import System.IO (fixIO, hPutStrLn, stderr)
 
 
+data FailedToRegisterResource = FailedToRegisterResource
+  deriving stock (Eq, Show)
+
+instance Exception FailedToRegisterResource where
+  displayException FailedToRegisterResource =
+    "Failed to register a resource to a resource manager. This might result in leaked resources if left unhandled."
 
 -- | Internal entry of `ResourceManager`. The `TMVar` will be set to `Nothing` when the disposable has completed disposing.
 newtype ResourceManagerEntry = ResourceManagerEntry (TMVar (Awaitable (), Disposable))
