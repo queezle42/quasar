@@ -2,6 +2,7 @@ module Quasar.ResourceManager (
   -- * MonadResourceManager
   MonadResourceManager(..),
   FailedToRegisterResource,
+  registerNewResource,
   registerDisposable,
   registerDisposeAction,
   registerSimpleDisposeAction,
@@ -135,6 +136,12 @@ registerDisposeAction disposeAction = mask_ $ registerDisposable =<< newDisposab
 
 registerSimpleDisposeAction :: MonadResourceManager m => IO () -> m ()
 registerSimpleDisposeAction disposeAction = registerDisposeAction (pure () <$ disposeAction)
+
+registerNewResource :: (IsDisposable a, MonadResourceManager m) => m a -> m a
+registerNewResource action = mask_ do
+  afix \awaitable -> do
+    registerDisposeAction $ either (\(_ :: SomeException) -> mempty) dispose =<< try (await awaitable)
+    action
 
 
 -- TODO rename to withResourceScope?
@@ -278,20 +285,15 @@ instance IsResourceManager DefaultResourceManager where
     entry <- newEntry disposable
 
     join $ atomically do
+      disposing <- readTVar (disposingVar resourceManager)
       disposed <- readTVar (disposedVar resourceManager)
 
-      unless disposed $ modifyTVar (entriesVar resourceManager) (|> entry)
+      unless disposing $ modifyTVar (entriesVar resourceManager) (|> entry)
 
-      disposing <- readTVar (disposingVar resourceManager)
-
-      -- IO that is run after the STM transaction is completed
-      pure $ (`catchAll` throwToResourceManager resourceManager) do
-        if disposed
-          then do
-            traceIO "Attached a disposable to a disposed resource manager"
-            await =<< dispose disposable
-          else when disposing do
-            void (dispose disposable)
+      pure do
+        -- IO that is run after the STM transaction is completed
+        when disposing $
+          throwM FailedToRegisterResource `catchAll` throwToResourceManager resourceManager
 
 instance IsDisposable DefaultResourceManager where
   dispose resourceManager = liftIO $ mask_ do
@@ -404,6 +406,7 @@ freeGarbage resourceManager = go
 
     entriesVar' :: TVar (Seq ResourceManagerEntry)
     entriesVar' = entriesVar resourceManager
+
 
 
 -- | Creates an `Disposable` that is bound to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
