@@ -54,10 +54,8 @@ instance IsAsyncContext UnlimitedAsyncContext where
   asyncOnContextWithUnmask UnlimitedAsyncContext action = do
     resourceManager <- askResourceManager
     let asyncContext = unlimitedAsyncContext
-    mask_ do
-      task <- forkTaskWithUnmask (\unmask -> runReaderT (runReaderT (action (liftUnmask unmask)) asyncContext) resourceManager)
-      registerDisposable task
-      pure $ toAwaitable task
+    toAwaitable <$> registerNewResource do
+      forkTaskWithUnmask (\unmask -> runReaderT (runReaderT (action (liftUnmask unmask)) asyncContext) resourceManager)
     where
       liftUnmask :: (forall b. IO b -> IO b) -> ReaderT AsyncContext (ReaderT ResourceManager IO) a -> ReaderT AsyncContext (ReaderT ResourceManager IO) a
       liftUnmask unmask innerAction = do
@@ -85,12 +83,13 @@ instance {-# OVERLAPPABLE #-} MonadAsync m => MonadAsync (ReaderT r m) where
 
 -- | TODO: Documentation
 --
--- The action will be run with asynchronous exceptions masked and will be passed an action that can be used unmask.
---
--- TODO change signature to `Awaitable`
+-- The action will be run with asynchronous exceptions unmasked.
 async :: MonadAsync m => (forall f. MonadAsync f => f a) -> m (Awaitable a)
 async action = asyncWithUnmask \unmask -> unmask action
 
+-- | TODO: Documentation
+--
+-- The action will be run with asynchronous exceptions masked and will be passed an action that can be used to unmask.
 asyncWithUnmask :: MonadAsync m => (forall f. MonadAsync f => (forall a. f a -> f a) -> f r) -> m (Awaitable r)
 asyncWithUnmask action = do
   asyncContext <- askAsyncContext
