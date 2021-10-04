@@ -109,5 +109,5 @@ splitOn p s = case break p s of
   (w, []) -> [w]
   (w, _:r) -> w : splitOn p r
 
-sleepForever :: IO a
-sleepForever = forever $ threadDelay 1000000000000
+sleepForever :: MonadIO m => m a
+sleepForever = liftIO $ forever $ threadDelay 1000000000000
