@@ -13,7 +13,8 @@ module Quasar.Awaitable (
   awaitableFromSTM,
 
   -- * Awaitable helpers
-
+  afix,
+  afix_,
   awaitSuccessOrFailure,
 
   -- ** Awaiting multiple awaitables
@@ -369,6 +370,22 @@ awaitSuccessOrFailure = await . fireAndForget . toAwaitable
   where
     fireAndForget :: MonadCatch m => m r -> m ()
     fireAndForget x = void x `catchAll` const (pure ())
+
+afix :: (MonadIO m, MonadCatch m) => (Awaitable a -> m a) -> m a
+afix action = do
+  var <- newAsyncVar
+  catchAll
+    do
+      result <- action (toAwaitable var)
+      putAsyncVar_ var result
+      pure result
+    \ex -> do
+      failAsyncVar_ var ex
+      throwM ex
+
+afix_ :: (MonadIO m, MonadCatch m) => (Awaitable a -> m a) -> m ()
+afix_ = void . afix
+
 
 -- ** Awaiting multiple awaitables
 
