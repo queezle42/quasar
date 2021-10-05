@@ -21,6 +21,7 @@ module Quasar.Prelude
     Control.Monad.unless,
     Control.Monad.void,
     Control.Monad.when,
+    Control.Monad.Fix.mfix,
     Data.Unique.Unique,
     Data.Unique.newUnique,
     Data.Void.Void,
@@ -80,6 +81,7 @@ import Control.Concurrent.MVar
 import Control.Exception qualified
 import Control.Monad ((>=>), (<=<))
 import Control.Monad qualified
+import Control.Monad.Fix qualified
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Foldable qualified
 import Data.Hashable qualified
