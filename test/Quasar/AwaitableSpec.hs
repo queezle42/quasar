@@ -113,3 +113,19 @@ spec = parallel $ do
       await awaitable
       await awaitable
       readTVarIO var `shouldReturn` 1
+
+    it "can cache an mfix operation" $ io do
+      avar <- newAsyncVar
+
+      r <- cacheAwaitable $ do
+        mfix \x -> do
+          v <- await avar
+          pure (v : x)
+
+      peekAwaitable r `shouldReturn` Nothing
+
+      putAsyncVar_ avar ()
+      Just (():():():_) <- peekAwaitable r
+
+      pure ()
+
