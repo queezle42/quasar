@@ -73,8 +73,18 @@ class (MonadCatch m, MonadFail m, MonadPlus m, MonadFix m) => MonadAwait m where
   -- awaitable.
   unsafeAwaitSTM :: STM a -> m a
 
+data BlockedIndefinitelyOnAwait = BlockedIndefinitelyOnAwait
+  deriving stock Show
+
+instance Exception BlockedIndefinitelyOnAwait where
+  displayException BlockedIndefinitelyOnAwait = "Thread blocked indefinitely in an 'await' operation"
+
+
 instance MonadAwait IO where
-  await awaitable = liftIO $ runQueryT atomically (runAwaitable awaitable)
+  await awaitable = liftIO do
+    runQueryT atomically (runAwaitable awaitable)
+      `catch`
+        \BlockedIndefinitelyOnSTM -> throwM BlockedIndefinitelyOnAwait
   unsafeAwaitSTM = atomically
 
 instance MonadAwait m => MonadAwait (ReaderT a m) where
