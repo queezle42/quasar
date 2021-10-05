@@ -65,7 +65,20 @@ spec = parallel $ do
             liftIO $ throwIO TestException
         \TestException -> True
 
+    it "handles an exception while disposing" $ io do
+      (`shouldThrow` \(_ :: CombinedException) -> True) do
+        withRootResourceManager do
+          registerDisposeAction $ throwIO TestException
+          liftIO $ threadDelay 100000
+
     it "passes an exception to the root resource manager" $ io do
+      (`shouldThrow` \(_ :: CombinedException) -> True) do
+        withRootResourceManager do
+          withSubResourceManagerM do
+            registerDisposeAction $ throwIO TestException
+            liftIO $ threadDelay 100000
+
+    it "passes an exception to the root resource manager when closing the inner resource manager first" $ io do
       (`shouldThrow` \(_ :: CombinedException) -> True) do
         withRootResourceManager do
           withSubResourceManagerM do

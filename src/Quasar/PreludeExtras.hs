@@ -16,9 +16,7 @@ import Data.HashSet qualified as HS
 import Data.Hashable qualified as Hashable
 import Data.List qualified as List
 import Data.Maybe qualified as Maybe
-import GHC.Records.Compat (HasField, getField, setField)
 import GHC.Stack.Types qualified
-import GHC.TypeLits (Symbol)
 import Quasar.Utils.ExtraT
 
 io :: IO a -> IO a
