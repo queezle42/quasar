@@ -11,22 +11,13 @@ module Quasar.Async (
   IsAsyncContext(..),
   AsyncContext,
   unlimitedAsyncContext,
-
-  -- * Unmanaged forking
-  forkTask,
-  forkTask_,
-  forkTaskWithUnmask,
-  forkTaskWithUnmask_,
 ) where
 
-import Control.Concurrent (ThreadId, forkIOWithUnmask, throwTo)
-import Control.Concurrent.STM
-import Control.Monad.Catch
 import Control.Monad.Reader
 import Quasar.Awaitable
-import Quasar.Disposable
 import Quasar.Prelude
 import Quasar.ResourceManager
+import Quasar.Utils.Concurrent
 
 
 
@@ -55,7 +46,7 @@ instance IsAsyncContext UnlimitedAsyncContext where
     resourceManager <- askResourceManager
     let asyncContext = unlimitedAsyncContext
     toAwaitable <$> registerNewResource do
-      forkTaskWithUnmask (\unmask -> runReaderT (runReaderT (action (liftUnmask unmask)) asyncContext) resourceManager)
+      unmanagedForkWithUnmask (\unmask -> runReaderT (runReaderT (action (liftUnmask unmask)) asyncContext) resourceManager)
     where
       liftUnmask :: (forall b. IO b -> IO b) -> ReaderT AsyncContext (ReaderT ResourceManager IO) a -> ReaderT AsyncContext (ReaderT ResourceManager IO) a
       liftUnmask unmask innerAction = do
@@ -108,51 +99,3 @@ asyncWithUnmask_ action = void $ asyncWithUnmask action
 runUnlimitedAsync :: ReaderT AsyncContext m a -> m a
 runUnlimitedAsync action = do
   runReaderT action unlimitedAsyncContext
-
-
-
-forkTask :: MonadIO m => IO a -> m (Task a)
-forkTask action = forkTaskWithUnmask \unmask -> unmask action
-
-forkTask_ :: MonadIO m => IO () -> m Disposable
-forkTask_ action = toDisposable <$> forkTask action
-
-forkTaskWithUnmask :: MonadIO m => ((forall b. IO b -> IO b) -> IO a) -> m (Task a)
-forkTaskWithUnmask action = do
-  liftIO $ mask_ do
-    resultVar <- newAsyncVar
-    threadIdVar <- newEmptyTMVarIO
-
-    disposable <- newDisposable $ disposeTask threadIdVar resultVar
-
-    onException
-      do
-        atomically . putTMVar threadIdVar . Just =<<
-          forkIOWithUnmask \unmask -> do
-            result <- try $ catch
-              do action unmask
-              \CancelTask -> throwIO TaskDisposed
-
-            putAsyncVarEither_ resultVar result
-
-            -- Thread has completed work, "disarm" the disposable and fire it
-            void $ atomically $ swapTMVar threadIdVar Nothing
-            disposeAndAwait disposable
-
-      do atomically $ putTMVar threadIdVar Nothing
-
-    pure $ Task disposable (toAwaitable resultVar)
-  where
-    disposeTask :: TMVar (Maybe ThreadId) -> AsyncVar r -> IO (Awaitable ())
-    disposeTask threadIdVar resultVar = mask_ do
-      -- Blocks until the thread is forked
-      atomically (swapTMVar threadIdVar Nothing) >>= \case
-        -- Thread completed or initialization failed
-        Nothing -> pure ()
-        Just threadId -> throwTo threadId CancelTask
-
-      -- Wait for task completion or failure. Tasks must not ignore `CancelTask` or this will hang.
-      pure $ void (toAwaitable resultVar) `catchAll` const (pure ())
-
-forkTaskWithUnmask_ :: MonadIO m => ((forall b. IO b -> IO b) -> IO ()) -> m Disposable
-forkTaskWithUnmask_ action = toDisposable <$> forkTaskWithUnmask action

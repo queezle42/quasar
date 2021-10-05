@@ -95,6 +95,7 @@ library
     Quasar.ResourceManager
     Quasar.Subscribable
     Quasar.Timer
+    Quasar.Utils.Concurrent
     Quasar.Utils.ExtraT
   hs-source-dirs:
     src

@@ -20,11 +20,11 @@ import Control.Monad.Catch
 import Data.Heap
 import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Foldable (toList)
-import Quasar.Async
 import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Prelude
 import Quasar.ResourceManager
+import Quasar.Utils.Concurrent
 
 
 data TimerCancelled = TimerCancelled
@@ -96,7 +96,7 @@ startSchedulerThread :: TimerScheduler -> IO ()
 startSchedulerThread scheduler = do
   mask_ do
     onResourceManager (resourceManager scheduler) do
-      registerDisposable =<< forkTask schedulerThread
+      registerDisposable =<< unmanagedFork schedulerThread
   where
     resourceManager' :: ResourceManager
     resourceManager' = resourceManager scheduler
@@ -191,7 +191,7 @@ instance IsAwaitable () Delay where
 
 newDelay :: MonadResourceManager m => Int -> m Delay
 newDelay microseconds = mask_ do
-  delay <- Delay <$> forkTask (liftIO (threadDelay microseconds))
+  delay <- Delay <$> unmanagedFork (liftIO (threadDelay microseconds))
   registerDisposable delay
   pure delay
 
