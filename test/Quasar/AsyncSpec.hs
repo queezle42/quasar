@@ -7,7 +7,6 @@ import Prelude
 import Test.Hspec
 import Quasar.Async
 import Quasar.Awaitable
-import Quasar.Disposable
 import Quasar.ResourceManager
 import System.Timeout
 

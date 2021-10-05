@@ -39,7 +39,6 @@ import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Data.Foldable (toList)
-import Data.List qualified as List
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Sequence

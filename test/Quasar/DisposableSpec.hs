@@ -1,12 +1,10 @@
 module Quasar.DisposableSpec (spec) where
 
-import Control.Exception
 import Control.Concurrent
 import Quasar.Prelude
 import Test.Hspec
 import Quasar.Awaitable
 import Quasar.Disposable
-import Quasar.ResourceManager
 
 spec :: Spec
 spec = parallel $ do

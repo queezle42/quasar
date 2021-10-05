@@ -11,8 +11,6 @@ module Quasar.Observable.ObservableHashMap (
 ) where
 
 import Data.HashMap.Strict qualified as HM
-import Data.Maybe (isJust)
-import Language.Haskell.TH.Syntax (mkName, nameBase)
 import Quasar.Disposable
 import Quasar.Observable
 import Quasar.Observable.Delta
