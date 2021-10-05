@@ -21,6 +21,7 @@ module Quasar.ResourceManager (
   attachDisposeAction_,
 
   -- ** Initialization
+  CombinedException,
   withRootResourceManager,
 
   CancelLinkedThread,
@@ -31,19 +32,20 @@ module Quasar.ResourceManager (
 ) where
 
 
-import Control.Concurrent (ThreadId, forkIOWithUnmask, myThreadId, throwTo, forkIO)
+import Control.Concurrent (ThreadId, forkIOWithUnmask, myThreadId, throwTo)
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Data.Foldable (toList)
-import Data.List.NonEmpty (NonEmpty(..))
-import Data.Maybe (isJust)
+import Data.List qualified as List
+import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
+import Data.List.NonEmpty qualified as NonEmpty
 import Data.Sequence
 import Data.Sequence qualified as Seq
 import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Prelude
-import System.IO (fixIO, hPutStrLn, stderr)
+import Quasar.Utils.Concurrent
 
 
 data FailedToRegisterResource = FailedToRegisterResource
@@ -180,13 +182,6 @@ captureTask action = do
   pure $ Task disposable awaitable
 
 
--- * ExceptionHandler
-
-type ExceptionHandler = SomeException -> IO ()
-
-loggingExceptionHandler :: ExceptionHandler
-loggingExceptionHandler ex = traceIO $ displayException ex
-
 
 -- | A computation bound to a resource manager with 'linkThread' should be canceled.
 data CancelLinkedThread = CancelLinkedThread Unique
@@ -202,35 +197,87 @@ data LinkState = LinkStateLinked ThreadId | LinkStateThrowing | LinkStateComplet
 
 -- * Resource manager implementations
 
+-- ** Root resource manager
 
-newtype CombinedException = CombinedException [SomeException]
+newtype CombinedException = CombinedException (NonEmpty SomeException)
+  deriving stock Show
 
-data RootResourceManager = RootResourceManager ResourceManager ExceptionHandler
+instance Exception CombinedException where
+  displayException (CombinedException exceptions) = intercalate "\n" (header : exceptionMessages)
+    where
+      header = mconcat ["CombinedException with ", show (NonEmpty.length exceptions), "exceptions:"]
+      exceptionMessages = (displayException <$> toList exceptions)
+
+
+data RootResourceManagerState
+  = RootResourceManagerNormal
+  | RootResourceManagerDisposing
+  | RootResourceManagerDisposed
+  deriving stock Eq
+
+data RootResourceManager
+  = RootResourceManager
+      ResourceManager
+      (TVar RootResourceManagerState)
+      (TVar (Seq SomeException))
+      (Awaitable ())
 
 instance IsResourceManager RootResourceManager where
-  attachDisposable (RootResourceManager child _) disposable = attachDisposable child disposable
-  throwToResourceManager (RootResourceManager child exceptionHandler) ex = do
-    exceptionHandler (toException ex)
-    void $ dispose child
+  attachDisposable (RootResourceManager child _ _ _) disposable = attachDisposable child disposable
+  throwToResourceManager (RootResourceManager _ stateVar exceptionsVar _) ex = do
+    -- TODO only log exceptions when disposing does not finish in time
+    traceIO $ "Exception thrown to root resource manager: " <> displayException ex
+    disposed <- liftIO $ atomically do
+      state <- readTVar stateVar
+      -- Start disposing
+      when (state == RootResourceManagerNormal) $ writeTVar stateVar RootResourceManagerDisposing
+      let disposed = state == RootResourceManagerDisposed
+
+      unless disposed $ modifyTVar exceptionsVar (|> toException ex)
+      pure disposed
+
+    when disposed $ fail "Could not throw to resource manager: RootResourceManager is already disposed"
+
 
 instance IsDisposable RootResourceManager where
-  dispose (RootResourceManager child _) = dispose child
-  isDisposed (RootResourceManager child _) = isDisposed child
+  dispose (RootResourceManager _ stateVar _ isDisposedAwaitable) = do
+    liftIO $ atomically do
+      state <- readTVar stateVar
+      -- Start disposing
+      when (state == RootResourceManagerNormal) $ writeTVar stateVar RootResourceManagerDisposing
+    pure isDisposedAwaitable
+  isDisposed (RootResourceManager _ _ _ isDisposedAwaitable) = isDisposedAwaitable
+
+newUnmanagedRootResourceManager :: MonadIO m => m ResourceManager
+newUnmanagedRootResourceManager = liftIO $ toResourceManager <$> do
+  stateVar <- newTVarIO RootResourceManagerNormal
+  exceptionsVar <- newTVarIO Empty
+  mfix \root -> do
+    isDisposedAwaitable <- toAwaitable <$> unmanagedFork (disposeThread root)
+    child <- newUnmanagedDefaultResourceManager (toResourceManager root)
+    pure $ RootResourceManager child stateVar exceptionsVar isDisposedAwaitable
+  where
+    disposeThread :: RootResourceManager -> IO ()
+    disposeThread (RootResourceManager child stateVar exceptionsVar _) = do
+      atomically do
+        state <- readTVar stateVar
+        when (state == RootResourceManagerNormal) retry
+      -- TODO start thread: wait for timeout, then report exceptions or report hang
+      await =<< dispose child
+      atomically do
+        exceptions <- nonEmpty . toList <$> readTVar exceptionsVar
+        mapM_ (throwM . CombinedException) exceptions
+
 
 withRootResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => ReaderT ResourceManager IO a -> m a
 withRootResourceManager action =
   bracket
     newUnmanagedRootResourceManager
-    (await <=< liftIO . dispose)
+    (await <=< dispose)
     (`onResourceManager` action)
 
 
-newUnmanagedRootResourceManager :: MonadIO m => m ResourceManager
-newUnmanagedRootResourceManager = liftIO $ fixIO \self -> do
-  var <- liftIO newEmptyTMVarIO
-  childResourceManager <- newUnmanagedDefaultResourceManager self
-  pure $ toResourceManager (RootResourceManager childResourceManager loggingExceptionHandler)
-
+-- ** Default resource manager
 
 data DefaultResourceManager = DefaultResourceManager {
   parentResourceManager :: ResourceManager,
@@ -247,7 +294,6 @@ instance IsResourceManager DefaultResourceManager where
 
     join $ atomically do
       disposing <- readTVar (disposingVar resourceManager)
-      disposed <- readTVar (disposedVar resourceManager)
 
       unless disposing $ modifyTVar (entriesVar resourceManager) (|> entry)
 
@@ -357,6 +403,7 @@ freeGarbage resourceManager = go
     entriesVar' = entriesVar resourceManager
 
 
+-- * Utilities
 
 -- | Creates an `Disposable` that is bound to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
 attachDisposeAction :: MonadIO m => ResourceManager -> IO (Awaitable ()) -> m Disposable

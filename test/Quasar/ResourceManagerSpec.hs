@@ -65,24 +65,25 @@ spec = parallel $ do
             liftIO $ throwIO TestException
         \TestException -> True
 
-    it "cancels the main thread when a dispose action fails" $ io @() do
-      withRootResourceManager do
-        withSubResourceManagerM do
-          registerDisposeAction $ throwIO TestException
-        liftIO $ threadDelay 100000
-        fail "Did not stop main thread on failing dispose action"
+    it "passes an exception to the root resource manager" $ io do
+      (`shouldThrow` \(_ :: CombinedException) -> True) do
+        withRootResourceManager do
+          withSubResourceManagerM do
+            registerDisposeAction $ throwIO TestException
+          liftIO $ threadDelay 100000
 
     it "can attach an disposable that is disposed asynchronously" $ io do
       withRootResourceManager do
         disposable <- captureDisposable_ $ registerDisposeAction $ pure () <$ threadDelay 100000
         liftIO $ void $ forkIO $ await =<< dispose disposable
 
-    it "does not abort when encountering an exception" $ do
+    it "does not abort disposing when encountering an exception" $ do
       var1 <- newTVarIO False
       var2 <- newTVarIO False
-      withRootResourceManager do
-        registerDisposeAction $ pure () <$ (atomically (writeTVar var1 True))
-        registerDisposeAction $ pure () <$ throwIO TestException
-        registerDisposeAction $ pure () <$ (atomically (writeTVar var2 True))
+      (`shouldThrow` \(_ :: CombinedException) -> True) do
+        withRootResourceManager do
+          registerDisposeAction $ pure () <$ (atomically (writeTVar var1 True))
+          registerDisposeAction $ pure () <$ throwIO TestException
+          registerDisposeAction $ pure () <$ (atomically (writeTVar var2 True))
       atomically (readTVar var1) `shouldReturn` True
       atomically (readTVar var2) `shouldReturn` True
