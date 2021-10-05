@@ -31,16 +31,28 @@ import Quasar.Prelude
 -- * Disposable
 
 class IsDisposable a where
-  -- TODO document laws: must not throw exceptions, is idempotent
-
-  -- | Dispose a resource.
-  -- TODO MonadIO
-  dispose :: MonadIO m => a -> m (Awaitable ())
+  -- | Dispose a resource. Completion of the returned `Awaitable` signals, that the resource has been released.
+  --
+  -- Dispose should be idempotent, i.e. calling `dispose` once or multiple times should have the same effect.
+  --
+  -- `dispose` should normally be run in /masked/ state. The implementation of `dispose` has to guarantee that
+  -- resources are disposed even when encountering asynchronous exceptions, or should disable asynchronous exceptions
+  -- itself (e.g. by using `uninterruptibleMask_`).
+  --
+  -- `dispose` should also function correctly when run with uninterruptible exceptions masked.
+  dispose :: (MonadIO m, MonadMask m) => a -> m (Awaitable ())
   dispose = dispose . toDisposable
+  -- Regarding the requirements for the masking state (masked, but not uninterruptible) some arguments from
+  -- `safe-exceptions` were considered:
+  -- https://github.com/fpco/safe-exceptions/issues/3#issuecomment-230274166
 
   isDisposed :: a -> Awaitable ()
   isDisposed = isDisposed . toDisposable
 
+  -- | Convert an `IsDisposable`-Object to a `Disposable`.
+  --
+  -- When implementing the `IsDisposable`-class this can be used to defer the dispose behavior to a disposable created
+  -- by e.g. `newDisposable`.
   toDisposable :: a -> Disposable
   toDisposable = Disposable
 
@@ -140,6 +152,9 @@ newDisposable action = liftIO $ toDisposable . FnDisposable <$> newTMVarIO (Left
 synchronousDisposable :: MonadIO m => IO () -> m Disposable
 synchronousDisposable = newDisposable . fmap pure
 
+-- | A `Disposable` for which `dispose` is a no-op and which reports as already disposed.
+--
+-- Alias for `mempty`.
 noDisposable :: Disposable
 noDisposable = mempty
 
@@ -147,10 +162,11 @@ noDisposable = mempty
 newtype AlreadyDisposing = AlreadyDisposing (Awaitable ())
 
 instance IsDisposable AlreadyDisposing where
-  dispose x = pure (isDisposed x)
+  dispose = pure . isDisposed
   isDisposed (AlreadyDisposing awaitable) = awaitable
 
--- | Create a `Disposable` from an `IsAwaitable`.
+-- | Create a `Disposable` for a dispose operation which is already in progress. The awaitable passed as a parameter
+-- is used to track the completion status of the dispose operation.
 --
 -- The disposable is considered to be already disposing (so `dispose` will be a no-op) and is considered disposed once
 -- the awaitable is completed.
