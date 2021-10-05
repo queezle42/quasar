@@ -24,7 +24,9 @@ module Quasar.ResourceManager (
   CombinedException,
   withRootResourceManager,
 
-  CancelLinkedThread,
+  -- ** Linking computations to a resource manager
+  linkExecution,
+  CancelLinkedExecution,
 
   -- ** Resource manager implementations
   newUnmanagedRootResourceManager,
@@ -184,15 +186,43 @@ captureTask action = do
 
 
 -- | A computation bound to a resource manager with 'linkThread' should be canceled.
-data CancelLinkedThread = CancelLinkedThread Unique
+data CancelLinkedExecution = CancelLinkedExecution Unique
   deriving anyclass Exception
 
-instance Show CancelLinkedThread where
-  show _ = "CancelLinkedThread"
+instance Show CancelLinkedExecution where
+  show _ = "CancelLinkedExecution"
 
 
 data LinkState = LinkStateLinked ThreadId | LinkStateThrowing | LinkStateCompleted
-  deriving Eq
+  deriving stock Eq
+
+
+-- | Links the execution of a computation to a resource manager.
+--
+-- The computation is executed on the current thread. When the resource manager is disposed before the computation
+-- is completed, a `CancelLinkedExecution`-exception is thrown to the current thread.
+linkExecution :: MonadResourceManager m => m a -> m (Maybe a)
+linkExecution action = do
+  key <- liftIO $ newUnique
+  var <- liftIO $ newTVarIO =<< LinkStateLinked <$> myThreadId
+  registerSimpleDisposeAction $ do
+    atomically (swapTVar var LinkStateThrowing) >>= \case
+      LinkStateLinked threadId -> throwTo threadId $ CancelLinkedExecution key
+      LinkStateThrowing -> pure () -- Dispose called twice
+      LinkStateCompleted -> pure () -- Thread has already left link
+
+  catch
+    do
+      result <- action
+      state <- liftIO $ atomically $ swapTVar var LinkStateCompleted
+      when (state == LinkStateThrowing) $ sleepForever -- Wait for exception to arrive
+      pure $ Just result
+
+    \ex@(CancelLinkedExecution exceptionKey) ->
+      if key == exceptionKey
+        then return Nothing
+        else throwM ex
+
 
 
 -- * Resource manager implementations
