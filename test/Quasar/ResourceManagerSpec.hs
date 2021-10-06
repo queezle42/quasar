@@ -100,3 +100,11 @@ spec = parallel $ do
           registerDisposeAction $ pure () <$ (atomically (writeTVar var2 True))
       atomically (readTVar var1) `shouldReturn` True
       atomically (readTVar var2) `shouldReturn` True
+
+    it "withRootResourceManager will start disposing when receiving an exception" $ io do
+      (`shouldThrow` \(_ :: CombinedException) -> True) do
+        withRootResourceManager do
+          linkExecution do
+            rm <- askResourceManager
+            liftIO $ throwToResourceManager rm TestException
+            sleepForever
