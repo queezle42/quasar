@@ -244,64 +244,55 @@ instance Exception CombinedException where
       exceptionMessages = (displayException <$> toList exceptions)
 
 
-data RootResourceManagerState
-  = RootResourceManagerNormal
-  | RootResourceManagerDisposing
-  | RootResourceManagerDisposed
-  deriving stock Eq
-
 data RootResourceManager
-  = RootResourceManager
-      ResourceManager
-      (TVar RootResourceManagerState)
-      (TVar (Seq SomeException))
-      (Awaitable ())
+  = RootResourceManager ResourceManager (TVar Bool) (TVar (Maybe (Seq SomeException))) (Awaitable ())
 
 instance IsResourceManager RootResourceManager where
   attachDisposable (RootResourceManager child _ _ _) disposable = attachDisposable child disposable
-  throwToResourceManager (RootResourceManager _ stateVar exceptionsVar _) ex = do
-    -- TODO only log exceptions when disposing does not finish in time
+  throwToResourceManager (RootResourceManager _ disposingVar exceptionsVar _) ex = do
+    -- TODO only log exceptions after a timeout
     traceIO $ "Exception thrown to root resource manager: " <> displayException ex
-    disposed <- liftIO $ atomically do
-      state <- readTVar stateVar
-      -- Start disposing
-      when (state == RootResourceManagerNormal) $ writeTVar stateVar RootResourceManagerDisposing
-      let disposed = state == RootResourceManagerDisposed
-
-      unless disposed $ modifyTVar exceptionsVar (|> toException ex)
-      pure disposed
-
-    when disposed $ fail "Could not throw to resource manager: RootResourceManager is already disposed"
+    liftIO $ join $ atomically do
+      stateTVar exceptionsVar \case
+        Just exceptions -> (pure (), Just (exceptions |> toException ex))
+        Nothing -> (fail @IO "Could not throw to resource manager: RootResourceManager is already disposed", Nothing)
 
 
 instance IsDisposable RootResourceManager where
-  dispose (RootResourceManager _ stateVar _ isDisposedAwaitable) = do
-    liftIO $ atomically do
-      state <- readTVar stateVar
-      -- Start disposing
-      when (state == RootResourceManagerNormal) $ writeTVar stateVar RootResourceManagerDisposing
-    pure isDisposedAwaitable
+  dispose (RootResourceManager _ disposingVar _ isDisposedAwaitable) = liftIO do
+    isDisposedAwaitable <$ atomically do
+      disposing <- readTVar disposingVar
+      unless disposing $ writeTVar disposingVar True
   isDisposed (RootResourceManager _ _ _ isDisposedAwaitable) = isDisposedAwaitable
 
 newUnmanagedRootResourceManager :: MonadIO m => m ResourceManager
 newUnmanagedRootResourceManager = liftIO $ toResourceManager <$> do
-  stateVar <- newTVarIO RootResourceManagerNormal
-  exceptionsVar <- newTVarIO Empty
+  disposingVar <- newTVarIO False
+  exceptionsVar <- newTVarIO (Just Empty)
   mfix \root -> do
     isDisposedAwaitable <- toAwaitable <$> unmanagedFork (disposeThread root)
     child <- newUnmanagedDefaultResourceManager (toResourceManager root)
-    pure $ RootResourceManager child stateVar exceptionsVar isDisposedAwaitable
+    pure $ RootResourceManager child disposingVar exceptionsVar isDisposedAwaitable
+
   where
     disposeThread :: RootResourceManager -> IO ()
-    disposeThread (RootResourceManager child stateVar exceptionsVar _) = do
+    disposeThread (RootResourceManager child disposingVar exceptionsVar _) = do
+      -- Wait until disposing
       atomically do
-        state <- readTVar stateVar
-        when (state == RootResourceManagerNormal) retry
-      -- TODO start thread: wait for timeout, then report exceptions or report hang
+        disposing <- readTVar disposingVar
+        hasExceptions <- (> 0) . Seq.length <$> (maybe impossibleCodePathM pure =<< readTVar exceptionsVar)
+        check $ disposing || hasExceptions
+
+      -- TODO start the thread that reports exceptions (or a potential hang) after a timeout
+
       await =<< dispose child
-      atomically do
-        exceptions <- nonEmpty . toList <$> readTVar exceptionsVar
-        mapM_ (throwM . CombinedException) exceptions
+
+      mExceptions <- atomically do
+        -- The var is set to `Nothing` to signal that no more exceptions can be received
+        nonEmpty . toList <$> (maybe impossibleCodePathM pure =<< swapTVar exceptionsVar Nothing)
+
+      -- If there are any exceptions will be stored in the awaitable (isDisposedAwaitable) by throwing them here
+      mapM_ (throwM . CombinedException) mExceptions
 
 
 withRootResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => ReaderT ResourceManager IO a -> m a
