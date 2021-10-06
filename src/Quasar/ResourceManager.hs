@@ -352,8 +352,9 @@ instance IsDisposable DefaultResourceManager where
               \ex -> do
                 -- Disposable failed so it should be removed
                 atomically (void $ tryTakeTMVar var)
+                -- This will only throw if the parent is disposed, which would be an illegal state
+                -- TODO wrap in a 'DisposeException'
                 throwToResourceManager resourceManager ex
-                pure ()
 
 
   isDisposed resourceManager =
@@ -383,7 +384,9 @@ newUnmanagedDefaultResourceManager parentResourceManager = liftIO do
   }
 
   void $ mask_ $ forkIOWithUnmask \unmask ->
-    unmask (freeGarbage resourceManager) `catchAll` throwToResourceManager resourceManager
+    unmask (freeGarbage resourceManager)
+      `catchAll`
+        \ex -> throwToResourceManager resourceManager (userError ("freeGarbage failed for DefaultResourceManager: " <> displayException ex))
 
   pure $ toResourceManager resourceManager
 
@@ -411,7 +414,8 @@ freeGarbage resourceManager = go
         else awaitAny (listChanged :| awaitables)
 
       -- Checking entries for completion has to be done in IO.
-      -- Completion is then queried with `entryIsEmpty` during the following STM transaction.
+      -- Completion is queried with `entryIsEmpty` during the following STM transaction for legacy reasons (the resource
+      -- manager once did allow to add resources while disposing). This could be simplified now.
       checkEntries =<< atomically (readTVar entriesVar')
 
       join $ atomically $ do
