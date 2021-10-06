@@ -108,3 +108,13 @@ spec = parallel $ do
             rm <- askResourceManager
             liftIO $ throwToResourceManager rm TestException
             sleepForever
+
+  describe "linkExecution" do
+    it "does not generate an exception after it is completed" $ io do
+      (`shouldThrow` \(_ :: CombinedException) -> True) do
+        withRootResourceManager do
+          linkExecution do
+            pure ()
+          rm <- askResourceManager
+          liftIO $ throwToResourceManager rm TestException
+          liftIO $ threadDelay 100000
