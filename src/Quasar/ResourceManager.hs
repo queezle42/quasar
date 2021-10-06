@@ -61,11 +61,17 @@ newtype ResourceManagerEntry = ResourceManagerEntry (TMVar (Awaitable (), Dispos
 
 instance IsAwaitable () ResourceManagerEntry where
   toAwaitable (ResourceManagerEntry var) = do
-    varContents <- unsafeAwaitSTM $ tryReadTMVar var
-    case varContents of
-      -- If the var is empty the Entry has already been disposed
-      Nothing -> pure ()
-      Just (awaitable, _) -> awaitable
+    awaitAny2
+      do
+        -- Wait for empty TMVar (dispose completed by resource manager)
+        unsafeAwaitSTM do
+          check . isNothing =<< tryReadTMVar var
+      do
+        -- Wait for Awaitable (dispose completed externally)
+        varContents <- unsafeAwaitSTM $ tryReadTMVar var
+        case varContents of
+          Nothing -> pure ()
+          Just (awaitable, _) -> awaitable
 
 
 newEntry :: IsDisposable a => a -> IO ResourceManagerEntry
