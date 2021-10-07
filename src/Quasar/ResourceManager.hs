@@ -22,6 +22,7 @@ module Quasar.ResourceManager (
 
   -- ** Initialization
   CombinedException,
+  combinedExceptions,
   withRootResourceManager,
 
   -- ** Linking computations to a resource manager
@@ -40,8 +41,7 @@ import Control.Monad.Catch
 import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
-import Data.List.NonEmpty qualified as NonEmpty
-import Data.Sequence
+import Data.Sequence (Seq(..), (|>))
 import Data.Sequence qualified as Seq
 import Quasar.Awaitable
 import Quasar.Disposable
@@ -240,8 +240,11 @@ newtype CombinedException = CombinedException (NonEmpty SomeException)
 instance Exception CombinedException where
   displayException (CombinedException exceptions) = intercalate "\n" (header : exceptionMessages)
     where
-      header = mconcat ["CombinedException with ", show (NonEmpty.length exceptions), "exceptions:"]
+      header = mconcat ["CombinedException with ", show (length exceptions), "exceptions:"]
       exceptionMessages = (displayException <$> toList exceptions)
+
+combinedExceptions :: CombinedException -> [SomeException]
+combinedExceptions (CombinedException exceptions) = toList exceptions
 
 
 data RootResourceManager
@@ -287,12 +290,12 @@ newUnmanagedRootResourceManager = liftIO $ toResourceManager <$> do
 
       await =<< dispose child
 
-      mExceptions <- atomically do
+      exceptions <- atomically do
         -- The var is set to `Nothing` to signal that no more exceptions can be received
-        nonEmpty . toList <$> (maybe impossibleCodePathM pure =<< swapTVar exceptionsVar Nothing)
+        maybe impossibleCodePathM pure =<< swapTVar exceptionsVar Nothing
 
       -- If there are any exceptions will be stored in the awaitable (isDisposedAwaitable) by throwing them here
-      mapM_ (throwM . CombinedException) mExceptions
+      mapM_ (throwM . CombinedException) $ nonEmpty $ toList exceptions
 
 
 withRootResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => ReaderT ResourceManager IO a -> m a

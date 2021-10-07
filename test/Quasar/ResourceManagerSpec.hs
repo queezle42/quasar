@@ -3,6 +3,7 @@ module Quasar.ResourceManagerSpec (spec) where
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Exception
+import Control.Monad.Catch
 import Quasar.Prelude
 import Test.Hspec
 import Quasar.Awaitable
@@ -108,6 +109,14 @@ spec = parallel $ do
             rm <- askResourceManager
             liftIO $ throwToResourceManager rm TestException
             sleepForever
+
+    it "combines exceptions from resources with exceptions on the thread" $ io do
+      pendingWith "not implemented"
+      (`shouldThrow` \(combinedExceptions -> exceptions) -> length exceptions == 2) do
+        withRootResourceManager do
+          rm <- askResourceManager
+          liftIO $ throwToResourceManager rm TestException
+          throwM TestException
 
   describe "linkExecution" do
     it "does not generate an exception after it is completed" $ io do
