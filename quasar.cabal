@@ -22,6 +22,7 @@ common shared-properties
     DeriveAnyClass
     DeriveGeneric
     DerivingStrategies
+    DisambiguateRecordFields
     DuplicateRecordFields
     ExistentialQuantification
     FlexibleContexts
@@ -32,6 +33,8 @@ common shared-properties
     ImportQualifiedPost
     InstanceSigs
     LambdaCase
+    -- Enable once 9.0.1 is required
+    --LexicalNegation
     MultiParamTypeClasses
     NamedFieldPuns
     NoImplicitPrelude

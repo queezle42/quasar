@@ -74,7 +74,7 @@ instance IsSubscribable r (SubscribableEvent r) where
     liftIO $ atomically do
       callbackMap <- readTVar tvar
       writeTVar tvar $ HM.insert key (\msg -> runReaderT (callback msg) resourceManager) callbackMap
-    registerDisposable =<< synchronousDisposable (disposeFn key)
+    registerDisposable =<< newDisposable (disposeFn key)
       where
         disposeFn :: Unique -> IO ()
         disposeFn key = atomically do

@@ -5,7 +5,7 @@ module Quasar.Utils.Exceptions (
 
 import Control.Exception
 import Data.Foldable (toList)
-import Data.List.NonEmpty (NonEmpty, nonEmpty)
+import Data.List.NonEmpty (NonEmpty)
 import Quasar.Prelude
 
 newtype CombinedException = CombinedException (NonEmpty SomeException)

@@ -34,6 +34,7 @@ data AsyncContext = forall a. IsAsyncContext a => AsyncContext a
 
 instance IsAsyncContext AsyncContext where
   asyncOnContextWithUnmask (AsyncContext ctx) = asyncOnContextWithUnmask ctx
+  toAsyncContext = id
 
 data UnlimitedAsyncContext = UnlimitedAsyncContext
 

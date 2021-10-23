@@ -11,25 +11,25 @@ spec = parallel $ do
   describe "Disposable" $ do
     describe "noDisposable" $ do
       it "can be disposed" $ io do
-        await =<< dispose noDisposable
+        dispose noDisposable
 
       it "can be awaited" $ io do
         await (isDisposed noDisposable)
 
     describe "newDisposable" $ do
       it "signals it's disposed state" $ io do
-        disposable <- newDisposable $ pure $ pure ()
-        void $ forkIO $ threadDelay 100000 >> disposeAndAwait disposable
+        disposable <- newDisposable $ pure ()
+        void $ forkIO $ threadDelay 100000 >> dispose disposable
         await (isDisposed disposable)
 
       it "can be disposed multiple times" $ io do
-        disposable <- newDisposable $ pure $ pure ()
-        disposeAndAwait disposable
-        disposeAndAwait disposable
+        disposable <- newDisposable $ pure ()
+        dispose disposable
+        dispose disposable
         await (isDisposed disposable)
 
       it "can be disposed in parallel" $ do
-        disposable <- newDisposable $ pure () <$ threadDelay 100000
-        void $ forkIO $ disposeAndAwait disposable
-        disposeAndAwait disposable
+        disposable <- newDisposable $ threadDelay 100000
+        void $ forkIO $ dispose disposable
+        dispose disposable
         await (isDisposed disposable)

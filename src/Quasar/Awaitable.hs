@@ -316,7 +316,7 @@ instance Alternative AwaitableStepM where
   x <|> y = x `catchAll` const y
   empty = throwM $ toException $ userError "empty"
 
-instance MonadPlus AwaitableStepM where
+instance MonadPlus AwaitableStepM
 
 instance MonadFix AwaitableStepM where
   mfix :: forall a. (a -> AwaitableStepM a) -> AwaitableStepM a

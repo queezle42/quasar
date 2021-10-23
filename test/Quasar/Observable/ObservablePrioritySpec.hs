@@ -22,9 +22,9 @@ spec = do
       retrieveIO op `shouldReturn` Just "p2"
       p1 <- OP.insertValue op 1 "p1"
       retrieveIO op `shouldReturn` Just "p2"
-      disposeAndAwait p2
+      dispose p2
       retrieveIO op `shouldReturn` Just "p1"
-      disposeAndAwait p1
+      dispose p1
       retrieveIO op `shouldReturn` Nothing
     it "sends updates when its value changes" $ do
       result <- newIORef []
@@ -40,9 +40,9 @@ spec = do
       mostRecentShouldBe (Just "p2")
       p1 <- OP.insertValue op 1 "p1"
       mostRecentShouldBe (Just "p2")
-      disposeAndAwait p2
+      dispose p2
       mostRecentShouldBe (Just "p1")
-      disposeAndAwait p1
+      dispose p1
       mostRecentShouldBe Nothing
 
       length <$> readIORef result `shouldReturn` 4

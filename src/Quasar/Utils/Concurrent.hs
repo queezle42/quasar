@@ -1,8 +1,13 @@
 module Quasar.Utils.Concurrent (
+  Task,
   unmanagedFork,
   unmanagedFork_,
   unmanagedForkWithUnmask,
   unmanagedForkWithUnmask_,
+
+  -- ** Task exceptions
+  CancelTask(..),
+  TaskDisposed(..),
 )where
 
 
@@ -14,6 +19,57 @@ import Quasar.Disposable
 import Quasar.Prelude
 
 
+
+
+-- | A task is an operation (e.g. a thread or a network request) that is running asynchronously and can be cancelled.
+-- It has a result and can fail.
+--
+-- The result (or exception) can be aquired by using the `IsAwaitable` class (e.g. by calling `await` or `awaitIO`).
+-- It is possible to cancel the task by using `dispose` or `cancelTask` if the operation has not been completed.
+data Task r = Task Unique (TVar TaskState) DisposableFinalizers (Awaitable r)
+
+data TaskState = TaskStateInitializing | TaskStateRunning ThreadId | TaskStateThrowing | TaskStateCompleted
+
+instance IsAwaitable r (Task r) where
+  toAwaitable (Task _ _ _ resultAwaitable) = resultAwaitable
+
+instance IsDisposable (Task r) where
+  beginDispose self@(Task key stateVar _ _) = uninterruptibleMask_ do
+    join $ atomically do
+      readTVar stateVar >>= \case
+        TaskStateInitializing -> impossibleCodePathM
+        TaskStateRunning threadId -> do
+          writeTVar stateVar TaskStateThrowing
+          pure do
+            throwTo threadId $ CancelTask key
+            atomically $ writeTVar stateVar TaskStateCompleted
+        TaskStateThrowing -> pure $ pure ()
+        TaskStateCompleted -> pure $ pure ()
+
+    -- Wait for task completion or failure. Tasks must not ignore `CancelTask` or this will hang.
+    pure $ DisposeResultAwait $ isDisposed self
+
+  isDisposed (Task _ _ _ resultAwaitable) = (() <$ resultAwaitable) `catchAll` \_ -> pure ()
+
+  registerFinalizer (Task _ _ finalizers _) = defaultRegisterFinalizer finalizers
+
+instance Functor Task where
+  fmap fn (Task key actionVar finalizerVar resultAwaitable) = Task key actionVar finalizerVar (fn <$> resultAwaitable)
+
+
+data CancelTask = CancelTask Unique
+instance Show CancelTask where
+  show _ = "CancelTask"
+instance Exception CancelTask where
+
+data TaskDisposed = TaskDisposed
+  deriving stock Show
+instance Exception TaskDisposed where
+
+
+
+
+
 unmanagedFork :: MonadIO m => IO a -> m (Task a)
 unmanagedFork action = unmanagedForkWithUnmask \unmask -> unmask action
 
@@ -23,42 +79,41 @@ unmanagedFork_ action = toDisposable <$> unmanagedFork action
 unmanagedForkWithUnmask :: MonadIO m => ((forall b. IO b -> IO b) -> IO a) -> m (Task a)
 unmanagedForkWithUnmask action = do
   liftIO $ mask_ do
+    key <- newUnique
     resultVar <- newAsyncVar
-    threadIdVar <- newEmptyTMVarIO
+    stateVar <- newTVarIO TaskStateInitializing
+    finalizers <- newDisposableFinalizers
 
-    disposable <- newDisposable $ disposeTask threadIdVar resultVar
+    threadId <- forkIOWithUnmask \unmask ->
+      handleAll
+        do \ex -> fail $ "unmanagedForkWithUnmask thread failed: " <> displayException ex
+        do
+          result <- try $ handleIf
+            do \(CancelTask exKey) -> key == exKey
+            do \_ -> throwIO TaskDisposed
+            do
+              action unmask
 
-    onException
-      do
-        atomically . putTMVar threadIdVar . Just =<<
-          forkIOWithUnmask \unmask -> do
-            result <- try $ catch
-              do action unmask
-              \CancelTask -> throwIO TaskDisposed
+          -- The `action` has completed its work.
+          -- "disarm" dispose:
+          handleIf
+            do \(CancelTask exKey) -> key == exKey
+            do mempty -- ignore exception if it matches; this can only happen once
+            do
+              atomically $ readTVar stateVar >>= \case
+                TaskStateInitializing -> retry
+                TaskStateRunning _ -> writeTVar stateVar TaskStateCompleted
+                TaskStateThrowing -> retry -- Could not disarm so we have to wait for the exception to arrive
+                TaskStateCompleted -> pure ()
 
-            putAsyncVarEither_ resultVar result
+          atomically do
+            putAsyncVarEitherSTM_ resultVar result
+            defaultRunFinalizers finalizers
 
-            -- The `action` has completed its work.
-            -- "disarm" the disposer thread ...
-            void $ atomically $ swapTMVar threadIdVar Nothing
-            -- .. then fire the disposable to release resources (the disposer thread) and to signal that this thread is
-            -- disposed.
-            await =<< dispose disposable
 
-      do atomically $ putTMVar threadIdVar Nothing
+    atomically $ writeTVar stateVar $ TaskStateRunning threadId
 
-    pure $ Task disposable (toAwaitable resultVar)
-  where
-    disposeTask :: TMVar (Maybe ThreadId) -> AsyncVar r -> IO (Awaitable ())
-    disposeTask threadIdVar resultVar = mask_ do
-      -- Blocks until the thread is forked
-      atomically (swapTMVar threadIdVar Nothing) >>= \case
-        -- Thread completed or initialization failed
-        Nothing -> pure ()
-        Just threadId -> throwTo threadId CancelTask
-
-      -- Wait for task completion or failure. Tasks must not ignore `CancelTask` or this will hang.
-      pure $ void (toAwaitable resultVar) `catchAll` const (pure ())
+    pure $ Task key stateVar finalizers (toAwaitable resultVar)
 
 unmanagedForkWithUnmask_ :: MonadIO m => ((forall b. IO b -> IO b) -> IO ()) -> m Disposable
 unmanagedForkWithUnmask_ action = toDisposable <$> unmanagedForkWithUnmask action

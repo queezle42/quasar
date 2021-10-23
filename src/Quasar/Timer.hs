@@ -47,15 +47,19 @@ instance Ord Timer where
   x `compare` y = time x `compare` time y
 
 instance IsDisposable Timer where
-  dispose self = liftIO do
-    atomically do
-      cancelled <- failAsyncVarSTM (completed self) TimerCancelled
-      when cancelled do
-        modifyTVar (activeCount (scheduler self)) (+ (-1))
-        modifyTVar (cancelledCount (scheduler self)) (+ 1)
-    pure $ isDisposed self
+  beginDispose = undefined
+
+  --dispose self = liftIO do
+  --  atomically do
+  --    cancelled <- failAsyncVarSTM (completed self) TimerCancelled
+  --    when cancelled do
+  --      modifyTVar (activeCount (scheduler self)) (+ (-1))
+  --      modifyTVar (cancelledCount (scheduler self)) (+ 1)
+  --  pure $ isDisposed self
 
   isDisposed = awaitSuccessOrFailure . completed
+
+  registerFinalizer = undefined
 
 instance IsAwaitable () Timer where
   toAwaitable = toAwaitable . completed
@@ -177,7 +181,7 @@ newTimer scheduler time = do
 
 
 sleepUntil :: TimerScheduler -> UTCTime -> IO ()
-sleepUntil scheduler time = bracketOnError (newTimer scheduler time) disposeAndAwait await
+sleepUntil scheduler time = bracketOnError (newTimer scheduler time) dispose await
 
 
 

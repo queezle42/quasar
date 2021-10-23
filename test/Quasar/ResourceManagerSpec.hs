@@ -19,14 +19,17 @@ spec :: Spec
 spec = parallel $ do
   describe "ResourceManager" $ do
     it "can be created" $ io do
-      void newUnmanagedRootResourceManager
-
-    it "can be created and disposed" $ io do
-      resourceManager <- newUnmanagedRootResourceManager
-      await =<< dispose resourceManager
-
-    it "can be created and disposed" $ io do
       withRootResourceManager $ pure ()
+
+    it "can be created and disposed" $ io do
+      withRootResourceManager do
+        resourceManager <- askResourceManager
+        disposeEventually_ resourceManager
+
+    it "is disposed when exiting withRootResourceManager" $ io do
+      resourceManager <- withRootResourceManager askResourceManager
+
+      peekAwaitable (isDisposed resourceManager) `shouldReturn` Just ()
 
     it "can be created and disposed with a delay" $ io do
       withRootResourceManager $ liftIO $ threadDelay 100000
@@ -35,29 +38,16 @@ spec = parallel $ do
       withRootResourceManager do
         registerDisposable noDisposable
 
-    it "can attach an disposable" $ io do
+    it "can attach a dispose action" $ io do
+      var <- newTVarIO False
       withRootResourceManager do
-        avar <- newAsyncVar
-        registerDisposable $ alreadyDisposing avar
-        putAsyncVar_ avar ()
+        registerDisposeAction $ atomically $ writeTVar var True
 
-    it "can dispose an awaitable that is completed asynchronously" $ io do
-      avar <- newAsyncVar
-      void $ forkIO $ do
-        threadDelay 100000
-        putAsyncVar_ avar ()
+      atomically (readTVar var) `shouldReturn` True
 
+    it "can attach a slow dispose action" $ io do
       withRootResourceManager do
-        registerDisposable (alreadyDisposing avar)
-
-    it "can call a trivial dispose action" $ io do
-      withRootResourceManager do
-        registerDisposeAction $ pure $ pure ()
-
-    it "can call a dispose action" $ io do
-      withRootResourceManager do
-        avar <- newAsyncVar
-        registerDisposeAction $ toAwaitable avar <$ putAsyncVar_ avar ()
+        registerDisposeAction $ threadDelay 100000
 
     it "re-throws an exception" $ do
       shouldThrow
@@ -88,17 +78,17 @@ spec = parallel $ do
 
     it "can attach an disposable that is disposed asynchronously" $ io do
       withRootResourceManager do
-        disposable <- captureDisposable_ $ registerDisposeAction $ pure () <$ threadDelay 100000
-        liftIO $ void $ forkIO $ await =<< dispose disposable
+        disposable <- captureDisposable_ $ registerDisposeAction $ threadDelay 100000
+        liftIO $ void $ forkIO $ dispose disposable
 
     it "does not abort disposing when encountering an exception" $ do
       var1 <- newTVarIO False
       var2 <- newTVarIO False
       (`shouldThrow` \(_ :: CombinedException) -> True) do
         withRootResourceManager do
-          registerDisposeAction $ pure () <$ (atomically (writeTVar var1 True))
-          registerDisposeAction $ pure () <$ throwIO TestException
-          registerDisposeAction $ pure () <$ (atomically (writeTVar var2 True))
+          registerDisposeAction $ atomically (writeTVar var1 True)
+          registerDisposeAction $ throwIO TestException
+          registerDisposeAction $ atomically (writeTVar var2 True)
       atomically (readTVar var1) `shouldReturn` True
       atomically (readTVar var2) `shouldReturn` True
 
@@ -111,12 +101,40 @@ spec = parallel $ do
             sleepForever
 
     it "combines exceptions from resources with exceptions on the thread" $ io do
-      pendingWith "not implemented"
       (`shouldThrow` \(combinedExceptions -> exceptions) -> length exceptions == 2) do
         withRootResourceManager do
           rm <- askResourceManager
           liftIO $ throwToResourceManager rm TestException
           throwM TestException
+
+    it "can dispose a resource manager loop" $ io do
+      withRootResourceManager do
+        rm1 <- newResourceManager
+        rm2 <- newResourceManager
+        attachDisposable rm1 rm2
+        attachDisposable rm2 rm1
+
+    it "can dispose a resource manager loop" $ io do
+      withRootResourceManager do
+        rm1 <- newResourceManager
+        rm2 <- newResourceManager
+        attachDisposable rm1 rm2
+        attachDisposable rm2 rm1
+        dispose rm1
+
+    it "can dispose a resource manager loop with a shared disposable" $ io do
+      var <- newTVarIO (0 :: Int)
+      d <- newDisposable $ atomically $ modifyTVar var (+ 1)
+      withRootResourceManager do
+        rm1 <- newResourceManager
+        rm2 <- newResourceManager
+        attachDisposable rm1 rm2
+        attachDisposable rm2 rm1
+        attachDisposable rm1 d
+        attachDisposable rm2 d
+
+      atomically (readTVar var) `shouldReturn` 1
+
 
   describe "linkExecution" do
     it "does not generate an exception after it is completed" $ io do

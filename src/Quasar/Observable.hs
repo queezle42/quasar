@@ -103,7 +103,7 @@ class IsRetrievable v o => IsObservable v o | o -> v where
   -- | Old signature of `observe`, will be removed from the class once it's no longer used for implementations.
   oldObserve :: o -> (ObservableMessage v -> IO ()) -> IO Disposable
   oldObserve observable callback = do
-    resourceManager <- newUnmanagedRootResourceManager
+    resourceManager <- (undefined :: IO ResourceManager)
     onResourceManager resourceManager do
       observe observable $ \msg -> liftIO (callback msg)
     pure $ toDisposable resourceManager
@@ -232,7 +232,7 @@ instance IsObservable r (BindObservable r) where
   oldObserve :: BindObservable r -> (ObservableMessage r -> IO ()) -> IO Disposable
   oldObserve (BindObservable fx fn) callback = do
     -- Create a resource manager to ensure all subscriptions are cleaned up when disposing.
-    resourceManager <- newUnmanagedRootResourceManager
+    resourceManager <- (undefined :: IO ResourceManager)
 
     isDisposingVar <- newTVarIO False
     disposableVar <- newTMVarIO noDisposable
@@ -240,12 +240,12 @@ instance IsObservable r (BindObservable r) where
 
     leftDisposable <- oldObserve fx (outerCallback resourceManager isDisposingVar disposableVar keyVar)
 
-    attachDisposeAction_ resourceManager $ do
-      atomically $ writeTVar isDisposingVar True
-      d1 <- dispose leftDisposable
-      -- Block while the `outerCallback` is running
-      d2 <- dispose =<< atomically (takeTMVar disposableVar)
-      pure (d1 <> d2)
+    attachDisposeAction_ resourceManager $ undefined -- do
+      --atomically $ writeTVar isDisposingVar True
+      --d1 <- dispose leftDisposable
+      ---- Block while the `outerCallback` is running
+      --d2 <- dispose =<< atomically (takeTMVar disposableVar)
+      --pure (d1 <> d2)
 
     pure $ toDisposable resourceManager
     where
@@ -300,7 +300,7 @@ instance IsObservable r (CatchObservable e r) where
   oldObserve :: CatchObservable e r -> (ObservableMessage r -> IO ()) -> IO Disposable
   oldObserve (CatchObservable fx fn) callback = do
     -- Create a resource manager to ensure all subscriptions are cleaned up when disposing.
-    resourceManager <- newUnmanagedRootResourceManager
+    resourceManager <- (undefined :: IO ResourceManager)
 
     isDisposingVar <- newTVarIO False
     disposableVar <- newTMVarIO noDisposable
@@ -308,12 +308,12 @@ instance IsObservable r (CatchObservable e r) where
 
     leftDisposable <- oldObserve fx (outerCallback resourceManager isDisposingVar disposableVar keyVar)
 
-    attachDisposeAction_ resourceManager $ do
-      atomically $ writeTVar isDisposingVar True
-      d1 <- dispose leftDisposable
-      -- Block while the `outerCallback` is running
-      d2 <- dispose =<< atomically (takeTMVar disposableVar)
-      pure (d1 <> d2)
+    attachDisposeAction_ resourceManager $ undefined -- do
+      --atomically $ writeTVar isDisposingVar True
+      --d1 <- dispose leftDisposable
+      ---- Block while the `outerCallback` is running
+      --d2 <- dispose =<< atomically (takeTMVar disposableVar)
+      --pure (d1 <> d2)
 
     pure $ toDisposable resourceManager
     where
@@ -369,7 +369,7 @@ instance IsObservable v (ObservableVar v) where
       -- Call listener
       callback (pure state)
       pure (state, HM.insert key callback subscribers)
-    synchronousDisposable (disposeFn key)
+    newDisposable (disposeFn key)
     where
       disposeFn :: Unique -> IO ()
       disposeFn key = modifyMVar_ mvar (\(state, subscribers) -> pure (state, HM.delete key subscribers))
@@ -426,7 +426,8 @@ instance forall r o0 v0 o1 v1. (IsObservable v0 o0, IsObservable v1 o1) => IsObs
     var1 <- newTVarIO Nothing
     d0 <- oldObserve obs0 (mergeCallback var0 var1 . writeTVar var0 . Just)
     d1 <- oldObserve obs1 (mergeCallback var0 var1 . writeTVar var1 . Just)
-    pure $ mconcat [d0, d1]
+    undefined
+    --pure $ mconcat [d0, d1]
     where
       mergeCallback :: TVar (Maybe (ObservableMessage v0)) -> TVar (Maybe (ObservableMessage v1)) -> STM () -> IO ()
       mergeCallback var0 var1 update = do
