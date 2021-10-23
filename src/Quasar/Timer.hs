@@ -3,15 +3,18 @@
 module Quasar.Timer (
   Timer,
   newTimer,
+  newUnmanagedTimer,
   sleepUntil,
 
   TimerScheduler,
   newTimerScheduler,
+  newUnmanagedTimerScheduler,
 
   TimerCancelled,
 
   Delay,
   newDelay,
+  newUnmanagedDelay,
 ) where
 
 import Control.Concurrent
@@ -20,6 +23,7 @@ import Control.Monad.Catch
 import Data.Heap
 import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Foldable (toList)
+import Quasar.Async
 import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Prelude
@@ -37,6 +41,7 @@ data Timer = Timer {
   key :: Unique,
   time :: UTCTime,
   completed :: AsyncVar (),
+  disposable :: STMDisposable,
   scheduler :: TimerScheduler
 }
 
@@ -47,33 +52,21 @@ instance Ord Timer where
   x `compare` y = time x `compare` time y
 
 instance IsDisposable Timer where
-  beginDispose = undefined
-
-  --dispose self = liftIO do
-  --  atomically do
-  --    cancelled <- failAsyncVarSTM (completed self) TimerCancelled
-  --    when cancelled do
-  --      modifyTVar (activeCount (scheduler self)) (+ (-1))
-  --      modifyTVar (cancelledCount (scheduler self)) (+ 1)
-  --  pure $ isDisposed self
-
-  isDisposed = awaitSuccessOrFailure . completed
-
-  registerFinalizer = undefined
+  toDisposable Timer{disposable} = toDisposable disposable
 
 instance IsAwaitable () Timer where
-  toAwaitable = toAwaitable . completed
+  toAwaitable Timer{completed} = toAwaitable completed
 
 
 data TimerScheduler = TimerScheduler {
-  heap :: TVar (Heap Timer),
+  heap :: TMVar (Heap Timer),
   activeCount :: TVar Int,
   cancelledCount :: TVar Int,
-  resourceManager :: ResourceManager
+  disposable :: Disposable
 }
 
 instance IsDisposable TimerScheduler where
-  toDisposable = toDisposable . resourceManager
+  toDisposable TimerScheduler{disposable} = disposable
 
 data TimerSchedulerDisposed = TimerSchedulerDisposed
   deriving stock (Eq, Show)
@@ -81,30 +74,27 @@ data TimerSchedulerDisposed = TimerSchedulerDisposed
 instance Exception TimerSchedulerDisposed
 
 newTimerScheduler :: MonadResourceManager m => m TimerScheduler
-newTimerScheduler = do
-  resourceManager <- newResourceManager
+newTimerScheduler = registerNewResource newUnmanagedTimerScheduler
+
+newUnmanagedTimerScheduler :: MonadIO m => m TimerScheduler
+newUnmanagedTimerScheduler = do
   liftIO do
-    heap <- newTVarIO empty
+    heap <- newTMVarIO empty
     activeCount <- newTVarIO 0
     cancelledCount <- newTVarIO 0
-    let scheduler = TimerScheduler {
-            heap,
-            activeCount,
-            cancelledCount,
-            resourceManager
-          }
-    startSchedulerThread scheduler
-    pure scheduler
+    mfix \scheduler -> do
+      disposable <- startSchedulerThread scheduler
+      pure TimerScheduler {
+        heap,
+        activeCount,
+        cancelledCount,
+        disposable
+      }
 
-startSchedulerThread :: TimerScheduler -> IO ()
-startSchedulerThread scheduler = do
-  mask_ do
-    onResourceManager (resourceManager scheduler) do
-      registerDisposable =<< unmanagedFork schedulerThread
+startSchedulerThread :: TimerScheduler -> IO Disposable
+startSchedulerThread scheduler = unmanagedFork_ (schedulerThread `finally` cancelAll)
   where
-    resourceManager' :: ResourceManager
-    resourceManager' = resourceManager scheduler
-    heap' :: TVar (Heap Timer)
+    heap' :: TMVar (Heap Timer)
     heap' = heap scheduler
     activeCount' = activeCount scheduler
     cancelledCount' = cancelledCount scheduler
@@ -114,7 +104,7 @@ startSchedulerThread scheduler = do
 
       -- Get next timer (blocks when heap is empty)
       nextTimer <- atomically do
-        uncons <$> readTVar heap' >>= \case
+        uncons <$> readTMVar heap' >>= \case
           Nothing -> retry
           Just (timer, _) -> pure timer
 
@@ -129,17 +119,18 @@ startSchedulerThread scheduler = do
 
     wait :: Timer -> Int -> IO ()
     wait nextTimer microseconds = do
-      delay <- onResourceManager resourceManager' $ toAwaitable <$> newDelay microseconds
+      delay <- newUnmanagedDelay microseconds
       awaitAny2 delay nextTimerChanged
+      dispose delay
       where
         nextTimerChanged :: Awaitable ()
         nextTimerChanged = unsafeAwaitSTM do
-          minTimer <- Data.Heap.minimum <$> readTVar heap'
+          minTimer <- Data.Heap.minimum <$> readTMVar heap'
           unless (minTimer /= nextTimer) retry
 
     fireTimers :: UTCTime -> IO ()
     fireTimers now = atomically do
-      writeTVar heap' =<< go =<< readTVar heap'
+      putTMVar heap' =<< go =<< takeTMVar heap'
       doCleanup <- liftA2 (>) (readTVar cancelledCount') (readTVar activeCount')
       when doCleanup cleanup
       where
@@ -150,13 +141,18 @@ startSchedulerThread scheduler = do
             Just (timer, others) -> do
               if (time timer) <= now
                 then do
-                  result <- putAsyncVarSTM (completed timer) ()
-                  modifyTVar (if result then activeCount' else cancelledCount') (+ (-1))
+                  fireTimer timer
                   pure others
                  else pure timers
 
+    fireTimer :: Timer -> STM ()
+    fireTimer Timer{completed, disposable} = do
+      result <- putAsyncVarSTM completed ()
+      modifyTVar (if result then activeCount' else cancelledCount') (+ (-1))
+      disposeSTMDisposable disposable
+
     cleanup :: STM ()
-    cleanup = writeTVar heap' . fromList =<< mapMaybeM cleanupTimer =<< (toList <$> readTVar heap')
+    cleanup = putTMVar heap' . fromList =<< mapMaybeM cleanupTimer =<< (toList <$> takeTMVar heap')
 
     cleanupTimer :: Timer -> STM (Maybe Timer)
     cleanupTimer timer = do
@@ -167,26 +163,43 @@ startSchedulerThread scheduler = do
           pure Nothing
         else pure $ Just timer
 
+    cancelAll :: IO ()
+    cancelAll = do
+      timers <- atomically $ takeTMVar heap'
+      mapM_ dispose timers
 
 
-newTimer :: TimerScheduler -> UTCTime -> IO Timer
-newTimer scheduler time = do
+newTimer :: MonadResourceManager m => TimerScheduler -> UTCTime -> m Timer
+newTimer scheduler time =
+  registerNewResource $ newUnmanagedTimer scheduler time
+
+
+newUnmanagedTimer :: MonadIO m => TimerScheduler -> UTCTime -> m Timer
+newUnmanagedTimer scheduler time = liftIO do
   key <- newUnique
   completed <- newAsyncVar
-  let timer = Timer { key, time, completed, scheduler }
+  disposable <- newSTMDisposable' do
+    cancelled <- failAsyncVarSTM completed TimerCancelled
+    when cancelled do
+      modifyTVar (activeCount scheduler) (+ (-1))
+      modifyTVar (cancelledCount scheduler) (+ 1)
+  let timer = Timer { key, time, completed, disposable, scheduler }
   atomically do
-    modifyTVar (heap scheduler) (insert timer)
+    tryTakeTMVar (heap scheduler) >>= \case
+      Just timers -> putTMVar (heap scheduler) (insert timer timers)
+      Nothing -> throwM TimerSchedulerDisposed
     modifyTVar (activeCount scheduler) (+ 1)
   pure timer
 
 
-sleepUntil :: TimerScheduler -> UTCTime -> IO ()
-sleepUntil scheduler time = bracketOnError (newTimer scheduler time) dispose await
+sleepUntil :: MonadIO m => TimerScheduler -> UTCTime -> m ()
+sleepUntil scheduler time = liftIO $ bracketOnError (newUnmanagedTimer scheduler time) dispose await
 
 
 
--- | Can be awaited successfully after a given number of microseconds. Based on `threadDelay`, but provides an
--- `IsAwaitable` and `IsDisposable` instance.
+-- | Provides an `IsAwaitable` instance that can be awaited successfully after a given number of microseconds.
+--
+-- Based on `threadDelay`. Provides a `IsAwaitable` and a `IsDisposable` instance.
 newtype Delay = Delay (Task ())
   deriving newtype IsDisposable
 
@@ -194,10 +207,10 @@ instance IsAwaitable () Delay where
   toAwaitable (Delay task) = toAwaitable task `catch` \TaskDisposed -> throwM TimerCancelled
 
 newDelay :: MonadResourceManager m => Int -> m Delay
-newDelay microseconds = mask_ do
-  delay <- Delay <$> unmanagedFork (liftIO (threadDelay microseconds))
-  registerDisposable delay
-  pure delay
+newDelay microseconds = registerNewResource $ newUnmanagedDelay microseconds
+
+newUnmanagedDelay :: MonadIO m => Int -> m Delay
+newUnmanagedDelay microseconds = Delay <$> unmanagedFork (liftIO (threadDelay microseconds))
 
 
 

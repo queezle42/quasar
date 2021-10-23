@@ -473,5 +473,5 @@ anySTM (x :| xs) = x `orElse` maybe retry anySTM (nonEmpty xs)
 
 
 -- | Like `awaitAny` with two awaitables.
-awaitAny2 :: (IsAwaitable r a, MonadAwait m) => a -> a -> m r
-awaitAny2 x y = awaitAny (x :| [y])
+awaitAny2 :: (IsAwaitable r a, IsAwaitable r b, MonadAwait m) => a -> b -> m r
+awaitAny2 x y = awaitAny (toAwaitable x :| [toAwaitable y])

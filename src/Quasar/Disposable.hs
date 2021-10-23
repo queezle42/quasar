@@ -9,6 +9,12 @@ module Quasar.Disposable (
   newDisposable,
   noDisposable,
 
+  -- ** STM disposable
+  STMDisposable,
+  newSTMDisposable,
+  newSTMDisposable',
+  disposeSTMDisposable,
+
   -- * Implementation internals
   DisposeResult(..),
   ResourceManagerResult(..),
@@ -114,10 +120,10 @@ instance IsAwaitable () Disposable where
 
 
 
-data ImmediateDisposable = ImmediateDisposable Unique (TMVar (IO ())) DisposableFinalizers (AsyncVar ())
+data IODisposable = IODisposable Unique (TMVar (IO ())) DisposableFinalizers (AsyncVar ())
 
-instance IsDisposable ImmediateDisposable where
-  beginDispose (ImmediateDisposable key actionVar finalizers resultVar) = do
+instance IsDisposable IODisposable where
+  beginDispose (IODisposable key actionVar finalizers resultVar) = do
     -- This is only safe when run in masked state
     atomically (tryTakeTMVar actionVar) >>= mapM_ \action -> do
       result <- try action
@@ -128,21 +134,66 @@ instance IsDisposable ImmediateDisposable where
     await resultVar
     pure DisposeResultDisposed
 
-  isDisposed (ImmediateDisposable _ _ _ resultVar) = toAwaitable resultVar `catchAll` \_ -> pure ()
+  isDisposed (IODisposable _ _ _ resultVar) = toAwaitable resultVar `catchAll` \_ -> pure ()
 
-  registerFinalizer (ImmediateDisposable _ _ finalizers _) = defaultRegisterFinalizer finalizers
-
-newImmediateDisposable :: MonadIO m => IO () -> m Disposable
-newImmediateDisposable disposeAction = liftIO do
-  key <- newUnique
-  fmap toDisposable $ ImmediateDisposable key <$> newTMVarIO disposeAction <*> newDisposableFinalizers <*> newAsyncVar
-
+  registerFinalizer (IODisposable _ _ finalizers _) = defaultRegisterFinalizer finalizers
 
 
 -- | Create a new disposable from an IO action. Is is guaranteed, that the IO action will only be called once (even when
 -- `dispose` is called multiple times).
+--
+-- The action must not block for an unbound time.
 newDisposable :: MonadIO m => IO () -> m Disposable
-newDisposable = newImmediateDisposable
+newDisposable disposeAction = liftIO do
+  key <- newUnique
+  fmap toDisposable $ IODisposable key <$> newTMVarIO disposeAction <*> newDisposableFinalizers <*> newAsyncVar
+
+
+data STMDisposable = STMDisposable Unique (TMVar (STM ())) DisposableFinalizers (AsyncVar ())
+
+instance IsDisposable STMDisposable where
+  beginDispose (STMDisposable key actionVar finalizers resultVar) = do
+    -- This is only safe when run in masked state
+    atomically (tryTakeTMVar actionVar) >>= mapM_ \action -> do
+      atomically do
+        result <- try action
+        putAsyncVarEitherSTM_ resultVar result
+        defaultRunFinalizers finalizers
+    -- Await so concurrent `beginDispose` calls don't exit too early
+    await resultVar
+    pure DisposeResultDisposed
+
+  isDisposed (STMDisposable _ _ _ resultVar) = toAwaitable resultVar `catchAll` \_ -> pure ()
+
+  registerFinalizer (STMDisposable _ _ finalizers _) = defaultRegisterFinalizer finalizers
+
+-- | Create a new disposable from an STM action. Is is guaranteed, that the STM action will only be called once (even
+-- when `dispose` is called multiple times).
+--
+-- The action must not block (retry) for an unbound time.
+newSTMDisposable :: MonadIO m => STM () -> m Disposable
+newSTMDisposable disposeAction = toDisposable <$> newSTMDisposable' disposeAction
+
+-- | Create a new disposable from an STM action. Is is guaranteed, that the STM action will only be called once (even
+-- when `dispose` is called multiple times).
+--
+-- The action must not block (retry) for an unbound time.
+--
+-- This variant of `newSTMDisposable` returns an unboxed `STMDisposable` which can be disposed from `STM` by using
+-- `disposeSTMDisposable`.
+newSTMDisposable' :: MonadIO m => STM () -> m STMDisposable
+newSTMDisposable' disposeAction = liftIO do
+  key <- newUnique
+  STMDisposable key <$> newTMVarIO disposeAction <*> newDisposableFinalizers <*> newAsyncVar
+
+disposeSTMDisposable :: STMDisposable -> STM ()
+disposeSTMDisposable (STMDisposable key actionVar finalizers resultVar) = do
+  tryTakeTMVar actionVar >>= \case
+    Just action -> do
+      result <- try action
+      putAsyncVarEitherSTM_ resultVar result
+      defaultRunFinalizers finalizers
+    Nothing -> readAsyncVarSTM resultVar
 
 
 data EmptyDisposable = EmptyDisposable
