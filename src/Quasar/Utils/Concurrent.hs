@@ -37,7 +37,7 @@ instance IsDisposable (Task r) where
   beginDispose self@(Task key stateVar _ _) = uninterruptibleMask_ do
     join $ atomically do
       readTVar stateVar >>= \case
-        TaskStateInitializing -> impossibleCodePathM
+        TaskStateInitializing -> unreachableCodePathM
         TaskStateRunning threadId -> do
           writeTVar stateVar TaskStateThrowing
           pure do

@@ -327,7 +327,7 @@ instance MonadFix AwaitableStepM where
         result <- fn $ unsafeDupablePerformIO do
           atomically (readTMVar var) `catch` \BlockedIndefinitelyOnSTM -> throwIO FixAwaitException
         storeResult var result
-      applyFix (Left _) = impossibleCodePathM -- `newEmptyTMVar` should never fail
+      applyFix (Left _) = unreachableCodePathM -- `newEmptyTMVar` should never fail
       storeResult :: TMVar a -> a -> AwaitableStepM a
       storeResult var x = AwaitableStep (void $ tryPutTMVar var x) (\_ -> pure x)
 
@@ -464,7 +464,7 @@ awaitAny xs = mkMonadicAwaitable $ stepAll Empty Empty $ runAwaitable <$> fromLi
         do prevSteps |> step
         steps
     stepAll acc _ Empty = do
-      newAwaitableSteps <- unsafeAwaitSTM $ maybe impossibleCodePathM anySTM $ nonEmpty (toList acc)
+      newAwaitableSteps <- unsafeAwaitSTM $ maybe unreachableCodePathM anySTM $ nonEmpty (toList acc)
       stepAll Empty Empty newAwaitableSteps
 
 -- | Helper for `awaitAny`

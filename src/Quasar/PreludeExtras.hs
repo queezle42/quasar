@@ -22,11 +22,19 @@ import Quasar.Utils.ExtraT
 io :: IO a -> IO a
 io = id
 
+unreachableCodePath :: GHC.Stack.Types.HasCallStack => a
+unreachableCodePath = error "Code path marked as unreachable was reached"
+
 impossibleCodePath :: GHC.Stack.Types.HasCallStack => a
 impossibleCodePath = error "Code path marked as impossible was reached"
+{-# DEPRECATED impossibleCodePath "Use unreachableCodePath instead" #-}
+
+unreachableCodePathM :: MonadThrow m => m a
+unreachableCodePathM = throwM (userError "Code path marked as unreachable was reached")
 
 impossibleCodePathM :: MonadThrow m => m a
 impossibleCodePathM = throwM (userError "Code path marked as impossible was reached")
+{-# DEPRECATED impossibleCodePathM "Use unreachableCodePathM instead" #-}
 
 intercalate :: (Foldable f, Monoid a) => a -> f a -> a
 intercalate inter = foldr1 (\a b -> a <> inter <> b)

@@ -126,7 +126,7 @@ instance Exception ObserveWhileCompleted
 -- | Observe until the callback returns `Just`.
 observeWhile :: (IsObservable v o, MonadResourceManager m) => o -> (ObservableMessage v -> m (Maybe a)) -> m a
 observeWhile observable callback = do
-  resultVar <- liftIO $ newIORef impossibleCodePath
+  resultVar <- liftIO $ newIORef unreachableCodePath
   observeWhile_ observable \msg -> do
     callback msg >>= \case
       Just result -> do

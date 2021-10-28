@@ -32,7 +32,7 @@ spec = parallel $ do
 
   describe "subscribe" $ do
     it "calls the callback with the contents of the map" $ io $ withRootResourceManager do
-      lastCallbackValue <- liftIO $ newIORef impossibleCodePath
+      lastCallbackValue <- liftIO $ newIORef unreachableCodePath
 
       om :: OM.ObservableHashMap String String <- OM.new
       subscriptionHandle <- captureDisposable_ $ observe om $ liftIO . writeIORef lastCallbackValue
@@ -54,7 +54,7 @@ spec = parallel $ do
 
   describe "subscribeDelta" $ do
     it "calls the callback with changes to the map" $ io $ withRootResourceManager do
-      lastDelta <- liftIO $ newIORef impossibleCodePath
+      lastDelta <- liftIO $ newIORef unreachableCodePath
 
       om :: OM.ObservableHashMap String String <- OM.new
       subscriptionHandle <- subscribeDelta om $ writeIORef lastDelta
