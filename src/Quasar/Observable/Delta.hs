@@ -30,7 +30,8 @@ instance (Eq k, Hashable k, Binary k, Binary v) => Binary (Delta k v) where
   put (Delete key) = B.put (2 :: Word8) >> B.put key
 
 class IsObservable (HM.HashMap k v) o => IsDeltaObservable k v o | o -> k, o -> v where
-  subscribeDelta :: o -> (Delta k v -> IO ()) -> IO Disposable
+  -- TODO change signature to use resource manager
+  subscribeDelta :: MonadIO m => o -> (Delta k v -> IO ()) -> m Disposable
 
 --observeHashMapDefaultImpl :: forall k v o. (Eq k, Hashable k) => IsDeltaObservable k v o => o -> (HM.HashMap k v -> IO ()) -> IO Disposable
 --observeHashMapDefaultImpl o callback = do
@@ -49,7 +50,7 @@ data DeltaObservable k v = forall o. IsDeltaObservable k v o => DeltaObservable 
 instance IsRetrievable (HM.HashMap k v) (DeltaObservable k v) where
   retrieve (DeltaObservable o) = retrieve o
 instance IsObservable (HM.HashMap k v) (DeltaObservable k v) where
-  oldObserve (DeltaObservable o) = oldObserve o
+  observe (DeltaObservable o) = observe o
 instance IsDeltaObservable k v (DeltaObservable k v) where
   subscribeDelta (DeltaObservable o) = subscribeDelta o
 instance Functor (DeltaObservable k) where
@@ -60,6 +61,6 @@ data MappedDeltaObservable k b = forall a o. IsDeltaObservable k a o => MappedDe
 instance IsRetrievable (HM.HashMap k b) (MappedDeltaObservable k b) where
   retrieve (MappedDeltaObservable f o) = fmap f <<$>> retrieve o
 instance IsObservable (HM.HashMap k b) (MappedDeltaObservable k b) where
-  oldObserve (MappedDeltaObservable f o) callback = oldObserve o (callback . fmap (fmap f))
+  observe (MappedDeltaObservable f o) callback = observe o (callback . fmap (fmap f))
 instance IsDeltaObservable k b (MappedDeltaObservable k b) where
   subscribeDelta (MappedDeltaObservable f o) callback = subscribeDelta o (callback . fmap f)

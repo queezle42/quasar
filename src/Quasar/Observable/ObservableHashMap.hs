@@ -33,19 +33,20 @@ data KeyHandle v = KeyHandle {
 instance IsRetrievable (HM.HashMap k v) (ObservableHashMap k v) where
   retrieve (ObservableHashMap mvar) = liftIO $ pure . HM.mapMaybe value . keyHandles <$> readMVar mvar
 instance IsObservable (HM.HashMap k v) (ObservableHashMap k v) where
-  oldObserve ohm callback = liftIO $ modifyHandle update ohm
-    where
-      update :: Handle k v -> IO (Handle k v, Disposable)
-      update handle = do
-        callback $ pure $ toHashMap handle
-        key <- newUnique
-        let handle' = handle {subscribers = HM.insert key callback (subscribers handle)}
-        (handle',) <$> newDisposable (unsubscribe key)
-      unsubscribe :: Unique -> IO ()
-      unsubscribe key = modifyHandle_ (\handle -> pure handle {subscribers = HM.delete key (subscribers handle)}) ohm
+  observe = undefined
+--  oldObserve ohm callback = liftIO $ modifyHandle update ohm
+--    where
+--      update :: Handle k v -> IO (Handle k v, Disposable)
+--      update handle = do
+--        callback $ pure $ toHashMap handle
+--        key <- newUnique
+--        let handle' = handle {subscribers = HM.insert key callback (subscribers handle)}
+--        (handle',) <$> newDisposable (unsubscribe key)
+--      unsubscribe :: Unique -> IO ()
+--      unsubscribe key = modifyHandle_ (\handle -> pure handle {subscribers = HM.delete key (subscribers handle)}) ohm
 
 instance IsDeltaObservable k v (ObservableHashMap k v) where
-  subscribeDelta ohm callback = modifyHandle update ohm
+  subscribeDelta ohm callback = liftIO $ modifyHandle update ohm
     where
       update :: Handle k v -> IO (Handle k v, Disposable)
       update handle = do
@@ -106,39 +107,40 @@ notifySubscribers handle@Handle{deltaSubscribers, subscribers} (Just delta) = do
 modifyKeySubscribers :: (HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ()) -> HM.HashMap Unique (ObservableMessage (Maybe v) -> IO ())) -> KeyHandle v -> KeyHandle v
 modifyKeySubscribers fn keyHandle = keyHandle {keySubscribers = fn (keySubscribers keyHandle)}
 
-new :: IO (ObservableHashMap k v)
-new = ObservableHashMap <$> newMVar Handle{keyHandles=HM.empty, subscribers=HM.empty, deltaSubscribers=HM.empty}
+new :: MonadIO m => m (ObservableHashMap k v)
+new = liftIO $ ObservableHashMap <$> newMVar Handle{keyHandles=HM.empty, subscribers=HM.empty, deltaSubscribers=HM.empty}
 
 observeKey :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> Observable (Maybe v)
-observeKey key ohm@(ObservableHashMap mvar) = synchronousFnObservable observeFn retrieveFn
-  where
-    retrieveFn :: IO (Maybe v)
-    retrieveFn = liftIO do
-      handle <- readMVar mvar
-      pure $ join $ fmap value $ HM.lookup key $ keyHandles handle
-    observeFn :: ((ObservableMessage (Maybe v) -> IO ()) -> IO Disposable)
-    observeFn callback = do
-      subscriptionKey <- newUnique
-      modifyKeyHandle_ (subscribeFn' subscriptionKey) key ohm
-      newDisposable (unsubscribe subscriptionKey)
-      where
-        subscribeFn' :: Unique -> KeyHandle v -> IO (KeyHandle v)
-        subscribeFn' subKey keyHandle@KeyHandle{value} = do
-          callback $ pure value
-          pure $ modifyKeySubscribers (HM.insert subKey callback) keyHandle
-        unsubscribe :: Unique -> IO ()
-        unsubscribe subKey = modifyKeyHandle_ (pure . modifyKeySubscribers (HM.delete subKey)) key ohm
+observeKey = undefined
+--observeKey key ohm@(ObservableHashMap mvar) = synchronousFnObservable observeFn retrieveFn
+--  where
+--    retrieveFn :: IO (Maybe v)
+--    retrieveFn = liftIO do
+--      handle <- readMVar mvar
+--      pure $ join $ fmap value $ HM.lookup key $ keyHandles handle
+--    observeFn :: ((ObservableMessage (Maybe v) -> IO ()) -> IO Disposable)
+--    observeFn callback = do
+--      subscriptionKey <- newUnique
+--      modifyKeyHandle_ (subscribeFn' subscriptionKey) key ohm
+--      newDisposable (unsubscribe subscriptionKey)
+--      where
+--        subscribeFn' :: Unique -> KeyHandle v -> IO (KeyHandle v)
+--        subscribeFn' subKey keyHandle@KeyHandle{value} = do
+--          callback $ pure value
+--          pure $ modifyKeySubscribers (HM.insert subKey callback) keyHandle
+--        unsubscribe :: Unique -> IO ()
+--        unsubscribe subKey = modifyKeyHandle_ (pure . modifyKeySubscribers (HM.delete subKey)) key ohm
 
-insert :: forall k v. (Eq k, Hashable k) => k -> v -> ObservableHashMap k v -> IO ()
-insert key value = modifyKeyHandleNotifying_ fn key
+insert :: forall k v m. (Eq k, Hashable k, MonadIO m) => k -> v -> ObservableHashMap k v -> m ()
+insert key value = liftIO . modifyKeyHandleNotifying_ fn key
   where
     fn :: KeyHandle v -> IO (KeyHandle v, Maybe (Delta k v))
     fn keyHandle@KeyHandle{keySubscribers} = do
       mapM_ ($ pure $ Just value) $ HM.elems keySubscribers
       pure (keyHandle{value=Just value}, Just (Insert key value))
 
-delete :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> IO ()
-delete key = modifyKeyHandleNotifying_ fn key
+delete :: forall k v m. (Eq k, Hashable k, MonadIO m) => k -> ObservableHashMap k v -> m ()
+delete key = liftIO . modifyKeyHandleNotifying_ fn key
   where
     fn :: KeyHandle v -> IO (KeyHandle v, Maybe (Delta k v))
     fn keyHandle@KeyHandle{value=oldValue, keySubscribers} = do
@@ -146,13 +148,13 @@ delete key = modifyKeyHandleNotifying_ fn key
       let delta = if isJust oldValue then Just (Delete key) else Nothing
       pure (keyHandle{value=Nothing}, delta)
 
-lookup :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> IO (Maybe v)
-lookup key (ObservableHashMap mvar) = do
+lookup :: forall k v m. (Eq k, Hashable k, MonadIO m) => k -> ObservableHashMap k v -> m (Maybe v)
+lookup key (ObservableHashMap mvar) = liftIO do
   Handle{keyHandles} <- readMVar mvar
   pure $ join $ value <$> HM.lookup key keyHandles
 
-lookupDelete :: forall k v. (Eq k, Hashable k) => k -> ObservableHashMap k v -> IO (Maybe v)
-lookupDelete key = modifyKeyHandleNotifying fn key
+lookupDelete :: forall k v m. (Eq k, Hashable k, MonadIO m) => k -> ObservableHashMap k v -> m (Maybe v)
+lookupDelete key = liftIO . modifyKeyHandleNotifying fn key
   where
     fn :: KeyHandle v -> IO (KeyHandle v, (Maybe (Delta k v), Maybe v))
     fn keyHandle@KeyHandle{value=oldValue, keySubscribers} = do

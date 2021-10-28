@@ -3,7 +3,6 @@
 module Quasar.Observable (
   -- * Observable core types
   IsRetrievable(..),
-  retrieveIO,
   IsObservable(..),
   Observable(..),
   ObservableMessage(..),
@@ -13,9 +12,8 @@ module Quasar.Observable (
   ObservableVar,
   newObservableVar,
   setObservableVar,
-  withObservableVar,
   modifyObservableVar,
-  modifyObservableVar_,
+  stateObservableVar,
 
   -- * Helper functions
   observeWhile,
@@ -23,9 +21,6 @@ module Quasar.Observable (
   observeBlocking,
   fnObservable,
   synchronousFnObservable,
-  mergeObservable,
-  joinObservable,
-  bindObservable,
   unsafeObservableIO,
 
   -- * Helper types
@@ -76,37 +71,22 @@ toObservableUpdate (ObservableNotAvailable ex) = throwM ex
 class IsRetrievable v a | a -> v where
   retrieve :: MonadResourceManager m => a -> m (Awaitable v)
 
--- TODO remove
-retrieveIO :: IsRetrievable v a => a -> IO v
-retrieveIO x = withRootResourceManager $ await =<< retrieve x
-
 class IsRetrievable v o => IsObservable v o | o -> v where
   -- | Register a callback to observe changes. The callback is called when the value changes, but depending on the
   -- delivery method (e.g. network) intermediate values may be skipped.
   --
-  -- A correct implementation of observe will call the callback during registration (if no value is available
+  -- A correct implementation of observe must call the callback during registration (if no value is available
   -- immediately an `ObservableLoading` will be delivered).
   --
   -- The callback must return without blocking, otherwise other callbacks will be delayed. If the value can't be
-  -- processed immediately, use `observeBlocking` instead or manually pass the value e.g. by using STM.
+  -- processed immediately, use `observeBlocking` instead or manually pass the value to a thread that processes the
+  -- data, e.g. by using STM.
   observe
     :: MonadResourceManager m
     => o -- ^ observable
-    -> (forall f. MonadResourceManager f => ObservableMessage v -> f ()) -- ^ callback
+    -> (ObservableMessage v -> ResourceManagerIO ()) -- ^ callback
     -> m ()
-  -- NOTE Compatability implementation, has to be removed when `oldObserve` is removed
-  observe observable callback = mask_ do
-    resourceManager <- askResourceManager
-    disposable <- liftIO $ oldObserve observable (\msg -> runReaderT (callback msg) resourceManager)
-    registerDisposable disposable
-
-  -- | Old signature of `observe`, will be removed from the class once it's no longer used for implementations.
-  oldObserve :: o -> (ObservableMessage v -> IO ()) -> IO Disposable
-  oldObserve observable callback = do
-    resourceManager <- (undefined :: IO ResourceManager)
-    onResourceManager resourceManager do
-      observe observable $ \msg -> liftIO (callback msg)
-    pure $ toDisposable resourceManager
+  observe observable = observe (toObservable observable)
 
   toObservable :: o -> Observable v
   toObservable = Observable
@@ -114,10 +94,7 @@ class IsRetrievable v o => IsObservable v o | o -> v where
   mapObservable :: (v -> a) -> o -> Observable a
   mapObservable f = Observable . MappedObservable f
 
-  {-# MINIMAL observe | oldObserve #-}
-  -- TODO the goal: {-# MINIMAL toObservable | observe #-}
-
-{-# DEPRECATED oldObserve "Old implementation of `observe`." #-}
+  {-# MINIMAL toObservable | observe #-}
 
 
 -- | Observe an observable by handling updates on the current thread.
@@ -140,6 +117,7 @@ observeBlocking observable handler = do
       handler msg
 
 
+-- | Internal control flow exception for `observeWhile` and `observeWhile_`.
 data ObserveWhileCompleted = ObserveWhileCompleted
   deriving stock (Eq, Show)
 
@@ -179,7 +157,6 @@ instance IsRetrievable v (Observable v) where
   retrieve (Observable o) = retrieve o
 instance IsObservable v (Observable v) where
   observe (Observable o) = observe o
-  oldObserve (Observable o) = oldObserve o
   toObservable = id
   mapObservable f (Observable o) = mapObservable f o
 
@@ -188,7 +165,7 @@ instance Functor Observable where
 
 instance Applicative Observable where
   pure = toObservable . ConstObservable
-  liftA2 fn x y = toObservable $ MergedObservable fn x y
+  liftA2 fn x y = toObservable $ LiftA2Observable fn x y
 
 instance Monad Observable where
   x >>= y = toObservable $ BindObservable x y
@@ -216,7 +193,6 @@ instance IsRetrievable v (MappedObservable v) where
   retrieve (MappedObservable f observable) = f <<$>> retrieve observable
 instance IsObservable v (MappedObservable v) where
   observe (MappedObservable fn observable) callback = observe observable (callback . fmap fn)
-  oldObserve (MappedObservable fn observable) callback = oldObserve observable (callback . fmap fn)
   mapObservable f1 (MappedObservable f2 upstream) = Observable $ MappedObservable (f1 . f2) upstream
 
 
@@ -229,66 +205,40 @@ instance IsRetrievable r (BindObservable r) where
     retrieve $ fn x
 
 instance IsObservable r (BindObservable r) where
-  oldObserve :: BindObservable r -> (ObservableMessage r -> IO ()) -> IO Disposable
-  oldObserve (BindObservable fx fn) callback = do
-    -- Create a resource manager to ensure all subscriptions are cleaned up when disposing.
-    resourceManager <- (undefined :: IO ResourceManager)
+  observe :: MonadResourceManager m => (BindObservable r) -> (ObservableMessage r -> ResourceManagerIO ()) -> m ()
+  observe (BindObservable fx fn) callback = do
+    disposableVar <- liftIO $ newTMVarIO noDisposable
+    keyVar <- liftIO $ newTMVarIO =<< newUnique
 
-    isDisposingVar <- newTVarIO False
-    disposableVar <- newTMVarIO noDisposable
-    keyVar <- newTMVarIO Nothing
-
-    leftDisposable <- oldObserve fx (outerCallback resourceManager isDisposingVar disposableVar keyVar)
-
-    attachDisposeAction_ resourceManager $ undefined -- do
-      --atomically $ writeTVar isDisposingVar True
-      --d1 <- dispose leftDisposable
-      ---- Block while the `outerCallback` is running
-      --d2 <- dispose =<< atomically (takeTMVar disposableVar)
-      --pure (d1 <> d2)
-
-    pure $ toDisposable resourceManager
+    observe fx (leftCallback disposableVar keyVar)
     where
-      outerCallback resourceManager isDisposingVar disposableVar keyVar observableMessage = mask $ \unmask -> do
-        key <- newUnique
+      leftCallback disposableVar keyVar message = do
+        key <- liftIO newUnique
 
-        join $ atomically $ do
-          readTVar isDisposingVar >>= \case
-            False -> do
-              -- Blocks while an inner callback is running
-              void $ swapTMVar keyVar (Just key)
+        oldDisposable <- liftIO $ atomically do
+          -- Blocks while `rightCallback` is running
+          void $ swapTMVar keyVar key
 
-              oldDisposable <- takeTMVar disposableVar
+          takeTMVar disposableVar
 
-              -- IO action that will run after the STM transaction
-              pure do
-                onResourceManager resourceManager do
-                  disposeEventually oldDisposable
+        disposeEventually_ oldDisposable
 
-                disposable <-
-                  unmask (outerMessageHandler key observableMessage)
-                    `onException`
-                      atomically (putTMVar disposableVar noDisposable)
+        disposable <- case message of
+          (ObservableUpdate x) -> captureDisposable_ $ observe (fn x) (rightCallback keyVar key)
+          ObservableLoading -> noDisposable <$ callback ObservableLoading
+          (ObservableNotAvailable ex) -> noDisposable <$ callback (ObservableNotAvailable ex)
 
-                atomically $ putTMVar disposableVar disposable
+        liftIO $ atomically $ putTMVar disposableVar disposable
 
-            -- When already disposing no new handlers should be registered
-            True -> pure $ pure ()
-
-        where
-          outerMessageHandler key (ObservableUpdate x) = oldObserve (fn x) (innerCallback key)
-          outerMessageHandler _ ObservableLoading = noDisposable <$ callback ObservableLoading
-          outerMessageHandler _ (ObservableNotAvailable ex) = noDisposable <$ callback (ObservableNotAvailable ex)
-
-          innerCallback :: Unique -> ObservableMessage r -> IO ()
-          innerCallback key x = do
-            bracket
-              -- Take key var to prevent parallel callbacks
-              (atomically $ takeTMVar keyVar)
-              -- Put key back
-              (atomically . putTMVar keyVar)
-              -- Call callback when key is still valid
-              (\currentKey -> when (Just key == currentKey) $ callback x)
+      rightCallback :: TMVar Unique -> Unique -> ObservableMessage r -> ResourceManagerIO ()
+      rightCallback keyVar key message =
+        bracket
+          -- Take key var to prevent parallel callbacks
+          (liftIO $ atomically $ takeTMVar keyVar)
+          -- Put key back
+          (liftIO . atomically . putTMVar keyVar)
+          -- Ignore all callbacks that arrive from the old `fn` when a new `fx` has been observed
+          (\currentKey -> when (key == currentKey) $ callback message)
 
 
 data CatchObservable e r = Exception e => CatchObservable (Observable r) (e -> Observable r)
@@ -297,65 +247,39 @@ instance IsRetrievable r (CatchObservable e r) where
   retrieve (CatchObservable fx fn) = retrieve fx `catch` \ex -> retrieve (fn ex)
 
 instance IsObservable r (CatchObservable e r) where
-  oldObserve :: CatchObservable e r -> (ObservableMessage r -> IO ()) -> IO Disposable
-  oldObserve (CatchObservable fx fn) callback = do
-    -- Create a resource manager to ensure all subscriptions are cleaned up when disposing.
-    resourceManager <- (undefined :: IO ResourceManager)
+  observe :: MonadResourceManager m => (CatchObservable e r) -> (ObservableMessage r -> ResourceManagerIO ()) -> m ()
+  observe (CatchObservable fx fn) callback = do
+    disposableVar <- liftIO $ newTMVarIO noDisposable
+    keyVar <- liftIO $ newTMVarIO =<< newUnique
 
-    isDisposingVar <- newTVarIO False
-    disposableVar <- newTMVarIO noDisposable
-    keyVar <- newTMVarIO Nothing
-
-    leftDisposable <- oldObserve fx (outerCallback resourceManager isDisposingVar disposableVar keyVar)
-
-    attachDisposeAction_ resourceManager $ undefined -- do
-      --atomically $ writeTVar isDisposingVar True
-      --d1 <- dispose leftDisposable
-      ---- Block while the `outerCallback` is running
-      --d2 <- dispose =<< atomically (takeTMVar disposableVar)
-      --pure (d1 <> d2)
-
-    pure $ toDisposable resourceManager
+    observe fx (leftCallback disposableVar keyVar)
     where
-      outerCallback resourceManager isDisposingVar disposableVar keyVar observableMessage = mask $ \unmask -> do
-        key <- newUnique
+      leftCallback disposableVar keyVar message = do
+        key <- liftIO newUnique
 
-        join $ atomically $ do
-          readTVar isDisposingVar >>= \case
-            False -> do
-              -- Blocks while an inner callback is running
-              void $ swapTMVar keyVar (Just key)
+        oldDisposable <- liftIO $ atomically do
+          -- Blocks while `rightCallback` is running
+          void $ swapTMVar keyVar key
 
-              oldDisposable <- takeTMVar disposableVar
+          takeTMVar disposableVar
 
-              -- IO action that will run after the STM transaction
-              pure do
-                onResourceManager resourceManager do
-                  disposeEventually oldDisposable
+        disposeEventually_ oldDisposable
 
-                disposable <-
-                  unmask (outerMessageHandler key observableMessage)
-                    `onException`
-                      atomically (putTMVar disposableVar noDisposable)
+        disposable <- case message of
+          (ObservableNotAvailable (fromException -> Just ex)) -> captureDisposable_ $ observe (fn ex) (rightCallback keyVar key)
+          msg -> noDisposable <$ callback msg
 
-                atomically $ putTMVar disposableVar disposable
+        liftIO $ atomically $ putTMVar disposableVar disposable
 
-            -- When already disposing no new handlers should be registered
-            True -> pure $ pure ()
-
-        where
-          outerMessageHandler key (ObservableNotAvailable (fromException -> Just ex)) = oldObserve (fn ex) (innerCallback key)
-          outerMessageHandler _ msg = noDisposable <$ callback msg
-
-          innerCallback :: Unique -> ObservableMessage r -> IO ()
-          innerCallback key x = do
-            bracket
-              -- Take key var to prevent parallel callbacks
-              (atomically $ takeTMVar keyVar)
-              -- Put key back
-              (atomically . putTMVar keyVar)
-              -- Call callback when key is still valid
-              (\currentKey -> when (Just key == currentKey) $ callback x)
+      rightCallback :: TMVar Unique -> Unique -> ObservableMessage r -> ResourceManagerIO ()
+      rightCallback keyVar key message =
+        bracket
+          -- Take key var to prevent parallel callbacks
+          (liftIO $ atomically $ takeTMVar keyVar)
+          -- Put key back
+          (liftIO . atomically . putTMVar keyVar)
+          -- Ignore all callbacks that arrive from the old `fn` when a new `fx` has been observed
+          (\currentKey -> when (key == currentKey) $ callback message)
 
 
 
@@ -363,13 +287,19 @@ newtype ObservableVar v = ObservableVar (MVar (v, HM.HashMap Unique (ObservableC
 instance IsRetrievable v (ObservableVar v) where
   retrieve (ObservableVar mvar) = liftIO $ pure . fst <$> readMVar mvar
 instance IsObservable v (ObservableVar v) where
-  oldObserve (ObservableVar mvar) callback = do
-    key <- newUnique
-    modifyMVar_ mvar $ \(state, subscribers) -> do
-      -- Call listener
-      callback (pure state)
-      pure (state, HM.insert key callback subscribers)
-    newDisposable (disposeFn key)
+  observe observable@(ObservableVar mvar) callback = do
+    resourceManager <- askResourceManager
+    key <- liftIO newUnique
+
+    registerNewResource_ do
+      let wrappedCallback = handleByResourceManager resourceManager . callback
+
+      liftIO $ modifyMVar_ mvar $ \(state, subscribers) -> do
+        -- Call listener with initial value
+        wrappedCallback (pure state)
+        pure (state, HM.insert key wrappedCallback subscribers)
+
+      newDisposable $ disposeFn key
     where
       disposeFn :: Unique -> IO ()
       disposeFn key = modifyMVar_ mvar (\(state, subscribers) -> pure (state, HM.delete key subscribers))
@@ -379,83 +309,54 @@ newObservableVar initialValue = liftIO do
   ObservableVar <$> newMVar (initialValue, HM.empty)
 
 setObservableVar :: MonadIO m => ObservableVar v -> v -> m ()
-setObservableVar (ObservableVar mvar) value = liftIO $ modifyMVar_ mvar $ \(_, subscribers) -> do
-  mapM_ (\callback -> callback (pure value)) subscribers
-  pure (value, subscribers)
+setObservableVar observable value = modifyObservableVar observable (const value)
 
-
--- TODO change function signature to pure or STM; swap v and a
-modifyObservableVar :: MonadIO m => ObservableVar v -> (v -> IO (v, a)) -> m a
-modifyObservableVar (ObservableVar mvar) f =
+stateObservableVar :: MonadIO m => ObservableVar v -> (v -> (a, v)) -> m a
+stateObservableVar observable@(ObservableVar mvar) f =
   liftIO $ modifyMVar mvar $ \(oldState, subscribers) -> do
-    (newState, result) <- f oldState
+    let (result, newState) = f oldState
     mapM_ (\callback -> callback (pure newState)) subscribers
     pure ((newState, subscribers), result)
 
--- TODO change update function signature to pure or STM
-modifyObservableVar_ :: MonadIO m => ObservableVar v -> (v -> IO v) -> m ()
-modifyObservableVar_ (ObservableVar mvar) f =
-  liftIO $ modifyMVar_ mvar $ \(oldState, subscribers) -> do
-    newState <- f oldState
-    mapM_ (\callback -> callback (pure newState)) subscribers
-    pure (newState, subscribers)
+modifyObservableVar :: MonadIO m => ObservableVar v -> (v -> v) -> m ()
+modifyObservableVar observable f = stateObservableVar observable (((), ) . f)
 
--- TODO change inner monad to `m` after reimplementing ObservableVar
-withObservableVar :: MonadIO m => ObservableVar v -> (v -> IO a) -> m a
-withObservableVar (ObservableVar mvar) f = liftIO $ withMVar mvar (f . fst)
-
-
-
-bindObservable :: (IsObservable a ma, IsObservable b mb) => ma -> (a -> mb) -> Observable b
-bindObservable fx fn = (toObservable fx) >>= \x -> toObservable (fn x)
-
-joinObservable :: (IsObservable i o, IsObservable v i) => o -> Observable v
-joinObservable = join . fmap toObservable . toObservable
 
 
 -- | Merge two observables using a given merge function. Whenever one of the inputs is updated, the resulting
 -- observable updates according to the merge function.
 --
 -- There is no caching involed, every subscriber effectively subscribes to both input observables.
-data MergedObservable r o0 v0 o1 v1 = MergedObservable (v0 -> v1 -> r) o0 o1
-instance forall r o0 v0 o1 v1. (IsRetrievable v0 o0, IsRetrievable v1 o1) => IsRetrievable r (MergedObservable r o0 v0 o1 v1) where
-  retrieve (MergedObservable merge obs0 obs1) = liftA2 (liftA2 merge) (retrieve obs0) (retrieve obs1)
-instance forall r o0 v0 o1 v1. (IsObservable v0 o0, IsObservable v1 o1) => IsObservable r (MergedObservable r o0 v0 o1 v1) where
-  oldObserve (MergedObservable merge obs0 obs1) callback = do
-    var0 <- newTVarIO Nothing
-    var1 <- newTVarIO Nothing
-    d0 <- oldObserve obs0 (mergeCallback var0 var1 . writeTVar var0 . Just)
-    d1 <- oldObserve obs1 (mergeCallback var0 var1 . writeTVar var1 . Just)
-    undefined
-    --pure $ mconcat [d0, d1]
+data LiftA2Observable r = forall r0 r1. LiftA2Observable (r0 -> r1 -> r) (Observable r0) (Observable r1)
+
+instance IsRetrievable r (LiftA2Observable r) where
+  retrieve (LiftA2Observable fn fx fy) =
+    liftA2 (liftA2 fn) (retrieve fx) (retrieve fy)
+
+instance IsObservable r (LiftA2Observable r) where
+  observe (LiftA2Observable fn fx fy) callback = do
+    var0 <- liftIO $ newTVarIO Nothing
+    var1 <- liftIO $ newTVarIO Nothing
+    observe fx (mergeCallback var0 var1 . writeTVar var0 . Just)
+    observe fy (mergeCallback var0 var1 . writeTVar var1 . Just)
     where
-      mergeCallback :: TVar (Maybe (ObservableMessage v0)) -> TVar (Maybe (ObservableMessage v1)) -> STM () -> IO ()
       mergeCallback var0 var1 update = do
-        mMerged <- atomically $ do
+        mMerged <- liftIO $ atomically do
           update
-          runMaybeT $ liftA2 (liftA2 merge) (MaybeT (readTVar var0)) (MaybeT (readTVar var1))
+          runMaybeT $ liftA2 (liftA2 fn) (MaybeT (readTVar var0)) (MaybeT (readTVar var1))
 
         -- Run the callback only once both values have been received
         mapM_ callback mMerged
 
 
--- | Merge two observables using a given merge function. Whenever one of the inputs is updated, the resulting
--- observable updates according to the merge function.
---
--- Behaves like `liftA2` on `Observable` but accepts anything that implements `IsObservable`..
---
--- There is no caching involed, every subscriber effectively subscribes to both input observables.
-mergeObservable :: (IsObservable v0 o0, IsObservable v1 o1) => (v0 -> v1 -> r) -> o0 -> o1 -> Observable r
-mergeObservable merge x y = Observable $ MergedObservable merge x y
-
 data FnObservable v = FnObservable {
-  retrieveFn :: forall m. MonadResourceManager m => m (Awaitable v),
-  observeFn :: (ObservableMessage v -> IO ()) -> IO Disposable
+  retrieveFn :: ResourceManagerIO (Awaitable v),
+  observeFn :: (ObservableMessage v -> ResourceManagerIO ()) -> ResourceManagerIO ()
 }
 instance IsRetrievable v (FnObservable v) where
-  retrieve o = retrieveFn o
+  retrieve o = liftResourceManagerIO $ retrieveFn o
 instance IsObservable v (FnObservable v) where
-  oldObserve o = observeFn o
+  observe o = observe o
   mapObservable f FnObservable{retrieveFn, observeFn} = Observable $ FnObservable {
     retrieveFn = f <<$>> retrieveFn,
     observeFn = \listener -> observeFn (listener . fmap f)
@@ -463,19 +364,20 @@ instance IsObservable v (FnObservable v) where
 
 -- | Implement an Observable by directly providing functions for `retrieve` and `subscribe`.
 fnObservable
-  :: ((ObservableMessage v -> IO ()) -> IO Disposable)
-  -> (forall m. MonadResourceManager m => m (Awaitable v))
+  :: ((ObservableMessage v -> ResourceManagerIO ()) -> ResourceManagerIO ())
+  -> ResourceManagerIO (Awaitable v)
   -> Observable v
 fnObservable observeFn retrieveFn = toObservable FnObservable{observeFn, retrieveFn}
 
 -- | Implement an Observable by directly providing functions for `retrieve` and `subscribe`.
 synchronousFnObservable
-  :: forall v. ((ObservableMessage v -> IO ()) -> IO Disposable)
+  :: forall v.
+  ((ObservableMessage v -> ResourceManagerIO ()) -> ResourceManagerIO ())
   -> IO v
   -> Observable v
 synchronousFnObservable observeFn synchronousRetrieveFn = fnObservable observeFn retrieveFn
   where
-    retrieveFn :: (forall m. MonadResourceManager m => m (Awaitable v))
+    retrieveFn :: ResourceManagerIO (Awaitable v)
     retrieveFn = liftIO $ pure <$> synchronousRetrieveFn
 
 
@@ -484,7 +386,7 @@ instance IsRetrievable v (ConstObservable v) where
   retrieve (ConstObservable x) = pure $ pure x
 instance IsObservable v (ConstObservable v) where
   observe (ConstObservable x) callback = do
-    callback $ ObservableUpdate x
+    liftResourceManagerIO $ callback $ ObservableUpdate x
 
 
 newtype FailedObservable v = FailedObservable SomeException
@@ -492,22 +394,24 @@ instance IsRetrievable v (FailedObservable v) where
   retrieve (FailedObservable ex) = liftIO $ throwIO ex
 instance IsObservable v (FailedObservable v) where
   observe (FailedObservable ex) callback = do
-    callback $ ObservableNotAvailable ex
+    liftResourceManagerIO $ callback $ ObservableNotAvailable ex
 
 
 -- | Create an observable by simply running an IO action whenever a value is requested or a callback is registered.
 --
--- There is no mechanism to send more than one update, so the resulting `Observable` will only be correct in specific
--- situations.
+-- There is no mechanism to send more than one update, so the resulting `Observable` will only be useful in specific
+-- situations, e.g. as a primitive for building a cache where a static value has to be calculated/loaded).
+--
+-- The function supplied to unsafeObservableIO must produce the same value when called multiple times to create a
+-- correctly behaving observable.
 unsafeObservableIO :: forall v. IO v -> Observable v
 unsafeObservableIO action = synchronousFnObservable observeFn action
   where
-    observeFn :: (ObservableMessage v -> IO ()) -> IO Disposable
+    observeFn :: (ObservableMessage v -> ResourceManagerIO ()) -> ResourceManagerIO ()
     observeFn callback = do
       callback ObservableLoading
-      value <- (ObservableUpdate <$> action) `catchAll` (pure . ObservableNotAvailable @v)
+      value <- (ObservableUpdate <$> liftIO action) `catchAll` (pure . ObservableNotAvailable @v)
       callback value
-      pure noDisposable
 
 
 -- TODO implement

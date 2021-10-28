@@ -25,16 +25,17 @@ instance IsRetrievable (Maybe v) (ObservablePriority p v) where
       getValueFromInternals Internals{current=Nothing} = Nothing
       getValueFromInternals Internals{current=Just (_, _, value)} = Just value
 instance IsObservable (Maybe v) (ObservablePriority p v) where
-  oldObserve (ObservablePriority mvar) callback = do
-    key <- newUnique
-    modifyMVar_ mvar $ \internals@Internals{subscribers} -> do
-      -- Call listener
-      callback (pure (currentValue internals))
-      pure internals{subscribers = HM.insert key callback subscribers}
-    newDisposable (unsubscribe key)
-    where
-      unsubscribe :: Unique -> IO ()
-      unsubscribe key = modifyMVar_ mvar $ \internals@Internals{subscribers} -> pure internals{subscribers=HM.delete key subscribers}
+  observe = undefined
+  --oldObserve (ObservablePriority mvar) callback = do
+  --  key <- newUnique
+  --  modifyMVar_ mvar $ \internals@Internals{subscribers} -> do
+  --    -- Call listener
+  --    callback (pure (currentValue internals))
+  --    pure internals{subscribers = HM.insert key callback subscribers}
+  --  newDisposable (unsubscribe key)
+  --  where
+  --    unsubscribe :: Unique -> IO ()
+  --    unsubscribe key = modifyMVar_ mvar $ \internals@Internals{subscribers} -> pure internals{subscribers=HM.delete key subscribers}
 
 type PriorityMap p v = HM.HashMap p (NonEmpty (Entry v))
 
@@ -45,8 +46,9 @@ data Internals p v = Internals {
 }
 
 -- | Create a new `ObservablePriority` data structure.
-create :: IO (ObservablePriority p v)
-create = ObservablePriority <$> newMVar Internals {
+create :: MonadIO m => m (ObservablePriority p v)
+create = liftIO do
+  ObservablePriority <$> newMVar Internals {
     priorityMap = HM.empty,
     current = Nothing,
     subscribers = HM.empty
@@ -57,8 +59,8 @@ currentValue Internals{current} = (\(_, _, value) -> value) <$> current
 
 -- | Insert a value with an assigned priority into the data structure. If the priority is higher than the current highest priority the value will become the current value (and will be sent to subscribers). Otherwise the value will be stored and will only become the current value when all values with a higher priority and all values with the same priority that have been inserted earlier have been removed.
 -- Returns an `Disposable` that can be used to remove the value from the data structure.
-insertValue :: forall p v. (Ord p, Hashable p) => ObservablePriority p v -> p -> v -> IO Disposable
-insertValue (ObservablePriority mvar) priority value = modifyMVar mvar $ \internals -> do
+insertValue :: forall p v m. MonadIO m => (Ord p, Hashable p) => ObservablePriority p v -> p -> v -> m Disposable
+insertValue (ObservablePriority mvar) priority value = liftIO $ modifyMVar mvar $ \internals -> do
   key <- newUnique
   newInternals <- insertValue' key internals
   (newInternals,) <$> newDisposable (removeValue key)

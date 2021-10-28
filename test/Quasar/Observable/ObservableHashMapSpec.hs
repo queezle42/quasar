@@ -1,35 +1,42 @@
 module Quasar.Observable.ObservableHashMapSpec (spec) where
 
-import Quasar.Disposable
-import Quasar.Observable
-import Quasar.Observable.Delta
-import Quasar.Observable.ObservableHashMap qualified as OM
 
 import Control.Monad (void)
 import Data.HashMap.Strict qualified as HM
 import Data.IORef
-import Prelude
+import Quasar.Awaitable
+import Quasar.Disposable
+import Quasar.Observable
+import Quasar.Observable.Delta
+import Quasar.Observable.ObservableHashMap qualified as OM
+import Quasar.Prelude
+import Quasar.ResourceManager
 import Test.Hspec
+
+shouldReturnM :: (Eq a, Show a, MonadIO m) => m a -> a -> m ()
+shouldReturnM action expected = do
+  result <- action
+  liftIO $ result `shouldBe` expected
 
 spec :: Spec
 spec = parallel $ do
-  describe "retrieveIO" $ do
-    it "returns the contents of the map" $ do
-      om <- OM.new :: IO (OM.ObservableHashMap String String)
-      retrieveIO om `shouldReturn` HM.empty
+  describe "retrieve" $ do
+    it "returns the contents of the map" $ io $ withRootResourceManager do
+      om :: OM.ObservableHashMap String String <- OM.new
+      (retrieve om >>= await) `shouldReturnM` HM.empty
       -- Evaluate unit for coverage
       () <- OM.insert "key" "value" om
-      retrieveIO om `shouldReturn` HM.singleton "key" "value"
+      (retrieve om >>= await) `shouldReturnM` HM.singleton "key" "value"
       OM.insert "key2" "value2" om
-      retrieveIO om `shouldReturn` HM.fromList [("key", "value"), ("key2", "value2")]
+      (retrieve om >>= await) `shouldReturnM` HM.fromList [("key", "value"), ("key2", "value2")]
 
   describe "subscribe" $ do
-    it "calls the callback with the contents of the map" $ do
-      lastCallbackValue <- newIORef undefined
+    it "calls the callback with the contents of the map" $ io $ withRootResourceManager do
+      lastCallbackValue <- liftIO $ newIORef impossibleCodePath
 
-      om <- OM.new :: IO (OM.ObservableHashMap String String)
-      subscriptionHandle <- oldObserve om $ writeIORef lastCallbackValue
-      let lastCallbackShouldBe expected = do
+      om :: OM.ObservableHashMap String String <- OM.new
+      subscriptionHandle <- captureDisposable_ $ observe om $ liftIO . writeIORef lastCallbackValue
+      let lastCallbackShouldBe expected = liftIO do
             (ObservableUpdate update) <- readIORef lastCallbackValue
             update `shouldBe` expected
 
@@ -46,12 +53,12 @@ spec = parallel $ do
       lastCallbackShouldBe (HM.fromList [("key", "value"), ("key2", "value2")])
 
   describe "subscribeDelta" $ do
-    it "calls the callback with changes to the map" $ do
-      lastDelta <- newIORef undefined
+    it "calls the callback with changes to the map" $ io $ withRootResourceManager do
+      lastDelta <- liftIO $ newIORef impossibleCodePath
 
-      om <- OM.new :: IO (OM.ObservableHashMap String String)
+      om :: OM.ObservableHashMap String String <- OM.new
       subscriptionHandle <- subscribeDelta om $ writeIORef lastDelta
-      let lastDeltaShouldBe = (readIORef lastDelta `shouldReturn`)
+      let lastDeltaShouldBe = liftIO . (readIORef lastDelta `shouldReturn`)
 
       lastDeltaShouldBe $ Reset HM.empty
       OM.insert "key" "value" om
@@ -73,20 +80,20 @@ spec = parallel $ do
       OM.delete "key2" om
       lastDeltaShouldBe $ Delete "key2"
 
-      OM.lookupDelete "key" om `shouldReturn` Just "changed"
+      OM.lookupDelete "key" om `shouldReturnM` Just "changed"
       lastDeltaShouldBe $ Delete "key"
 
-      retrieveIO om `shouldReturn` HM.singleton "key3" "value3"
+      (retrieve om >>= await) `shouldReturnM` HM.singleton "key3" "value3"
 
   describe "observeKey" $ do
-    it "calls key callbacks with the correct value" $ do
-      value1 <- newIORef undefined
-      value2 <- newIORef undefined
+    it "calls key callbacks with the correct value" $ io $ withRootResourceManager do
+      value1 <- liftIO $ newIORef undefined
+      value2 <- liftIO $ newIORef undefined
 
-      om <- OM.new :: IO (OM.ObservableHashMap String String)
+      om :: OM.ObservableHashMap String String <- OM.new
 
-      void $ oldObserve (OM.observeKey "key1" om) (writeIORef value1)
-      let v1ShouldBe expected = do
+      void $ observe (OM.observeKey "key1" om) (liftIO . writeIORef value1)
+      let v1ShouldBe expected = liftIO do
             (ObservableUpdate update) <- readIORef value1
             update `shouldBe` expected
 
@@ -98,8 +105,8 @@ spec = parallel $ do
       OM.insert "key2" "value2" om
       v1ShouldBe $ Just "value1"
 
-      handle2 <- oldObserve (OM.observeKey "key2" om) (writeIORef value2)
-      let v2ShouldBe expected = do
+      handle2 <- captureDisposable_ $ observe (OM.observeKey "key2" om) (liftIO . writeIORef value2)
+      let v2ShouldBe expected = liftIO do
             (ObservableUpdate update) <- readIORef value2
             update `shouldBe` expected
 
@@ -119,15 +126,15 @@ spec = parallel $ do
       v1ShouldBe $ Nothing
       v2ShouldBe $ Just "changed"
 
-      retrieveIO om `shouldReturn` HM.singleton "key2" "changed"
+      (retrieve om >>= await) `shouldReturnM` HM.singleton "key2" "changed"
       dispose handle2
 
-      OM.lookupDelete "key2" om `shouldReturn` Just "changed"
+      OM.lookupDelete "key2" om `shouldReturnM` Just "changed"
       v2ShouldBe $ Just "changed"
 
-      OM.lookupDelete "key2" om `shouldReturn` Nothing
+      OM.lookupDelete "key2" om `shouldReturnM` Nothing
 
-      OM.lookupDelete "key1" om `shouldReturn` Nothing
+      OM.lookupDelete "key1" om `shouldReturnM` Nothing
       v1ShouldBe $ Nothing
 
-      retrieveIO om `shouldReturn` HM.empty
+      (retrieve om >>= await) `shouldReturnM` HM.empty

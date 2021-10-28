@@ -1,14 +1,19 @@
 module Quasar.ResourceManager (
   -- * MonadResourceManager
   MonadResourceManager(..),
+  ResourceManagerT,
+  ResourceManagerIO,
   FailedToRegisterResource,
   registerNewResource,
+  registerNewResource_,
   registerDisposable,
   registerDisposeAction,
   withSubResourceManagerM,
   onResourceManager,
   captureDisposable,
   captureDisposable_,
+  liftResourceManagerIO,
+  handleByResourceManager,
 
   -- ** Top level initialization
   withRootResourceManager,
@@ -45,6 +50,14 @@ import Quasar.Disposable
 import Quasar.Prelude
 import Quasar.Utils.Concurrent
 import Quasar.Utils.Exceptions
+
+
+
+-- TODO replacement for MonadAsync scheduler
+--scheduleAfter :: MonadScheduler m => Awaitable a -> (a -> SchedulerIO (Awaitable b)) -> m (Awaitable b)
+--scheduleAfter' :: Awaitable a -> (a -> SchedulerIO b) -> m (Awaitable b)
+--scheduleAfter_ :: Awaitable a -> (a -> IO ()) -> m ()
+
 
 
 data DisposeException = DisposeException SomeException
@@ -122,6 +135,9 @@ registerNewResource action = mask_ do
     attachDisposable resourceManager resource
     pure resource
 
+registerNewResource_ :: (IsDisposable a, MonadResourceManager m) => m a -> m ()
+registerNewResource_ action = void $ registerNewResource action
+
 
 -- TODO rename to withResourceScope, subResourceManager or withResourceManager?
 withSubResourceManagerM :: MonadResourceManager m => m a -> m a
@@ -129,7 +145,10 @@ withSubResourceManagerM action =
   bracket newResourceManager dispose \scope -> localResourceManager scope action
 
 
-instance (MonadAwait m, MonadMask m, MonadIO m, MonadFix m) => MonadResourceManager (ReaderT ResourceManager m) where
+type ResourceManagerT = ReaderT ResourceManager
+type ResourceManagerIO = ResourceManagerT IO
+
+instance (MonadAwait m, MonadMask m, MonadIO m, MonadFix m) => MonadResourceManager (ResourceManagerT m) where
   localResourceManager resourceManager = local (const (toResourceManager resourceManager))
 
   askResourceManager = ask
@@ -142,12 +161,16 @@ instance {-# OVERLAPPABLE #-} MonadResourceManager m => MonadResourceManager (Re
     x <- ask
     lift $ localResourceManager resourceManager $ runReaderT action x
 
-
 -- TODO MonadResourceManager instances for StateT, WriterT, RWST, MaybeT, ...
 
 
-onResourceManager :: (IsResourceManager a, MonadIO m) => a -> ReaderT ResourceManager IO r -> m r
+onResourceManager :: (IsResourceManager a, MonadIO m) => a -> ResourceManagerIO r -> m r
 onResourceManager target action = liftIO $ runReaderT action (toResourceManager target)
+
+liftResourceManagerIO :: MonadResourceManager m => ResourceManagerIO r -> m r
+liftResourceManagerIO action = do
+  resourceManager <- askResourceManager
+  onResourceManager resourceManager action
 
 
 captureDisposable :: MonadResourceManager m => m a -> m (a, Disposable)
@@ -160,6 +183,13 @@ captureDisposable action = do
 captureDisposable_ :: MonadResourceManager m => m () -> m Disposable
 captureDisposable_ = snd <<$>> captureDisposable
 
+-- | Run a computation and throw any exception that occurs to the resource manager.
+--
+-- This can be used to run e.g. callbacks that belong to a different resource context.
+handleByResourceManager :: ResourceManager -> ResourceManagerIO () -> IO ()
+handleByResourceManager resourceManager action =
+  onResourceManager resourceManager do
+    action `catchAll` \ex -> liftIO $ throwToResourceManager resourceManager ex
 
 
 -- * Resource manager implementations
@@ -227,8 +257,8 @@ newUnmanagedRootResourceManagerInternal = liftIO do
             putAsyncVarSTM_ finalExceptionsVar $ toList exceptions
 
 
-withRootResourceManager :: (MonadAwait m, MonadMask m, MonadIO m) => ReaderT ResourceManager IO a -> m a
-withRootResourceManager action = uninterruptibleMask \unmask -> do
+withRootResourceManager :: MonadIO m => ResourceManagerIO a -> m a
+withRootResourceManager action = liftIO $ uninterruptibleMask \unmask -> do
   resourceManager@(RootResourceManager _ _ _ finalExceptionsVar) <- newUnmanagedRootResourceManagerInternal
 
   result <- try $ unmask $ onResourceManager resourceManager action
@@ -476,4 +506,3 @@ linkExecution action = do
       if key == exceptionKey
         then return Nothing
         else throwM ex
-
