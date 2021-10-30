@@ -62,7 +62,9 @@ import Quasar.Utils.Exceptions
 
 data DisposeException = DisposeException SomeException
   deriving stock Show
-  deriving anyclass Exception
+
+instance Exception DisposeException where
+  displayException (DisposeException inner) = "Exception was thrown while disposing: " <> displayException inner
 
 data FailedToRegisterResource = FailedToRegisterResource
   deriving stock (Eq, Show)
