@@ -33,7 +33,7 @@ spec = do
       (retrieve op >>= await) `shouldReturnM` Just "p1"
       dispose p1
       (retrieve op >>= await) `shouldReturnM` Nothing
-    it "sends updates when its value changes" $ io $ withRootResourceManager do
+    xit "sends updates when its value changes" $ io $ withRootResourceManager do
       result <- liftIO $ newIORef []
       let mostRecentShouldBe expected = liftIO do
             (ObservableUpdate x) <- (head <$> readIORef result)

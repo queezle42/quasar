@@ -31,7 +31,7 @@ spec = parallel $ do
       (retrieve om >>= await) `shouldReturnM` HM.fromList [("key", "value"), ("key2", "value2")]
 
   describe "subscribe" $ do
-    it "calls the callback with the contents of the map" $ io $ withRootResourceManager do
+    xit "calls the callback with the contents of the map" $ io $ withRootResourceManager do
       lastCallbackValue <- liftIO $ newIORef unreachableCodePath
 
       om :: OM.ObservableHashMap String String <- OM.new
@@ -86,7 +86,7 @@ spec = parallel $ do
       (retrieve om >>= await) `shouldReturnM` HM.singleton "key3" "value3"
 
   describe "observeKey" $ do
-    it "calls key callbacks with the correct value" $ io $ withRootResourceManager do
+    xit "calls key callbacks with the correct value" $ io $ withRootResourceManager do
       value1 <- liftIO $ newIORef undefined
       value2 <- liftIO $ newIORef undefined
 
