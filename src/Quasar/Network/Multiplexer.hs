@@ -1,5 +1,4 @@
 module Quasar.Network.Multiplexer (
-  ChannelId,
   MessageId,
   MessageLength,
   Channel,
@@ -14,7 +13,6 @@ module Quasar.Network.Multiplexer (
   channelSend,
   channelSend_,
   channelSendSimple,
-  channelClose,
   channelSetHandler,
   channelSetSimpleHandler,
   ChannelMessageHandler,
@@ -24,9 +22,7 @@ module Quasar.Network.Multiplexer (
 ) where
 
 
-import Control.Concurrent.Async qualified as Async
-import Control.Concurrent.Async (race_, wait, waitAnyCancel, withAsync, withAsyncWithUnmask)
-import Control.Exception (MaskingState(Unmasked), interruptible, getMaskingState)
+import Control.Concurrent.Async (race_)
 import Control.Monad.Catch
 import Control.Monad.State (StateT, execStateT, runStateT, lift)
 import Control.Monad.State qualified as State
@@ -174,11 +170,11 @@ data MultiplexerSide = MultiplexerSideA | MultiplexerSideB
 newMultiplexer :: (IsConnection a, MonadResourceManager m) => MultiplexerSide -> a -> m Channel
 newMultiplexer side connection = do
   channelMVar <- liftIO newEmptyMVar
-  runUnlimitedAsync $ async $ runMultiplexer side (liftIO . putMVar channelMVar) (toSocketConnection connection)
+  runUnlimitedAsync $ async_ $ runMultiplexer side (liftIO . putMVar channelMVar) (toSocketConnection connection)
   liftIO $ takeMVar channelMVar
 
 -- | Starts a new multiplexer on the provided connection and blocks until it is closed.
--- The channel is provided to a setup action and can be closed by calling 'closeChannel'; otherwise the multiplexer will run until the underlying connection is closed.
+-- The channel is provided to a setup action and can be closed by calling `dispose`; otherwise the multiplexer will run until the underlying connection is closed.
 runMultiplexer :: (IsConnection a, MonadResourceManager m) => MultiplexerSide -> (Channel -> m ()) -> a -> m ()
 runMultiplexer side channelSetupHook connection = withSubResourceManagerM do
   stateMVar <- liftIO $ newMVar $ MultiplexerWorkerState {
@@ -198,12 +194,15 @@ runMultiplexer side channelSetupHook connection = withSubResourceManagerM do
 
   resourceManager <- askResourceManager
 
+  -- deadloop!
+  --attachDisposeAction_ resourceManager $ pure () <$ multiplexerClose_ ConnectionClosed worker
+  --attachDisposeAction_ resourceManager $ fail "foobar"
+
   rootChannel <- withMultiplexerState worker (newChannel resourceManager worker 0 Connected)
 
   channelSetupHook rootChannel
 
-  -- TODO this is a race condition; handle "tried to register on disposed resource manager" instead (that's a userError
-  -- currently, that has to be changed as well)
+  -- Fast path - if the channel has been closed during setup there is no need to start the receive thread
   closed <- (== Just ()) <$> peekAwaitable (isDisposed rootChannel)
   unless closed do
 
@@ -219,18 +218,18 @@ runMultiplexer side channelSetupHook connection = withSubResourceManagerM do
       ex -> throwM ex
 
 
-receiveThread :: MonadResourceManager m => MultiplexerWorker -> m a
-receiveThread worker = liftIO $ receiveThreadLoop multiplexerDecoder
+receiveThread :: forall m r. MonadResourceManager m => MultiplexerWorker -> m r
+receiveThread worker = receiveThreadLoop multiplexerDecoder
   where
     multiplexerDecoder :: Decoder MultiplexerMessage
     multiplexerDecoder = runGetIncremental Binary.get
-    receiveThreadLoop :: Decoder MultiplexerMessage -> IO a
+    receiveThreadLoop :: Decoder MultiplexerMessage -> m a
     receiveThreadLoop (Fail _ _ errMsg) = reportProtocolError worker ("Failed to parse protocol message: " <> errMsg)
-    receiveThreadLoop (Partial feedFn) = receiveThreadLoop . feedFn . Just =<< receiveThrowing
+    receiveThreadLoop (Partial feedFn) = receiveThreadLoop . feedFn . Just =<< liftIO receiveThrowing
     receiveThreadLoop (Done leftovers _ msg) = do
       newLeftovers <- execStateT (handleMultiplexerMessage msg) leftovers
       receiveThreadLoop (pushChunk multiplexerDecoder newLeftovers)
-    handleMultiplexerMessage :: MultiplexerMessage -> StateT BS.ByteString IO ()
+    handleMultiplexerMessage :: MultiplexerMessage -> StateT BS.ByteString m ()
     handleMultiplexerMessage (ChannelMessage headers len) = do
       workerState <- liftIO $ readMVar worker.stateMVar
       case HM.lookup workerState.receiveChannel workerState.channels of
@@ -244,7 +243,7 @@ receiveThread worker = liftIO $ receiveThreadLoop multiplexerDecoder
         Nothing -> reportProtocolError worker ("Received CloseChannel on invalid channel: " <> show workerState.receiveChannel)
     handleMultiplexerMessage x = liftIO $ print x >> undefined -- Unhandled multiplexer message
 
-    handleChannelMessage :: Channel -> [MultiplexerMessageHeader] -> MessageLength -> StateT BS.ByteString IO ()
+    handleChannelMessage :: Channel -> [MultiplexerMessageHeader] -> MessageLength -> StateT BS.ByteString m ()
     handleChannelMessage channel headers len = do
       decoder <- liftIO $ do
         messageId <- modifyMVar channel.receiveStateMVar $ \state ->
@@ -278,8 +277,8 @@ receiveThread worker = liftIO $ receiveThreadLoop multiplexerDecoder
 
       -- Data is received in chunks but messages have a defined length, so leftovers are put back into StateT
       State.put leftovers
-      -- Critical section: don't interrupt downstream callbacks
-      liftIO $ mask_ $ withAsyncWithUnmask (\unmask -> unmask channelCallback) wait
+      -- TODO bubble channelCallback exceptions to callback owner
+      liftIO channelCallback `catchAll` undefined
       where
         runDecoder :: MessageLength -> Decoder (IO ()) -> IO (IO (), BS.ByteString)
         runDecoder _ (Fail _ _ err) = failedToParseMessage err
@@ -355,7 +354,7 @@ withMultiplexerState2 worker action = do
 withChannelState :: Channel -> StateT ChannelState IO a -> IO a
 withChannelState channel action = modifyMVar channel.stateMVar $ fmap swap . runStateT action
 
-multiplexerSend :: MultiplexerWorker -> MultiplexerMessage -> IO ()
+multiplexerSend :: MonadIO m => MultiplexerWorker -> MultiplexerMessage -> m ()
 multiplexerSend worker msg = withMultiplexerState worker (multiplexerStateSend worker msg)
 
 multiplexerStateSend :: MultiplexerWorker -> MultiplexerMessage -> StateT MultiplexerWorkerState IO ()
@@ -428,34 +427,24 @@ multiplexerSwitchChannel worker channelId = do
   shouldSwitchChannel <- State.state (\state -> (state.sendChannel /= channelId, state{sendChannel = channelId}))
   when shouldSwitchChannel $ multiplexerStateSend worker (SwitchChannel channelId)
 
--- | Closes a channel and all it's children: After the function completes, the channel callback will no longer be called on received messages and sending messages on the channel will fail.
--- Calling close on a closed channel is a noop.
---
--- Alias for `dispose`.
-channelClose :: MonadIO m => Channel -> m (Awaitable ())
-channelClose = dispose
-
 instance IsDisposable Channel where
   toDisposable channel = toDisposable channel.resourceManager
 
-channelCloseInternal :: Channel -> IO (Awaitable ())
+channelCloseInternal :: Channel -> IO ()
 channelCloseInternal channel = do
-    -- Change channel state of all unclosed channels in the tree to closed
-    channelWasClosed <- channelClose' channel
+  -- Change channel state of all unclosed channels in the tree to closed
+  channelWasClosed <- channelClose' channel
 
-    when channelWasClosed $
-      -- Closing a channel on a Connection that is no longer connected should not throw an exception (channelClose is a resource management operation and is supposed to be idempotent)
-      handle (\(_ :: MultiplexerException) -> pure ()) $ do
-        -- Send close message
-        withMultiplexerState worker $ do
-          multiplexerSwitchChannel worker channel.channelId
-          multiplexerStateSend worker CloseChannel
+  when channelWasClosed do
+    -- Closing a channel on a Connection that is no longer connected should not throw an exception (channelClose is a resource management operation and is supposed to be idempotent)
+    handle (\(_ :: MultiplexerException) -> pure ()) $ do
+      -- Send close message
+      withMultiplexerState worker $ do
+        multiplexerSwitchChannel worker channel.channelId
+        multiplexerStateSend worker CloseChannel
 
-        -- Terminate the worker when the root channel is closed
-        when (channel.channelId == 0) $ multiplexerClose_ ConnectionClosed worker
-
-    -- Return completed awaitabe (so this can be inserted into a ResourceManager)
-    pure $ pure ()
+      -- Terminate the worker when the root channel is closed
+      when (channel.channelId == 0) $ multiplexerClose_ ConnectionClosed worker
   where
     worker = channel.worker
     channelClose' :: Channel -> IO Bool
@@ -504,26 +493,26 @@ channelConfirmClose channel = do
         -- Ignore already closed children
         CloseConfirmed -> pure (state, [])
 
-multiplexerClose :: MultiplexerException -> MultiplexerWorker -> IO MultiplexerException
+multiplexerClose :: (MonadIO m, MonadMask m) => MultiplexerException -> MultiplexerWorker -> m MultiplexerException
 multiplexerClose exception worker = mask_ $ do
   (actualException, mConnection) <- withMultiplexerState worker $ State.state $ \state ->
     case state.socketConnection of
       Left ex -> ((ex, Nothing), state)
       Right connection -> ((exception, Just connection), state{socketConnection = Left exception})
-  mapM_ (.close) mConnection
+  liftIO $ mapM_ (.close) mConnection
   -- Stop sender and receiver thread
   writeAtVar worker.multiplexerClosedAtVar exception
   pure actualException
 
-multiplexerClose_ :: MultiplexerException -> MultiplexerWorker -> IO ()
+multiplexerClose_ :: (MonadIO m, MonadMask m) => MultiplexerException -> MultiplexerWorker -> m ()
 multiplexerClose_ exception worker = void $ multiplexerClose exception worker
 
-reportProtocolError :: MultiplexerWorker -> String -> IO b
+reportProtocolError :: (MonadIO m, MonadMask m) => MultiplexerWorker -> String -> m b
 reportProtocolError worker message = do
   multiplexerSend worker $ ProtocolError message
   let ex = ProtocolException message
   multiplexerClose_ ex worker
-  throwIO ex
+  throwM ex
 
 channelReportProtocolError :: MonadIO m => Channel -> String -> m b
 channelReportProtocolError channel message = liftIO $ do
@@ -531,7 +520,7 @@ channelReportProtocolError channel message = liftIO $ do
   multiplexerSend channel.worker $ ChannelProtocolError channelId message
   let ex = ChannelProtocolException channelId message
   multiplexerClose_ ex channel.worker
-  throwIO ex
+  throwM ex
 
 channelReportException :: Channel -> SomeException -> IO b
 channelReportException channel exception = do
@@ -539,7 +528,7 @@ channelReportException channel exception = do
   multiplexerSend channel.worker $ ProtocolError $ "Internal server error on channel " <> show channel.channelId
   let ex = LocalException exception
   multiplexerClose_ ex channel.worker
-  throwIO ex
+  throwM ex
 
 -- The StateT holds the parent channels state
 newSubChannel :: MultiplexerWorker -> ChannelId -> (StateT ChannelState (StateT MultiplexerWorkerState IO)) Channel

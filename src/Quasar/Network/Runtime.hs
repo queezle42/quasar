@@ -1,7 +1,6 @@
 module Quasar.Network.Runtime (
   -- * Client
   Client,
-  clientClose,
 
   withClientTCP,
   newClientTCP,
@@ -76,9 +75,14 @@ data Client p = Client {
   channel :: Channel,
   stateMVar :: MVar (ClientState p)
 }
+
+instance IsDisposable (Client p) where
+  toDisposable client = toDisposable client.channel
+
 newtype ClientState p = ClientState {
   callbacks :: HM.HashMap MessageId (ProtocolResponse p -> IO ())
 }
+
 emptyClientState :: ClientState p
 emptyClientState = ClientState {
   callbacks = HM.empty
@@ -120,9 +124,6 @@ clientHandleChannelMessage client resources msg = case decodeOrFail msg of
           Nothing -> channelReportProtocolError client.channel ("Received response with invalid request id " <> show requestId)
       callback resp
 
-clientClose :: MonadIO m => Client p -> m (Awaitable ())
-clientClose client = channelClose client.channel
-
 clientReportProtocolError :: Client p -> String -> IO a
 clientReportProtocolError client = channelReportProtocolError client.channel
 
@@ -161,8 +162,10 @@ streamSend (Stream channel) value = liftIO $ channelSendSimple channel (encode v
 streamSetHandler :: (Binary down, MonadIO m) => Stream up down -> (down -> IO ()) -> m ()
 streamSetHandler (Stream channel) handler = liftIO $ channelSetSimpleHandler channel handler
 
-streamClose :: MonadIO m => Stream up down -> m (Awaitable ())
-streamClose (Stream channel) = liftIO $ channelClose channel
+-- | Alias for `dispose`.
+streamClose :: MonadIO m => Stream up down -> m ()
+streamClose = dispose
+{-# DEPRECATED streamClose "Use `dispose` instead." #-}
 
 -- ** Running client and server
 
@@ -195,7 +198,7 @@ newClient :: forall p a m. (IsConnection a, RpcProtocol p, MonadResourceManager 
 newClient connection = newChannelClient =<< newMultiplexer MultiplexerSideA (toSocketConnection connection)
 
 withClientBracket :: (MonadResourceManager m) => m (Client p) -> (Client p -> m a) -> m a
-withClientBracket createClient = bracket createClient clientClose
+withClientBracket createClient = bracket createClient dispose
 
 
 newChannelClient :: MonadIO m => RpcProtocol p => Channel -> m (Client p)
@@ -306,7 +309,7 @@ runListenerOnBoundSocket server sock = do
 connectToServer :: forall p a m. (HasProtocolImpl p, IsConnection a, MonadIO m) => Server p -> a -> m ()
 connectToServer server conn =
   onResourceManager server do
-    registerDisposeAction $ pure () <$ connection.close
+    registerDisposeAction $ connection.close
     runUnlimitedAsync $ async_ $ runServerHandler @p server.protocolImpl connection
   where
     connection :: Connection

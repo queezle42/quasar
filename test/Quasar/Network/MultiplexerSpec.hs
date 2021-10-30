@@ -1,12 +1,10 @@
-module Quasar.Network.MultiplexerSpec where
+module Quasar.Network.MultiplexerSpec (spec) where
 
-import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (concurrently_)
 import Control.Concurrent.MVar
-import Control.Monad (forever, void, unless)
 import Control.Monad.Catch
 import Control.Monad.Reader (ReaderT)
-import qualified Data.ByteString.Lazy as BSL
+import Data.ByteString.Lazy qualified as BSL
 import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Network.Multiplexer
@@ -19,25 +17,26 @@ import Test.Hspec.Core.Spec
 import Test.Hspec.Expectations.Lifted
 import Test.Hspec qualified as Hspec
 
-rm :: (forall m. MonadResourceManager m => m a) -> IO a
-rm = withRootResourceManagerM
+-- Type is pinned to IO, otherwise hspec spec type cannot be inferred
+rm :: ResourceManagerIO a -> IO a
+rm = withRootResourceManager
 
 shouldThrow :: (HasCallStack, Exception e, MonadResourceManager m) => (ReaderT ResourceManager IO a) -> Hspec.Selector e -> m ()
 shouldThrow action expected = do
-  rm <- askResourceManager
-  liftIO $ (onResourceManager rm action) `Hspec.shouldThrow` expected
+  resourceManager <- askResourceManager
+  liftIO $ (onResourceManager resourceManager action) `Hspec.shouldThrow` expected
 
 spec :: Spec
 spec = describe "runMultiplexer" $ parallel $ do
   it "can be closed from the channelSetupHook" $ rm do
     (x, _) <- newDummySocketPair
-    runMultiplexer MultiplexerSideA (await <=< channelClose) x
+    runMultiplexer MultiplexerSideA disposeEventually_ x
 
   it "closes when the remote is closed" $ do
     (x, y) <- newDummySocketPair
     concurrently_
       do rm (runMultiplexer MultiplexerSideA (const (pure ())) x)
-      do rm (runMultiplexer MultiplexerSideB (await <=< channelClose) y)
+      do rm (runMultiplexer MultiplexerSideB dispose y)
 
   it "can dispose a resource" $ rm do
     var <- newAsyncVar
@@ -46,8 +45,8 @@ spec = describe "runMultiplexer" $ parallel $ do
       do MultiplexerSideA
       do
         \channel -> do
-          attachDisposeAction_ channel.resourceManager (pure () <$ putAsyncVar_ var ())
-          await =<< channelClose channel
+          attachDisposeAction_ channel.resourceManager (putAsyncVar_ var ())
+          dispose channel
       do x
     peekAwaitable var `shouldReturn` Just ()
 
@@ -111,14 +110,13 @@ spec = describe "runMultiplexer" $ parallel $ do
     liftIO $ pendingWith "This test cannot work with the current implementation"
     msgSentMVar <- liftIO newEmptyMVar
     let
-      sleepForever = forever (threadDelay 1000000000)
       connection = Connection {
         send = const (putMVar msgSentMVar () >> sleepForever),
         receive = sleepForever,
         close = pure ()
       }
       testAction :: Channel -> IO ()
-      testAction channel = concurrently_ (channelSendSimple channel "foobar") (void (takeMVar msgSentMVar) >> channelClose channel)
+      testAction channel = concurrently_ (channelSendSimple channel "foobar") (void (takeMVar msgSentMVar) >> dispose channel)
     runMultiplexer MultiplexerSideA (liftIO . testAction) connection
 
 
@@ -133,7 +131,7 @@ withEchoServer fn = rm $ bracket setup closePair (\(channel, _) -> fn channel)
       configureEchoHandler echoChannel
       pure (mainChannel, echoChannel)
     closePair :: MonadResourceManager m => (Channel, Channel) -> m ()
-    closePair (x, y) = await =<< liftA2 (<>) (channelClose x) (channelClose y)
+    closePair (x, y) = dispose x >> dispose y
     configureEchoHandler :: MonadIO m => Channel -> m ()
     configureEchoHandler channel = channelSetHandler channel (echoHandler channel)
     echoHandler :: Channel -> ReceivedMessageResources -> BSL.ByteString -> IO ()

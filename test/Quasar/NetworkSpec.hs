@@ -30,12 +30,12 @@ import Test.QuickCheck
 import Test.QuickCheck.Monadic
 
 rm :: (forall m. MonadResourceManager m => m a) -> IO a
-rm = withRootResourceManagerM
+rm = withRootResourceManager
 
 shouldThrow :: (HasCallStack, Exception e, MonadResourceManager m) => (ReaderT ResourceManager IO a) -> Hspec.Selector e -> m ()
 shouldThrow action expected = do
-  rm <- askResourceManager
-  liftIO $ (onResourceManager rm action) `Hspec.shouldThrow` expected
+  resourceManager <- askResourceManager
+  liftIO $ (onResourceManager resourceManager action) `Hspec.shouldThrow` expected
 
 
 $(makeRpc $ rpcApi "Example" $ do
@@ -116,12 +116,13 @@ spec = parallel $ do
   describe "StreamExample" $ do
     it "can open and close a stream" $ rm do
       withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
-        await =<< streamClose =<< createMultiplyStream client
+        dispose =<< createMultiplyStream client
 
     it "can open multiple streams in a single rpc call" $ rm do
       withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
         (stream1, stream2) <- createStreams client
-        await =<< liftA2 (<>) (streamClose stream1) (streamClose stream2)
+        dispose stream1
+        dispose stream2
 
     Hspec.aroundAll (\x -> rm $ withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
         resultMVar <- liftIO newEmptyMVar
@@ -152,7 +153,7 @@ spec = parallel $ do
         -- Change the value before calling `observe`
         setObservableVar var 42
 
-        withResourceManagerM $ runUnlimitedAsync do
+        withRootResourceManager $ runUnlimitedAsync do
           observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
 
           liftIO $ join $ atomically $ readTVar resultVar >>=
@@ -166,7 +167,7 @@ spec = parallel $ do
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
         resultVar <- liftIO $ newTVarIO ObservableLoading
         observable <- liftIO $ intObservable client
-        withResourceManagerM $ runUnlimitedAsync do
+        withRootResourceManager $ runUnlimitedAsync do
           observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
 
           let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=
@@ -190,7 +191,7 @@ spec = parallel $ do
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
         resultVar <- liftIO $ newTVarIO ObservableLoading
         observable <- liftIO $ intObservable client
-        withResourceManagerM $ runUnlimitedAsync do
+        withRootResourceManager $ runUnlimitedAsync do
           disposable <- captureDisposable_ $ observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
 
           let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=
@@ -209,7 +210,7 @@ spec = parallel $ do
           setObservableVar var 42
           latestShouldBe 42
 
-          await =<< dispose disposable
+          dispose disposable
 
           setObservableVar var (-1)
           liftIO $ threadDelay 10000

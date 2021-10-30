@@ -18,7 +18,6 @@ module Quasar.Network (
   -- ** Client
   Client,
   clientSend,
-  clientClose,
   clientReportProtocolError,
 
   withClientTCP,
