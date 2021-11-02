@@ -53,7 +53,7 @@ type ChannelAmount = Word32
 
 -- ** Wire format
 
--- | Low level network protocol message type
+-- | Low level network protocol control message
 data MultiplexerMessage
   = ChannelMessage ChannelAmount MessageLength
   | SwitchChannel ChannelId
@@ -93,13 +93,11 @@ data MultiplexerException
 -- ** Channel
 
 data Channel = Channel {
-  channelId :: ChannelId,
+  multiplexer :: Multiplexer,
   resourceManager :: ResourceManager,
-  closingVar :: TVar Bool,
-  closedVar :: TVar Bool
+  channelId :: ChannelId
   --connectionState :: ChannelConnectivity,
   --children :: [Channel]
-  --multiplexer :: Multiplexer,
   --stateMVar :: MVar ChannelState,
   --sendStateMVar :: MVar ChannelSendState,
     --  nextMessageId :: MessageId
@@ -113,6 +111,15 @@ instance IsDisposable Channel where
 
 instance IsResourceManager Channel where
   toResourceManager channel = channel.resourceManager
+
+newRootChannel :: Multiplexer -> ResourceManagerIO Channel
+newRootChannel multiplexer = do
+  resourceManager <- askResourceManager
+  pure Channel {
+    multiplexer,
+    resourceManager,
+    channelId = 0
+  }
 
 
 type ChannelHandler = MessageLength -> ReceivedMessageResources -> ResourceManagerIO ChannelMessageHandler
@@ -149,63 +156,62 @@ data ReceivedMessageResources = ReceivedMessageResources {
 
 -- * Implementation
 
+-- | Starts a new multiplexer on the provided connection and blocks until it is closed.
+-- The channel is provided to a setup action and can be closed by calling `dispose`; otherwise the multiplexer will run until the underlying connection is closed.
+runMultiplexer :: (IsConnection a, MonadResourceManager m) => MultiplexerSide -> (Channel -> ResourceManagerIO ()) -> a -> m ()
+runMultiplexer side channelSetupHook connection = do
+  rootChannel <- newMultiplexer side connection
+  onResourceManager rootChannel $ channelSetupHook rootChannel
+  await $ isDisposed rootChannel
+
 -- | Starts a new multiplexer on an existing connection.
 -- This starts a thread which runs until 'channelClose' is called on the resulting 'Channel' (use e.g. 'bracket' to ensure the channel is closed).
 newMultiplexer :: (IsConnection a, MonadResourceManager m) => MultiplexerSide -> a -> m Channel
 newMultiplexer side connection = do
-  channelMVar <- liftIO newEmptyMVar
-  runUnlimitedAsync $ async_ $ runMultiplexer side (liftIO . putMVar channelMVar) (toSocketConnection connection)
-  liftIO $ takeMVar channelMVar
+  bracketOnError
+    newResourceManager
+    dispose
+    \resourceManager -> onResourceManager resourceManager do
+      multiplexer <- startMultiplexer (toSocketConnection connection)
+      newRootChannel multiplexer
 
--- | Starts a new multiplexer on the provided connection and blocks until it is closed.
--- The channel is provided to a setup action and can be closed by calling `dispose`; otherwise the multiplexer will run until the underlying connection is closed.
-runMultiplexer :: (IsConnection a, MonadResourceManager m) => MultiplexerSide -> (Channel -> m ()) -> a -> m ()
-runMultiplexer side channelSetupHook connection = withSubResourceManagerM do
+
+startMultiplexer :: Connection -> ResourceManagerIO Multiplexer
+startMultiplexer connection = do
+  inbox <- liftIO newEmptyTMVarIO
+  outbox <- liftIO newEmptyTMVarIO
+  multiplexerResult <- newAsyncVar
+
+  registerDisposeAction do
+    -- Setting `ConnectionClosed` before calling `close` suppresses exceptions from
+    -- the send- and receive thread (which might some times occur after closing the socket)
+    putAsyncVar_ multiplexerResult ConnectionClosed
+    connection.close
+
+  runUnlimitedAsync do
+    async_ $ liftIO $ receiveThread inbox `catchAll` (putAsyncVar_ multiplexerResult . ConnectionLost)
+    async_ $ liftIO $ sendThread outbox `catchAll` (putAsyncVar_ multiplexerResult . ConnectionLost)
+
   --channels = HM.empty,
   --sendChannel = 0,
   --receiveChannel = 0,
   --receiveNextChannelId = if side == MultiplexerSideA then 2 else 1,
   --sendNextChannelId = if side == MultiplexerSideA then 1 else 2
-
-  inbox <- liftIO newEmptyTMVarIO
-  outbox <- liftIO newEmptyTMVarIO
-  multiplexerResult <- newAsyncVar
-
-  let
-    multiplexer = Multiplexer {
-      inbox,
-      outbox,
-      multiplexerResult
-    }
-
-  runUnlimitedAsync do
-    async_ $ liftIO $ receiveThread inbox
-    async_ $ liftIO $ sendThread outbox
-
-  resourceManager <- askResourceManager
-
-  --rootChannel <- withMultiplexerState multiplexer (newChannel resourceManager multiplexer 0 Connected)
-  rootChannel <- undefined
-
-  channelSetupHook rootChannel
-
-  undefined
-
+  pure Multiplexer {
+    inbox,
+    outbox,
+    multiplexerResult
+  }
   where
-    socketConnection :: Connection
-    socketConnection = toSocketConnection connection
-
     receiveThread :: TMVar BS.ByteString -> IO ()
     receiveThread inbox = forever do
-      chunk <- socketConnection.receive
+      chunk <- connection.receive
       atomically $ putTMVar inbox chunk
-      -- TODO report error
 
     sendThread :: TMVar BSL.ByteString -> IO ()
     sendThread outbox = forever do
       chunks <- atomically $ takeTMVar outbox
-      socketConnection.send chunks
-      -- TODO `catch` \ex -> throwIO =<< multiplexerClose (ConnectionLost ex) multiplexer
+      connection.send chunks
 
 channelSend :: MonadIO m => Channel -> MessageConfiguration -> BSL.ByteString -> (MessageId -> m ()) -> m SentMessageResources
 channelSend = undefined
@@ -215,7 +221,7 @@ channelSend_ channel configuration msg = channelSend channel configuration msg (
 
 channelSendSimple :: MonadIO m => Channel -> BSL.ByteString -> m ()
 channelSendSimple channel msg = liftIO do
-  -- We are not sending headers, so no channels can be created
+  -- Pattern match verifies no channels are created due to a bug
   SentMessageResources{createdChannels=[]} <- channelSend channel defaultMessageConfiguration msg (const (pure ()))
   pure ()
 

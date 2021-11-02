@@ -30,7 +30,7 @@ spec :: Spec
 spec = describe "runMultiplexer" $ parallel $ do
   fit "can be closed from the channelSetupHook" $ rm do
     (x, _) <- newDummySocketPair
-    runMultiplexer MultiplexerSideA disposeEventually_ x
+    runMultiplexer MultiplexerSideA dispose x
 
   it "closes when the remote is closed" $ do
     (x, y) <- newDummySocketPair

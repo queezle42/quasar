@@ -318,8 +318,8 @@ connectToServer server conn =
 runServerHandler :: forall p a m. (HasProtocolImpl p, IsConnection a, MonadResourceManager m) => ProtocolImpl p -> a -> m ()
 runServerHandler protocolImpl = runMultiplexer MultiplexerSideB registerChannelServerHandler . toSocketConnection
   where
-    registerChannelServerHandler :: Channel -> m ()
-    registerChannelServerHandler channel = liftIO $
+    registerChannelServerHandler :: Channel -> ResourceManagerIO ()
+    registerChannelServerHandler channel = liftIO do
       channelSetBinaryHandler channel (serverHandleChannelMessage @p protocolImpl channel)
 
 
