@@ -1,16 +1,20 @@
 module Quasar.Async (
-  -- * Async/await
+  -- * Async
   async,
   async_,
   asyncWithUnmask,
   asyncWithUnmask_,
+
+  -- ** Task exceptions
+  CancelTask(..),
+  TaskDisposed(..),
 ) where
 
 import Control.Monad.Reader
+import Quasar.Async.Unmanaged
 import Quasar.Awaitable
 import Quasar.Prelude
 import Quasar.ResourceManager
-import Quasar.Utils.Concurrent
 
 
 -- | TODO: Documentation
@@ -26,7 +30,7 @@ asyncWithUnmask :: MonadResourceManager m => ((ResourceManagerIO a -> ResourceMa
 asyncWithUnmask action = do
   resourceManager <- askResourceManager
   toAwaitable <$> registerNewResource do
-    unmanagedForkWithUnmask (\unmask -> runReaderT (action (liftUnmask unmask)) resourceManager)
+    unmanagedAsyncWithUnmask (\unmask -> runReaderT (action (liftUnmask unmask)) resourceManager)
   where
     liftUnmask :: (forall b. IO b -> IO b) -> ResourceManagerIO a -> ResourceManagerIO a
     liftUnmask unmask innerAction = do

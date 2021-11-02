@@ -24,11 +24,11 @@ import Data.Heap
 import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Foldable (toList)
 import Quasar.Async
+import Quasar.Async.Unmanaged
 import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Prelude
 import Quasar.ResourceManager
-import Quasar.Utils.Concurrent
 
 
 data TimerCancelled = TimerCancelled
@@ -92,7 +92,7 @@ newUnmanagedTimerScheduler = do
       }
 
 startSchedulerThread :: TimerScheduler -> IO Disposable
-startSchedulerThread scheduler = unmanagedFork_ (schedulerThread `finally` cancelAll)
+startSchedulerThread scheduler = unmanagedAsync_ (schedulerThread `finally` cancelAll)
   where
     heap' :: TMVar (Heap Timer)
     heap' = heap scheduler
@@ -210,7 +210,7 @@ newDelay :: MonadResourceManager m => Int -> m Delay
 newDelay microseconds = registerNewResource $ newUnmanagedDelay microseconds
 
 newUnmanagedDelay :: MonadIO m => Int -> m Delay
-newUnmanagedDelay microseconds = Delay <$> unmanagedFork (liftIO (threadDelay microseconds))
+newUnmanagedDelay microseconds = Delay <$> unmanagedAsync (liftIO (threadDelay microseconds))
 
 
 

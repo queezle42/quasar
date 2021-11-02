@@ -1,9 +1,10 @@
-module Quasar.Utils.Concurrent (
+module Quasar.Async.Unmanaged (
+  -- ** Unmanaged variant
   Task,
-  unmanagedFork,
-  unmanagedFork_,
-  unmanagedForkWithUnmask,
-  unmanagedForkWithUnmask_,
+  unmanagedAsync,
+  unmanagedAsync_,
+  unmanagedAsyncWithUnmask,
+  unmanagedAsyncWithUnmask_,
 
   -- ** Task exceptions
   CancelTask(..),
@@ -17,8 +18,6 @@ import Control.Monad.Catch
 import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Prelude
-
-
 
 
 -- | A task is an operation (e.g. a thread or a network request) that is running asynchronously and can be cancelled.
@@ -68,16 +67,14 @@ instance Exception TaskDisposed where
 
 
 
+unmanagedAsync :: MonadIO m => IO a -> m (Task a)
+unmanagedAsync action = unmanagedAsyncWithUnmask \unmask -> unmask action
 
+unmanagedAsync_ :: MonadIO m => IO () -> m Disposable
+unmanagedAsync_ action = toDisposable <$> unmanagedAsync action
 
-unmanagedFork :: MonadIO m => IO a -> m (Task a)
-unmanagedFork action = unmanagedForkWithUnmask \unmask -> unmask action
-
-unmanagedFork_ :: MonadIO m => IO () -> m Disposable
-unmanagedFork_ action = toDisposable <$> unmanagedFork action
-
-unmanagedForkWithUnmask :: MonadIO m => ((forall b. IO b -> IO b) -> IO a) -> m (Task a)
-unmanagedForkWithUnmask action = do
+unmanagedAsyncWithUnmask :: MonadIO m => ((forall b. IO b -> IO b) -> IO a) -> m (Task a)
+unmanagedAsyncWithUnmask action = do
   liftIO $ mask_ do
     key <- newUnique
     resultVar <- newAsyncVar
@@ -86,7 +83,7 @@ unmanagedForkWithUnmask action = do
 
     threadId <- forkIOWithUnmask \unmask ->
       handleAll
-        do \ex -> fail $ "unmanagedForkWithUnmask thread failed: " <> displayException ex
+        do \ex -> fail $ "unmanagedAsyncWithUnmask thread failed: " <> displayException ex
         do
           result <- try $ handleIf
             do \(CancelTask exKey) -> key == exKey
@@ -115,5 +112,5 @@ unmanagedForkWithUnmask action = do
 
     pure $ Task key stateVar finalizers (toAwaitable resultVar)
 
-unmanagedForkWithUnmask_ :: MonadIO m => ((forall b. IO b -> IO b) -> IO ()) -> m Disposable
-unmanagedForkWithUnmask_ action = toDisposable <$> unmanagedForkWithUnmask action
+unmanagedAsyncWithUnmask_ :: MonadIO m => ((forall b. IO b -> IO b) -> IO ()) -> m Disposable
+unmanagedAsyncWithUnmask_ action = toDisposable <$> unmanagedAsyncWithUnmask action

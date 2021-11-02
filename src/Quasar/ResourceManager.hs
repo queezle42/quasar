@@ -48,10 +48,10 @@ import Data.HashMap.Strict qualified as HM
 import Data.List.NonEmpty (NonEmpty(..), (<|), nonEmpty)
 import Data.Sequence (Seq(..), (|>))
 import Data.Sequence qualified as Seq
+import Quasar.Async.Unmanaged
 import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Prelude
-import Quasar.Utils.Concurrent
 import Quasar.Utils.Exceptions
 
 
@@ -249,7 +249,7 @@ newUnmanagedRootResourceManagerInternal = liftIO do
   exceptionsVar <- newTMVarIO Empty
   finalExceptionsVar <- newAsyncVar
   mfix \root -> do
-    unmanagedFork_ (disposeThread root)
+    unmanagedAsync_ (disposeThread root)
     internal <- newUnmanagedDefaultResourceManagerInternal (toResourceManager root)
     pure $ RootResourceManager internal disposingVar exceptionsVar finalExceptionsVar
 

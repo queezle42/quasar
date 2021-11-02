@@ -85,6 +85,7 @@ library
   exposed-modules:
     Quasar
     Quasar.Async
+    Quasar.Async.Unmanaged
     Quasar.Awaitable
     Quasar.Disposable
     Quasar.Observable
@@ -96,7 +97,6 @@ library
     Quasar.ResourceManager
     Quasar.Subscribable
     Quasar.Timer
-    Quasar.Utils.Concurrent
     Quasar.Utils.Exceptions
     Quasar.Utils.ExtraT
   hs-source-dirs:
