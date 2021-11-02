@@ -14,6 +14,7 @@ module Quasar.ResourceManager (
   onResourceManager,
   captureDisposable,
   captureDisposable_,
+  disposeOnError,
   liftResourceManagerIO,
   handleByResourceManager,
 
@@ -192,6 +193,14 @@ captureDisposable action = do
 
 captureDisposable_ :: MonadResourceManager m => m () -> m Disposable
 captureDisposable_ = snd <<$>> captureDisposable
+
+-- | Disposes all resources created by the computation if the computation throws an exception.
+disposeOnError :: MonadResourceManager m => m a -> m a
+disposeOnError action = do
+  bracketOnError
+    newResourceManager
+    dispose
+    \resourceManager -> localResourceManager resourceManager action
 
 -- | Run a computation and throw any exception that occurs to the resource manager.
 --
