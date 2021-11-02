@@ -2,11 +2,13 @@ module Quasar.Network.Connection (
   Connection(..),
   IsConnection(..),
   connectTCP,
+  newConnectionPair,
 ) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (Async, async, cancel, link, waitCatch, withAsync)
 import Control.Concurrent.MVar
+import Control.Concurrent.STM
 import Control.Exception (Exception(..), bracketOnError, catch, interruptible, finally, bracketOnError, onException)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BSL
@@ -100,3 +102,34 @@ connectTCP host port = liftIO do
 -- | Reimplementation of 'openSocket' from the 'network'-package, which got introduced in version 3.1.2.0. Should be removed later.
 openSocket :: Socket.AddrInfo -> IO Socket.Socket
 openSocket addr = Socket.socket (Socket.addrFamily addr) (Socket.addrSocketType addr) (Socket.addrProtocol addr)
+
+
+data ConnectionPairException = ConnectionPairClosed
+  deriving stock Show
+  deriving anyclass Exception
+
+newConnectionPair :: MonadIO m => m (Connection, Connection)
+newConnectionPair = liftIO do
+  x <- newEmptyTMVarIO
+  y <- newEmptyTMVarIO
+  c <- newTVarIO False
+  pure (connectionSide x y c, connectionSide y x c)
+  where
+    connectionSide s r c =
+      Connection {
+        send,
+        receive,
+        close = atomically $ writeTVar c True
+      }
+      where
+        failWhenClosed = do
+          closed <- readTVar c
+          when closed $ throwSTM ConnectionPairClosed
+        send chunk = atomically do
+          failWhenClosed
+          putTMVar s $ BSL.toChunks chunk
+        receive = atomically do
+          failWhenClosed
+          takeTMVar r >>= \case
+            [] -> retry
+            (chunk:chunks) -> chunk <$ putTMVar r chunks

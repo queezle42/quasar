@@ -29,18 +29,18 @@ shouldThrow action expected = do
 spec :: Spec
 spec = describe "runMultiplexer" $ parallel $ do
   fit "can be closed from the channelSetupHook" $ rm do
-    (x, _) <- newDummySocketPair
+    (x, _) <- newConnectionPair
     runMultiplexer MultiplexerSideA dispose x
 
-  it "closes when the remote is closed" $ do
-    (x, y) <- newDummySocketPair
+  fit "closes when the remote is closed" $ do
+    (x, y) <- newConnectionPair
     concurrently_
       do rm (runMultiplexer MultiplexerSideA (const (pure ())) x)
       do rm (runMultiplexer MultiplexerSideB dispose y)
 
   it "can dispose a resource" $ rm do
     var <- newAsyncVar
-    (x, _) <- newDummySocketPair
+    (x, _) <- newConnectionPair
     runMultiplexer
       do MultiplexerSideA
       do
@@ -125,7 +125,7 @@ withEchoServer fn = rm $ bracket setup closePair (\(channel, _) -> fn channel)
   where
     setup :: MonadResourceManager m => m (Channel, Channel)
     setup = do
-      (mainSocket, echoSocket) <- newDummySocketPair
+      (mainSocket, echoSocket) <- newConnectionPair
       mainChannel <- newMultiplexer MultiplexerSideA mainSocket
       echoChannel <- newMultiplexer MultiplexerSideB echoSocket
       configureEchoHandler echoChannel
@@ -138,8 +138,3 @@ withEchoServer fn = rm $ bracket setup closePair (\(channel, _) -> fn channel)
     echoHandler channel resources msg = do
       mapM_ configureEchoHandler resources.createdChannels
       channelSendSimple channel msg
-
-newDummySocketPair :: MonadIO m => m (Socket, Socket)
-newDummySocketPair = liftIO do
-  unless Socket.isUnixDomainSocketAvailable $ pendingWith "Unix domain sockets are not available"
-  Socket.socketPair Socket.AF_UNIX Socket.Stream Socket.defaultProtocol
