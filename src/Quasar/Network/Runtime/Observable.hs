@@ -48,7 +48,7 @@ newObservableStub startRetrieveRequest startObserveRequest = pure uncachedObserv
         -- TODO send updates about the connection status
         stream <- startObserveRequest
         resourceManager <- askResourceManager
-        streamSetHandler stream (handleByResourceManager resourceManager . callback . unpackObservableMessage)
+        streamSetHandler stream (liftIO . handleByResourceManager resourceManager . callback . unpackObservableMessage)
         pure $ toDisposable stream
     retrieveFn :: ResourceManagerIO (Awaitable v)
     retrieveFn = startRetrieveRequest

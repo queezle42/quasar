@@ -127,7 +127,7 @@ spec = parallel $ do
     Hspec.aroundAll (\x -> rm $ withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
         resultMVar <- liftIO newEmptyMVar
         stream <- createMultiplyStream client
-        streamSetHandler stream $ putMVar resultMVar
+        streamSetHandler stream $ liftIO . putMVar resultMVar
         liftIO $ x (resultMVar, stream)
       ) $ it "can send data over the stream" $ \(resultMVar, stream) -> property $ \(x, y) -> monadicIO $ do
         liftIO $ streamSend stream (x, y)

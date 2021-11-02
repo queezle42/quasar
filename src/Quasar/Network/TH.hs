@@ -20,7 +20,6 @@ module Quasar.Network.TH (
 import Control.Monad.State (State, execState)
 import Control.Monad.State qualified as State
 import Data.Binary (Binary)
-import Data.Maybe (isJust, isNothing)
 import GHC.Records.Compat (HasField)
 import Language.Haskell.TH hiding (interruptible)
 import Language.Haskell.TH.Syntax

@@ -39,10 +39,7 @@ module Quasar.Network.Runtime (
   newStream,
 ) where
 
-import Control.Concurrent (forkFinally)
-import Control.Concurrent.Async (cancel, link, withAsync, mapConcurrently_)
 import Control.Concurrent.MVar
-import Control.Exception (interruptible)
 import Control.Monad.Catch
 import Data.Binary (Binary, encode, decodeOrFail)
 import Data.ByteString.Lazy qualified as BSL
@@ -108,11 +105,13 @@ clientRequest client checkResponse config req = do
         Nothing -> clientReportProtocolError client "Invalid response"
         Just result -> putAsyncVar_ resultAsync result
 
-clientHandleChannelMessage :: forall p. (RpcProtocol p) => Client p -> ReceivedMessageResources -> BSL.ByteString -> IO ()
-clientHandleChannelMessage client resources msg = case decodeOrFail msg of
-  Left (_, _, errMsg) -> channelReportProtocolError client.channel errMsg
-  Right ("", _, resp) -> clientHandleResponse resp
-  Right (leftovers, _, _) -> channelReportProtocolError client.channel ("Response parser returned unexpected leftovers: " <> show (BSL.length leftovers))
+-- TODO use new direct decoder api instead
+clientHandleChannelMessage :: forall p. (RpcProtocol p) => Client p -> ReceivedMessageResources -> BSL.ByteString -> ResourceManagerIO ()
+clientHandleChannelMessage client resources msg = liftIO do
+  case decodeOrFail msg of
+    Left (_, _, errMsg) -> channelReportProtocolError client.channel errMsg
+    Right ("", _, resp) -> clientHandleResponse resp
+    Right (leftovers, _, _) -> channelReportProtocolError client.channel ("Response parser returned unexpected leftovers: " <> show (BSL.length leftovers))
   where
     clientHandleResponse :: ProtocolResponseWrapper p -> IO ()
     clientHandleResponse (requestId, resp) = do
@@ -128,8 +127,9 @@ clientReportProtocolError :: Client p -> String -> IO a
 clientReportProtocolError client = channelReportProtocolError client.channel
 
 
-serverHandleChannelMessage :: forall p. (HasProtocolImpl p) => ProtocolImpl p -> Channel -> ReceivedMessageResources -> BSL.ByteString -> IO ()
-serverHandleChannelMessage protocolImpl channel resources msg = case decodeOrFail msg of
+serverHandleChannelMessage :: forall p. (HasProtocolImpl p) => ProtocolImpl p -> Channel -> ReceivedMessageResources -> BSL.ByteString -> ResourceManagerIO ()
+serverHandleChannelMessage protocolImpl channel resources msg = liftIO do
+  case decodeOrFail msg of
     Left (_, _, errMsg) -> channelReportProtocolError channel errMsg
     Right ("", _, req) -> serverHandleChannelRequest resources.createdChannels req
     Right (leftovers, _, _) -> channelReportProtocolError channel ("Request parser pureed unexpected leftovers: " <> show (BSL.length leftovers))
@@ -159,8 +159,8 @@ newStream = liftIO . pure . Stream
 streamSend :: (Binary up, MonadIO m) => Stream up down -> up -> m ()
 streamSend (Stream channel) value = liftIO $ channelSendSimple channel (encode value)
 
-streamSetHandler :: (Binary down, MonadIO m) => Stream up down -> (down -> IO ()) -> m ()
-streamSetHandler (Stream channel) handler = liftIO $ channelSetSimpleHandler channel handler
+streamSetHandler :: (Binary down, MonadIO m) => Stream up down -> (down -> ResourceManagerIO ()) -> m ()
+streamSetHandler (Stream channel) handler = liftIO $ channelSetSimpleBinaryHandler channel handler
 
 -- | Alias for `dispose`.
 streamClose :: MonadIO m => Stream up down -> m ()
@@ -208,7 +208,7 @@ newChannelClient channel = do
     channel,
     stateMVar
   }
-  channelSetHandler channel (clientHandleChannelMessage client)
+  channelSetBinaryHandler channel (clientHandleChannelMessage client)
   pure client
 
 data Listener =
@@ -249,13 +249,13 @@ addListener server listener =
 addListener_ :: (HasProtocolImpl p, MonadIO m) => Server p -> Listener -> m ()
 addListener_ server listener = void $ addListener server listener
 
-runServer :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> [Listener] -> m ()
+runServer :: forall p m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> [Listener] -> m ()
 runServer _ [] = fail "Tried to start a server without any listeners attached"
 runServer protocolImpl listener = do
   server <- newServer @p protocolImpl listener
   await $ isDisposed server
 
-listenTCP :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> Maybe Socket.HostName -> Socket.ServiceName -> m ()
+listenTCP :: forall p m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> Maybe Socket.HostName -> Socket.ServiceName -> m ()
 listenTCP impl mhost port = runServer @p impl [TcpPort mhost port]
 
 runTCPListener :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> Maybe Socket.HostName -> Socket.ServiceName -> m a
@@ -274,7 +274,7 @@ runTCPListener server mhost port = do
       Socket.bind sock (Socket.addrAddress addr)
       pure sock
 
-listenUnix :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> FilePath -> m ()
+listenUnix :: forall p m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> FilePath -> m ()
 listenUnix impl path = runServer @p impl [UnixSocket path]
 
 runUnixSocketListener :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> FilePath -> m a
@@ -296,7 +296,7 @@ runUnixSocketListener server socketPath = do
         pure sock
 
 -- | Listen and accept connections on an already bound socket.
-listenOnBoundSocket :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> Socket.Socket -> m ()
+listenOnBoundSocket :: forall p m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> Socket.Socket -> m ()
 listenOnBoundSocket protocolImpl socket = runServer @p protocolImpl [ListenSocket socket]
 
 runListenerOnBoundSocket :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> Socket.Socket -> m a
@@ -320,7 +320,7 @@ runServerHandler protocolImpl = runMultiplexer MultiplexerSideB registerChannelS
   where
     registerChannelServerHandler :: Channel -> m ()
     registerChannelServerHandler channel = liftIO $
-      channelSetHandler channel (serverHandleChannelMessage @p protocolImpl channel)
+      channelSetBinaryHandler channel (serverHandleChannelMessage @p protocolImpl channel)
 
 
 withLocalClient :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> (Client p -> m a) -> m a
