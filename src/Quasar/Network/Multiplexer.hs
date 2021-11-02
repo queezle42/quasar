@@ -168,12 +168,9 @@ runMultiplexer side channelSetupHook connection = do
 -- This starts a thread which runs until 'channelClose' is called on the resulting 'Channel' (use e.g. 'bracket' to ensure the channel is closed).
 newMultiplexer :: (IsConnection a, MonadResourceManager m) => MultiplexerSide -> a -> m Channel
 newMultiplexer side connection = do
-  bracketOnError
-    newResourceManager
-    dispose
-    \resourceManager -> onResourceManager resourceManager do
-      multiplexer <- startMultiplexer (toSocketConnection connection)
-      newRootChannel multiplexer
+  disposeOnError do
+    multiplexer <- startMultiplexer (toSocketConnection connection)
+    newRootChannel multiplexer
 
 
 startMultiplexer :: Connection -> ResourceManagerIO Multiplexer
