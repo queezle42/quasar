@@ -8,6 +8,8 @@ module Quasar.ResourceManager (
   registerNewResource_,
   registerDisposable,
   registerDisposeAction,
+  withScopedResourceManager,
+  withScopedResourceManagerIO,
   withSubResourceManagerM,
   onResourceManager,
   captureDisposable,
@@ -140,11 +142,17 @@ registerNewResource action = mask_ do
 registerNewResource_ :: (IsDisposable a, MonadResourceManager m) => m a -> m ()
 registerNewResource_ action = void $ registerNewResource action
 
-
--- TODO rename to withResourceScope, subResourceManager or withResourceManager?
-withSubResourceManagerM :: MonadResourceManager m => m a -> m a
-withSubResourceManagerM action =
+withScopedResourceManager :: MonadResourceManager m => m a -> m a
+withScopedResourceManager action =
   bracket newResourceManager dispose \scope -> localResourceManager scope action
+
+withScopedResourceManagerIO :: MonadResourceManager m => ResourceManagerIO a -> m a
+withScopedResourceManagerIO action =
+  bracket newResourceManager dispose \scope -> onResourceManager scope action
+
+withSubResourceManagerM :: MonadResourceManager m => m a -> m a
+withSubResourceManagerM = withScopedResourceManager
+{-# DEPRECATED withSubResourceManagerM "Use `withScopedResourceManager` instead." #-}
 
 
 type ResourceManagerT = ReaderT ResourceManager
