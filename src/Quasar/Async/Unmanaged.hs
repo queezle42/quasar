@@ -7,9 +7,13 @@ module Quasar.Async.Unmanaged (
   unmanagedAsyncWithUnmask_,
 
   -- ** Task exceptions
-  CancelTask(..),
-  TaskDisposed(..),
-)where
+  CancelAsync(..),
+  AsyncDisposed(..),
+  AsyncException(..),
+
+  -- ** Implementation internals
+  coreAsyncImplementation
+) where
 
 
 import Control.Concurrent (ThreadId, forkIOWithUnmask, throwTo)
@@ -40,7 +44,7 @@ instance IsDisposable (Task r) where
         TaskStateRunning threadId -> do
           writeTVar stateVar TaskStateThrowing
           pure do
-            throwTo threadId $ CancelTask key
+            throwTo threadId $ CancelAsync key
             atomically $ writeTVar stateVar TaskStateCompleted
         TaskStateThrowing -> pure $ pure ()
         TaskStateCompleted -> pure $ pure ()
@@ -56,15 +60,68 @@ instance Functor Task where
   fmap fn (Task key actionVar finalizerVar resultAwaitable) = Task key actionVar finalizerVar (fn <$> resultAwaitable)
 
 
-data CancelTask = CancelTask Unique
-instance Show CancelTask where
-  show _ = "CancelTask"
-instance Exception CancelTask where
+data CancelAsync = CancelAsync Unique
+  deriving stock Eq
+instance Show CancelAsync where
+  show _ = "CancelAsync"
+instance Exception CancelAsync where
 
-data TaskDisposed = TaskDisposed
+data AsyncDisposed = AsyncDisposed
+  deriving stock (Eq, Show)
+instance Exception AsyncDisposed where
+
+-- TODO Needs a descriptive name. This is similar in functionality to `ExceptionThrownInLinkedThread`
+data AsyncException = AsyncException SomeException
   deriving stock Show
-instance Exception TaskDisposed where
+  deriving anyclass Exception
 
+
+
+-- | Base implementation for the `unmanagedAsync`- and `Quasar.Async.async`-class of functions.
+coreAsyncImplementation :: MonadIO m => (SomeException -> IO ()) -> ((forall b. IO b -> IO b) -> IO a) -> m (Task a)
+coreAsyncImplementation handler action = do
+  liftIO $ mask_ do
+    key <- newUnique
+    resultVar <- newAsyncVar
+    stateVar <- newTVarIO TaskStateInitializing
+    finalizers <- newDisposableFinalizers
+
+    threadId <- forkIOWithUnmask \unmask ->
+      handleAll
+        do \ex -> fail $ "coreAsyncImplementation thread failed: " <> displayException ex
+        do
+          result <- try $ catchAll
+            do action unmask
+            \ex -> do
+              -- Rewrite exception if its the cancel exception for this async
+              when (fromException ex == Just (CancelAsync key)) $ throwIO AsyncDisposed
+              throwIO $ AsyncException ex
+
+          -- The `action` has completed its work.
+          -- "disarm" dispose:
+          handleIf
+            do \(CancelAsync exKey) -> key == exKey
+            do mempty -- ignore exception if it matches; this can only happen once
+            do
+              atomically $ readTVar stateVar >>= \case
+                TaskStateInitializing -> retry
+                TaskStateRunning _ -> writeTVar stateVar TaskStateCompleted
+                TaskStateThrowing -> retry -- Could not disarm so we have to wait for the exception to arrive
+                TaskStateCompleted -> pure ()
+
+          catchAll
+            case result of
+              Left ex -> when (fromException ex /= Just AsyncDisposed) $ handler ex
+              Right _ -> pure ()
+            \ex -> undefined
+
+          atomically do
+            putAsyncVarEitherSTM_ resultVar result
+            defaultRunFinalizers finalizers
+
+    atomically $ writeTVar stateVar $ TaskStateRunning threadId
+
+    pure $ Task key stateVar finalizers (toAwaitable resultVar)
 
 
 unmanagedAsync :: MonadIO m => IO a -> m (Task a)
@@ -74,43 +131,7 @@ unmanagedAsync_ :: MonadIO m => IO () -> m Disposable
 unmanagedAsync_ action = toDisposable <$> unmanagedAsync action
 
 unmanagedAsyncWithUnmask :: MonadIO m => ((forall b. IO b -> IO b) -> IO a) -> m (Task a)
-unmanagedAsyncWithUnmask action = do
-  liftIO $ mask_ do
-    key <- newUnique
-    resultVar <- newAsyncVar
-    stateVar <- newTVarIO TaskStateInitializing
-    finalizers <- newDisposableFinalizers
-
-    threadId <- forkIOWithUnmask \unmask ->
-      handleAll
-        do \ex -> fail $ "unmanagedAsyncWithUnmask thread failed: " <> displayException ex
-        do
-          result <- try $ handleIf
-            do \(CancelTask exKey) -> key == exKey
-            do \_ -> throwIO TaskDisposed
-            do
-              action unmask
-
-          -- The `action` has completed its work.
-          -- "disarm" dispose:
-          handleIf
-            do \(CancelTask exKey) -> key == exKey
-            do mempty -- ignore exception if it matches; this can only happen once
-            do
-              atomically $ readTVar stateVar >>= \case
-                TaskStateInitializing -> retry
-                TaskStateRunning _ -> writeTVar stateVar TaskStateCompleted
-                TaskStateThrowing -> retry -- Could not disarm so we have to wait for the exception to arrive
-                TaskStateCompleted -> pure ()
-
-          atomically do
-            putAsyncVarEitherSTM_ resultVar result
-            defaultRunFinalizers finalizers
-
-
-    atomically $ writeTVar stateVar $ TaskStateRunning threadId
-
-    pure $ Task key stateVar finalizers (toAwaitable resultVar)
+unmanagedAsyncWithUnmask = coreAsyncImplementation (traceIO . ("Unhandled exception in unmanaged async: " <>) . displayException)
 
 unmanagedAsyncWithUnmask_ :: MonadIO m => ((forall b. IO b -> IO b) -> IO ()) -> m Disposable
 unmanagedAsyncWithUnmask_ action = toDisposable <$> unmanagedAsyncWithUnmask action

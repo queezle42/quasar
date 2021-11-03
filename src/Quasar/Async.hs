@@ -5,17 +5,18 @@ module Quasar.Async (
   asyncWithUnmask,
   asyncWithUnmask_,
 
-  -- ** Task exceptions
-  CancelTask(..),
-  TaskDisposed(..),
+  -- ** Async exceptions
+  CancelAsync(..),
+  AsyncDisposed(..),
+  AsyncException(..),
 ) where
 
+import Control.Monad.Catch
 import Control.Monad.Reader
 import Quasar.Async.Unmanaged
 import Quasar.Awaitable
 import Quasar.Prelude
 import Quasar.ResourceManager
-
 
 -- | TODO: Documentation
 --
@@ -30,12 +31,18 @@ asyncWithUnmask :: MonadResourceManager m => ((ResourceManagerIO a -> ResourceMa
 asyncWithUnmask action = do
   resourceManager <- askResourceManager
   toAwaitable <$> registerNewResource do
-    unmanagedAsyncWithUnmask (\unmask -> runReaderT (action (liftUnmask unmask)) resourceManager)
+    coreAsyncImplementation (handler resourceManager) \unmask ->
+      onResourceManager resourceManager (action (liftUnmask unmask))
   where
+    handler :: ResourceManager -> SomeException -> IO ()
+    handler resourceManager ex = when (fromException ex /= Just AsyncDisposed) do
+      -- Throwing to the resource manager is safe because the handler runs on the async thread the resource manager
+      -- cannot reach disposed state until the thread exits
+      throwToResourceManager resourceManager ex
     liftUnmask :: (forall b. IO b -> IO b) -> ResourceManagerIO a -> ResourceManagerIO a
     liftUnmask unmask innerAction = do
       resourceManager <- askResourceManager
-      liftIO $ unmask $ runReaderT innerAction resourceManager
+      liftIO $ unmask $ onResourceManager resourceManager innerAction
 
 async_ :: MonadResourceManager m => (ResourceManagerIO ()) -> m ()
 async_ action = void $ async action

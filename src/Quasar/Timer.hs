@@ -204,7 +204,7 @@ newtype Delay = Delay (Task ())
   deriving newtype IsDisposable
 
 instance IsAwaitable () Delay where
-  toAwaitable (Delay task) = toAwaitable task `catch` \TaskDisposed -> throwM TimerCancelled
+  toAwaitable (Delay task) = toAwaitable task `catch` \AsyncDisposed -> throwM TimerCancelled
 
 newDelay :: MonadResourceManager m => Int -> m Delay
 newDelay microseconds = registerNewResource $ newUnmanagedDelay microseconds
