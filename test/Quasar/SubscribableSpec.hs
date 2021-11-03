@@ -25,7 +25,7 @@ spec = do
     it "stops calling the callback after the subscription is disposed" $ io $ withRootResourceManager do
       event <- newSubscribableEvent
       resultVar <- liftIO $ newEmptyTMVarIO
-      withSubResourceManagerM do
+      withScopedResourceManager do
         subscribe event $ liftIO . \case
           SubscribableUpdate r -> atomically (putTMVar resultVar r) >> mempty
           SubscribableNotAvailable ex -> throwIO ex

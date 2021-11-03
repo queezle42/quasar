@@ -9,14 +9,14 @@ module Quasar.ResourceManager (
   registerDisposable,
   registerDisposeAction,
   withScopedResourceManager,
-  withScopedResourceManagerIO,
-  withSubResourceManagerM,
+  genericWithScopedResourceManager,
   onResourceManager,
   captureDisposable,
   captureDisposable_,
   disposeOnError,
   liftResourceManagerIO,
-  handleByResourceManager,
+  enterResourceManager,
+  lockResourceManager,
 
   -- ** Top level initialization
   withRootResourceManager,
@@ -93,21 +93,21 @@ class IsDisposable a => IsResourceManager a where
   attachDisposable :: (IsDisposable b, MonadIO m) => a -> b -> m ()
   attachDisposable self = attachDisposable (toResourceManager self)
 
-  lockResourceManager :: (IsDisposable b, MonadIO m, MonadMask m) => a -> m b -> m b
-  lockResourceManager self = lockResourceManager (toResourceManager self)
+  lockResourceManagerImpl :: (MonadIO m, MonadMask m) => a -> m b -> m b
+  lockResourceManagerImpl self = lockResourceManagerImpl (toResourceManager self)
 
   -- | Forward an exception that happened asynchronously.
   throwToResourceManager :: Exception e => a -> e -> IO ()
   throwToResourceManager = throwToResourceManager . toResourceManager
 
-  {-# MINIMAL toResourceManager | (attachDisposable, lockResourceManager, throwToResourceManager) #-}
+  {-# MINIMAL toResourceManager | (attachDisposable, lockResourceManagerImpl, throwToResourceManager) #-}
 
 
 data ResourceManager = forall a. IsResourceManager a => ResourceManager a
 instance IsResourceManager ResourceManager where
   toResourceManager = id
   attachDisposable (ResourceManager x) = attachDisposable x
-  lockResourceManager (ResourceManager x) = lockResourceManager x
+  lockResourceManagerImpl (ResourceManager x) = lockResourceManagerImpl x
   throwToResourceManager (ResourceManager x) = throwToResourceManager x
 instance IsDisposable ResourceManager where
   toDisposable (ResourceManager x) = toDisposable x
@@ -119,6 +119,16 @@ class (MonadAwait m, MonadMask m, MonadIO m, MonadFix m) => MonadResourceManager
   -- | Replace the resource manager for a computation.
   localResourceManager :: IsResourceManager a => a -> m r -> m r
 
+
+
+-- | Locks the resource manager. As long as the resource manager is locked, it's possible to register new resources
+-- on the resource manager.
+--
+-- This prevents the resource manager from disposing, so the computation must not block for an unbound amount of time.
+lockResourceManager :: MonadResourceManager m => m a -> m a
+lockResourceManager action = do
+  resourceManager <- askResourceManager
+  lockResourceManagerImpl resourceManager action
 
 -- | Register a `Disposable` to the resource manager.
 --
@@ -132,28 +142,27 @@ registerDisposable disposable = do
 registerDisposeAction :: MonadResourceManager m => IO () -> m ()
 registerDisposeAction disposeAction = mask_ $ registerDisposable =<< newDisposable disposeAction
 
+-- | Locks the resource manager (which may fail), runs the computation and registeres the resulting disposable.
+--
+-- The computation will be run in masked state.
+--
+-- The computation must not block for an unbound amount of time.
 registerNewResource :: (IsDisposable a, MonadResourceManager m) => m a -> m a
-registerNewResource action = mask_ do
-  resourceManager <- askResourceManager
-  lockResourceManager resourceManager do
+registerNewResource action = mask_ $ lockResourceManager do
     resource <- action
-    attachDisposable resourceManager resource
+    registerDisposable resource
     pure resource
 
 registerNewResource_ :: (IsDisposable a, MonadResourceManager m) => m a -> m ()
 registerNewResource_ action = void $ registerNewResource action
 
-withScopedResourceManager :: MonadResourceManager m => m a -> m a
+withScopedResourceManager :: MonadResourceManager m => ResourceManagerIO a -> m a
 withScopedResourceManager action =
-  bracket newResourceManager dispose \scope -> localResourceManager scope action
-
-withScopedResourceManagerIO :: MonadResourceManager m => ResourceManagerIO a -> m a
-withScopedResourceManagerIO action =
   bracket newResourceManager dispose \scope -> onResourceManager scope action
 
-withSubResourceManagerM :: MonadResourceManager m => m a -> m a
-withSubResourceManagerM = withScopedResourceManager
-{-# DEPRECATED withSubResourceManagerM "Use `withScopedResourceManager` instead." #-}
+genericWithScopedResourceManager :: MonadResourceManager m => m a -> m a
+genericWithScopedResourceManager action =
+  bracket newResourceManager dispose \scope -> localResourceManager scope action
 
 
 type ResourceManagerT = ReaderT ResourceManager
@@ -202,12 +211,16 @@ disposeOnError action = do
     dispose
     \resourceManager -> localResourceManager resourceManager action
 
--- | Run a computation and throw any exception that occurs to the resource manager.
+-- | Run a computation on a resource manager and throw any exception that occurs to the resource manager.
 --
 -- This can be used to run e.g. callbacks that belong to a different resource context.
-handleByResourceManager :: ResourceManager -> ResourceManagerIO () -> IO ()
-handleByResourceManager resourceManager action =
-  onResourceManager resourceManager do
+--
+-- Locks the resource manager, so the computation must not block for an unbounded time.
+--
+-- May throw an exception when the resource manager is disposing.
+enterResourceManager :: MonadIO m => ResourceManager -> ResourceManagerIO () -> m ()
+enterResourceManager resourceManager action = liftIO do
+  onResourceManager resourceManager $ lockResourceManager do
     action `catchAll` \ex -> liftIO $ throwToResourceManager resourceManager ex
 
 
@@ -220,7 +233,7 @@ data RootResourceManager
 
 instance IsResourceManager RootResourceManager where
   attachDisposable (RootResourceManager internal _ _ _) = attachDisposable internal
-  lockResourceManager (RootResourceManager internal _ _ _) = lockResourceManager internal
+  lockResourceManagerImpl (RootResourceManager internal _ _ _) = lockResourceManagerImpl internal
   throwToResourceManager (RootResourceManager _ _ exceptionsVar _) ex = do
     -- TODO only log exceptions after a timeout
     traceIO $ "Exception thrown to root resource manager: " <> displayException ex
@@ -329,7 +342,7 @@ instance IsResourceManager DefaultResourceManager where
             putTMVar disposablesVar $ HM.delete key disposables
           Nothing -> pure ()
 
-  lockResourceManager DefaultResourceManager{stateVar, lockVar} =
+  lockResourceManagerImpl DefaultResourceManager{stateVar, lockVar} =
     bracket_ (liftIO aquire) (liftIO release)
     where
       aquire :: IO ()

@@ -105,8 +105,8 @@ class IsRetrievable v o => IsObservable v o | o -> v where
 -- after it completes; when the value changes multiple times it will only be executed once (with the latest value).
 observeBlocking :: (IsObservable v o, MonadResourceManager m) => o -> (ObservableMessage v -> m ()) -> m a
 observeBlocking observable handler = do
-  -- `withSubResourceManagerM` removes the `observe` callback when the `handler` fails.
-  withSubResourceManagerM do
+  -- `withScopedResourceManager` removes the `observe` callback when the `handler` fails.
+  genericWithScopedResourceManager do
     var <- liftIO newEmptyTMVarIO
     observe observable \msg -> liftIO $ atomically do
       void $ tryTakeTMVar var
@@ -292,7 +292,7 @@ instance IsObservable v (ObservableVar v) where
     key <- liftIO newUnique
 
     registerNewResource_ do
-      let wrappedCallback = handleByResourceManager resourceManager . callback
+      let wrappedCallback = enterResourceManager resourceManager . callback
 
       liftIO $ modifyMVar_ mvar $ \(state, subscribers) -> do
         -- Call listener with initial value

@@ -65,14 +65,14 @@ spec = parallel $ do
     it "passes an exception to the root resource manager" $ io do
       (`shouldThrow` \(_ :: CombinedException) -> True) do
         withRootResourceManager do
-          withSubResourceManagerM do
+          withScopedResourceManager do
             registerDisposeAction $ throwIO TestException
             liftIO $ threadDelay 100000
 
     it "passes an exception to the root resource manager when closing the inner resource manager first" $ io do
       (`shouldThrow` \(_ :: CombinedException) -> True) do
         withRootResourceManager do
-          withSubResourceManagerM do
+          withScopedResourceManager do
             registerDisposeAction $ throwIO TestException
           liftIO $ threadDelay 100000
 
