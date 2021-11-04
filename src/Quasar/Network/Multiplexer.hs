@@ -25,6 +25,7 @@ module Quasar.Network.Multiplexer (
 ) where
 
 
+import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Data.Binary (Binary, encode)
@@ -167,16 +168,11 @@ runMultiplexer side channelSetupHook connection = do
 -- | Starts a new multiplexer on an existing connection.
 -- This starts a thread which runs until 'channelClose' is called on the resulting 'Channel' (use e.g. 'bracket' to ensure the channel is closed).
 newMultiplexer :: (IsConnection a, MonadResourceManager m) => MultiplexerSide -> a -> m Channel
-newMultiplexer side connection = do
-  disposeOnError do
-    multiplexer <- startMultiplexer (toSocketConnection connection)
-    newRootChannel multiplexer
+newMultiplexer side (toSocketConnection -> connection) = liftResourceManagerIO $ disposeOnError do
+  resourceManager <- askResourceManager
 
-
-startMultiplexer :: Connection -> ResourceManagerIO Multiplexer
-startMultiplexer connection = do
   inbox <- liftIO newEmptyTMVarIO
-  outbox <- liftIO newEmptyTMVarIO
+  outbox <- liftIO $ newTMVarIO $ BSL.fromStrict magicBytes
   multiplexerResult <- newAsyncVar
 
   registerDisposeAction do
@@ -185,16 +181,21 @@ startMultiplexer connection = do
     putAsyncVar_ multiplexerResult ConnectionClosed
     connection.close
 
-  runUnlimitedAsync do
-    async_ $ liftIO $ receiveThread inbox `catchAll` (putAsyncVar_ multiplexerResult . ConnectionLost)
-    async_ $ liftIO $ sendThread outbox `catchAll` (putAsyncVar_ multiplexerResult . ConnectionLost)
+  handleAsync_ (putAsyncVar_ multiplexerResult . ConnectionLost) (liftIO (receiveThread inbox))
+  handleAsync_ (putAsyncVar_ multiplexerResult . ConnectionLost) (liftIO (sendThread outbox))
+
+  -- An async cannot be disposed from its own thread, so forkIO is used instead for now
+  liftIO $ void $ forkIO do
+    awaitSuccessOrFailure multiplexerResult
+    -- Ensure the multiplexer is disposed when the connection is lost
+    disposeEventually_ resourceManager
 
   --channels = HM.empty,
   --sendChannel = 0,
   --receiveChannel = 0,
   --receiveNextChannelId = if side == MultiplexerSideA then 2 else 1,
   --sendNextChannelId = if side == MultiplexerSideA then 1 else 2
-  pure Multiplexer {
+  newRootChannel Multiplexer {
     inbox,
     outbox,
     multiplexerResult

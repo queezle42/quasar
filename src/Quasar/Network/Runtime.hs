@@ -65,7 +65,7 @@ type ProtocolResponseWrapper p = (MessageId, ProtocolResponse p)
 
 class RpcProtocol p => HasProtocolImpl p where
   type ProtocolImpl p
-  handleRequest :: MonadAsync m => ProtocolImpl p -> Channel -> ProtocolRequest p -> [Channel] -> m (Maybe (Awaitable (ProtocolResponse p)))
+  handleRequest :: ProtocolImpl p -> Channel -> ProtocolRequest p -> [Channel] -> ResourceManagerIO (Maybe (Awaitable (ProtocolResponse p)))
 
 
 data Client p = Client {
@@ -137,7 +137,7 @@ serverHandleChannelMessage protocolImpl channel resources msg = liftIO do
     serverHandleChannelRequest :: [Channel] -> ProtocolRequest p -> IO ()
     serverHandleChannelRequest channels req = do
       -- TODO runUnlimitedAsync should be replaced with a per-connection limited async context
-      onResourceManager channel $ runUnlimitedAsync $
+      onResourceManager channel do
         handleRequest @p protocolImpl channel req channels >>= \case
           Nothing -> pure ()
           Just task -> do
@@ -239,7 +239,7 @@ addListener :: (HasProtocolImpl p, MonadIO m) => Server p -> Listener -> m Dispo
 addListener server listener =
   onResourceManager server $
     captureDisposable_ $
-      runUnlimitedAsync $ async_ $ runListener listener
+      async_ $ runListener listener
   where
     runListener :: MonadResourceManager f => Listener -> f a
     runListener (TcpPort mhost port) = runTCPListener server mhost port
@@ -310,7 +310,7 @@ connectToServer :: forall p a m. (HasProtocolImpl p, IsConnection a, MonadIO m) 
 connectToServer server conn =
   onResourceManager server do
     registerDisposeAction $ connection.close
-    runUnlimitedAsync $ async_ $ runServerHandler @p server.protocolImpl connection
+    async_ $ runServerHandler @p server.protocolImpl connection
   where
     connection :: Connection
     connection = toSocketConnection conn
@@ -325,7 +325,7 @@ runServerHandler protocolImpl = runMultiplexer MultiplexerSideB registerChannelS
 
 withLocalClient :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> (Client p -> m a) -> m a
 withLocalClient server action =
-  withSubResourceManagerM do
+  withScopedResourceManager do
     client <- newLocalClient server
     action client
 

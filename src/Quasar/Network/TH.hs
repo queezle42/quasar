@@ -30,6 +30,7 @@ import Quasar.Network.Runtime
 import Quasar.Network.Runtime.Observable
 import Quasar.Observable
 import Quasar.Prelude
+import Quasar.ResourceManager
 
 data RpcApi = RpcApi {
   name :: String,
@@ -551,7 +552,7 @@ createResource RequestCreateChannel channelE = [|pure $channelE|]
 createResource (RequestCreateStream _up _down) channelE = [|newStream $channelE|]
 
 implResultType :: Request -> Q Type
-implResultType req = [t|forall m. MonadAsync m => m $(resultType)|]
+implResultType req = [t|ResourceManagerIO $(resultType)|]
   where
     resultType = case req.mResponse of
       Nothing -> [t|()|]

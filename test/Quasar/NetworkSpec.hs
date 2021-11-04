@@ -153,7 +153,7 @@ spec = parallel $ do
         -- Change the value before calling `observe`
         setObservableVar var 42
 
-        withRootResourceManager $ runUnlimitedAsync do
+        withRootResourceManager do
           observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
 
           liftIO $ join $ atomically $ readTVar resultVar >>=
@@ -167,7 +167,7 @@ spec = parallel $ do
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
         resultVar <- liftIO $ newTVarIO ObservableLoading
         observable <- liftIO $ intObservable client
-        withRootResourceManager $ runUnlimitedAsync do
+        withRootResourceManager do
           observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
 
           let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=
@@ -191,7 +191,7 @@ spec = parallel $ do
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
         resultVar <- liftIO $ newTVarIO ObservableLoading
         observable <- liftIO $ intObservable client
-        withRootResourceManager $ runUnlimitedAsync do
+        withRootResourceManager do
           disposable <- captureDisposable_ $ observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
 
           let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=

@@ -36,7 +36,7 @@ spec = describe "runMultiplexer" $ parallel $ do
       do rm (runMultiplexer MultiplexerSideA (const (pure ())) x)
       do rm (runMultiplexer MultiplexerSideB dispose y)
 
-  it "can dispose a resource" $ rm do
+  fit "can dispose a resource" $ rm do
     var <- newAsyncVar
     (x, _) <- newConnectionPair
     runMultiplexer

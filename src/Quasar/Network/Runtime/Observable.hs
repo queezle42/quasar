@@ -48,12 +48,12 @@ newObservableStub startRetrieveRequest startObserveRequest = pure uncachedObserv
         -- TODO send updates about the connection status
         stream <- startObserveRequest
         resourceManager <- askResourceManager
-        streamSetHandler stream (liftIO . handleByResourceManager resourceManager . callback . unpackObservableMessage)
+        streamSetHandler stream (enterResourceManager resourceManager . callback . unpackObservableMessage)
         pure $ toDisposable stream
     retrieveFn :: ResourceManagerIO (Awaitable v)
     retrieveFn = startRetrieveRequest
 
-observeToStream :: (Binary v, MonadAsync m) => Observable v -> Stream (PackedObservableMessage v) Void -> m ()
+observeToStream :: (Binary v, MonadResourceManager m) => Observable v -> Stream (PackedObservableMessage v) Void -> m ()
 observeToStream observable stream = do
   localResourceManager stream do
     observe observable \msg -> do
