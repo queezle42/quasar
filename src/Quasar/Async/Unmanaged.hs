@@ -99,21 +99,22 @@ coreAsyncImplementation handler action = do
 
           -- The `action` has completed its work.
           -- "disarm" dispose:
-          handleIf
+          catchIf
             do \(CancelAsync exKey) -> key == exKey
-            do mempty -- ignore exception if it matches; this can only happen once
             do
               atomically $ readTVar stateVar >>= \case
                 TaskStateInitializing -> retry
                 TaskStateRunning _ -> writeTVar stateVar TaskStateCompleted
                 TaskStateThrowing -> retry -- Could not disarm so we have to wait for the exception to arrive
                 TaskStateCompleted -> pure ()
+            do mempty -- ignore exception if it matches; this can only happen once (see TaskStateThrowing above)
 
           catchAll
             case result of
-              Left ex -> when (fromException ex /= Just AsyncDisposed) $ handler ex
-              Right _ -> pure ()
-            \ex -> undefined
+              Left (fromException -> Just AsyncDisposed) -> pure ()
+              Left ex -> handler ex
+              _ -> pure ()
+            \ex -> traceIO $ "An exception was thrown while handling an async exception: " <> displayException ex
 
           atomically do
             putAsyncVarEitherSTM_ resultVar result
