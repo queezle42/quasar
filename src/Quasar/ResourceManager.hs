@@ -54,14 +54,6 @@ import Quasar.Prelude
 import Quasar.Utils.Exceptions
 
 
-
--- TODO replacement for MonadAsync scheduler
---scheduleAfter :: MonadScheduler m => Awaitable a -> (a -> SchedulerIO (Awaitable b)) -> m (Awaitable b)
---scheduleAfter' :: Awaitable a -> (a -> SchedulerIO b) -> m (Awaitable b)
---scheduleAfter_ :: Awaitable a -> (a -> IO ()) -> m ()
-
-
-
 data DisposeException = DisposeException SomeException
   deriving stock Show
 
@@ -190,7 +182,6 @@ liftResourceManagerIO action = do
 
 captureDisposable :: MonadResourceManager m => m a -> m (a, Disposable)
 captureDisposable action = do
-  -- TODO improve performance by only creating a new resource manager when two or more disposables are attached
   resourceManager <- newResourceManager
   result <- localResourceManager resourceManager action
   pure $ (result, toDisposable resourceManager)
