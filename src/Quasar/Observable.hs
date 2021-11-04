@@ -106,7 +106,7 @@ class IsRetrievable v o => IsObservable v o | o -> v where
 observeBlocking :: (IsObservable v o, MonadResourceManager m) => o -> (ObservableMessage v -> m ()) -> m a
 observeBlocking observable handler = do
   -- `withScopedResourceManager` removes the `observe` callback when the `handler` fails.
-  genericWithScopedResourceManager do
+  withScopedResourceManager do
     var <- liftIO newEmptyTMVarIO
     observe observable \msg -> liftIO $ atomically do
       void $ tryTakeTMVar var

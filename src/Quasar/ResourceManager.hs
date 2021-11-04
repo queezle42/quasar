@@ -9,7 +9,6 @@ module Quasar.ResourceManager (
   registerDisposable,
   registerDisposeAction,
   withScopedResourceManager,
-  genericWithScopedResourceManager,
   onResourceManager,
   captureDisposable,
   captureDisposable_,
@@ -156,12 +155,8 @@ registerNewResource action = mask_ $ lockResourceManager do
 registerNewResource_ :: (IsDisposable a, MonadResourceManager m) => m a -> m ()
 registerNewResource_ action = void $ registerNewResource action
 
-withScopedResourceManager :: MonadResourceManager m => ResourceManagerIO a -> m a
+withScopedResourceManager :: MonadResourceManager m => m a -> m a
 withScopedResourceManager action =
-  bracket newResourceManager dispose \scope -> onResourceManager scope action
-
-genericWithScopedResourceManager :: MonadResourceManager m => m a -> m a
-genericWithScopedResourceManager action =
   bracket newResourceManager dispose \scope -> localResourceManager scope action
 
 
