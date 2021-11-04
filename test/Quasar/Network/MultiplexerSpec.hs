@@ -11,8 +11,6 @@ import Quasar.Network.Multiplexer
 import Quasar.Network.Connection
 import Quasar.Prelude
 import Quasar.ResourceManager
-import Network.Socket qualified as Socket
-import Network.Socket (Socket)
 import Test.Hspec.Core.Spec
 import Test.Hspec.Expectations.Lifted
 import Test.Hspec qualified as Hspec
