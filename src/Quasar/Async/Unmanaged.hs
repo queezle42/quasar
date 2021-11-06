@@ -16,7 +16,7 @@ module Quasar.Async.Unmanaged (
 ) where
 
 
-import Control.Concurrent (ThreadId, forkIOWithUnmask, throwTo)
+import Control.Concurrent (ThreadId, forkIO, forkIOWithUnmask, throwTo)
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Quasar.Awaitable
@@ -43,16 +43,18 @@ instance IsDisposable (Task r) where
         TaskStateInitializing -> unreachableCodePathM
         TaskStateRunning threadId -> do
           writeTVar stateVar TaskStateThrowing
-          pure do
+          -- Fork to prevent synchronous exceptions when disposing this thread, and to prevent blocking when disposing
+          -- a thread that is running in uninterruptible masked state.
+          pure $ void $ forkIO do
             throwTo threadId $ CancelAsync key
             atomically $ writeTVar stateVar TaskStateCompleted
-        TaskStateThrowing -> pure $ pure ()
-        TaskStateCompleted -> pure $ pure ()
+        TaskStateThrowing -> pure $ pure @IO ()
+        TaskStateCompleted -> pure $ pure @IO ()
 
     -- Wait for task completion or failure. Tasks must not ignore `CancelTask` or this will hang.
     pure $ DisposeResultAwait $ isDisposed self
 
-  isDisposed (Task _ _ _ resultAwaitable) = (() <$ resultAwaitable) `catchAll` \_ -> pure ()
+  isDisposed (Task _ _ _ resultAwaitable) = awaitSuccessOrFailure resultAwaitable
 
   registerFinalizer (Task _ _ finalizers _) = defaultRegisterFinalizer finalizers
 
