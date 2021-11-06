@@ -1,24 +1,34 @@
 module Quasar.Network.Multiplexer (
+  -- * Channel type
+  Channel,
+
+  -- * Sending and receiving messages
   MessageId,
   MessageLength,
-  Channel,
+
+  -- ** Sending messages
   MessageConfiguration(..),
-  defaultMessageConfiguration,
   SentMessageResources(..),
-  ReceivedMessageResources(..),
-  ChannelException(..),
-  channelReportProtocolError,
-  channelReportException,
+  defaultMessageConfiguration,
   channelSend,
   channelSend_,
   channelSendSimple,
+
+  -- ** Receiving messages
+  ChannelHandler,
+  ChannelMessageHandler,
+  ReceivedMessageResources(..),
   channelSetHandler,
   channelSetBinaryHandler,
   channelSetSimpleBinaryHandler,
-  ChannelMessageHandler,
 
-  -- * Multiplexer
+  -- ** Exception handling
   MultiplexerException(..),
+  ChannelException(..),
+  channelReportProtocolError,
+  channelReportException,
+
+  -- * Create or run a multiplexer
   MultiplexerSide(..),
   runMultiplexer,
   newMultiplexer,
