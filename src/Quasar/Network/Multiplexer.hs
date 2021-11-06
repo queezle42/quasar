@@ -60,13 +60,13 @@ type MessageId = Word64
 type MessageLength = Word64
 
 -- | Amount of created sub-channels
-type ChannelAmount = Word32
+type NewChannelCount = Word32
 
 -- ** Wire format
 
 -- | Low level network protocol control message
 data MultiplexerMessage
-  = ChannelMessage ChannelAmount MessageLength
+  = ChannelMessage NewChannelCount MessageLength
   | SwitchChannel ChannelId
   | CloseChannel
   | ProtocolError String
@@ -145,7 +145,7 @@ data ChannelException = ChannelNotConnected
 -- ** Channel message interface
 
 newtype MessageConfiguration = MessageConfiguration {
-  createChannels :: ChannelAmount
+  createChannels :: NewChannelCount
 }
 
 defaultMessageConfiguration :: MessageConfiguration
