@@ -38,6 +38,7 @@ module Quasar.Network.Multiplexer (
 import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import Control.Monad.Catch
+import Data.Bifunctor (first)
 import Data.Binary (Binary, encode)
 import Data.Binary qualified as Binary
 import Data.Binary.Get (Get, Decoder(..), runGetIncremental, pushChunk, pushEndOfInput)
@@ -64,13 +65,17 @@ type NewChannelCount = Word32
 
 -- ** Wire format
 
+magicBytes :: BS.ByteString
+magicBytes = "qso\0dev\0"
+
 -- | Low level network protocol control message
 data MultiplexerMessage
   = ChannelMessage NewChannelCount MessageLength
   | SwitchChannel ChannelId
   | CloseChannel
-  | ProtocolError String
+  | MultiplexerProtocolError String
   | ChannelProtocolError ChannelId String
+  | InternalError String
   deriving stock (Generic, Show)
   deriving anyclass (Binary)
 
@@ -80,8 +85,8 @@ data MultiplexerMessage
 data Multiplexer = Multiplexer {
   inbox :: TMVar (BS.ByteString),
   outbox :: TMVar (BSL.ByteString),
-  multiplexerResult :: AsyncVar MultiplexerException
-  --channels :: HM.HashMap ChannelId Channel,
+  multiplexerResult :: AsyncVar MultiplexerException,
+  channelsVar :: TVar (HM.HashMap ChannelId Channel)
   --sendChannel :: ChannelId,
   --receiveChannel :: ChannelId,
   --receiveNextChannelId :: ChannelId,
@@ -94,12 +99,19 @@ data MultiplexerSide = MultiplexerSideA | MultiplexerSideB
 data MultiplexerException
   = ConnectionClosed
   | ConnectionLost SomeException
+  | InvalidMagicBytes BS.ByteString
   | LocalException SomeException
   | RemoteException String
   | ProtocolException String
+  | ReceivedProtocolException String
   | ChannelProtocolException ChannelId String
+  | ReceivedChannelProtocolException ChannelId String
   deriving stock Show
-  deriving anyclass Exception
+
+instance Exception MultiplexerException where
+  displayException (InvalidMagicBytes received) =
+    mconcat ["Magic bytes don't match: Expected ", show magicBytes, ", got ", show received]
+  displayException ex = show ex
 
 -- ** Channel
 
@@ -133,16 +145,14 @@ newRootChannel multiplexer = do
   }
 
 
-type ChannelHandler = MessageLength -> ReceivedMessageResources -> ResourceManagerIO ChannelMessageHandler
-type ChannelMessageHandler = Maybe BS.ByteString -> ResourceManagerIO ()
-
-
 data ChannelException = ChannelNotConnected
   deriving stock Show
   deriving anyclass Exception
 
-
 -- ** Channel message interface
+
+type ChannelHandler = MessageLength -> ReceivedMessageResources -> ResourceManagerIO ChannelMessageHandler
+type ChannelMessageHandler = Maybe BS.ByteString -> ResourceManagerIO ()
 
 newtype MessageConfiguration = MessageConfiguration {
   createChannels :: NewChannelCount
@@ -175,10 +185,11 @@ runMultiplexer side channelSetupHook connection = do
   onResourceManager rootChannel $ channelSetupHook rootChannel
   await $ isDisposed rootChannel
 
--- | Starts a new multiplexer on an existing connection.
--- This starts a thread which runs until 'channelClose' is called on the resulting 'Channel' (use e.g. 'bracket' to ensure the channel is closed).
+-- | Starts a new multiplexer on an existing connection (e.g. on a connected TCP socket).
 newMultiplexer :: (IsConnection a, MonadResourceManager m) => MultiplexerSide -> a -> m Channel
 newMultiplexer side (toSocketConnection -> connection) = liftResourceManagerIO $ disposeOnError do
+  -- The multiplexer returned by `askResourceManager` is created by `disposeOnError`, so it can be used as a disposable
+  -- without accidentally disposing external resources.
   resourceManager <- askResourceManager
 
   inbox <- liftIO newEmptyTMVarIO
@@ -187,7 +198,7 @@ newMultiplexer side (toSocketConnection -> connection) = liftResourceManagerIO $
 
   registerDisposeAction do
     -- Setting `ConnectionClosed` before calling `close` suppresses exceptions from
-    -- the send- and receive thread (which might some times occur after closing the socket)
+    -- the send- and receive thread (which occur after closing the socket)
     putAsyncVar_ multiplexerResult ConnectionClosed
     connection.close
 
@@ -200,16 +211,23 @@ newMultiplexer side (toSocketConnection -> connection) = liftResourceManagerIO $
     -- Ensure the multiplexer is disposed when the connection is lost
     disposeEventually_ resourceManager
 
-  --channels = HM.empty,
-  --sendChannel = 0,
-  --receiveChannel = 0,
-  --receiveNextChannelId = if side == MultiplexerSideA then 2 else 1,
-  --sendNextChannelId = if side == MultiplexerSideA then 1 else 2
-  newRootChannel Multiplexer {
-    inbox,
-    outbox,
-    multiplexerResult
-  }
+  mfix \rootChannel -> do
+    channelsVar <- liftIO $ newTVarIO $ HM.singleton 0 rootChannel
+
+    --sendChannel = 0,
+    --receiveChannel = 0,
+    --receiveNextChannelId = if side == MultiplexerSideA then 2 else 1,
+    --sendNextChannelId = if side == MultiplexerSideA then 1 else 2
+    let multiplexer = Multiplexer {
+      inbox,
+      outbox,
+      multiplexerResult,
+      channelsVar
+    }
+
+    handleAsync_ (multiplexerExceptionHandler multiplexer) (liftIO (multiplexerThread multiplexer))
+
+    newRootChannel multiplexer
   where
     receiveThread :: TMVar BS.ByteString -> IO ()
     receiveThread inbox = forever do
@@ -220,6 +238,54 @@ newMultiplexer side (toSocketConnection -> connection) = liftResourceManagerIO $
     sendThread outbox = forever do
       chunks <- atomically $ takeTMVar outbox
       connection.send chunks
+
+multiplexerExceptionHandler :: Multiplexer -> SomeException -> IO ()
+-- Exception is a MultiplexerException already
+multiplexerExceptionHandler m (fromException -> Just ex) = putAsyncVar_ m.multiplexerResult ex
+-- Exception is an unexpected exception
+multiplexerExceptionHandler m ex = putAsyncVar_ m.multiplexerResult $ LocalException ex
+
+multiplexerThread :: Multiplexer -> IO ()
+multiplexerThread multiplexer = checkMagicBytes =<< read
+  where
+    read :: IO BS.ByteString
+    read = atomically $ takeTMVar multiplexer.inbox
+
+    continueWithMoreData :: (BS.ByteString -> IO ()) -> BS.ByteString -> IO ()
+    continueWithMoreData messageHandler leftovers = messageHandler . (leftovers <>) =<< read
+
+    checkMagicBytes :: BS.ByteString -> IO ()
+    checkMagicBytes chunk@((< magicBytesLength) . BS.length -> True) =
+      continueWithMoreData checkMagicBytes chunk
+    checkMagicBytes (BS.splitAt magicBytesLength -> (bytes, leftovers)) =
+      if bytes == magicBytes
+        then nextMultiplexerMessage leftovers
+        else throwM $ InvalidMagicBytes $ bytes
+
+    magicBytesLength = BS.length magicBytes
+
+    nextMultiplexerMessage :: BS.ByteString -> IO ()
+    nextMultiplexerMessage leftovers = stepDecoder (pushChunk (runGetIncremental Binary.get) leftovers)
+      where
+        stepDecoder :: Decoder MultiplexerMessage -> IO ()
+        stepDecoder (Fail _ _ errMsg) = throwM $ ProtocolException $ "Failed to parse protocol message: " <> errMsg
+        stepDecoder (Partial feedFn) = stepDecoder . feedFn . Just =<< read
+        stepDecoder (Done leftovers _ msg) = execMultiplexerMessage msg leftovers
+
+    execMultiplexerMessage :: MultiplexerMessage -> BS.ByteString -> IO ()
+    execMultiplexerMessage multiplexerMessage leftovers =
+      case multiplexerMessage of
+        (ChannelMessage channelAmount messageLength) -> undefined
+        (SwitchChannel channelId) -> undefined
+        CloseChannel -> undefined
+        (MultiplexerProtocolError msg) -> throwM $ RemoteException $ "Remote closed connection because of a multiplexer protocol error: " <> msg
+        (ChannelProtocolError channelId msg) -> throwM $ ChannelProtocolException channelId msg
+        (InternalError msg) -> throwM $ RemoteException msg
+      where
+        continue = nextMultiplexerMessage leftovers
+
+    receiveChannelMessage :: MessageLength -> BS.ByteString -> IO ()
+    receiveChannelMessage remaining chunk = undefined
 
 channelSend :: MonadIO m => Channel -> MessageConfiguration -> BSL.ByteString -> (MessageId -> m ()) -> m SentMessageResources
 channelSend = undefined
@@ -241,7 +307,7 @@ channelReportException = undefined
 
 
 channelSetHandler :: MonadIO m => Channel -> ChannelHandler -> m ()
-channelSetHandler = undefined -- TODO new type
+channelSetHandler = undefined
 
 -- | Sets a simple channel message handler, which cannot handle sub-resurces (e.g. new channels). When a resource is received the channel will be terminated with a channel protocol error.
 channelSetBinaryHandler :: forall a m. (Binary a, MonadIO m) => Channel -> (ReceivedMessageResources -> a -> ResourceManagerIO ()) -> m ()
