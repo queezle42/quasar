@@ -44,6 +44,7 @@ module Quasar.Awaitable (
   failAsyncVarSTM_,
   putAsyncVarEitherSTM_,
   readAsyncVarSTM,
+  tryReadAsyncVarSTM,
 ) where
 
 import Control.Applicative (empty)
@@ -364,6 +365,9 @@ putAsyncVarEitherSTM (AsyncVar var) = tryPutTMVar var
 -- | Get the value of an `AsyncVar` in `STM`. Will retry until the AsyncVar is fulfilled.
 readAsyncVarSTM :: AsyncVar a -> STM a
 readAsyncVarSTM (AsyncVar var) = either throwM pure =<< readTMVar var
+
+tryReadAsyncVarSTM :: forall a. AsyncVar a -> STM (Maybe a)
+tryReadAsyncVarSTM (AsyncVar var) = mapM (either throwM pure) =<< tryReadTMVar var
 
 
 putAsyncVar :: MonadIO m => AsyncVar a -> a -> m Bool
