@@ -48,10 +48,10 @@ spec = describe "runMultiplexer" $ parallel $ do
       do x
     peekAwaitable var `shouldReturn` Just ()
 
-  it "can send and receive simple messages" $ do
+  fit "can send and receive simple messages" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
-      channelSetSimpleBinaryHandler channel ((liftIO . putMVar recvMVar) :: BSL.ByteString -> ResourceManagerIO ())
+      channelSetSimpleHandler channel ((liftIO . putMVar recvMVar) :: BSL.ByteString -> ResourceManagerIO ())
       channelSendSimple channel "foobar"
       liftIO $ takeMVar recvMVar `shouldReturn` "foobar"
       channelSendSimple channel "test"
@@ -62,7 +62,7 @@ spec = describe "runMultiplexer" $ parallel $ do
   it "can create sub-channels" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
-      channelSetBinaryHandler channel ((\_ -> liftIO . putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> ResourceManagerIO ())
+      channelSetHandler channel ((\_ -> liftIO . putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> ResourceManagerIO ())
       SentMessageResources{createdChannels=[_]} <- channelSend_ channel defaultMessageConfiguration{createChannels=1} "create a channel"
       liftIO $ takeMVar recvMVar `shouldReturn` "create a channel"
       SentMessageResources{createdChannels=[_, _, _]} <- channelSend_ channel defaultMessageConfiguration{createChannels=3} "create more channels"
@@ -75,14 +75,14 @@ spec = describe "runMultiplexer" $ parallel $ do
     c2RecvMVar <- newEmptyMVar
     c3RecvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
-      channelSetSimpleBinaryHandler channel $ (liftIO . putMVar recvMVar :: BSL.ByteString -> ResourceManagerIO ())
+      channelSetSimpleHandler channel $ (liftIO . putMVar recvMVar :: BSL.ByteString -> ResourceManagerIO ())
       channelSendSimple channel "foobar"
       liftIO $ takeMVar recvMVar `shouldReturn` "foobar"
 
       SentMessageResources{createdChannels=[c1, c2]} <- channelSend_ channel defaultMessageConfiguration{createChannels=2}  "create channels"
       liftIO $ takeMVar recvMVar `shouldReturn` "create channels"
-      channelSetSimpleBinaryHandler c1 (liftIO . putMVar c1RecvMVar :: BSL.ByteString -> ResourceManagerIO ())
-      channelSetSimpleBinaryHandler c2 (liftIO . putMVar c2RecvMVar :: BSL.ByteString -> ResourceManagerIO ())
+      channelSetSimpleHandler c1 (liftIO . putMVar c1RecvMVar :: BSL.ByteString -> ResourceManagerIO ())
+      channelSetSimpleHandler c2 (liftIO . putMVar c2RecvMVar :: BSL.ByteString -> ResourceManagerIO ())
 
       channelSendSimple c1 "test"
       liftIO $ takeMVar c1RecvMVar `shouldReturn` "test"
@@ -95,7 +95,7 @@ spec = describe "runMultiplexer" $ parallel $ do
 
       SentMessageResources{createdChannels=[c3]} <- channelSend_ channel  defaultMessageConfiguration{createChannels=1} "create another channel"
       liftIO $ takeMVar recvMVar `shouldReturn` "create another channel"
-      channelSetSimpleBinaryHandler c3 (liftIO . putMVar c3RecvMVar :: BSL.ByteString -> ResourceManagerIO ())
+      channelSetSimpleHandler c3 (liftIO . putMVar c3RecvMVar :: BSL.ByteString -> ResourceManagerIO ())
 
       channelSendSimple c3 "test5"
       liftIO $ takeMVar c3RecvMVar `shouldReturn` "test5"
@@ -118,10 +118,10 @@ spec = describe "runMultiplexer" $ parallel $ do
     runMultiplexer MultiplexerSideA (liftIO . testAction) connection
 
 
-withEchoServer :: (forall m. MonadResourceManager m => Channel -> m a) -> IO a
+withEchoServer :: (Channel -> ResourceManagerIO ()) -> IO ()
 withEchoServer fn = rm $ bracket setup closePair (\(channel, _) -> fn channel)
   where
-    setup :: MonadResourceManager m => m (Channel, Channel)
+    setup :: ResourceManagerIO (Channel, Channel)
     setup = do
       (mainSocket, echoSocket) <- newConnectionPair
       mainChannel <- newMultiplexer MultiplexerSideA mainSocket
@@ -131,7 +131,7 @@ withEchoServer fn = rm $ bracket setup closePair (\(channel, _) -> fn channel)
     closePair :: MonadResourceManager m => (Channel, Channel) -> m ()
     closePair (x, y) = dispose x >> dispose y
     configureEchoHandler :: MonadIO m => Channel -> m ()
-    configureEchoHandler channel = channelSetBinaryHandler channel (echoHandler channel)
+    configureEchoHandler channel = channelSetHandler channel (echoHandler channel)
     echoHandler :: Channel -> ReceivedMessageResources -> BSL.ByteString -> ResourceManagerIO ()
     echoHandler channel resources msg = do
       mapM_ configureEchoHandler resources.createdChannels

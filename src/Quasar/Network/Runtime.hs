@@ -40,6 +40,7 @@ module Quasar.Network.Runtime (
 ) where
 
 import Control.Concurrent.MVar
+import Control.Concurrent.STM
 import Control.Monad.Catch
 import Data.Binary (Binary, encode, decodeOrFail)
 import Data.ByteString.Lazy qualified as BSL
@@ -70,20 +71,11 @@ class RpcProtocol p => HasProtocolImpl p where
 
 data Client p = Client {
   channel :: Channel,
-  stateMVar :: MVar (ClientState p)
+  callbacksVar :: TVar (HM.HashMap MessageId (ProtocolResponse p -> IO ()))
 }
 
 instance IsDisposable (Client p) where
   toDisposable client = toDisposable client.channel
-
-newtype ClientState p = ClientState {
-  callbacks :: HM.HashMap MessageId (ProtocolResponse p -> IO ())
-}
-
-emptyClientState :: ClientState p
-emptyClientState = ClientState {
-  callbacks = HM.empty
-}
 
 clientSend :: forall p m. (MonadIO m, RpcProtocol p) => Client p -> MessageConfiguration -> ProtocolRequest p -> m SentMessageResources
 clientSend client config req = liftIO $ channelSend_ client.channel config (encode req)
@@ -91,15 +83,14 @@ clientSend client config req = liftIO $ channelSend_ client.channel config (enco
 clientRequest :: forall p m a. (MonadIO m, RpcProtocol p) => Client p -> (ProtocolResponse p -> Maybe a) -> MessageConfiguration -> ProtocolRequest p -> m (Awaitable a, SentMessageResources)
 clientRequest client checkResponse config req = do
   resultAsync <- newAsyncVar
-  sentMessageResources <- liftIO $ channelSend client.channel config (encode req) $ \msgId ->
-    modifyMVar_ client.stateMVar $
-      \state -> pure state{callbacks = HM.insert msgId (requestCompletedCallback resultAsync msgId) state.callbacks}
+  sentMessageResources <- liftIO $ channelSend client.channel config (encode req) \msgId ->
+    modifyTVar client.callbacksVar $ HM.insert msgId (requestCompletedCallback resultAsync msgId)
   pure (toAwaitable resultAsync, sentMessageResources)
   where
     requestCompletedCallback :: AsyncVar a -> MessageId -> ProtocolResponse p -> IO ()
     requestCompletedCallback resultAsync msgId response = do
       -- Remove callback
-      modifyMVar_ client.stateMVar $ \state -> pure state{callbacks = HM.delete msgId state.callbacks}
+      atomically $ modifyTVar client.callbacksVar $ HM.delete msgId
 
       case checkResponse response of
         Nothing -> clientReportProtocolError client "Invalid response"
@@ -116,12 +107,11 @@ clientHandleChannelMessage client resources msg = liftIO do
     clientHandleResponse :: ProtocolResponseWrapper p -> IO ()
     clientHandleResponse (requestId, resp) = do
       unless (null resources.createdChannels) (channelReportProtocolError client.channel "Received unexpected new channel during a rpc response")
-      callback <- modifyMVar client.stateMVar $ \state -> do
-        let (callbacks, mCallback) = lookupDelete requestId state.callbacks
+      join $ atomically $ stateTVar client.callbacksVar $ \oldCallbacks -> do
+        let (callbacks, mCallback) = lookupDelete requestId oldCallbacks
         case mCallback of
-          Just callback -> pure (state{callbacks}, callback)
-          Nothing -> channelReportProtocolError client.channel ("Received response with invalid request id " <> show requestId)
-      callback resp
+          Just callback -> (callback resp, callbacks)
+          Nothing -> (channelReportProtocolError client.channel ("Received response with invalid request id " <> show requestId), callbacks)
 
 clientReportProtocolError :: Client p -> String -> IO a
 clientReportProtocolError client = channelReportProtocolError client.channel
@@ -203,10 +193,10 @@ withClientBracket createClient = bracket createClient dispose
 
 newChannelClient :: MonadIO m => RpcProtocol p => Channel -> m (Client p)
 newChannelClient channel = do
-  stateMVar <- liftIO $ newMVar emptyClientState
+  callbacksVar <- liftIO $ newTVarIO mempty
   let client = Client {
     channel,
-    stateMVar
+    callbacksVar
   }
   channelSetBinaryHandler channel (clientHandleChannelMessage client)
   pure client
