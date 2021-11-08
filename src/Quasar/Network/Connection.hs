@@ -110,8 +110,8 @@ data ConnectionPairException = ConnectionPairClosed
 
 newConnectionPair :: MonadIO m => m (Connection, Connection)
 newConnectionPair = liftIO do
-  x <- newEmptyTMVarIO
-  y <- newEmptyTMVarIO
+  x <- newTVarIO []
+  y <- newTVarIO []
   c <- newTVarIO False
   pure (connectionSide x y c, connectionSide y x c)
   where
@@ -127,9 +127,10 @@ newConnectionPair = liftIO do
           when closed $ throwSTM ConnectionPairClosed
         send chunk = atomically do
           failWhenClosed
-          putTMVar s $ BSL.toChunks chunk
+          check . null =<< readTVar s
+          writeTVar s $ BSL.toChunks chunk
         receive = atomically do
           failWhenClosed
-          takeTMVar r >>= \case
+          readTVar r >>= \case
             [] -> retry
-            (chunk:chunks) -> chunk <$ putTMVar r chunks
+            (chunk:chunks) -> chunk <$ writeTVar r chunks
