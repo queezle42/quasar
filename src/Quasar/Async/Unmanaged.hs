@@ -1,18 +1,15 @@
 module Quasar.Async.Unmanaged (
   -- ** Unmanaged variant
-  Task,
+  Async,
   unmanagedAsync,
-  unmanagedAsync_,
+  unmanagedAsyncWithHandler,
   unmanagedAsyncWithUnmask,
-  unmanagedAsyncWithUnmask_,
+  unmanagedAsyncWithHandlerAndUnmask,
 
-  -- ** Task exceptions
+  -- ** Async exceptions
   CancelAsync(..),
   AsyncDisposed(..),
   AsyncException(..),
-
-  -- ** Implementation internals
-  coreAsyncImplementation
 ) where
 
 
@@ -24,42 +21,41 @@ import Quasar.Disposable
 import Quasar.Prelude
 
 
--- | A task is an operation (e.g. a thread or a network request) that is running asynchronously and can be cancelled.
--- It has a result and can fail.
+-- | An async is an asynchronously running computation that can be cancelled.
 --
 -- The result (or exception) can be aquired by using the `IsAwaitable` class (e.g. by calling `await` or `awaitIO`).
--- It is possible to cancel the task by using `dispose` or `cancelTask` if the operation has not been completed.
-data Task r = Task Unique (TVar TaskState) DisposableFinalizers (Awaitable r)
+-- It is possible to cancel the async by using `dispose` if the operation has not been completed.
+data Async r = Async Unique (TVar AsyncState) DisposableFinalizers (Awaitable r)
 
-data TaskState = TaskStateInitializing | TaskStateRunning ThreadId | TaskStateThrowing | TaskStateCompleted
+data AsyncState = AsyncStateInitializing | AsyncStateRunning ThreadId | AsyncStateThrowing | AsyncStateCompleted
 
-instance IsAwaitable r (Task r) where
-  toAwaitable (Task _ _ _ resultAwaitable) = resultAwaitable
+instance IsAwaitable r (Async r) where
+  toAwaitable (Async _ _ _ resultAwaitable) = resultAwaitable
 
-instance IsDisposable (Task r) where
-  beginDispose self@(Task key stateVar _ _) = uninterruptibleMask_ do
+instance IsDisposable (Async r) where
+  beginDispose self@(Async key stateVar _ _) = uninterruptibleMask_ do
     join $ atomically do
       readTVar stateVar >>= \case
-        TaskStateInitializing -> unreachableCodePathM
-        TaskStateRunning threadId -> do
-          writeTVar stateVar TaskStateThrowing
+        AsyncStateInitializing -> unreachableCodePathM
+        AsyncStateRunning threadId -> do
+          writeTVar stateVar AsyncStateThrowing
           -- Fork to prevent synchronous exceptions when disposing this thread, and to prevent blocking when disposing
           -- a thread that is running in uninterruptible masked state.
           pure $ void $ forkIO do
             throwTo threadId $ CancelAsync key
-            atomically $ writeTVar stateVar TaskStateCompleted
-        TaskStateThrowing -> pure $ pure @IO ()
-        TaskStateCompleted -> pure $ pure @IO ()
+            atomically $ writeTVar stateVar AsyncStateCompleted
+        AsyncStateThrowing -> pure $ pure @IO ()
+        AsyncStateCompleted -> pure $ pure @IO ()
 
-    -- Wait for task completion or failure. Tasks must not ignore `CancelTask` or this will hang.
+    -- Wait for async completion or failure. Asyncs must not ignore `CancelAsync` or this will hang.
     pure $ DisposeResultAwait $ isDisposed self
 
-  isDisposed (Task _ _ _ resultAwaitable) = awaitSuccessOrFailure resultAwaitable
+  isDisposed (Async _ _ _ resultAwaitable) = awaitSuccessOrFailure resultAwaitable
 
-  registerFinalizer (Task _ _ finalizers _) = defaultRegisterFinalizer finalizers
+  registerFinalizer (Async _ _ finalizers _) = defaultRegisterFinalizer finalizers
 
-instance Functor Task where
-  fmap fn (Task key actionVar finalizerVar resultAwaitable) = Task key actionVar finalizerVar (fn <$> resultAwaitable)
+instance Functor Async where
+  fmap fn (Async key actionVar finalizerVar resultAwaitable) = Async key actionVar finalizerVar (fn <$> resultAwaitable)
 
 
 data CancelAsync = CancelAsync Unique
@@ -80,12 +76,12 @@ data AsyncException = AsyncException SomeException
 
 
 -- | Base implementation for the `unmanagedAsync`- and `Quasar.Async.async`-class of functions.
-coreAsyncImplementation :: MonadIO m => (SomeException -> IO ()) -> ((forall b. IO b -> IO b) -> IO a) -> m (Task a)
-coreAsyncImplementation handler action = do
+unmanagedAsyncWithHandlerAndUnmask :: MonadIO m => (SomeException -> IO ()) -> ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
+unmanagedAsyncWithHandlerAndUnmask handler action = do
   liftIO $ mask_ do
     key <- newUnique
     resultVar <- newAsyncVar
-    stateVar <- newTVarIO TaskStateInitializing
+    stateVar <- newTVarIO AsyncStateInitializing
     finalizers <- newDisposableFinalizers
 
     threadId <- forkIOWithUnmask \unmask ->
@@ -105,11 +101,11 @@ coreAsyncImplementation handler action = do
             do \(CancelAsync exKey) -> key == exKey
             do
               atomically $ readTVar stateVar >>= \case
-                TaskStateInitializing -> retry
-                TaskStateRunning _ -> writeTVar stateVar TaskStateCompleted
-                TaskStateThrowing -> retry -- Could not disarm so we have to wait for the exception to arrive
-                TaskStateCompleted -> pure ()
-            do mempty -- ignore exception if it matches; this can only happen once (see TaskStateThrowing above)
+                AsyncStateInitializing -> retry
+                AsyncStateRunning _ -> writeTVar stateVar AsyncStateCompleted
+                AsyncStateThrowing -> retry -- Could not disarm so we have to wait for the exception to arrive
+                AsyncStateCompleted -> pure ()
+            do mempty -- ignore exception if it matches; this can only happen once (see AsyncStateThrowing above)
 
           catchAll
             case result of
@@ -122,19 +118,16 @@ coreAsyncImplementation handler action = do
             putAsyncVarEitherSTM_ resultVar result
             defaultRunFinalizers finalizers
 
-    atomically $ writeTVar stateVar $ TaskStateRunning threadId
+    atomically $ writeTVar stateVar $ AsyncStateRunning threadId
 
-    pure $ Task key stateVar finalizers (toAwaitable resultVar)
+    pure $ Async key stateVar finalizers (toAwaitable resultVar)
 
 
-unmanagedAsync :: MonadIO m => IO a -> m (Task a)
+unmanagedAsync :: MonadIO m => IO a -> m (Async a)
 unmanagedAsync action = unmanagedAsyncWithUnmask \unmask -> unmask action
 
-unmanagedAsync_ :: MonadIO m => IO () -> m Disposable
-unmanagedAsync_ action = toDisposable <$> unmanagedAsync action
+unmanagedAsyncWithHandler :: MonadIO m => (SomeException -> IO ()) -> IO a -> m (Async a)
+unmanagedAsyncWithHandler handler action = unmanagedAsyncWithHandlerAndUnmask handler \unmask -> unmask action
 
-unmanagedAsyncWithUnmask :: MonadIO m => ((forall b. IO b -> IO b) -> IO a) -> m (Task a)
-unmanagedAsyncWithUnmask = coreAsyncImplementation (traceIO . ("Unhandled exception in unmanaged async: " <>) . displayException)
-
-unmanagedAsyncWithUnmask_ :: MonadIO m => ((forall b. IO b -> IO b) -> IO ()) -> m Disposable
-unmanagedAsyncWithUnmask_ action = toDisposable <$> unmanagedAsyncWithUnmask action
+unmanagedAsyncWithUnmask :: MonadIO m => ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
+unmanagedAsyncWithUnmask = unmanagedAsyncWithHandlerAndUnmask (traceIO . ("Unhandled exception in unmanaged async: " <>) . displayException)

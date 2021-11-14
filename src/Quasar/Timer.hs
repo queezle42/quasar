@@ -92,7 +92,7 @@ newUnmanagedTimerScheduler = do
       }
 
 startSchedulerThread :: TimerScheduler -> IO Disposable
-startSchedulerThread scheduler = unmanagedAsync_ (schedulerThread `finally` cancelAll)
+startSchedulerThread scheduler = toDisposable <$> unmanagedAsync (schedulerThread `finally` cancelAll)
   where
     heap' :: TMVar (Heap Timer)
     heap' = heap scheduler
@@ -200,7 +200,7 @@ sleepUntil scheduler time = liftIO $ bracketOnError (newUnmanagedTimer scheduler
 -- | Provides an `IsAwaitable` instance that can be awaited successfully after a given number of microseconds.
 --
 -- Based on `threadDelay`. Provides a `IsAwaitable` and a `IsDisposable` instance.
-newtype Delay = Delay (Task ())
+newtype Delay = Delay (Async ())
   deriving newtype IsDisposable
 
 instance IsAwaitable () Delay where

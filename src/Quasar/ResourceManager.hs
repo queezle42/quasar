@@ -248,7 +248,8 @@ newUnmanagedRootResourceManagerInternal = liftIO do
   exceptionsVar <- newTMVarIO Empty
   finalExceptionsVar <- newAsyncVar
   mfix \root -> do
-    unmanagedAsync_ (disposeThread root)
+    -- TODO reevaluate if using unmanagedAsync and voiding the result is correct
+    void $ unmanagedAsync (disposeThread root)
     internal <- newUnmanagedDefaultResourceManagerInternal (toResourceManager root)
     pure $ RootResourceManager internal disposingVar exceptionsVar finalExceptionsVar
 
