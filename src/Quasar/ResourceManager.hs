@@ -8,6 +8,7 @@ module Quasar.ResourceManager (
   registerNewResource_,
   registerDisposable,
   registerDisposeAction,
+  registerAsyncDisposeAction,
   withScopedResourceManager,
   onResourceManager,
   captureDisposable,
@@ -132,6 +133,9 @@ registerDisposable disposable = do
 
 registerDisposeAction :: MonadResourceManager m => IO () -> m ()
 registerDisposeAction disposeAction = mask_ $ registerDisposable =<< newDisposable disposeAction
+
+registerAsyncDisposeAction :: MonadResourceManager m => IO () -> m ()
+registerAsyncDisposeAction disposeAction = mask_ $ registerDisposable =<< newAsyncDisposable disposeAction
 
 -- | Locks the resource manager (which may fail), runs the computation and registeres the resulting disposable.
 --
