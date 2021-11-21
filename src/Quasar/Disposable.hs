@@ -9,6 +9,9 @@ module Quasar.Disposable (
   newDisposable,
   noDisposable,
 
+  -- ** Async Disposable
+  newAsyncDisposable,
+
   -- ** STM disposable
   STMDisposable,
   newSTMDisposable,
@@ -25,6 +28,7 @@ module Quasar.Disposable (
   awaitResourceManagerResult,
 ) where
 
+import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Reader
@@ -147,6 +151,34 @@ newDisposable :: MonadIO m => IO () -> m Disposable
 newDisposable disposeAction = liftIO do
   key <- newUnique
   fmap toDisposable $ IODisposable key <$> newTMVarIO disposeAction <*> newDisposableFinalizers <*> newAsyncVar
+
+
+data AsyncDisposable = AsyncDisposable Unique (TMVar (IO ())) DisposableFinalizers (AsyncVar ())
+
+instance IsDisposable AsyncDisposable where
+  beginDispose (AsyncDisposable key actionVar finalizers resultVar) = do
+    -- This is only safe when run in masked state
+    atomically (tryTakeTMVar actionVar) >>= mapM_ \action -> do
+      void $ forkIO do
+        result <- try action
+        atomically do
+          putAsyncVarEitherSTM_ resultVar result
+          defaultRunFinalizers finalizers
+    pure $ DisposeResultAwait $ await resultVar
+
+  isDisposed (AsyncDisposable _ _ _ resultVar) = toAwaitable resultVar `catchAll` \_ -> pure ()
+
+  registerFinalizer (AsyncDisposable _ _ finalizers _) = defaultRegisterFinalizer finalizers
+
+-- | Create a new disposable from an IO action. The action will be run asynchrously. Is is guaranteed, that the IO
+-- action will only be called once (even when `dispose` is called multiple times).
+--
+-- The action must not block for an unbound time.
+newAsyncDisposable :: MonadIO m => IO () -> m Disposable
+newAsyncDisposable disposeAction = liftIO do
+  key <- newUnique
+  fmap toDisposable $ AsyncDisposable key <$> newTMVarIO disposeAction <*> newDisposableFinalizers <*> newAsyncVar
+
 
 
 data STMDisposable = STMDisposable Unique (TMVar (STM ())) DisposableFinalizers (AsyncVar ())
