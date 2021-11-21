@@ -110,7 +110,9 @@ unmanagedAsyncWithHandlerAndUnmask handler action = do
           catchAll
             case result of
               Left (fromException -> Just AsyncDisposed) -> pure ()
-              Left ex -> handler ex
+              Left (fromException -> Just (AsyncException ex)) -> handler ex
+              -- Impossible code path reached
+              Left ex -> traceIO $ "Error in unmanagedAsyncWithHandlerAndUnmask: " <> displayException ex
               _ -> pure ()
             \ex -> traceIO $ "An exception was thrown while handling an async exception: " <> displayException ex
 
