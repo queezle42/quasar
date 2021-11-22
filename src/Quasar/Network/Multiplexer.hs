@@ -97,6 +97,8 @@ data Multiplexer = Multiplexer {
   inbox :: TMVar (BS.ByteString),
   outbox :: TMVar (ChannelId, NewChannelCount, BSL.ByteString),
   outboxGuard :: MVar (),
+  -- Set to true after magic bytes have been received
+  receivedHeader :: TVar Bool,
   closeChannelOutbox :: TVar [ChannelId],
   channelsVar :: TVar (HM.HashMap ChannelId Channel),
   multiplexerResult :: AsyncVar MultiplexerException
@@ -104,6 +106,12 @@ data Multiplexer = Multiplexer {
 instance IsDisposable Multiplexer where
   toDisposable = (.disposable)
 
+-- | 'MultiplexerSideA' describes the initiator of a connection, i.e. the client in most cases.
+--
+-- Side A will send multiplexer headers before the server sends a response.
+--
+-- In cases where there is no clear initiator or client/server relation, the side which usually sends the first message
+-- should be side A.
 data MultiplexerSide = MultiplexerSideA | MultiplexerSideB
   deriving stock (Eq, Show)
 
@@ -246,6 +254,7 @@ newMultiplexerInternal side connection = disposeOnError do
   outbox <- liftIO $ newEmptyTMVarIO
   multiplexerResult <- newAsyncVar
   outboxGuard <- liftIO $ newMVar ()
+  receivedHeader <- liftIO $ newTVarIO False
   closeChannelOutbox <- liftIO $ newTVarIO mempty
 
   rootChannel <- mfix \rootChannel -> do
@@ -259,6 +268,7 @@ newMultiplexerInternal side connection = disposeOnError do
       inbox,
       outbox,
       outboxGuard,
+      receivedHeader,
       closeChannelOutbox,
       channelsVar,
       multiplexerResult
@@ -302,7 +312,11 @@ newMultiplexerInternal side connection = disposeOnError do
 
     sendThread :: Multiplexer -> IO ()
     sendThread multiplexer = do
-      send $ Binary.putByteString magicBytes
+      case multiplexer.side of
+        MultiplexerSideA -> send $ Binary.putByteString magicBytes
+        MultiplexerSideB -> do
+          -- Block sending until magic bytes have been received
+          atomically $ check =<< readTVar multiplexer.receivedHeader
       evalStateT sendLoop 0
       where
         sendLoop :: StateT ChannelId IO ()
@@ -367,28 +381,34 @@ multiplexerExceptionHandler m ex = multiplexerCloseWithException m $ LocalExcept
 
 multiplexerCloseWithException :: Multiplexer -> MultiplexerException -> IO ()
 multiplexerCloseWithException m ex = do
-  putAsyncVar_ m.multiplexerResult ex
+  unlessM
+    do putAsyncVar m.multiplexerResult ex
+    do traceIO $ "Multiplexer ignored exception: " <> displayException ex
   disposeEventually_ m
 
 multiplexerThread :: Multiplexer -> IO ()
 multiplexerThread multiplexer = do
   rootChannel <- lookupChannel 0
-  chunk <- read
-  evalStateT (checkMagicBytes >> multiplexerLoop rootChannel) chunk
+  chunk <- case multiplexer.side of
+    MultiplexerSideA -> read
+    MultiplexerSideB -> checkMagicBytes
+  evalStateT (multiplexerLoop rootChannel) chunk
   where
     read :: IO BS.ByteString
     read = atomically $ takeTMVar multiplexer.inbox
 
-    checkMagicBytes :: StateT BS.ByteString IO ()
-    checkMagicBytes = modifyStateM checkMagicBytes'
+    checkMagicBytes :: IO BS.ByteString
+    checkMagicBytes = checkMagicBytes' ""
       where
         magicBytesLength = BS.length magicBytes
         checkMagicBytes' :: BS.ByteString -> IO BS.ByteString
         checkMagicBytes' chunk@((< magicBytesLength) . BS.length -> True) = do
-          next <- read `catchAll` (\_ -> throwM (InvalidMagicBytes chunk))
+          next <- read `catchAll` \_ -> throwM (InvalidMagicBytes chunk)
           checkMagicBytes' $ chunk <> next
         checkMagicBytes' (BS.splitAt magicBytesLength -> (bytes, leftovers)) = do
           when (bytes /= magicBytes) $ throwM $ InvalidMagicBytes bytes
+          -- Confirm magic bytes
+          atomically $ writeTVar multiplexer.receivedHeader True
           pure leftovers
 
     multiplexerLoop :: Maybe Channel -> StateT BS.ByteString IO a
@@ -444,6 +464,7 @@ multiplexerThread multiplexer = do
 
     execReceivedMultiplexerMessage Nothing CloseChannel = undefined
     execReceivedMultiplexerMessage (Just channel) CloseChannel = liftIO do
+      traceIO $ "Received close message on channel " <> show channel.channelId
       atomically $ writeTVar channel.receivedCloseMessage True
       sendChannelCloseMessage channel
       disposeEventually_ channel
