@@ -26,19 +26,22 @@ shouldThrow action expected = do
 
 spec :: Spec
 spec = describe "runMultiplexer" $ parallel $ do
-  fit "can be closed from the channelSetupHook" $ rm do
-    (x, _) <- newConnectionPair
-    runMultiplexer MultiplexerSideA dispose x
-
-  fit "closes when the remote is closed" $ do
+  fit "can be closed from the channelSetupHook" do
     (x, y) <- newConnectionPair
     concurrently_
-      do rm (runMultiplexer MultiplexerSideA (const (pure ())) x)
+      do rm (runMultiplexer MultiplexerSideA dispose x)
+      do rm (runMultiplexer MultiplexerSideB dispose y)
+
+  fit "closes when the remote is closed" do
+    (x, y) <- newConnectionPair
+    concurrently_
+      do rm (runMultiplexer MultiplexerSideA (\rootChannel -> await (isDisposed rootChannel)) x)
       do rm (runMultiplexer MultiplexerSideB dispose y)
 
   fit "can dispose a resource" $ rm do
     var <- newAsyncVar
-    (x, _) <- newConnectionPair
+    (x, y) <- newConnectionPair
+    void $ newMultiplexer MultiplexerSideB y
     runMultiplexer
       do MultiplexerSideA
       do
