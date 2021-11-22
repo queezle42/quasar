@@ -117,3 +117,15 @@ splitOn p s = case break p s of
 
 sleepForever :: MonadIO m => m a
 sleepForever = liftIO $ forever $ threadDelay 1000000000000
+
+-- | Monadic version of @when@, taking the condition in the monad
+whenM :: Monad m => m Bool -> m () -> m ()
+whenM mb action = do
+  b <- mb
+  when b action
+
+-- | Monadic version of @unless@, taking the condition in the monad
+unlessM :: Monad m => m Bool -> m () -> m ()
+unlessM condM acc = do
+  cond <- condM
+  unless cond acc
