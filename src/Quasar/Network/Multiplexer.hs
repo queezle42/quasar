@@ -157,13 +157,7 @@ newChannel multiplexer channelId = do
     receivedCloseMessage <- newTVarIO False
     sentCloseMessage <- newTVarIO False
 
-    attachDisposeAction resourceManager $ atomically do
-      hasAlreadySentClose <- swapTVar sentCloseMessage True
-      unless hasAlreadySentClose do
-        -- TODO check parent close state (or propagate close state to children)
-        modifyTVar multiplexer.closeChannelOutbox (channelId :)
-
-    pure Channel {
+    let channel = Channel {
       multiplexer,
       resourceManager,
       channelId,
@@ -173,6 +167,18 @@ newChannel multiplexer channelId = do
       receivedCloseMessage,
       sentCloseMessage
     }
+
+    attachDisposeAction resourceManager (sendChannelCloseMessage channel)
+
+    pure channel
+
+sendChannelCloseMessage :: Channel -> IO ()
+sendChannelCloseMessage channel = do
+  atomically do
+    hasAlreadySentClose <- swapTVar channel.sentCloseMessage True
+    unless hasAlreadySentClose do
+      -- TODO check parent close state (or propagate close state to children)
+      modifyTVar channel.multiplexer.closeChannelOutbox (channel.channelId :)
 
 data ChannelException = ChannelNotConnected
   deriving stock Show
@@ -260,8 +266,8 @@ newMultiplexerInternal side connection = disposeOnError do
 
     lockResourceManager do
       x <- unmanagedAsyncWithHandler (multiplexerExceptionHandler multiplexer) (liftIO (receiveThread inbox))
-      y <- unmanagedAsyncWithHandler (multiplexerExceptionHandler multiplexer) (liftIO (sendThread multiplexer))
       z <- unmanagedAsyncWithHandler (multiplexerExceptionHandler multiplexer) (liftIO (multiplexerThread multiplexer))
+      y <- unmanagedAsyncWithHandler (multiplexerExceptionHandler multiplexer) (liftIO (sendThread multiplexer))
 
       registerAsyncDisposeAction do
         -- NOTE The network connection should be closed automatically when the root channel is closed.
@@ -439,6 +445,7 @@ multiplexerThread multiplexer = do
     execReceivedMultiplexerMessage Nothing CloseChannel = undefined
     execReceivedMultiplexerMessage (Just channel) CloseChannel = liftIO do
       atomically $ writeTVar channel.receivedCloseMessage True
+      sendChannelCloseMessage channel
       disposeEventually_ channel
       -- TODO don't close the underlying connection if we haven't sent the close message yet
       when (channel.channelId == 0) $ throwM ConnectionClosed
