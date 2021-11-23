@@ -36,7 +36,6 @@ module Quasar.Network.Multiplexer (
 ) where
 
 
-import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import Control.DeepSeq (rnf)
 import Control.Monad.Catch
@@ -44,10 +43,9 @@ import Control.Monad.State (StateT, evalStateT)
 import Control.Monad.State qualified as State
 import Control.Monad.Trans (lift)
 import Control.Monad.Writer.Strict (WriterT, execWriterT, tell)
-import Data.Bifunctor (first)
 import Data.Binary (Binary, Put)
 import Data.Binary qualified as Binary
-import Data.Binary.Get (Get, Decoder(..), runGetIncremental, getByteString, pushChunk, pushEndOfInput)
+import Data.Binary.Get (Get, Decoder(..), runGetIncremental, pushChunk)
 import Data.Binary.Put qualified as Binary
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BSL
@@ -60,7 +58,6 @@ import Quasar.Network.Connection
 import Quasar.Prelude
 import Quasar.ResourceManager
 import Quasar.Timer (newUnmanagedDelay)
-import System.IO (hPutStrLn, stderr)
 
 -- * Types
 
@@ -176,7 +173,7 @@ newChannel multiplexer channelId = do
       sentCloseMessage
     }
 
-    attachDisposeAction resourceManager (sendChannelCloseMessage channel)
+    attachDisposeAction_ resourceManager (sendChannelCloseMessage channel)
 
     pure channel
 
@@ -275,9 +272,9 @@ newMultiplexerInternal side connection = disposeOnError do
     }
 
     lockResourceManager do
-      x <- unmanagedAsyncWithHandler (multiplexerExceptionHandler multiplexer) (liftIO (receiveThread connection inbox))
-      y <- unmanagedAsyncWithHandler (multiplexerExceptionHandler multiplexer) (liftIO (sendThread connection multiplexer))
-      z <- unmanagedAsyncWithHandler (multiplexerExceptionHandler multiplexer) (liftIO (multiplexerThread multiplexer))
+      receiveThread <- unmanagedAsyncWithHandler (multiplexerExceptionHandler multiplexer) (liftIO (receiveThread connection inbox))
+      multiplexerThread <- unmanagedAsyncWithHandler (multiplexerExceptionHandler multiplexer) (liftIO (multiplexerThread multiplexer))
+      sendThread <- unmanagedAsyncWithHandler (multiplexerExceptionHandler multiplexer) (liftIO (sendThread connection multiplexer))
 
       registerAsyncDisposeAction do
         -- NOTE The network connection should be closed automatically when the root channel is closed.
@@ -285,14 +282,24 @@ newMultiplexerInternal side connection = disposeOnError do
         -- amount of time.
 
         timeout <- newUnmanagedDelay 2000000
-        awaitAny2 (awaitSuccessOrFailure multiplexerResult :: Awaitable ()) timeout
 
-        -- Setting `ConnectionClosed` before calling `close` suppresses exceptions from
-        -- the send- and receive thread (which occur after closing the socket)
-        putAsyncVar_ multiplexerResult ConnectionClosed
-        dispose x
-        dispose y
-        dispose z
+        -- Valid reasons to abort the multiplexer threads:
+        awaitAny [
+          -- Timeout reached
+          await timeout,
+          -- Connection is lost, so no exit/error messages need to be sent
+          connectionLost multiplexer,
+          -- Send *and* receive thread have terminated on their own, which happens after final messages (i.e. root
+          -- channel closed or error messages) have been exchanged.
+          do
+            awaitSuccessOrFailure sendThread
+            awaitSuccessOrFailure multiplexerThread
+          ]
+
+        putAsyncVar_ multiplexerResult $ ConnectionLost undefined -- "Reached timeout while performing graceful close"
+        dispose receiveThread
+        dispose sendThread
+        dispose multiplexerThread
         connection.close
 
     newChannel multiplexer 0
@@ -315,6 +322,20 @@ toMultiplexerException :: SomeException -> MultiplexerException
 toMultiplexerException (fromException -> Just ex) = ex
 -- Otherwise it's a local exception (usually from application code)
 toMultiplexerException ex = LocalException ex
+
+-- | Await a lost connection.
+--
+-- For module-internal use only, since it does not follow awaitable rules (it never completes when the the connection
+-- does not fail).
+connectionLost :: Multiplexer -> Awaitable ()
+connectionLost multiplexer =
+  unsafeAwaitSTM do
+    r <- readAsyncVarSTM multiplexer.multiplexerResult
+    check (isConnectionLost r)
+  where
+    isConnectionLost :: MultiplexerException -> Bool
+    isConnectionLost (ConnectionLost _) = True
+    isConnectionLost _ = False
 
 
 receiveThread :: Connection -> TMVar BS.ByteString -> IO ()
@@ -467,8 +488,9 @@ multiplexerThread multiplexer = do
       atomically $ writeTVar channel.receivedCloseMessage True
       sendChannelCloseMessage channel
       disposeEventually_ channel
-      -- TODO don't close the underlying connection if we haven't sent the close message yet
-      when (channel.channelId == 0) $ throwM ConnectionClosed
+      when (channel.channelId == 0) do
+        -- Signal "clean" exit via exception
+        throwM ConnectionClosed
       pure Nothing
 
     execReceivedMultiplexerMessage _ (MultiplexerProtocolError msg) = throwM $ RemoteException $
@@ -511,20 +533,33 @@ multiplexerThread multiplexer = do
 
 
 channelSend :: MonadIO m => Channel -> MessageConfiguration -> BSL.ByteString -> (MessageId -> STM ()) -> m SentMessageResources
-channelSend channel@Channel{multiplexer} configuration payload messageIdHook = liftIO do
+channelSend = sendChannelMessage
+
+sendChannelMessage :: MonadIO m => Channel -> MessageConfiguration -> BSL.ByteString -> (MessageId -> STM ()) -> m SentMessageResources
+sendChannelMessage channel@Channel{multiplexer} configuration payload messageIdHook = liftIO do
   -- To guarantee fairness when sending (and to prevent unnecessary STM retries)
-  withMVar multiplexer.outboxGuard \_ ->
-    atomically do
+  withMVar multiplexer.outboxGuard \_ -> do
+
+    (messageId, createdChannelIds) <- atomically do
+      -- Abort if the multiplexer is finished or currently cleaning up
       mapM_ throwM =<< tryReadAsyncVarSTM multiplexer.multiplexerResult
+
       -- Prevents message reordering in send thread
       check . null <$> readTVar multiplexer.closeChannelOutbox
+
+      -- Put the message into the outbox. It will be picked up by the send thread.
       putTMVar multiplexer.outbox (channel.channelId, configuration.createChannels, payload)
       messageId <- stateTVar channel.nextSendMessageId (\x -> (x, x + 1))
       messageIdHook messageId
-      pure $ SentMessageResources {
-        messageId,
-        createdChannels = []
-      }
+
+      let createdChannelIds = []
+      pure (messageId, createdChannelIds)
+
+    pure $ SentMessageResources {
+      messageId,
+      createdChannels = []
+    }
+
 
 channelSend_ :: MonadIO m => Channel -> MessageConfiguration -> BSL.ByteString -> m SentMessageResources
 channelSend_ channel configuration msg = channelSend channel configuration msg (const (pure ()))
