@@ -431,7 +431,7 @@ afix_ = void . afix
 
 
 -- | Completes as soon as either awaitable completes.
-awaitEither :: (IsAwaitable ra a, IsAwaitable rb b, MonadAwait m) => a -> b -> m (Either ra rb)
+awaitEither :: MonadAwait m => Awaitable ra -> Awaitable rb -> m (Either ra rb)
 awaitEither x y = mkMonadicAwaitable $ stepBoth (runAwaitable x) (runAwaitable y)
   where
     stepBoth :: MonadAwait m => AwaitableStepM ra -> AwaitableStepM rb -> m (Either ra rb)
@@ -451,8 +451,8 @@ eitherSTM x y = fmap Left x `orElse` fmap Right y
 
 -- Completes as soon as any awaitable in the list is completed and then returns the left-most completed result
 -- (or exception).
-awaitAny :: (IsAwaitable r a, MonadAwait m) => NonEmpty a -> m r
-awaitAny xs = mkMonadicAwaitable $ stepAll Empty Empty $ runAwaitable <$> fromList (toList xs)
+awaitAny :: MonadAwait m => [Awaitable r] -> m r
+awaitAny xs = mkMonadicAwaitable $ stepAll Empty Empty $ runAwaitable <$> fromList xs
   where
     stepAll
       :: MonadAwait m
@@ -477,5 +477,5 @@ anySTM (x :| xs) = x `orElse` maybe retry anySTM (nonEmpty xs)
 
 
 -- | Like `awaitAny` with two awaitables.
-awaitAny2 :: (IsAwaitable r a, IsAwaitable r b, MonadAwait m) => a -> b -> m r
-awaitAny2 x y = awaitAny (toAwaitable x :| [toAwaitable y])
+awaitAny2 :: MonadAwait m => Awaitable r -> Awaitable r -> m r
+awaitAny2 x y = awaitAny [toAwaitable x, toAwaitable y]

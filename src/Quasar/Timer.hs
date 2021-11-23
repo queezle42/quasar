@@ -120,7 +120,7 @@ startSchedulerThread scheduler = toDisposable <$> unmanagedAsync (schedulerThrea
     wait :: Timer -> Int -> IO ()
     wait nextTimer microseconds = do
       delay <- newUnmanagedDelay microseconds
-      awaitAny2 delay nextTimerChanged
+      awaitAny2 (await delay) nextTimerChanged
       dispose delay
       where
         nextTimerChanged :: Awaitable ()

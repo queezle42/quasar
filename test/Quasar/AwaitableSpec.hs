@@ -53,7 +53,7 @@ spec = parallel $ do
       void $ forkIO $ do
         threadDelay 100000
         putAsyncVar_ avar1 ()
-      awaitAny2 avar1 avar2
+      awaitAny2 (await avar1) (await avar2)
 
     it "can be completed later by the second parameter" $ do
       avar1 <- newAsyncVar :: IO (AsyncVar ())
@@ -61,7 +61,7 @@ spec = parallel $ do
       void $ forkIO $ do
         threadDelay 100000
         putAsyncVar_ avar2 ()
-      awaitAny2 avar1 avar2
+      awaitAny2 (await avar1) (await avar2)
 
   describe "cacheAwaitable" do
     it "can cache an awaitable" $ io do
