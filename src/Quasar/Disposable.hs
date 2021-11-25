@@ -23,6 +23,7 @@ module Quasar.Disposable (
   ResourceManagerResult(..),
   DisposableFinalizers,
   newDisposableFinalizers,
+  newDisposableFinalizersSTM,
   defaultRegisterFinalizer,
   defaultRunFinalizers,
   awaitResourceManagerResult,
@@ -35,6 +36,7 @@ import Control.Monad.Reader
 import Data.List.NonEmpty (nonEmpty)
 import Data.HashSet (HashSet)
 import Data.HashSet qualified as HashSet
+import GHC.Conc (unsafeIOToSTM)
 import Quasar.Awaitable
 import Quasar.Prelude
 import Quasar.Utils.Exceptions
@@ -65,6 +67,8 @@ class IsDisposable a where
   isDisposed = isDisposed . toDisposable
 
   -- | Finalizers MUST NOT throw exceptions.
+  --
+  -- The boolean returned by register finalizer indicates if the operation was successful.
   registerFinalizer :: a -> STM () -> STM Bool
   registerFinalizer = registerFinalizer . toDisposable
 
@@ -203,7 +207,7 @@ instance IsDisposable STMDisposable where
 -- when `dispose` is called multiple times).
 --
 -- The action must not block (retry) for an unbound time.
-newSTMDisposable :: MonadIO m => STM () -> m Disposable
+newSTMDisposable :: STM () -> STM Disposable
 newSTMDisposable disposeAction = toDisposable <$> newSTMDisposable' disposeAction
 
 -- | Create a new disposable from an STM action. Is is guaranteed, that the STM action will only be called once (even
@@ -213,10 +217,10 @@ newSTMDisposable disposeAction = toDisposable <$> newSTMDisposable' disposeActio
 --
 -- This variant of `newSTMDisposable` returns an unboxed `STMDisposable` which can be disposed from `STM` by using
 -- `disposeSTMDisposable`.
-newSTMDisposable' :: MonadIO m => STM () -> m STMDisposable
-newSTMDisposable' disposeAction = liftIO do
-  key <- newUnique
-  STMDisposable key <$> newTMVarIO disposeAction <*> newDisposableFinalizers <*> newAsyncVar
+newSTMDisposable' :: STM () -> STM STMDisposable
+newSTMDisposable' disposeAction = do
+  key <- unsafeIOToSTM newUnique
+  STMDisposable key <$> newTMVar disposeAction <*> newDisposableFinalizersSTM <*> newAsyncVarSTM
 
 disposeSTMDisposable :: STMDisposable -> STM ()
 disposeSTMDisposable (STMDisposable key actionVar finalizers resultVar) = do
@@ -249,6 +253,9 @@ newtype DisposableFinalizers = DisposableFinalizers (TMVar [STM ()])
 
 newDisposableFinalizers :: IO DisposableFinalizers
 newDisposableFinalizers = DisposableFinalizers <$> newTMVarIO []
+
+newDisposableFinalizersSTM :: STM DisposableFinalizers
+newDisposableFinalizersSTM = DisposableFinalizers <$> newTMVar []
 
 defaultRegisterFinalizer :: DisposableFinalizers -> STM () -> STM Bool
 defaultRegisterFinalizer (DisposableFinalizers finalizerVar) finalizer =

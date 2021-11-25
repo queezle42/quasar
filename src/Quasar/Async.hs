@@ -27,7 +27,7 @@ import Quasar.ResourceManager
 -- | TODO: Documentation
 --
 -- The action will be run with asynchronous exceptions unmasked.
-async :: MonadResourceManager m => (ResourceManagerIO a) -> m (Awaitable a)
+async :: MonadResourceManager m => ResourceManagerIO a -> m (Awaitable a)
 async action = asyncWithUnmask \unmask -> unmask action
 
 -- | TODO: Documentation
@@ -38,7 +38,7 @@ asyncWithUnmask action = do
   resourceManager <- askResourceManager
   asyncWithHandlerAndUnmask (throwToResourceManager resourceManager . AsyncException) action
 
-async_ :: MonadResourceManager m => (ResourceManagerIO ()) -> m ()
+async_ :: MonadResourceManager m => ResourceManagerIO () -> m ()
 async_ action = void $ async action
 
 asyncWithUnmask_ :: MonadResourceManager m => ((ResourceManagerIO a -> ResourceManagerIO a) -> ResourceManagerIO ()) -> m ()
