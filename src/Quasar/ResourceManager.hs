@@ -49,7 +49,6 @@ import Data.HashMap.Strict qualified as HM
 import Data.List.NonEmpty (NonEmpty(..), (<|), nonEmpty)
 import Data.Sequence (Seq(..), (|>))
 import Data.Sequence qualified as Seq
-import GHC.Conc (unsafeIOToSTM)
 import Quasar.Async.Unmanaged
 import Quasar.Awaitable
 import Quasar.Disposable
@@ -330,7 +329,7 @@ instance IsResourceManager DefaultResourceManager where
   attachDisposable self disposable = liftIO $ atomically $ attachDisposableSTM self disposable
 
   attachDisposableSTM DefaultResourceManager{stateVar, disposablesVar} disposable = do
-    key <- unsafeIOToSTM newUnique
+    key <- newUniqueSTM
     state <- readTVar stateVar
     case state of
       ResourceManagerNormal -> do
@@ -462,7 +461,7 @@ defaultResourceManagerDisposeResult DefaultResourceManager{resourceManagerKey, r
 -- to implement the root resource manager.
 newUnmanagedDefaultResourceManagerInternal :: ResourceManager -> STM DefaultResourceManager
 newUnmanagedDefaultResourceManagerInternal parentResourceManager = do
-  resourceManagerKey <- unsafeIOToSTM newUnique
+  resourceManagerKey <- newUniqueSTM
   stateVar <- newTVar ResourceManagerNormal
   disposablesVar <- newTMVar HM.empty
   lockVar <- newTVar 0

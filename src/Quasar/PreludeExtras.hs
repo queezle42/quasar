@@ -8,6 +8,7 @@ import Prelude
 
 import Control.Applicative (liftA2)
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.STM
 import Control.Monad.Catch (MonadThrow, throwM)
 import Control.Monad.State.Lazy as State
 import Data.Char qualified as Char
@@ -16,6 +17,8 @@ import Data.HashSet qualified as HS
 import Data.Hashable qualified as Hashable
 import Data.List qualified as List
 import Data.Maybe qualified as Maybe
+import Data.Unique (Unique, newUnique)
+import GHC.Conc (unsafeIOToSTM)
 import GHC.Stack.Types qualified
 import Quasar.Utils.ExtraT
 
@@ -129,3 +132,6 @@ unlessM :: Monad m => m Bool -> m () -> m ()
 unlessM condM acc = do
   cond <- condM
   unless cond acc
+
+newUniqueSTM :: STM Unique
+newUniqueSTM = unsafeIOToSTM newUnique
