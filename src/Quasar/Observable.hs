@@ -354,9 +354,9 @@ data FnObservable v = FnObservable {
   observeFn :: (ObservableMessage v -> ResourceManagerIO ()) -> ResourceManagerIO ()
 }
 instance IsRetrievable v (FnObservable v) where
-  retrieve o = liftResourceManagerIO $ retrieveFn o
+  retrieve FnObservable{retrieveFn} = liftResourceManagerIO retrieveFn
 instance IsObservable v (FnObservable v) where
-  observe o = observe o
+  observe FnObservable{observeFn} callback = liftResourceManagerIO $ observeFn callback
   mapObservable f FnObservable{retrieveFn, observeFn} = Observable $ FnObservable {
     retrieveFn = f <<$>> retrieveFn,
     observeFn = \listener -> observeFn (listener . fmap f)
