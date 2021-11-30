@@ -1,0 +1,14 @@
+#!/usr/bin/env zsh
+
+set -euo pipefail
+
+testsuite=quasar-network-test
+iter=$(( ${1:-1000} ))
+
+nix develop -c cabal build $testsuite
+testsuite_exe=$(nix develop -c cabal list-bin $testsuite)
+
+for i in {1..$iter}; {
+  echo "Running tests ($i/$iter)"
+  $testsuite_exe
+}
