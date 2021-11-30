@@ -10,6 +10,8 @@ module Quasar.Async.Unmanaged (
   CancelAsync(..),
   AsyncDisposed(..),
   AsyncException(..),
+  isCancelAsync,
+  isAsyncDisposed,
 ) where
 
 
@@ -74,6 +76,15 @@ data AsyncException = AsyncException SomeException
   deriving anyclass Exception
 
 
+isCancelAsync :: SomeException -> Bool
+isCancelAsync (fromException @CancelAsync -> Just _) = True
+isCancelAsync _ = False
+
+isAsyncDisposed :: SomeException -> Bool
+isAsyncDisposed (fromException @AsyncDisposed -> Just _) = True
+isAsyncDisposed _ = False
+
+
 
 -- | Base implementation for the `unmanagedAsync`- and `Quasar.Async.async`-class of functions.
 unmanagedAsyncWithHandlerAndUnmask :: MonadIO m => (SomeException -> IO ()) -> ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
@@ -133,3 +144,14 @@ unmanagedAsyncWithHandler handler action = unmanagedAsyncWithHandlerAndUnmask ha
 
 unmanagedAsyncWithUnmask :: MonadIO m => ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
 unmanagedAsyncWithUnmask = unmanagedAsyncWithHandlerAndUnmask (traceIO . ("Unhandled exception in unmanaged async: " <>) . displayException)
+
+
+-- | Run a computation concurrently to another computation. When the current thread leaves `withAsync`, the async
+-- computation is cancelled.
+--
+-- While the async is disposed when `withUnmanagedAsync` exits, an exception would be ignored if the action fails. This
+-- behavior is similar to the @withAsync@ function from the @async@ package.
+--
+-- For an exception-safe version, see `Quasar.Async.withAsync`.
+withUnmanagedAsync :: (MonadIO m, MonadMask m) => IO r -> (Async r -> m a) -> m a
+withUnmanagedAsync action = bracket (unmanagedAsync action) dispose

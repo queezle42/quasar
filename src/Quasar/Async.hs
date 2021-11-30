@@ -4,6 +4,7 @@ module Quasar.Async (
   async_,
   asyncWithUnmask,
   asyncWithUnmask_,
+  withAsync,
 
   -- ** Async with explicit error handling
   asyncWithHandler,
@@ -15,25 +16,28 @@ module Quasar.Async (
   CancelAsync(..),
   AsyncDisposed(..),
   AsyncException(..),
+  isCancelAsync,
+  isAsyncDisposed,
 ) where
 
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Quasar.Async.Unmanaged
 import Quasar.Awaitable
+import Quasar.Disposable
 import Quasar.Prelude
 import Quasar.ResourceManager
 
 -- | TODO: Documentation
 --
 -- The action will be run with asynchronous exceptions unmasked.
-async :: MonadResourceManager m => ResourceManagerIO a -> m (Awaitable a)
+async :: MonadResourceManager m => ResourceManagerIO a -> m (Async a)
 async action = asyncWithUnmask \unmask -> unmask action
 
 -- | TODO: Documentation
 --
 -- The action will be run with asynchronous exceptions masked and will be passed an action that can be used to unmask.
-asyncWithUnmask :: MonadResourceManager m => ((ResourceManagerIO a -> ResourceManagerIO a) -> ResourceManagerIO r) -> m (Awaitable r)
+asyncWithUnmask :: MonadResourceManager m => ((ResourceManagerIO a -> ResourceManagerIO a) -> ResourceManagerIO r) -> m (Async r)
 asyncWithUnmask action = do
   resourceManager <- askResourceManager
   asyncWithHandlerAndUnmask (throwToResourceManager resourceManager . AsyncException) action
@@ -48,10 +52,15 @@ asyncWithUnmask_ action = void $ asyncWithUnmask action
 --
 -- The action will be run with asynchronous exceptions unmasked. When an exception is thrown that is not caused from
 -- the disposable instance (i.e. the task being canceled), the handler is called with that exception.
-asyncWithHandlerAndUnmask :: MonadResourceManager m => (SomeException -> IO ()) -> ((ResourceManagerIO a -> ResourceManagerIO a) -> ResourceManagerIO r) -> m (Awaitable r)
+asyncWithHandlerAndUnmask
+  :: MonadResourceManager m
+  => (SomeException -> IO ())
+  -> ((ResourceManagerIO a -> ResourceManagerIO a)
+  -> ResourceManagerIO r)
+  -> m (Async r)
 asyncWithHandlerAndUnmask handler action = do
   resourceManager <- askResourceManager
-  toAwaitable <$> registerNewResource do
+  registerNewResource do
     unmanagedAsyncWithHandlerAndUnmask wrappedHandler \unmask ->
       onResourceManager resourceManager (action (liftUnmask unmask))
   where
@@ -63,11 +72,20 @@ asyncWithHandlerAndUnmask handler action = do
       resourceManager <- askResourceManager
       liftIO $ unmask $ onResourceManager resourceManager innerAction
 
-asyncWithHandlerAndUnmask_ :: MonadResourceManager m => (SomeException -> IO ()) -> ((ResourceManagerIO a -> ResourceManagerIO a) -> ResourceManagerIO r) -> m ()
+asyncWithHandlerAndUnmask_
+  :: MonadResourceManager m
+  => (SomeException -> IO ())
+  -> ((ResourceManagerIO a -> ResourceManagerIO a)
+  -> ResourceManagerIO r)
+  -> m ()
 asyncWithHandlerAndUnmask_ handler action = void $ asyncWithHandlerAndUnmask handler action
 
-asyncWithHandler :: MonadResourceManager m => (SomeException -> IO ()) -> ResourceManagerIO r -> m (Awaitable r)
+asyncWithHandler :: MonadResourceManager m => (SomeException -> IO ()) -> ResourceManagerIO r -> m (Async r)
 asyncWithHandler handler action = asyncWithHandlerAndUnmask handler \unmask -> unmask action
 
 asyncWithHandler_ :: MonadResourceManager m => (SomeException -> IO ()) -> ResourceManagerIO r -> m ()
 asyncWithHandler_ handler action = void $ asyncWithHandler handler action
+
+
+withAsync :: MonadResourceManager m => ResourceManagerIO r -> (Async r -> m a) -> m a
+withAsync action = bracket (async action) dispose
