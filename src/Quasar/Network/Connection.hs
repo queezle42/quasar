@@ -3,6 +3,7 @@ module Quasar.Network.Connection (
   IsConnection(..),
   connectTCP,
   newConnectionPair,
+  traceConnection,
 ) where
 
 import Control.Concurrent (threadDelay)
@@ -140,3 +141,25 @@ newConnectionPair = liftIO do
             (chunk:chunks) -> do
               whenM (readTVar localClosed) $ throwSTM ConnectionPairClosed
               chunk <$ writeTVar receiveBuffer chunks
+
+traceConnection :: String -> Connection -> Connection
+traceConnection name connection =
+  Connection {
+    send,
+    receive,
+    close
+  }
+  where
+    trace msg = traceIO $ mconcat [ "connection ", name, " ", msg ]
+    send bytes = do
+      trace $ "send: " <> show bytes
+      connection.send bytes
+    receive = do
+      trace $ "receiving..."
+      chunk <- connection.receive
+      trace $ "received: " <> show chunk
+      pure chunk
+    close = do
+      trace $ "closing"
+      connection.close
+
