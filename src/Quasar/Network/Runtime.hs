@@ -240,7 +240,7 @@ addListener_ :: (HasProtocolImpl p, MonadIO m) => Server p -> Listener -> m ()
 addListener_ server listener = void $ addListener server listener
 
 runServer :: forall p m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> [Listener] -> m ()
-runServer _ [] = fail "Tried to start a server without any listeners attached"
+runServer _ [] = throwM $ userError "Tried to start a server without any listeners attached"
 runServer protocolImpl listener = do
   server <- newServer @p protocolImpl listener
   await $ isDisposed server
@@ -321,7 +321,7 @@ withLocalClient server action =
 
 newLocalClient :: forall p m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> m (Client p)
 newLocalClient server = do
-  unless Socket.isUnixDomainSocketAvailable $ fail "Unix domain sockets are not available"
+  unless Socket.isUnixDomainSocketAvailable $ throwM $ userError "Unix domain sockets are not available"
   mask_ $ do
     (clientSocket, serverSocket) <- liftIO $ Socket.socketPair Socket.AF_UNIX Socket.Stream Socket.defaultProtocol
     connectToServer server serverSocket

@@ -25,7 +25,7 @@ shouldThrow action expected = do
   liftIO $ (onResourceManager resourceManager action) `Hspec.shouldThrow` expected
 
 spec :: Spec
-spec = describe "runMultiplexer" $ parallel $ do
+spec = parallel $ describe "runMultiplexer" $ do
   fit "can be closed from the channelSetupHook" do
     (x, y) <- newConnectionPair
     concurrently_
@@ -62,7 +62,7 @@ spec = describe "runMultiplexer" $ parallel $ do
 
     tryReadMVar recvMVar `shouldReturn` Nothing
 
-  it "can create sub-channels" $ do
+  fit "can create sub-channels" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
       channelSetHandler channel ((\_ -> liftIO . putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> ResourceManagerIO ())
@@ -72,7 +72,7 @@ spec = describe "runMultiplexer" $ parallel $ do
       liftIO $ takeMVar recvMVar `shouldReturn` "create more channels"
     tryReadMVar recvMVar `shouldReturn` Nothing
 
-  it "can send messages on sub-channels" $ do
+  fit "can send messages on sub-channels" $ do
     recvMVar <- newEmptyMVar
     c1RecvMVar <- newEmptyMVar
     c2RecvMVar <- newEmptyMVar
