@@ -153,66 +153,65 @@ spec = parallel $ do
         -- Change the value before calling `observe`
         setObservableVar var 42
 
-        withRootResourceManager do
-          observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
+        observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
 
-          liftIO $ join $ atomically $ readTVar resultVar >>=
-            \case
-              ObservableUpdate x -> pure $ x `shouldBe` 42
-              ObservableLoading -> retry
-              ObservableNotAvailable ex -> pure $ throwIO ex
+        liftIO $ join $ atomically $ readTVar resultVar >>=
+          \case
+            ObservableUpdate x -> pure $ x `shouldBe` 42
+            ObservableLoading -> retry
+            ObservableNotAvailable ex -> pure $ throwIO ex
 
     it "receives continuous updates when observing" $ rm do
       var <- newObservableVar 42
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
         resultVar <- liftIO $ newTVarIO ObservableLoading
         observable <- liftIO $ intObservable client
-        withRootResourceManager do
-          observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
 
-          let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=
-                \case
-                  -- Send and receive are running asynchronously, so this retries until the expected value is received.
-                  -- Blocks forever if the wrong or no value is received.
-                  ObservableUpdate x -> if (x == expected) then pure (pure ()) else retry
-                  ObservableLoading -> retry
-                  ObservableNotAvailable ex -> pure $ throwIO ex
+        observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
 
-          latestShouldBe 42
-          setObservableVar var 13
-          latestShouldBe 13
-          setObservableVar var (-1)
-          latestShouldBe (-1)
-          setObservableVar var 42
-          latestShouldBe 42
+        let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=
+              \case
+                -- Send and receive are running asynchronously, so this retries until the expected value is received.
+                -- Blocks forever if the wrong or no value is received.
+                ObservableUpdate x -> if (x == expected) then pure (pure ()) else retry
+                ObservableLoading -> retry
+                ObservableNotAvailable ex -> pure $ throwIO ex
+
+        latestShouldBe 42
+        setObservableVar var 13
+        latestShouldBe 13
+        setObservableVar var (-1)
+        latestShouldBe (-1)
+        setObservableVar var 42
+        latestShouldBe 42
 
     it "receives no further updates after unsubscribing" $ rm do
       var <- newObservableVar 42
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
         resultVar <- liftIO $ newTVarIO ObservableLoading
         observable <- liftIO $ intObservable client
-        withRootResourceManager do
-          disposable <- captureDisposable_ $ observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
 
-          let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=
-                \case
-                  -- Send and receive are running asynchronously, so this retries until the expected value is received.
-                  -- Blocks forever if the wrong or no value is received.
-                  ObservableUpdate x -> if (x < 0)
-                    then pure (fail "received a message after unsubscribing")
-                    else if (x == expected) then pure (pure ()) else retry
-                  ObservableLoading -> retry
-                  ObservableNotAvailable ex -> pure $ throwIO ex
+        disposable <- captureDisposable_ $ observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
 
-          latestShouldBe 42
-          setObservableVar var 13
-          latestShouldBe 13
-          setObservableVar var 42
-          latestShouldBe 42
+        let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=
+              \case
+                -- Send and receive are running asynchronously, so this retries until the expected value is received.
+                -- Blocks forever if the wrong or no value is received.
+                ObservableUpdate x -> if (x < 0)
+                  then pure (fail "received a message after unsubscribing")
+                  else if (x == expected) then pure (pure ()) else retry
+                ObservableLoading -> retry
+                ObservableNotAvailable ex -> pure $ throwIO ex
 
-          dispose disposable
+        latestShouldBe 42
+        setObservableVar var 13
+        latestShouldBe 13
+        setObservableVar var 42
+        latestShouldBe 42
 
-          setObservableVar var (-1)
-          liftIO $ threadDelay 10000
+        dispose disposable
 
-          latestShouldBe 42
+        setObservableVar var (-1)
+        liftIO $ threadDelay 10000
+
+        latestShouldBe 42

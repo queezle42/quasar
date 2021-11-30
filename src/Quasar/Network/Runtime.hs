@@ -97,12 +97,8 @@ clientRequest client checkResponse config req = do
         Just result -> putAsyncVar_ resultAsync result
 
 -- TODO use new direct decoder api instead
-clientHandleChannelMessage :: forall p. (RpcProtocol p) => Client p -> ReceivedMessageResources -> BSL.ByteString -> ResourceManagerIO ()
-clientHandleChannelMessage client resources msg = liftIO do
-  case decodeOrFail msg of
-    Left (_, _, errMsg) -> channelReportProtocolError client.channel errMsg
-    Right ("", _, resp) -> clientHandleResponse resp
-    Right (leftovers, _, _) -> channelReportProtocolError client.channel ("Response parser returned unexpected leftovers: " <> show (BSL.length leftovers))
+clientHandleChannelMessage :: forall p. (RpcProtocol p) => Client p -> ReceivedMessageResources -> ProtocolResponseWrapper p -> ResourceManagerIO ()
+clientHandleChannelMessage client resources resp = liftIO $ clientHandleResponse resp
   where
     clientHandleResponse :: ProtocolResponseWrapper p -> IO ()
     clientHandleResponse (requestId, resp) = do
@@ -117,12 +113,8 @@ clientReportProtocolError :: Client p -> String -> IO a
 clientReportProtocolError client = channelReportProtocolError client.channel
 
 
-serverHandleChannelMessage :: forall p. (HasProtocolImpl p) => ProtocolImpl p -> Channel -> ReceivedMessageResources -> BSL.ByteString -> ResourceManagerIO ()
-serverHandleChannelMessage protocolImpl channel resources msg = liftIO do
-  case decodeOrFail msg of
-    Left (_, _, errMsg) -> channelReportProtocolError channel errMsg
-    Right ("", _, req) -> serverHandleChannelRequest resources.createdChannels req
-    Right (leftovers, _, _) -> channelReportProtocolError channel ("Request parser pureed unexpected leftovers: " <> show (BSL.length leftovers))
+serverHandleChannelMessage :: forall p. (HasProtocolImpl p) => ProtocolImpl p -> Channel -> ReceivedMessageResources -> ProtocolRequest p -> ResourceManagerIO ()
+serverHandleChannelMessage protocolImpl channel resources req = liftIO $ serverHandleChannelRequest resources.createdChannels req
   where
     serverHandleChannelRequest :: [Channel] -> ProtocolRequest p -> IO ()
     serverHandleChannelRequest channels req = do
@@ -320,12 +312,10 @@ withLocalClient server action =
     action client
 
 newLocalClient :: forall p m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> m (Client p)
-newLocalClient server = do
-  unless Socket.isUnixDomainSocketAvailable $ throwM $ userError "Unix domain sockets are not available"
-  mask_ $ do
-    (clientSocket, serverSocket) <- liftIO $ Socket.socketPair Socket.AF_UNIX Socket.Stream Socket.defaultProtocol
-    connectToServer server serverSocket
-    newClient @p clientSocket
+newLocalClient server = mask_ do
+  (clientSocket, serverSocket) <- newConnectionPair
+  connectToServer server serverSocket
+  newClient @p clientSocket
 
 -- ** Test implementation
 

@@ -43,11 +43,13 @@ newObservableStub startRetrieveRequest startObserveRequest = pure uncachedObserv
     uncachedObservable :: Observable v
     uncachedObservable = fnObservable observeFn retrieveFn
     observeFn :: (ObservableMessage v -> ResourceManagerIO ()) -> ResourceManagerIO ()
-    observeFn callback =
+    observeFn callback = do
+      callback ObservableLoading
       registerNewResource_ do
         -- TODO send updates about the connection status
         stream <- startObserveRequest
         resourceManager <- askResourceManager
+        -- TODO FIXME enterResourceManager may fail if the resource manager is disposing (before the stream is disposed)
         streamSetHandler stream (enterResourceManager resourceManager . callback . unpackObservableMessage)
         pure $ toDisposable stream
     retrieveFn :: ResourceManagerIO (Awaitable v)
