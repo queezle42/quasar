@@ -312,9 +312,8 @@ runMultiplexer :: (IsConnection a, MonadResourceManager m) => MultiplexerSide ->
 runMultiplexer side channelSetupHook (toSocketConnection -> connection) = liftResourceManagerIO $ mask_ do
   (rootChannel, result) <- newMultiplexerInternal side connection
   onResourceManager rootChannel $ channelSetupHook rootChannel
-  await result >>= \case
-    Nothing -> pure ()
-    Just exception -> throwM exception
+  mException <- await result
+  mapM_ throwM mException
 
 -- | Starts a new multiplexer on an existing connection (e.g. on a connected TCP socket).
 newMultiplexer :: (IsConnection a, MonadResourceManager m) => MultiplexerSide -> a -> m Channel
@@ -322,10 +321,8 @@ newMultiplexer side (toSocketConnection -> connection) = liftResourceManagerIO $
   resourceManager <- askResourceManager
   (rootChannel, result) <- newMultiplexerInternal side connection
   async_ $ liftIO $ uninterruptibleMask_ do
-    -- TODO
-    await result >>= \case
-      Nothing -> pure ()
-      Just exception -> throwToResourceManager resourceManager exception
+    mException <- await result
+    mapM_ (throwToResourceManager resourceManager) mException
   pure rootChannel
 
 newMultiplexerInternal :: MultiplexerSide -> Connection -> ResourceManagerIO (Channel, Awaitable (Maybe MultiplexerException))
@@ -452,7 +449,6 @@ sendThread multiplexer sendFn = do
               _ -> pure do
                 msg <- execWriterT do
                   formatChannelMessage mMessage
-                  --unless (null closeChannelQueue) $ traceIO $ "Sending channel close messages: " <> show (reverse closeChannelQueue)
                   -- closeChannelQueue is used as a queue, so it has to be reversed to keep the order of close messages
                   formatCloseMessages (reverse closeChannelQueue)
                 liftIO $ send msg
@@ -550,19 +546,22 @@ receiveThread multiplexer readFn = do
 
     execReceivedMultiplexerMessage :: ReceiveThreadState -> MultiplexerMessage -> StateT BS.ByteString IO (Maybe ReceiveThreadState)
     execReceivedMultiplexerMessage Nothing (ChannelMessage _ messageLength) = undefined
-    execReceivedMultiplexerMessage jc@(Just channel) (ChannelMessage newChannelCount messageLength) = do
+    execReceivedMultiplexerMessage state@(Just channel) (ChannelMessage newChannelCount messageLength) = do
       join $ liftIO $ atomically do
         closedByRemote <- readTVar channel.receivedCloseMessage
         sentClose <- readTVar channel.sentCloseMessage
+        -- Create channels even if the current channel has been closed, to stay in sync with the remote side
+        createdChannelIds <- stateTVar multiplexer.nextReceiveChannelId (createChannelIds newChannelCount)
+        createdChannels <- mapM (newChannelSTM channel) createdChannelIds
         pure do
           -- Receiving messages after the remote side closed a channel is a protocol error
           when closedByRemote $ protocolException $
             mconcat ["Received message for invalid channel ", show channel.channelId, " (channel is closed)"]
           if sentClose
             -- Drop received messages when the channel has been closed on the local side
-            then undefined -- TODO drop message
-            else receiveChannelMessage channel newChannelCount messageLength
-          pure $ Just jc
+            then dropBytes messageLength
+            else receiveChannelMessage channel createdChannels messageLength
+          pure $ Just state
 
     execReceivedMultiplexerMessage _ (SwitchChannel channelId) = liftIO do
       lookupChannel channelId >>= \case
@@ -592,16 +591,12 @@ receiveThread multiplexer readFn = do
     execReceivedMultiplexerMessage _ (InternalError msg) =
       throwM $ RemoteException msg
 
-    receiveChannelMessage :: Channel -> NewChannelCount -> MessageLength -> StateT BS.ByteString IO ()
-    receiveChannelMessage channel newChannelCount messageLength = do
+    receiveChannelMessage :: Channel -> [Channel] -> MessageLength -> StateT BS.ByteString IO ()
+    receiveChannelMessage channel createdChannels messageLength = do
       modifyStateM \chunk -> liftIO do
         messageId <- atomically $ stateTVar channel.nextReceiveMessageId (\x -> (x, x + 1))
         -- NOTE blocks until a channel handler is set
         handler <- atomically $ maybe retry pure =<< readTVar channel.channelHandler
-
-        createdChannels <- atomically do
-          createdChannelIds <- stateTVar multiplexer.nextReceiveChannelId (createChannelIds newChannelCount)
-          mapM (newChannelSTM channel) createdChannelIds
 
         messageHandler <- handler ReceivedMessageResources {
           createdChannels,
@@ -627,6 +622,18 @@ receiveThread multiplexer readFn = do
           where
             chunkLength = fromIntegral $ BS.length chunk
 
+    dropBytes :: MessageLength -> StateT BS.ByteString IO ()
+    dropBytes = modifyStateM . go
+      where
+        go :: MessageLength -> BS.ByteString -> IO BS.ByteString
+        go remaining chunk
+          | chunkLength <= remaining = do
+            go (remaining - chunkLength) =<< read
+          | otherwise = do
+            pure $ BS.drop (fromIntegral remaining) chunk
+          where
+            chunkLength = fromIntegral $ BS.length chunk
+
 
 channelSend :: MonadIO m => Channel -> MessageConfiguration -> BSL.ByteString -> (MessageId -> STM ()) -> m SentMessageResources
 channelSend = sendChannelMessage
@@ -642,7 +649,6 @@ sendChannelMessage channel@Channel{multiplexer} MessageConfiguration{closeChanne
     result <- withMVar multiplexer.outboxGuard \_ -> do
       atomically do
         -- Abort if the multiplexer is finished or currently cleaning up
-        -- TODO
         mapM_ throwM =<< tryReadAsyncVarSTM multiplexer.multiplexerException
 
         -- Abort if the channel is closed

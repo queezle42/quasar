@@ -26,19 +26,19 @@ shouldThrow action expected = do
 
 spec :: Spec
 spec = parallel $ describe "runMultiplexer" $ do
-  fit "can be closed from the channelSetupHook" do
+  it "can be closed from the channelSetupHook" do
     (x, y) <- newConnectionPair
     concurrently_
       do rm (runMultiplexer MultiplexerSideA dispose x)
       do rm (runMultiplexer MultiplexerSideB dispose y)
 
-  fit "closes when the remote is closed" do
+  it "closes when the remote is closed" do
     (x, y) <- newConnectionPair
     concurrently_
       do rm (runMultiplexer MultiplexerSideA (\rootChannel -> await (isDisposed rootChannel)) x)
       do rm (runMultiplexer MultiplexerSideB dispose y)
 
-  fit "can dispose a resource" $ rm do
+  it "can dispose a resource" $ rm do
     var <- newAsyncVar
     (x, y) <- newConnectionPair
     void $ newMultiplexer MultiplexerSideB y
@@ -51,7 +51,7 @@ spec = parallel $ describe "runMultiplexer" $ do
       do x
     peekAwaitable var `shouldReturn` Just ()
 
-  fit "can send and receive simple messages" $ do
+  it "can send and receive simple messages" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
       channelSetSimpleHandler channel ((liftIO . putMVar recvMVar) :: BSL.ByteString -> ResourceManagerIO ())
@@ -62,7 +62,7 @@ spec = parallel $ describe "runMultiplexer" $ do
 
     tryReadMVar recvMVar `shouldReturn` Nothing
 
-  fit "can create sub-channels" $ do
+  it "can create sub-channels" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
       channelSetHandler channel ((\_ -> liftIO . putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> ResourceManagerIO ())
@@ -72,7 +72,7 @@ spec = parallel $ describe "runMultiplexer" $ do
       liftIO $ takeMVar recvMVar `shouldReturn` "create more channels"
     tryReadMVar recvMVar `shouldReturn` Nothing
 
-  fit "can send messages on sub-channels" $ do
+  it "can send messages on sub-channels" $ do
     recvMVar <- newEmptyMVar
     c1RecvMVar <- newEmptyMVar
     c2RecvMVar <- newEmptyMVar
