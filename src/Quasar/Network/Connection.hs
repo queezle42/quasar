@@ -112,25 +112,31 @@ newConnectionPair :: MonadIO m => m (Connection, Connection)
 newConnectionPair = liftIO do
   x <- newTVarIO []
   y <- newTVarIO []
-  c <- newTVarIO False
-  pure (connectionSide x y c, connectionSide y x c)
+  cx <- newTVarIO False
+  cy <- newTVarIO False
+  pure (connectionSide x y cx cy, connectionSide y x cy cx)
   where
-    connectionSide s r c =
+    connectionSide sendBuffer receiveBuffer localClosed remoteClosed =
       Connection {
         send,
         receive,
-        close = atomically $ writeTVar c True
+        close
       }
       where
-        failWhenClosed = do
-          closed <- readTVar c
-          when closed $ throwSTM ConnectionPairClosed
-        send chunk = atomically do
-          failWhenClosed
-          check . null =<< readTVar s
-          writeTVar s $ BSL.toChunks chunk
+        close = atomically do
+          writeTVar localClosed True
+          writeTVar receiveBuffer []
+        send bytes = atomically do
+          whenM (readTVar localClosed) $ throwSTM ConnectionPairClosed
+          whenM (readTVar remoteClosed) $ throwSTM ConnectionPairClosed
+          check . null =<< readTVar sendBuffer
+          writeTVar sendBuffer $ BSL.toChunks bytes
         receive = atomically do
-          failWhenClosed
-          readTVar r >>= \case
-            [] -> retry
-            (chunk:chunks) -> chunk <$ writeTVar r chunks
+          readTVar receiveBuffer >>= \case
+            [] -> do
+              whenM (readTVar localClosed) $ throwSTM ConnectionPairClosed
+              whenM (readTVar remoteClosed) $ throwSTM ConnectionPairClosed
+              retry
+            (chunk:chunks) -> do
+              whenM (readTVar localClosed) $ throwSTM ConnectionPairClosed
+              chunk <$ writeTVar receiveBuffer chunks
