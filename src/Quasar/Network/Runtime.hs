@@ -171,14 +171,14 @@ newClientUnix socketPath =
       liftIO do
         Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
         Socket.connect sock $ Socket.SockAddrUnix socketPath
-      newClient sock
+      newClient $ socketConnection socketPath sock
 
 
-withClient :: forall p a m b. (IsConnection a, RpcProtocol p, MonadResourceManager m) => a -> (Client p -> m b) -> m b
+withClient :: forall p a m b. (RpcProtocol p, MonadResourceManager m) => Connection -> (Client p -> m b) -> m b
 withClient connection = withClientBracket (newClient connection)
 
-newClient :: forall p a m. (IsConnection a, RpcProtocol p, MonadResourceManager m) => a -> m (Client p)
-newClient connection = newChannelClient =<< newMultiplexer MultiplexerSideA (toSocketConnection connection)
+newClient :: forall p a m. (RpcProtocol p, MonadResourceManager m) => Connection -> m (Client p)
+newClient connection = newChannelClient =<< newMultiplexer MultiplexerSideA connection
 
 withClientBracket :: (MonadResourceManager m) => m (Client p) -> (Client p -> m a) -> m a
 withClientBracket createClient = bracket createClient dispose
@@ -286,22 +286,21 @@ runListenerOnBoundSocket :: forall p a m. (HasProtocolImpl p, MonadIO m, MonadMa
 runListenerOnBoundSocket server sock = do
   liftIO $ Socket.listen sock 1024
   forever $ mask_ $ do
-    (conn, _sockAddr) <- liftIO $ Socket.accept sock
-    connectToServer server conn
+    connection <- liftIO $ sockAddrConnection <$> Socket.accept sock
+    connectToServer server connection
 
-connectToServer :: forall p a m. (HasProtocolImpl p, IsConnection a, MonadIO m) => Server p -> a -> m ()
-connectToServer server conn =
+connectToServer :: forall p a m. (HasProtocolImpl p, MonadIO m) => Server p -> Connection -> m ()
+connectToServer server connection =
   -- Attach to server resource manager: When the server is closed, all listeners should be closed.
   onResourceManager server do
-    asyncWithHandler_ (\ex -> traceIO ("Client connection failed:\n" <> (displayException ex))) do
+    asyncWithHandler_ (\ex -> traceIO (mconcat ["Client connection lost (", connection.description, "):\n", (displayException ex)])) do
+
       -- This needs a resource manager which catches (and then logs) exceptions. Since that doesn't exist right now,
       -- a new resource manager root is used instead.
       withRootResourceManager do
-        runMultiplexer MultiplexerSideB registerChannelServerHandler $ conn
-  where
-    connection :: Connection
-    connection = toSocketConnection conn
+        runMultiplexer MultiplexerSideB registerChannelServerHandler $ connection
 
+  where
     registerChannelServerHandler :: Channel -> ResourceManagerIO ()
     registerChannelServerHandler channel = liftIO do
       channelSetBinaryHandler channel (serverHandleChannelMessage @p server.protocolImpl channel)

@@ -1,16 +1,28 @@
 module Quasar.Network.Connection (
+  -- * Connection abstraction
   Connection(..),
-  IsConnection(..),
   connectTCP,
   newConnectionPair,
   traceConnection,
+
+  -- ** Generating connections from sockets
+  socketConnection,
+  sockAddrConnection,
+
+  -- ** EOF as an exception
+  EOF(..),
+  receiveCheckEOF,
+
+  -- ** Low-level
+  connectTCPSocket,
 ) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (Async, async, cancel, link, waitCatch, withAsync)
 import Control.Concurrent.MVar
 import Control.Concurrent.STM
-import Control.Exception (Exception(..), bracketOnError, catch, interruptible, finally, bracketOnError, onException)
+import Control.Exception (interruptible)
+import Control.Monad.Catch
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BSL
 import Network.Socket qualified as Socket
@@ -20,21 +32,34 @@ import Quasar.Prelude
 
 -- | Abstraction over a bidirectional stream connection (e.g. a socket), to be able to switch to different communication channels (e.g. stdin/stdout or a dummy implementation for unit tests).
 data Connection = Connection {
+  description :: String,
   send :: BSL.ByteString -> IO (),
   receive :: IO BS.ByteString,
   -- | Close - expected to be idempotent
   close :: IO ()
 }
-class IsConnection a where
-  toSocketConnection :: a -> Connection
-instance IsConnection Connection where
-  toSocketConnection = id
-instance IsConnection Socket.Socket where
-  toSocketConnection sock = Connection {
-    send=SocketL.sendAll sock,
-    receive=Socket.recv sock 4096,
-    close=Socket.close sock
+
+sockAddrConnection :: (Socket.Socket, Socket.SockAddr) -> Connection
+sockAddrConnection (sock, sockAddr) = socketConnection (show sockAddr) sock
+
+socketConnection :: String -> Socket.Socket -> Connection
+socketConnection description sock = Connection {
+    description,
+    send = SocketL.sendAll sock,
+    receive = Socket.recv sock 4096,
+    close = Socket.close sock
   }
+
+
+data EOF = EOF
+  deriving stock Show
+  deriving anyclass Exception
+
+receiveCheckEOF :: Connection -> IO BS.ByteString
+receiveCheckEOF connection = do
+  chunk <- connection.receive
+  when (BS.null chunk) $ throwM EOF
+  pure chunk
 
 
 newtype ConnectingFailed = ConnectingFailed [(Socket.AddrInfo, SomeException)]
@@ -44,8 +69,13 @@ instance Exception ConnectingFailed where
 
 -- | Open a TCP connection to target host and port. Will start multiple connection attempts (i.e. retry quickly and then try other addresses) but only return the first successful connection.
 -- Throws a 'ConnectionFailed' on failure, which contains the exceptions from all failed connection attempts.
-connectTCP :: MonadIO m => Socket.HostName -> Socket.ServiceName -> m Socket.Socket
-connectTCP host port = liftIO do
+connectTCP :: MonadIO m => Socket.HostName -> Socket.ServiceName -> m Connection
+connectTCP host port = socketConnection (mconcat [show host, ":", show port]) <$> connectTCPSocket host port
+
+-- | Open a TCP connection to target host and port. Will start multiple connection attempts (i.e. retry quickly and then try other addresses) but only return the first successful connection.
+-- Throws a 'ConnectionFailed' on failure, which contains the exceptions from all failed connection attempts.
+connectTCPSocket :: MonadIO m => Socket.HostName -> Socket.ServiceName -> m Socket.Socket
+connectTCPSocket host port = liftIO do
   -- 'getAddrInfo' either pures a non-empty list or throws an exception
   -- TODO simultaneous v4 and v6 resolution (see RFC 8305)
   -- TODO sort responses (e.g. give private range IPs priority)
@@ -118,6 +148,7 @@ newConnectionPair = liftIO do
   where
     connectionSide sendBuffer receiveBuffer localClosed remoteClosed =
       Connection {
+        description = "local",
         send,
         receive,
         close
@@ -135,8 +166,10 @@ newConnectionPair = liftIO do
           readTVar receiveBuffer >>= \case
             [] -> do
               whenM (readTVar localClosed) $ throwSTM ConnectionPairClosed
-              whenM (readTVar remoteClosed) $ throwSTM ConnectionPairClosed
-              retry
+              eof <- readTVar remoteClosed
+              if eof
+                then pure "" -- EOF
+                else retry
             (chunk:chunks) -> do
               whenM (readTVar localClosed) $ throwSTM ConnectionPairClosed
               chunk <$ writeTVar receiveBuffer chunks
@@ -144,6 +177,7 @@ newConnectionPair = liftIO do
 traceConnection :: String -> Connection -> Connection
 traceConnection name connection =
   Connection {
+    description = connection.description,
     send,
     receive,
     close

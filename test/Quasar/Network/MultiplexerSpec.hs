@@ -112,6 +112,7 @@ spec = parallel $ describe "runMultiplexer" $ do
     msgSentMVar <- liftIO newEmptyMVar
     let
       connection = Connection {
+        description = "hanging test connection",
         send = const (putMVar msgSentMVar () >> sleepForever),
         receive = sleepForever,
         close = pure ()

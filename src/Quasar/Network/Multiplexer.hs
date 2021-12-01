@@ -308,16 +308,16 @@ data ReceivedMessageResources = ReceivedMessageResources {
 
 -- | Starts a new multiplexer on the provided connection and blocks until it is closed.
 -- The channel is provided to a setup action and can be closed by calling `dispose`; otherwise the multiplexer will run until the underlying connection is closed.
-runMultiplexer :: (IsConnection a, MonadResourceManager m) => MultiplexerSide -> (Channel -> ResourceManagerIO ()) -> a -> m ()
-runMultiplexer side channelSetupHook (toSocketConnection -> connection) = liftResourceManagerIO $ mask_ do
+runMultiplexer :: MonadResourceManager m => MultiplexerSide -> (Channel -> ResourceManagerIO ()) -> Connection -> m ()
+runMultiplexer side channelSetupHook connection = liftResourceManagerIO $ mask_ do
   (rootChannel, result) <- newMultiplexerInternal side connection
   onResourceManager rootChannel $ channelSetupHook rootChannel
   mException <- await result
   mapM_ throwM mException
 
 -- | Starts a new multiplexer on an existing connection (e.g. on a connected TCP socket).
-newMultiplexer :: (IsConnection a, MonadResourceManager m) => MultiplexerSide -> a -> m Channel
-newMultiplexer side (toSocketConnection -> connection) = liftResourceManagerIO $ mask_ do
+newMultiplexer :: MonadResourceManager m => MultiplexerSide -> Connection -> m Channel
+newMultiplexer side connection = liftResourceManagerIO $ mask_ do
   resourceManager <- askResourceManager
   (rootChannel, result) <- newMultiplexerInternal side connection
   async_ $ liftIO $ uninterruptibleMask_ do
@@ -346,7 +346,7 @@ newMultiplexerInternal side connection = disposeOnError do
     lockResourceManager do
       multiplexer <- mfix \multiplexer -> do
         receiveThread <- unmanagedAsyncWithHandler (multiplexerExceptionHandler multiplexer) do
-          liftIO $ receiveThread multiplexer connection.receive
+          liftIO $ receiveThread multiplexer (receiveCheckEOF connection)
         sendThread <- unmanagedAsyncWithHandler (multiplexerExceptionHandler multiplexer) do
           liftIO $ sendThread multiplexer connection.send
         let
