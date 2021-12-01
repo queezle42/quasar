@@ -26,6 +26,7 @@ module Quasar.Network.Multiplexer (
 
   -- ** Exception handling
   MultiplexerException(..),
+  ConnectionLostReason(..),
   ChannelException(..),
   channelReportProtocolError,
   channelReportException,
@@ -136,8 +137,13 @@ instance Exception MultiplexerException where
 data ConnectionLostReason
   = SendFailed SomeException
   | ReceiveFailed SomeException
-  | CloseTimeoutReached -- "Multiplexer reached timeout while gracefully closing connection"
+  | CloseTimeoutReached -- "Multiplexer reached timeout while closing connection"
   deriving stock Show
+
+instance Exception ConnectionLostReason where
+  displayException (SendFailed ex) = displayException ex
+  displayException (ReceiveFailed ex) = "Failed to send: " <> displayException ex
+  displayException CloseTimeoutReached = "Multiplexer reached timeout while closing connection"
 
 protocolException :: MonadThrow m => String -> m a
 protocolException = throwM . ProtocolException

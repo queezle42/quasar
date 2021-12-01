@@ -293,7 +293,7 @@ connectToServer :: forall p a m. (HasProtocolImpl p, MonadIO m) => Server p -> C
 connectToServer server connection =
   -- Attach to server resource manager: When the server is closed, all listeners should be closed.
   onResourceManager server do
-    asyncWithHandler_ (\ex -> traceIO (mconcat ["Client connection lost (", connection.description, "):\n", (displayException ex)])) do
+    asyncWithHandler_ (traceIO . formatException) do
 
       -- This needs a resource manager which catches (and then logs) exceptions. Since that doesn't exist right now,
       -- a new resource manager root is used instead.
@@ -304,6 +304,14 @@ connectToServer server connection =
     registerChannelServerHandler :: Channel -> ResourceManagerIO ()
     registerChannelServerHandler channel = liftIO do
       channelSetBinaryHandler channel (serverHandleChannelMessage @p server.protocolImpl channel)
+
+    formatException :: SomeException -> String
+    formatException (fromException -> Just (ConnectionLost (ReceiveFailed (fromException -> Just EOF)))) =
+      mconcat ["Client connection lost (", connection.description, ")"]
+    formatException (fromException -> Just (ConnectionLost ex)) =
+      mconcat ["Client connection lost (", connection.description, "): ", (displayException ex)]
+    formatException ex =
+      mconcat ["Client exception (", connection.description, "): ", (displayException ex)]
 
 
 withLocalClient :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> (Client p -> m a) -> m a
