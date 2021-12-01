@@ -33,8 +33,7 @@ instance IsConnection Socket.Socket where
   toSocketConnection sock = Connection {
     send=SocketL.sendAll sock,
     receive=Socket.recv sock 4096,
-    -- gracefulClose may fail but guarantees that the socket is deallocated
-    close=Socket.gracefulClose sock 2000 `catch` \(_ :: SomeException) -> pure ()
+    close=Socket.close sock
   }
 
 

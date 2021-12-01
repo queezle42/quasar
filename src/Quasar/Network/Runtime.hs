@@ -288,21 +288,19 @@ runListenerOnBoundSocket server sock = do
     (conn, _sockAddr) <- liftIO $ Socket.accept sock
     connectToServer server conn
 
-connectToServer :: forall p a m. (HasProtocolImpl p, IsConnection a, MonadIO m) => Server p -> a -> m ()
+connectToServer :: forall p a m. (HasProtocolImpl p, IsConnection a, MonadResourceManager m) => Server p -> a -> m ()
 connectToServer server conn =
   onResourceManager server do
-    registerDisposeAction $ connection.close
-    async_ $ runServerHandler @p server.protocolImpl connection
+    asyncWithHandler_ (\ex -> traceIO ("Client connection failed:\n" <> (displayException ex))) do
+      withRootResourceManager do
+        runMultiplexer MultiplexerSideB registerChannelServerHandler $ conn
   where
     connection :: Connection
     connection = toSocketConnection conn
 
-runServerHandler :: forall p a m. (HasProtocolImpl p, IsConnection a, MonadResourceManager m) => ProtocolImpl p -> a -> m ()
-runServerHandler protocolImpl = runMultiplexer MultiplexerSideB registerChannelServerHandler . toSocketConnection
-  where
     registerChannelServerHandler :: Channel -> ResourceManagerIO ()
     registerChannelServerHandler channel = liftIO do
-      channelSetBinaryHandler channel (serverHandleChannelMessage @p protocolImpl channel)
+      channelSetBinaryHandler channel (serverHandleChannelMessage @p server.protocolImpl channel)
 
 
 withLocalClient :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> (Client p -> m a) -> m a
