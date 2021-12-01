@@ -232,7 +232,7 @@ addListener_ :: (HasProtocolImpl p, MonadIO m) => Server p -> Listener -> m ()
 addListener_ server listener = void $ addListener server listener
 
 runServer :: forall p m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> [Listener] -> m ()
-runServer _ [] = throwM $ userError "Tried to start a server without any listeners attached"
+runServer _ [] = throwM $ userError "Tried to start a server without any listeners"
 runServer protocolImpl listener = do
   server <- newServer @p protocolImpl listener
   await $ isDisposed server
@@ -240,7 +240,7 @@ runServer protocolImpl listener = do
 listenTCP :: forall p m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> Maybe Socket.HostName -> Socket.ServiceName -> m ()
 listenTCP impl mhost port = runServer @p impl [TcpPort mhost port]
 
-runTCPListener :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> Maybe Socket.HostName -> Socket.ServiceName -> m a
+runTCPListener :: forall p a m. (HasProtocolImpl p, MonadIO m, MonadMask m) => Server p -> Maybe Socket.HostName -> Socket.ServiceName -> m a
 runTCPListener server mhost port = do
   addr <- liftIO resolve
   bracket (liftIO (open addr)) (liftIO . Socket.close) (runListenerOnBoundSocket server)
@@ -259,7 +259,7 @@ runTCPListener server mhost port = do
 listenUnix :: forall p m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> FilePath -> m ()
 listenUnix impl path = runServer @p impl [UnixSocket path]
 
-runUnixSocketListener :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> FilePath -> m a
+runUnixSocketListener :: forall p a m. (HasProtocolImpl p, MonadIO m, MonadMask m) => Server p -> FilePath -> m a
 runUnixSocketListener server socketPath = do
   bracket create (liftIO . Socket.close) (runListenerOnBoundSocket server)
   where
@@ -281,7 +281,7 @@ runUnixSocketListener server socketPath = do
 listenOnBoundSocket :: forall p m. (HasProtocolImpl p, MonadResourceManager m) => ProtocolImpl p -> Socket.Socket -> m ()
 listenOnBoundSocket protocolImpl socket = runServer @p protocolImpl [ListenSocket socket]
 
-runListenerOnBoundSocket :: forall p a m. (HasProtocolImpl p, MonadResourceManager m) => Server p -> Socket.Socket -> m a
+runListenerOnBoundSocket :: forall p a m. (HasProtocolImpl p, MonadIO m, MonadMask m) => Server p -> Socket.Socket -> m a
 runListenerOnBoundSocket server sock = do
   liftIO $ Socket.listen sock 1024
   forever $ mask_ $ do
