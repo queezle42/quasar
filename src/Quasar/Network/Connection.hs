@@ -40,6 +40,7 @@ data Connection = Connection {
 }
 
 sockAddrConnection :: (Socket.Socket, Socket.SockAddr) -> Connection
+sockAddrConnection (sock, Socket.SockAddrUnix "") = socketConnection "unix" sock
 sockAddrConnection (sock, sockAddr) = socketConnection (show sockAddr) sock
 
 socketConnection :: String -> Socket.Socket -> Connection
