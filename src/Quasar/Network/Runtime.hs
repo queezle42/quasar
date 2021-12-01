@@ -12,6 +12,7 @@ module Quasar.Network.Runtime (
   -- * Server
   Server,
   Listener(..),
+  newServer,
   runServer,
   addListener,
   addListener_,
