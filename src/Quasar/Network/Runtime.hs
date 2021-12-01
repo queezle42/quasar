@@ -288,10 +288,13 @@ runListenerOnBoundSocket server sock = do
     (conn, _sockAddr) <- liftIO $ Socket.accept sock
     connectToServer server conn
 
-connectToServer :: forall p a m. (HasProtocolImpl p, IsConnection a, MonadResourceManager m) => Server p -> a -> m ()
+connectToServer :: forall p a m. (HasProtocolImpl p, IsConnection a, MonadIO m) => Server p -> a -> m ()
 connectToServer server conn =
+  -- Attach to server resource manager: When the server is closed, all listeners should be closed.
   onResourceManager server do
     asyncWithHandler_ (\ex -> traceIO ("Client connection failed:\n" <> (displayException ex))) do
+      -- This needs a resource manager which catches (and then logs) exceptions. Since that doesn't exist right now,
+      -- a new resource manager root is used instead.
       withRootResourceManager do
         runMultiplexer MultiplexerSideB registerChannelServerHandler $ conn
   where
