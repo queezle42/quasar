@@ -97,6 +97,7 @@ library
     Quasar.ResourceManager
     Quasar.Subscribable
     Quasar.Timer
+    Quasar.Timer.PosixTimer
     Quasar.Utils.Exceptions
     Quasar.Utils.ExtraT
   hs-source-dirs:
