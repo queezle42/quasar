@@ -1,5 +1,6 @@
 module Quasar.Async (
   -- * Async
+  Async,
   async,
   async_,
   asyncWithUnmask,
