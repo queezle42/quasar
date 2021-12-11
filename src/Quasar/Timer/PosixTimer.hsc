@@ -2,9 +2,12 @@
 
 module Quasar.Timer.PosixTimer (
   ClockId(..),
+  toCClockId,
   TimerSetTimeMode(..),
   CTimeSpec(..),
+  defaultCTimeSpec,
   CITimerSpec(..),
+  defaultCITimerSpec,
   newPosixTimer,
   newUnmanagedPosixTimer,
   setPosixTimer,
