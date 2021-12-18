@@ -384,7 +384,8 @@ instance IsDisposable DefaultResourceManager where
       primaryBeginDispose :: [Disposable] -> IO DisposeResult
       primaryBeginDispose disposables = do
         (reportExceptionActions, resultAwaitables) <- unzip <$> mapM beginDisposeEntry disposables
-        cachedResultAwaitable <- cacheAwaitable $ mconcat resultAwaitables
+        -- TODO caching was removed; re-optimize later
+        let cachedResultAwaitable = mconcat resultAwaitables
         putAsyncVar_ resultVar cachedResultAwaitable
 
         let
