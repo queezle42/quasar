@@ -5,6 +5,7 @@ module Quasar.ResourceManager (
   ResourceManagerIO,
   ResourceManagerSTM,
   FailedToRegisterResource,
+  attachDisposable,
   registerNewResource,
   registerNewResource_,
   registerDisposable,
@@ -61,9 +62,6 @@ import Quasar.Disposable
 import Quasar.Prelude
 import Quasar.Utils.Exceptions
 
--- TODO: Merge `DefaultResourceManager` and `RootResourceManager` as `ResourceManager`
--- This allows to remove functions other than `toResourceManager` from the `IsResourceManager` class.
-
 
 data DisposeException = DisposeException SomeException
   deriving stock Show
@@ -85,35 +83,9 @@ instance Exception FailedToLockResourceManager where
   displayException FailedToLockResourceManager =
     "FailedToLockResourceManager: Failed to lock a resource manager."
 
+-- TODO HasResourceManager, getResourceManager
 class IsDisposable a => IsResourceManager a where
   toResourceManager :: a -> ResourceManager
-  toResourceManager = ResourceManager
-
-  -- | Attaches an `Disposable` to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
-  --
-  -- May throw an `FailedToRegisterResource` if the resource manager is disposing/disposed.
-  attachDisposable :: IsDisposable b => a -> b -> STM ()
-  attachDisposable self = attachDisposable (toResourceManager self)
-
-  lockResourceManagerImpl :: (MonadIO m, MonadMask m) => a -> m b -> m b
-  lockResourceManagerImpl self = lockResourceManagerImpl (toResourceManager self)
-
-  -- | Forward an exception that happened asynchronously.
-  throwToResourceManagerImpl :: Exception e => a -> e -> STM ()
-  throwToResourceManagerImpl = throwToResourceManagerImpl . toResourceManager
-
-  {-# MINIMAL toResourceManager | (attachDisposable, lockResourceManagerImpl, throwToResourceManagerImpl) #-}
-
-
-
-data ResourceManager = forall a. IsResourceManager a => ResourceManager a
-instance IsResourceManager ResourceManager where
-  toResourceManager = id
-  attachDisposable (ResourceManager x) = attachDisposable x
-  lockResourceManagerImpl (ResourceManager x) = lockResourceManagerImpl x
-  throwToResourceManagerImpl (ResourceManager x) = throwToResourceManagerImpl x
-instance IsDisposable ResourceManager where
-  toDisposable (ResourceManager x) = toDisposable x
 
 
 class MonadFix m => MonadResourceManager m where
@@ -136,10 +108,11 @@ class MonadFix m => MonadResourceManager m where
   maskIfRequired :: MonadResourceManager m => m a -> m a
 
 
+-- | Forward an exception that happened asynchronously.
 throwToResourceManager :: (Exception e, MonadResourceManager m) => e -> m ()
-throwToResourceManager exception = do
+throwToResourceManager ex = do
   resourceManager <- askResourceManager
-  runInSTM $ throwToResourceManagerImpl resourceManager exception
+  runInSTM $ throwToResourceManagerImpl resourceManager (toException ex)
 
 
 runInResourceManagerSTM :: MonadResourceManager m => ResourceManagerSTM a -> m a
@@ -298,42 +271,52 @@ newUniqueRM = runInSTM newUniqueSTM
 
 -- ** Root resource manager
 
-data RootResourceManager
-  = RootResourceManager DefaultResourceManager (TVar Bool) (TMVar (Seq SomeException)) (AsyncVar [SomeException])
-
-instance IsResourceManager RootResourceManager where
-  attachDisposable (RootResourceManager internal _ _ _) = attachDisposable internal
-  lockResourceManagerImpl (RootResourceManager internal _ _ _) = lockResourceManagerImpl internal
-  throwToResourceManagerImpl (RootResourceManager _ _ exceptionsVar _) ex = do
-    tryTakeTMVar exceptionsVar >>= \case
-      Just exceptions -> do
-        putTMVar exceptionsVar (exceptions |> toException ex)
-      Nothing -> do
-        throwM $ userError "Could not throw to resource manager: RootResourceManager is already disposed"
+data ResourceManager
+  = NormalResourceManager ResourceManagerCore ResourceManager
+  | RootResourceManager ResourceManagerCore (TVar Bool) (TMVar (Seq SomeException)) (AsyncVar [SomeException])
 
 
-instance IsDisposable RootResourceManager where
+instance IsResourceManager ResourceManager where
+  toResourceManager = id
+
+resourceManagerCore :: ResourceManager -> ResourceManagerCore
+resourceManagerCore (RootResourceManager core _ _ _) = core
+resourceManagerCore (NormalResourceManager core _) = core
+
+throwToResourceManagerImpl :: ResourceManager -> SomeException -> STM ()
+throwToResourceManagerImpl (NormalResourceManager _ exceptionManager) ex = throwToResourceManagerImpl exceptionManager ex
+throwToResourceManagerImpl (RootResourceManager _ _ exceptionsVar _) ex = do
+  tryTakeTMVar exceptionsVar >>= \case
+    Just exceptions -> do
+      putTMVar exceptionsVar (exceptions |> toException ex)
+    Nothing -> do
+      throwM $ userError "Could not throw to resource manager: RootResourceManager is already disposed"
+
+
+
+instance IsDisposable ResourceManager where
+  beginDispose (NormalResourceManager core _) = beginDispose core
   beginDispose (RootResourceManager internal disposingVar _ _) = do
     defaultResourceManagerDisposeResult internal <$ atomically do
       disposing <- readTVar disposingVar
       unless disposing $ writeTVar disposingVar True
 
-  isDisposed (RootResourceManager internal _ _ _) = isDisposed internal
+  isDisposed (resourceManagerCore -> core) = isDisposed core
 
-  registerFinalizer (RootResourceManager internal _ _ _) = registerFinalizer internal
+  registerFinalizer (resourceManagerCore -> core) = registerFinalizer core
 
-newUnmanagedRootResourceManagerInternal :: MonadIO m => m RootResourceManager
+newUnmanagedRootResourceManagerInternal :: MonadIO m => m ResourceManager
 newUnmanagedRootResourceManagerInternal = liftIO do
   disposingVar <- newTVarIO False
   exceptionsVar <- newTMVarIO Empty
   finalExceptionsVar <- newAsyncVar
   mfix \root -> do
     void $ forkIO (disposeWorker root)
-    internal <- atomically $ newUnmanagedDefaultResourceManagerInternal (toResourceManager root)
+    internal <- atomically $ newUnmanagedDefaultResourceManagerInternal (throwToResourceManagerImpl root)
     pure $ RootResourceManager internal disposingVar exceptionsVar finalExceptionsVar
-
   where
-    disposeWorker :: RootResourceManager -> IO ()
+    disposeWorker :: ResourceManager -> IO ()
+    disposeWorker (NormalResourceManager _ _) = unreachableCodePathM
     disposeWorker (RootResourceManager internal disposingVar exceptionsVar finalExceptionsVar) =
       handleAll
         do \ex -> fail $ "RootResourceManager thread failed unexpectedly: " <> displayException ex
@@ -405,7 +388,7 @@ withRootResourceManager action = liftIO $ uninterruptibleMask \unmask -> do
 
 -- ** Default resource manager
 
-data DefaultResourceManager = DefaultResourceManager {
+data ResourceManagerCore = ResourceManagerCore {
   resourceManagerKey :: Unique,
   throwToHandler :: SomeException -> STM (),
   stateVar :: TVar ResourceManagerState,
@@ -420,40 +403,46 @@ data ResourceManagerState
   | ResourceManagerDisposing
   | ResourceManagerDisposed
 
-instance IsResourceManager DefaultResourceManager where
-  throwToResourceManagerImpl DefaultResourceManager{throwToHandler} = throwToHandler . toException
 
-  attachDisposable DefaultResourceManager{stateVar, disposablesVar} disposable = do
-    key <- newUniqueSTM
-    state <- readTVar stateVar
-    case state of
-      ResourceManagerNormal -> do
-        disposables <- takeTMVar disposablesVar
-        putTMVar disposablesVar (HM.insert key (toDisposable disposable) disposables)
-        void $ registerFinalizer disposable (finalizer key)
-      _ -> throwM FailedToRegisterResource
-    where
-      finalizer :: Unique -> STM ()
-      finalizer key =
-        tryTakeTMVar disposablesVar >>= \case
-          Just disposables ->
-            putTMVar disposablesVar $ HM.delete key disposables
-          Nothing -> pure ()
+-- | Attaches an `Disposable` to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
+--
+-- May throw an `FailedToRegisterResource` if the resource manager is disposing/disposed.
+attachDisposable :: (IsResourceManager a, IsDisposable b) => a -> b -> STM ()
+attachDisposable rm disposable = attachDisposableImpl (resourceManagerCore (toResourceManager rm)) (toDisposable disposable)
 
-  lockResourceManagerImpl DefaultResourceManager{stateVar, lockVar} =
-    bracket_ (liftIO aquire) (liftIO release)
-    where
-      aquire :: IO ()
-      aquire = atomically do
-        readTVar stateVar >>= \case
-          ResourceManagerNormal -> pure ()
-          _ -> throwM FailedToLockResourceManager
-        modifyTVar lockVar (+ 1)
-      release :: IO ()
-      release = atomically (modifyTVar lockVar (\x -> x - 1))
+attachDisposableImpl :: ResourceManagerCore -> Disposable -> STM ()
+attachDisposableImpl ResourceManagerCore{stateVar, disposablesVar} disposable = do
+  key <- newUniqueSTM
+  state <- readTVar stateVar
+  case state of
+    ResourceManagerNormal -> do
+      disposables <- takeTMVar disposablesVar
+      putTMVar disposablesVar (HM.insert key disposable disposables)
+      void $ registerFinalizer disposable (finalizer key)
+    _ -> throwM FailedToRegisterResource
+  where
+    finalizer :: Unique -> STM ()
+    finalizer key =
+      tryTakeTMVar disposablesVar >>= \case
+        Just disposables ->
+          putTMVar disposablesVar $ HM.delete key disposables
+        Nothing -> pure ()
 
-instance IsDisposable DefaultResourceManager where
-  beginDispose self@DefaultResourceManager{resourceManagerKey, stateVar, disposablesVar, lockVar, resultVar, finalizers} = liftIO do
+lockResourceManagerImpl :: (MonadIO m, MonadMask m) => ResourceManager -> m b -> m b
+lockResourceManagerImpl (resourceManagerCore -> ResourceManagerCore{stateVar, lockVar}) =
+  bracket_ (liftIO aquire) (liftIO release)
+  where
+    aquire :: IO ()
+    aquire = atomically do
+      readTVar stateVar >>= \case
+        ResourceManagerNormal -> pure ()
+        _ -> throwM FailedToLockResourceManager
+      modifyTVar lockVar (+ 1)
+    release :: IO ()
+    release = atomically (modifyTVar lockVar (\x -> x - 1))
+
+instance IsDisposable ResourceManagerCore where
+  beginDispose self@ResourceManagerCore{resourceManagerKey, throwToHandler, stateVar, disposablesVar, lockVar, resultVar, finalizers} = liftIO do
     uninterruptibleMask_ do
       join $ atomically do
         state <- readTVar stateVar
@@ -479,7 +468,7 @@ instance IsDisposable DefaultResourceManager where
       primaryBeginDispose :: [Disposable] -> IO DisposeResult
       primaryBeginDispose disposables = do
         (reportExceptionActions, resultAwaitables) <- unzip <$> mapM beginDisposeEntry disposables
-        -- TODO caching was removed; re-optimize later
+        -- TODO cache was removed, has to be re-optimized later
         let cachedResultAwaitable = mconcat resultAwaitables
         putAsyncVar_ resultVar cachedResultAwaitable
 
@@ -508,8 +497,8 @@ instance IsDisposable DefaultResourceManager where
           catchAll
             action
             \ex ->
-              onResourceManager self $ throwToResourceManager $
-                userError ("Dispose thread failed for DefaultResourceManager: " <> displayException ex)
+              atomically $ throwToHandler $ toException $
+                userError ("Dispose thread failed for ResourceManager: " <> displayException ex)
 
       takeDisposables :: STM [Disposable]
       takeDisposables = toList <$> takeTMVar disposablesVar
@@ -525,14 +514,14 @@ instance IsDisposable DefaultResourceManager where
               DisposeResultAwait awaitable -> (processDisposeException awaitable, [] <$ awaitSuccessOrFailure awaitable)
               DisposeResultResourceManager resourceManagerResult -> (pure (), pure [resourceManagerResult])
           \ex -> do
-            onResourceManager self $ throwToResourceManager $ DisposeException ex
+            atomically $ throwToHandler $ toException $ DisposeException ex
             pure (pure (), pure [])
 
       processDisposeException :: Awaitable () -> IO ()
       processDisposeException awaitable =
         await awaitable
           `catchAll`
-            \ex -> onResourceManager self $ throwToResourceManager $ DisposeException ex
+            \ex -> atomically $ throwToHandler $ toException $ DisposeException ex
 
       completeDisposing :: IO ()
       completeDisposing =
@@ -540,7 +529,7 @@ instance IsDisposable DefaultResourceManager where
           writeTVar stateVar $ ResourceManagerDisposed
           defaultRunFinalizers finalizers
 
-  isDisposed DefaultResourceManager{stateVar} =
+  isDisposed ResourceManagerCore{stateVar} =
     unsafeAwaitSTM do
       disposed <- stateIsDisposed <$> readTVar stateVar
       check disposed
@@ -549,16 +538,16 @@ instance IsDisposable DefaultResourceManager where
       stateIsDisposed ResourceManagerDisposed = True
       stateIsDisposed _ = False
 
-  registerFinalizer DefaultResourceManager{finalizers} = defaultRegisterFinalizer finalizers
+  registerFinalizer ResourceManagerCore{finalizers} = defaultRegisterFinalizer finalizers
 
-defaultResourceManagerDisposeResult :: DefaultResourceManager -> DisposeResult
-defaultResourceManagerDisposeResult DefaultResourceManager{resourceManagerKey, resultVar} =
+defaultResourceManagerDisposeResult :: ResourceManagerCore -> DisposeResult
+defaultResourceManagerDisposeResult ResourceManagerCore{resourceManagerKey, resultVar} =
   DisposeResultResourceManager $ ResourceManagerResult resourceManagerKey $ join $ toAwaitable resultVar
 
--- | Internal constructor. The resulting resource manager is not attached to it's parent, which is required internally
--- to implement the root resource manager.
-newUnmanagedDefaultResourceManagerInternal :: ResourceManager -> STM DefaultResourceManager
-newUnmanagedDefaultResourceManagerInternal parentResourceManager = do
+-- | Internal constructor. The resulting resource manager core is indirectly attached to it's parent by it's exception
+-- handler.
+newUnmanagedDefaultResourceManagerInternal :: (SomeException -> STM ()) -> STM ResourceManagerCore
+newUnmanagedDefaultResourceManagerInternal throwToHandler = do
   resourceManagerKey <- newUniqueSTM
   stateVar <- newTVar ResourceManagerNormal
   disposablesVar <- newTMVar HM.empty
@@ -566,9 +555,9 @@ newUnmanagedDefaultResourceManagerInternal parentResourceManager = do
   finalizers <- newDisposableFinalizersSTM
   resultVar <- newAsyncVarSTM
 
-  pure DefaultResourceManager {
+  pure ResourceManagerCore {
     resourceManagerKey,
-    throwToHandler = throwToResourceManagerImpl parentResourceManager,
+    throwToHandler,
     stateVar,
     disposablesVar,
     lockVar,
@@ -579,16 +568,15 @@ newUnmanagedDefaultResourceManagerInternal parentResourceManager = do
 newResourceManager :: MonadResourceManager m => m ResourceManager
 newResourceManager = do
   parent <- askResourceManager
-  runInResourceManagerSTM do
-    resourceManager <- lift $ toResourceManager <$> newUnmanagedDefaultResourceManagerInternal parent
-    registerDisposable resourceManager
-    pure resourceManager
+  runInSTM $ newResourceManagerSTM parent
 
 newResourceManagerSTM :: ResourceManager -> STM ResourceManager
 newResourceManagerSTM parent = do
-  resourceManager <- toResourceManager <$> newUnmanagedDefaultResourceManagerInternal parent
+  -- Bind core exception handler to parent to tie exception handling to the parent
+  resourceManager <- newUnmanagedDefaultResourceManagerInternal (throwToResourceManagerImpl parent)
+  -- Attach disposable to parent to tie resource management to the parent
   attachDisposable parent resourceManager
-  pure resourceManager
+  pure $ NormalResourceManager resourceManager parent
 
 
 -- * Utilities

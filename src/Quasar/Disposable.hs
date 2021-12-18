@@ -60,6 +60,8 @@ class IsDisposable a where
   -- `beginDispose` must be called in masked state.
   --
   -- `beginDispose` must not block for an unbounded time.
+  --
+  -- TODO document finalizers (finalizers also have to run when an exception is thrown)
   beginDispose :: a -> IO DisposeResult
   beginDispose = beginDispose . toDisposable
 
