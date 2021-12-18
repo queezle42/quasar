@@ -22,6 +22,8 @@ module Quasar.Prelude
     Control.Monad.void,
     Control.Monad.when,
     Control.Monad.Fix.mfix,
+    Data.Kind.Type,
+    Data.Kind.Constraint,
     Data.Unique.Unique,
     Data.Unique.newUnique,
     Data.Void.Void,
@@ -86,6 +88,7 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Foldable qualified
 import Data.Hashable qualified
 import Data.Int qualified
+import Data.Kind qualified
 import Data.Maybe qualified
 import Data.Unique qualified
 import Data.Void qualified
