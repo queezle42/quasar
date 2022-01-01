@@ -3,6 +3,7 @@ module Quasar.ResourceManager (
   MonadResourceManager(..),
   ResourceManagerT,
   ResourceManagerIO,
+  ResourceManagerSTM,
   FailedToRegisterResource,
   registerNewResource,
   registerNewResource_,
@@ -15,6 +16,7 @@ module Quasar.ResourceManager (
   captureDisposable_,
   disposeOnError,
   liftResourceManagerIO,
+  runInResourceManagerSTM,
   enterResourceManager,
   lockResourceManager,
 
@@ -86,14 +88,8 @@ class IsDisposable a => IsResourceManager a where
   -- | Attaches an `Disposable` to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
   --
   -- May throw an `FailedToRegisterResource` if the resource manager is disposing/disposed.
-  attachDisposable :: (IsDisposable b, MonadIO m) => a -> b -> m ()
+  attachDisposable :: IsDisposable b => a -> b -> STM ()
   attachDisposable self = attachDisposable (toResourceManager self)
-
-  -- | Attaches an `Disposable` to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
-  --
-  -- May throw an `FailedToRegisterResource` if the resource manager is disposing/disposed.
-  attachDisposableSTM :: IsDisposable b => a -> b -> STM ()
-  attachDisposableSTM self = attachDisposableSTM (toResourceManager self)
 
   lockResourceManagerImpl :: (MonadIO m, MonadMask m) => a -> m b -> m b
   lockResourceManagerImpl self = lockResourceManagerImpl (toResourceManager self)
@@ -102,36 +98,40 @@ class IsDisposable a => IsResourceManager a where
   throwToResourceManager :: Exception e => a -> e -> IO ()
   throwToResourceManager = throwToResourceManager . toResourceManager
 
-  {-# MINIMAL toResourceManager | (attachDisposable, attachDisposableSTM, lockResourceManagerImpl, throwToResourceManager) #-}
+  {-# MINIMAL toResourceManager | (attachDisposable, lockResourceManagerImpl, throwToResourceManager) #-}
 
 
 data ResourceManager = forall a. IsResourceManager a => ResourceManager a
 instance IsResourceManager ResourceManager where
   toResourceManager = id
   attachDisposable (ResourceManager x) = attachDisposable x
-  attachDisposableSTM (ResourceManager x) = attachDisposableSTM x
   lockResourceManagerImpl (ResourceManager x) = lockResourceManagerImpl x
   throwToResourceManager (ResourceManager x) = throwToResourceManager x
 instance IsDisposable ResourceManager where
   toDisposable (ResourceManager x) = toDisposable x
 
-class (MonadAwait m, MonadMask m, MonadIO m, MonadFix m) => MonadResourceManager m where
+
+class MonadFix m => MonadResourceManager m where
   -- | Get the underlying resource manager.
   askResourceManager :: m ResourceManager
 
   -- | Replace the resource manager for a computation.
   localResourceManager :: IsResourceManager a => a -> m r -> m r
 
+  -- | Locks the resource manager. As long as the resource manager is locked, it's possible to register new resources
+  -- on the resource manager.
+  --
+  -- This prevents the resource manager from disposing, so the computation must not block for an unbound amount of time.
+  lockResourceManager :: MonadResourceManager m => m a -> m a
 
+  -- | Run an `STM` computation. Depending on the monad this may be run in a dedicated STM transaction or may be
+  -- embedded in a larger transaction.
+  runInSTM :: MonadResourceManager m => STM a -> m a
 
--- | Locks the resource manager. As long as the resource manager is locked, it's possible to register new resources
--- on the resource manager.
---
--- This prevents the resource manager from disposing, so the computation must not block for an unbound amount of time.
-lockResourceManager :: MonadResourceManager m => m a -> m a
-lockResourceManager action = do
+runInResourceManagerSTM :: MonadResourceManager m => ResourceManagerSTM a -> m a
+runInResourceManagerSTM action = do
   resourceManager <- askResourceManager
-  lockResourceManagerImpl resourceManager action
+  runInSTM $ runReaderT action resourceManager
 
 -- | Register a `Disposable` to the resource manager.
 --
@@ -139,41 +139,52 @@ lockResourceManager action = do
 registerDisposable :: (IsDisposable a, MonadResourceManager m) => a -> m ()
 registerDisposable disposable = do
   resourceManager <- askResourceManager
-  attachDisposable resourceManager disposable
+  runInSTM $ attachDisposable resourceManager disposable
 
 
 registerDisposeAction :: MonadResourceManager m => IO () -> m ()
-registerDisposeAction disposeAction = mask_ $ registerDisposable =<< newDisposable disposeAction
+registerDisposeAction disposeAction = runInResourceManagerSTM do
+  disposable <- lift (newDisposable disposeAction)
+  registerDisposable disposable
 
 registerAsyncDisposeAction :: MonadResourceManager m => IO () -> m ()
-registerAsyncDisposeAction disposeAction = mask_ $ registerDisposable =<< newAsyncDisposable disposeAction
+registerAsyncDisposeAction disposeAction = runInResourceManagerSTM do
+  disposable <- lift (newAsyncDisposable disposeAction)
+  registerDisposable disposable
 
 -- | Locks the resource manager (which may fail), runs the computation and registeres the resulting disposable.
 --
 -- The computation will be run in masked state.
 --
 -- The computation must not block for an unbound amount of time.
-registerNewResource :: (IsDisposable a, MonadResourceManager m) => m a -> m a
+registerNewResource :: (IsDisposable a, MonadResourceManager m, MonadIO m, MonadMask m) => m a -> m a
 registerNewResource action = mask_ $ lockResourceManager do
     resource <- action
     registerDisposable resource
     pure resource
 
-registerNewResource_ :: (IsDisposable a, MonadResourceManager m) => m a -> m ()
+registerNewResource_ :: (IsDisposable a, MonadResourceManager m, MonadIO m, MonadMask m) => m a -> m ()
 registerNewResource_ action = void $ registerNewResource action
 
-withScopedResourceManager :: MonadResourceManager m => m a -> m a
+withScopedResourceManager :: (MonadResourceManager m, MonadIO m, MonadMask m) => m a -> m a
 withScopedResourceManager action =
   bracket newResourceManager dispose \scope -> localResourceManager scope action
 
 
 type ResourceManagerT = ReaderT ResourceManager
 type ResourceManagerIO = ResourceManagerT IO
+type ResourceManagerSTM = ResourceManagerT STM
 
 instance (MonadAwait m, MonadMask m, MonadIO m, MonadFix m) => MonadResourceManager (ResourceManagerT m) where
   localResourceManager resourceManager = local (const (toResourceManager resourceManager))
 
   askResourceManager = ask
+
+  lockResourceManager action = do
+    resourceManager <- askResourceManager
+    lockResourceManagerImpl resourceManager action
+
+  runInSTM action = liftIO $ atomically action
 
 
 instance {-# OVERLAPPABLE #-} MonadResourceManager m => MonadResourceManager (ReaderT r m) where
@@ -183,13 +194,32 @@ instance {-# OVERLAPPABLE #-} MonadResourceManager m => MonadResourceManager (Re
     x <- ask
     lift $ localResourceManager resourceManager $ runReaderT action x
 
+  lockResourceManager action = do
+    x <- ask
+    lift $ lockResourceManager $ runReaderT action x
+
+  runInSTM action = lift $ runInSTM action
+
 -- TODO MonadResourceManager instances for StateT, WriterT, RWST, MaybeT, ...
+
+
+-- Overlaps the ResourceManagerT-instance, because `MonadIO` _could_ be specified for `STM` (which would be very
+-- very incorrect, so this is safe).
+instance {-# OVERLAPS #-} MonadResourceManager (ResourceManagerT STM) where
+  localResourceManager resourceManager = local (const (toResourceManager resourceManager))
+
+  askResourceManager = ask
+
+  -- | No-op, since STM is always executed atomically.
+  lockResourceManager = id
+
+  runInSTM action = lift action
 
 
 onResourceManager :: (IsResourceManager a, MonadIO m) => a -> ResourceManagerIO r -> m r
 onResourceManager target action = liftIO $ runReaderT action (toResourceManager target)
 
-liftResourceManagerIO :: MonadResourceManager m => ResourceManagerIO r -> m r
+liftResourceManagerIO :: (MonadResourceManager m, MonadIO m) => ResourceManagerIO r -> m r
 liftResourceManagerIO action = do
   resourceManager <- askResourceManager
   onResourceManager resourceManager action
@@ -205,7 +235,7 @@ captureDisposable_ :: MonadResourceManager m => m () -> m Disposable
 captureDisposable_ = snd <<$>> captureDisposable
 
 -- | Disposes all resources created by the computation if the computation throws an exception.
-disposeOnError :: MonadResourceManager m => m a -> m a
+disposeOnError :: (MonadResourceManager m, MonadIO m, MonadMask m) => m a -> m a
 disposeOnError action = do
   bracketOnError
     newResourceManager
@@ -234,7 +264,6 @@ data RootResourceManager
 
 instance IsResourceManager RootResourceManager where
   attachDisposable (RootResourceManager internal _ _ _) = attachDisposable internal
-  attachDisposableSTM (RootResourceManager internal _ _ _) = attachDisposableSTM internal
   lockResourceManagerImpl (RootResourceManager internal _ _ _) = lockResourceManagerImpl internal
   throwToResourceManager (RootResourceManager _ _ exceptionsVar _) ex = do
     -- TODO only log exceptions after a timeout
@@ -326,9 +355,7 @@ data ResourceManagerState
 instance IsResourceManager DefaultResourceManager where
   throwToResourceManager DefaultResourceManager{throwToHandler} = throwToHandler . toException
 
-  attachDisposable self disposable = liftIO $ atomically $ attachDisposableSTM self disposable
-
-  attachDisposableSTM DefaultResourceManager{stateVar, disposablesVar} disposable = do
+  attachDisposable DefaultResourceManager{stateVar, disposablesVar} disposable = do
     key <- newUniqueSTM
     state <- readTVar stateVar
     case state of
@@ -480,30 +507,31 @@ newUnmanagedDefaultResourceManagerInternal parentResourceManager = do
   }
 
 newResourceManager :: MonadResourceManager m => m ResourceManager
-newResourceManager = mask_ do
+newResourceManager = do
   parent <- askResourceManager
-  resourceManager <- liftIO $ atomically $ toResourceManager <$> newUnmanagedDefaultResourceManagerInternal parent
-  registerDisposable resourceManager
-  pure resourceManager
+  runInResourceManagerSTM do
+    resourceManager <- lift $ toResourceManager <$> newUnmanagedDefaultResourceManagerInternal parent
+    registerDisposable resourceManager
+    pure resourceManager
 
 newResourceManagerSTM :: ResourceManager -> STM ResourceManager
 newResourceManagerSTM parent = do
   resourceManager <- toResourceManager <$> newUnmanagedDefaultResourceManagerInternal parent
-  attachDisposableSTM parent resourceManager
+  attachDisposable parent resourceManager
   pure resourceManager
 
 
 -- * Utilities
 
 -- | Creates an `Disposable` that is bound to a ResourceManager. It will automatically be disposed when the resource manager is disposed.
-attachDisposeAction :: MonadIO m => ResourceManager -> IO () -> m Disposable
-attachDisposeAction resourceManager action = liftIO $ mask_ $ do
+attachDisposeAction :: ResourceManager -> IO () -> STM Disposable
+attachDisposeAction resourceManager action = do
   disposable <- newDisposable action
   attachDisposable resourceManager disposable
   pure disposable
 
 -- | Attaches a dispose action to a ResourceManager. It will automatically be run when the resource manager is disposed.
-attachDisposeAction_ :: MonadIO m => ResourceManager -> IO () -> m ()
+attachDisposeAction_ :: ResourceManager -> IO () -> STM ()
 attachDisposeAction_ resourceManager action = void $ attachDisposeAction resourceManager action
 
 
@@ -525,7 +553,7 @@ data LinkState = LinkStateLinked ThreadId | LinkStateThrowing | LinkStateComplet
 --
 -- The computation is executed on the current thread. When the resource manager is disposed before the computation
 -- is completed, a `CancelLinkedExecution`-exception is thrown to the current thread.
-linkExecution :: MonadResourceManager m => m a -> m (Maybe a)
+linkExecution :: (MonadResourceManager m, MonadIO m, MonadMask m) => m a -> m (Maybe a)
 linkExecution action = do
   key <- liftIO $ newUnique
   var <- liftIO $ newTVarIO =<< LinkStateLinked <$> myThreadId

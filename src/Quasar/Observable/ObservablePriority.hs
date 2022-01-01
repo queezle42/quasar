@@ -4,6 +4,7 @@ module Quasar.Observable.ObservablePriority (
   insertValue,
 ) where
 
+import Control.Concurrent.STM (atomically)
 import Data.HashMap.Strict qualified as HM
 import Data.List (maximumBy)
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
@@ -63,7 +64,7 @@ insertValue :: forall p v m. MonadIO m => (Ord p, Hashable p) => ObservablePrior
 insertValue (ObservablePriority mvar) priority value = liftIO $ modifyMVar mvar $ \internals -> do
   key <- newUnique
   newInternals <- insertValue' key internals
-  (newInternals,) <$> newDisposable (removeValue key)
+  (newInternals,) <$> atomically (newDisposable (removeValue key))
   where
     insertValue' :: Unique -> Internals p v -> IO (Internals p v)
     insertValue' key internals@Internals{priorityMap, current}

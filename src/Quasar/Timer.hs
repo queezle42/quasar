@@ -73,7 +73,7 @@ data TimerSchedulerDisposed = TimerSchedulerDisposed
 
 instance Exception TimerSchedulerDisposed
 
-newTimerScheduler :: MonadResourceManager m => m TimerScheduler
+newTimerScheduler :: (MonadResourceManager m, MonadIO m, MonadMask m) => m TimerScheduler
 newTimerScheduler = registerNewResource newUnmanagedTimerScheduler
 
 newUnmanagedTimerScheduler :: MonadIO m => m TimerScheduler
@@ -169,7 +169,7 @@ startSchedulerThread scheduler = toDisposable <$> unmanagedAsync (schedulerThrea
       mapM_ dispose timers
 
 
-newTimer :: MonadResourceManager m => TimerScheduler -> UTCTime -> m Timer
+newTimer :: (MonadResourceManager m, MonadIO m, MonadMask m) => TimerScheduler -> UTCTime -> m Timer
 newTimer scheduler time =
   registerNewResource $ newUnmanagedTimer scheduler time
 
@@ -206,7 +206,7 @@ newtype Delay = Delay (Async ())
 instance IsAwaitable () Delay where
   toAwaitable (Delay task) = toAwaitable task `catch` \AsyncDisposed -> throwM TimerCancelled
 
-newDelay :: MonadResourceManager m => Int -> m Delay
+newDelay :: (MonadResourceManager m, MonadIO m, MonadMask m) => Int -> m Delay
 newDelay microseconds = registerNewResource $ newUnmanagedDelay microseconds
 
 newUnmanagedDelay :: MonadIO m => Int -> m Delay

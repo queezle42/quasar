@@ -31,9 +31,9 @@ class IsSubscribable r a | a -> r where
   toSubscribable x = Subscribable x
 
   subscribe
-    :: MonadResourceManager m
+    :: (MonadResourceManager m, MonadIO m, MonadMask m)
     => a
-    -> (forall f. MonadResourceManager f => SubscribableMessage r -> f (Awaitable ()))
+    -> (SubscribableMessage r -> ResourceManagerIO (Awaitable ()))
     -> m ()
   subscribe x = subscribe (toSubscribable x)
   {-# MINIMAL toSubscribable | subscribe #-}
@@ -71,10 +71,11 @@ instance IsSubscribable r (SubscribableEvent r) where
   subscribe (SubscribableEvent tvar) callback = mask_ do
     key <- liftIO newUnique
     resourceManager <- askResourceManager
-    liftIO $ atomically do
-      callbackMap <- readTVar tvar
-      writeTVar tvar $ HM.insert key (\msg -> runReaderT (callback msg) resourceManager) callbackMap
-    registerDisposable =<< newDisposable (disposeFn key)
+    runInResourceManagerSTM do
+      registerDisposable =<< lift do
+        callbackMap <- readTVar tvar
+        writeTVar tvar $ HM.insert key (\msg -> runReaderT (callback msg) resourceManager) callbackMap
+        newDisposable (disposeFn key)
       where
         disposeFn :: Unique -> IO ()
         disposeFn key = atomically do

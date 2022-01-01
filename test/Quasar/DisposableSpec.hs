@@ -1,6 +1,7 @@
 module Quasar.DisposableSpec (spec) where
 
 import Control.Concurrent
+import Control.Concurrent.STM
 import Quasar.Prelude
 import Test.Hspec
 import Quasar.Awaitable
@@ -18,18 +19,18 @@ spec = parallel $ do
 
     describe "newDisposable" $ do
       it "signals it's disposed state" $ io do
-        disposable <- newDisposable $ pure ()
+        disposable <- atomically $ newDisposable $ pure ()
         void $ forkIO $ threadDelay 100000 >> dispose disposable
         await (isDisposed disposable)
 
       it "can be disposed multiple times" $ io do
-        disposable <- newDisposable $ pure ()
+        disposable <- atomically $ newDisposable $ pure ()
         dispose disposable
         dispose disposable
         await (isDisposed disposable)
 
       it "can be disposed in parallel" $ do
-        disposable <- newDisposable $ threadDelay 100000
+        disposable <- atomically $ newDisposable $ threadDelay 100000
         void $ forkIO $ dispose disposable
         dispose disposable
         await (isDisposed disposable)

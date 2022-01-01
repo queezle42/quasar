@@ -15,6 +15,8 @@ module Quasar.Timer.PosixTimer (
 ) where
 
 import Control.Concurrent
+import Control.Monad.Catch (MonadMask)
+import Control.Monad.STM (atomically)
 import Foreign
 import Foreign.C
 import Quasar.Disposable
@@ -164,7 +166,7 @@ instance IsDisposable PosixTimer where
   toDisposable = disposable
 
 
-newPosixTimer :: MonadResourceManager m => ClockId -> IO () -> m PosixTimer
+newPosixTimer :: (MonadResourceManager m, MonadIO m, MonadMask m) => ClockId -> IO () -> m PosixTimer
 newPosixTimer clockId callback = registerNewResource do
   liftIO $ newUnmanagedPosixTimer clockId callback
 
@@ -179,7 +181,7 @@ newUnmanagedPosixTimer clockId callback = runInBoundThread do
         c_timer_create (toCClockId clockId) sigevent ctimerPtr
       peek ctimerPtr
 
-  disposable <- newDisposable (delete ctimer callbackPtr)
+  disposable <- atomically $ newDisposable (delete ctimer callbackPtr)
 
   pure $ PosixTimer { ctimer, disposable }
   where

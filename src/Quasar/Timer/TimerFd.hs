@@ -43,7 +43,7 @@ newtype TimerFd = TimerFd Fd
   deriving stock (Eq, Show)
   deriving newtype Num
 
-newTimerFd :: MonadResourceManager m => ClockId -> IO () -> m TimerFd
+newTimerFd :: (MonadResourceManager m, MonadIO m, MonadMask m) => ClockId -> IO () -> m TimerFd
 newTimerFd clockId callback = mask_ do
   timer <- liftIO $ runInBoundThread do
     throwErrnoIfMinus1 "timerfd_create" do

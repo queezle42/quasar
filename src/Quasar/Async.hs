@@ -32,21 +32,25 @@ import Quasar.ResourceManager
 -- | TODO: Documentation
 --
 -- The action will be run with asynchronous exceptions unmasked.
-async :: MonadResourceManager m => ResourceManagerIO a -> m (Async a)
+async :: (MonadResourceManager m, MonadIO m, MonadMask m) => ResourceManagerIO a -> m (Async a)
 async action = asyncWithUnmask \unmask -> unmask action
 
 -- | TODO: Documentation
 --
 -- The action will be run with asynchronous exceptions masked and will be passed an action that can be used to unmask.
-asyncWithUnmask :: MonadResourceManager m => ((ResourceManagerIO a -> ResourceManagerIO a) -> ResourceManagerIO r) -> m (Async r)
+asyncWithUnmask
+  :: (MonadResourceManager m, MonadIO m, MonadMask m)
+  => ((ResourceManagerIO a -> ResourceManagerIO a)
+  -> ResourceManagerIO r)
+  -> m (Async r)
 asyncWithUnmask action = do
   resourceManager <- askResourceManager
   asyncWithHandlerAndUnmask (throwToResourceManager resourceManager . AsyncException) action
 
-async_ :: MonadResourceManager m => ResourceManagerIO () -> m ()
+async_ :: (MonadResourceManager m, MonadIO m, MonadMask m) => ResourceManagerIO () -> m ()
 async_ action = void $ async action
 
-asyncWithUnmask_ :: MonadResourceManager m => ((ResourceManagerIO a -> ResourceManagerIO a) -> ResourceManagerIO ()) -> m ()
+asyncWithUnmask_ :: (MonadResourceManager m, MonadIO m, MonadMask m) => ((ResourceManagerIO a -> ResourceManagerIO a) -> ResourceManagerIO ()) -> m ()
 asyncWithUnmask_ action = void $ asyncWithUnmask action
 
 -- | TODO: Documentation
@@ -54,7 +58,7 @@ asyncWithUnmask_ action = void $ asyncWithUnmask action
 -- The action will be run with asynchronous exceptions unmasked. When an exception is thrown that is not caused from
 -- the disposable instance (i.e. the task being canceled), the handler is called with that exception.
 asyncWithHandlerAndUnmask
-  :: MonadResourceManager m
+  :: (MonadResourceManager m, MonadIO m, MonadMask m)
   => (SomeException -> IO ())
   -> ((ResourceManagerIO a -> ResourceManagerIO a)
   -> ResourceManagerIO r)
@@ -74,19 +78,19 @@ asyncWithHandlerAndUnmask handler action = do
       liftIO $ unmask $ onResourceManager resourceManager innerAction
 
 asyncWithHandlerAndUnmask_
-  :: MonadResourceManager m
+  :: (MonadResourceManager m, MonadIO m, MonadMask m)
   => (SomeException -> IO ())
   -> ((ResourceManagerIO a -> ResourceManagerIO a)
   -> ResourceManagerIO r)
   -> m ()
 asyncWithHandlerAndUnmask_ handler action = void $ asyncWithHandlerAndUnmask handler action
 
-asyncWithHandler :: MonadResourceManager m => (SomeException -> IO ()) -> ResourceManagerIO r -> m (Async r)
+asyncWithHandler :: (MonadResourceManager m, MonadIO m, MonadMask m) => (SomeException -> IO ()) -> ResourceManagerIO r -> m (Async r)
 asyncWithHandler handler action = asyncWithHandlerAndUnmask handler \unmask -> unmask action
 
-asyncWithHandler_ :: MonadResourceManager m => (SomeException -> IO ()) -> ResourceManagerIO r -> m ()
+asyncWithHandler_ :: (MonadResourceManager m, MonadIO m, MonadMask m) => (SomeException -> IO ()) -> ResourceManagerIO r -> m ()
 asyncWithHandler_ handler action = void $ asyncWithHandler handler action
 
 
-withAsync :: MonadResourceManager m => ResourceManagerIO r -> (Async r -> m a) -> m a
+withAsync :: (MonadResourceManager m, MonadIO m, MonadMask m) => ResourceManagerIO r -> (Async r -> m a) -> m a
 withAsync action = bracket (async action) dispose

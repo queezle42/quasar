@@ -111,27 +111,30 @@ spec = parallel $ do
       withRootResourceManager do
         rm1 <- newResourceManager
         rm2 <- newResourceManager
-        attachDisposable rm1 rm2
-        attachDisposable rm2 rm1
+        liftIO $ atomically do
+          attachDisposable rm1 rm2
+          attachDisposable rm2 rm1
 
     it "can dispose a resource manager loop" $ io do
       withRootResourceManager do
         rm1 <- newResourceManager
         rm2 <- newResourceManager
-        attachDisposable rm1 rm2
-        attachDisposable rm2 rm1
+        liftIO $ atomically do
+          attachDisposable rm1 rm2
+          attachDisposable rm2 rm1
         dispose rm1
 
     it "can dispose a resource manager loop with a shared disposable" $ io do
       var <- newTVarIO (0 :: Int)
-      d <- newDisposable $ atomically $ modifyTVar var (+ 1)
+      d <- atomically $ newDisposable $ atomically $ modifyTVar var (+ 1)
       withRootResourceManager do
         rm1 <- newResourceManager
         rm2 <- newResourceManager
-        attachDisposable rm1 rm2
-        attachDisposable rm2 rm1
-        attachDisposable rm1 d
-        attachDisposable rm2 d
+        liftIO $ atomically do
+          attachDisposable rm1 rm2
+          attachDisposable rm2 rm1
+          attachDisposable rm1 d
+          attachDisposable rm2 d
 
       atomically (readTVar var) `shouldReturn` 1
 

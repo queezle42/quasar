@@ -69,7 +69,7 @@ toObservableUpdate (ObservableNotAvailable ex) = throwM ex
 
 
 class IsRetrievable v a | a -> v where
-  retrieve :: MonadResourceManager m => a -> m (Awaitable v)
+  retrieve :: (MonadResourceManager m, MonadIO m, MonadMask m) => a -> m (Awaitable v)
 
 class IsRetrievable v o => IsObservable v o | o -> v where
   -- | Register a callback to observe changes. The callback is called when the value changes, but depending on the
@@ -82,7 +82,7 @@ class IsRetrievable v o => IsObservable v o | o -> v where
   -- processed immediately, use `observeBlocking` instead or manually pass the value to a thread that processes the
   -- data, e.g. by using STM.
   observe
-    :: MonadResourceManager m
+    :: (MonadResourceManager m, MonadIO m, MonadMask m)
     => o -- ^ observable
     -> (ObservableMessage v -> ResourceManagerIO ()) -- ^ callback
     -> m ()
@@ -103,7 +103,11 @@ class IsRetrievable v o => IsObservable v o | o -> v where
 --
 -- The handler is allowed to block. When the value changes while the handler is running the handler will be run again
 -- after it completes; when the value changes multiple times it will only be executed once (with the latest value).
-observeBlocking :: (IsObservable v o, MonadResourceManager m) => o -> (ObservableMessage v -> m ()) -> m a
+observeBlocking
+  :: (IsObservable v o, MonadResourceManager m, MonadIO m, MonadMask m)
+  => o
+  -> (ObservableMessage v -> m ())
+  -> m a
 observeBlocking observable handler = do
   -- `withScopedResourceManager` removes the `observe` callback when the `handler` fails.
   withScopedResourceManager do
@@ -124,7 +128,11 @@ data ObserveWhileCompleted = ObserveWhileCompleted
 instance Exception ObserveWhileCompleted
 
 -- | Observe until the callback returns `Just`.
-observeWhile :: (IsObservable v o, MonadResourceManager m) => o -> (ObservableMessage v -> m (Maybe a)) -> m a
+observeWhile
+  :: (IsObservable v o, MonadResourceManager m, MonadIO m, MonadMask m)
+  => o
+  -> (ObservableMessage v -> m (Maybe a))
+  -> m a
 observeWhile observable callback = do
   resultVar <- liftIO $ newIORef unreachableCodePath
   observeWhile_ observable \msg -> do
@@ -138,7 +146,11 @@ observeWhile observable callback = do
 
 
 -- | Observe until the callback returns `False`.
-observeWhile_ :: (IsObservable v o, MonadResourceManager m) => o -> (ObservableMessage v -> m Bool) -> m ()
+observeWhile_
+  :: (IsObservable v o, MonadResourceManager m, MonadIO m, MonadMask m)
+  => o
+  -> (ObservableMessage v -> m Bool)
+  -> m ()
 observeWhile_ observable callback =
   catch
     do
@@ -201,11 +213,11 @@ data BindObservable r = forall a. BindObservable (Observable a) (a -> Observable
 
 instance IsRetrievable r (BindObservable r) where
   retrieve (BindObservable fx fn) = do
-    x <- await =<< retrieve fx
-    retrieve $ fn x
+    awaitable <- retrieve fx
+    value <- liftIO $ await awaitable
+    retrieve $ fn value
 
 instance IsObservable r (BindObservable r) where
-  observe :: MonadResourceManager m => (BindObservable r) -> (ObservableMessage r -> ResourceManagerIO ()) -> m ()
   observe (BindObservable fx fn) callback = do
     disposableVar <- liftIO $ newTMVarIO noDisposable
     keyVar <- liftIO $ newTMVarIO =<< newUnique
@@ -247,7 +259,6 @@ instance IsRetrievable r (CatchObservable e r) where
   retrieve (CatchObservable fx fn) = retrieve fx `catch` \ex -> retrieve (fn ex)
 
 instance IsObservable r (CatchObservable e r) where
-  observe :: MonadResourceManager m => (CatchObservable e r) -> (ObservableMessage r -> ResourceManagerIO ()) -> m ()
   observe (CatchObservable fx fn) callback = do
     disposableVar <- liftIO $ newTMVarIO noDisposable
     keyVar <- liftIO $ newTMVarIO =<< newUnique
@@ -266,7 +277,8 @@ instance IsObservable r (CatchObservable e r) where
         disposeEventually_ oldDisposable
 
         disposable <- case message of
-          (ObservableNotAvailable (fromException -> Just ex)) -> captureDisposable_ $ observe (fn ex) (rightCallback keyVar key)
+          (ObservableNotAvailable (fromException -> Just ex)) ->
+            captureDisposable_ $ observe (fn ex) (rightCallback keyVar key)
           msg -> noDisposable <$ callback msg
 
         liftIO $ atomically $ putTMVar disposableVar disposable
@@ -289,17 +301,18 @@ instance IsRetrievable v (ObservableVar v) where
 instance IsObservable v (ObservableVar v) where
   observe observable@(ObservableVar mvar) callback = do
     resourceManager <- askResourceManager
-    key <- liftIO newUnique
 
-    registerNewResource_ do
+    registerNewResource_ $ liftIO do
       let wrappedCallback = enterResourceManager resourceManager . callback
 
-      liftIO $ modifyMVar_ mvar $ \(state, subscribers) -> do
+      key <- liftIO newUnique
+
+      modifyMVar_ mvar $ \(state, subscribers) -> do
         -- Call listener with initial value
         wrappedCallback (pure state)
         pure (state, HM.insert key wrappedCallback subscribers)
 
-      newDisposable $ disposeFn key
+      atomically $ newDisposable $ disposeFn key
     where
       disposeFn :: Unique -> IO ()
       disposeFn key = modifyMVar_ mvar (\(state, subscribers) -> pure (state, HM.delete key subscribers))

@@ -10,6 +10,7 @@ module Quasar.Observable.ObservableHashMap (
   lookupDelete,
 ) where
 
+import Control.Concurrent.STM (atomically)
 import Data.HashMap.Strict qualified as HM
 import Quasar.Disposable
 import Quasar.Observable
@@ -53,7 +54,7 @@ instance IsDeltaObservable k v (ObservableHashMap k v) where
         callback (Reset $ toHashMap handle)
         key <- newUnique
         let handle' = handle {deltaSubscribers = HM.insert key callback (deltaSubscribers handle)}
-        (handle',) <$> newDisposable (unsubscribe key)
+        (handle',) <$> atomically (newDisposable (unsubscribe key))
       unsubscribe :: Unique -> IO ()
       unsubscribe key = modifyHandle_ (\handle -> pure handle {deltaSubscribers = HM.delete key (deltaSubscribers handle)}) ohm
 

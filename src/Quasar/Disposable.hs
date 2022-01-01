@@ -151,10 +151,10 @@ instance IsDisposable IODisposable where
 -- `dispose` is called multiple times).
 --
 -- The action must not block for an unbound time.
-newDisposable :: MonadIO m => IO () -> m Disposable
-newDisposable disposeAction = liftIO do
-  key <- newUnique
-  fmap toDisposable $ IODisposable key <$> newTMVarIO disposeAction <*> newDisposableFinalizers <*> newAsyncVar
+newDisposable :: IO () -> STM Disposable
+newDisposable disposeAction = do
+  key <- newUniqueSTM
+  fmap toDisposable $ IODisposable key <$> newTMVar disposeAction <*> newDisposableFinalizersSTM <*> newAsyncVarSTM
 
 
 data AsyncDisposable = AsyncDisposable Unique (TMVar (IO ())) DisposableFinalizers (AsyncVar ())
@@ -178,10 +178,10 @@ instance IsDisposable AsyncDisposable where
 -- action will only be called once (even when `dispose` is called multiple times).
 --
 -- The action must not block for an unbound time.
-newAsyncDisposable :: MonadIO m => IO () -> m Disposable
-newAsyncDisposable disposeAction = liftIO do
-  key <- newUnique
-  fmap toDisposable $ AsyncDisposable key <$> newTMVarIO disposeAction <*> newDisposableFinalizers <*> newAsyncVar
+newAsyncDisposable :: IO () -> STM Disposable
+newAsyncDisposable disposeAction = do
+  key <- newUniqueSTM
+  fmap toDisposable $ AsyncDisposable key <$> newTMVar disposeAction <*> newDisposableFinalizersSTM <*> newAsyncVarSTM
 
 
 
