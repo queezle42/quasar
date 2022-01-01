@@ -2,6 +2,7 @@ module Quasar.Awaitable (
   -- * MonadAwaitable
   MonadAwait(..),
   peekAwaitable,
+  awaitSTM,
 
   -- * Awaitable
   IsAwaitable(toAwaitable),
@@ -76,6 +77,8 @@ instance MonadAwait IO where
       `catch`
         \BlockedIndefinitelyOnSTM -> throwM BlockedIndefinitelyOnAwait
 
+-- | `awaitSTM` exists as an explicit alternative to an `Awaitable STM`-instance, to prevent code which creates- and
+-- then awaits resources without knowing it's running in STM (which would block indefinitely when run in STM).
 awaitSTM :: Awaitable a -> STM a
 awaitSTM (toAwaitable -> Awaitable x) =
   x `catch` \BlockedIndefinitelyOnSTM -> throwM BlockedIndefinitelyOnAwait
