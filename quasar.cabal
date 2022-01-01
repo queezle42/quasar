@@ -2,7 +2,7 @@ cabal-version: 3.0
 
 name:           quasar
 version:        0.1.0.0
-license:        NONE
+license:        BSD-2-Clause
 build-type:     Simple
 extra-source-files:
     README.md
