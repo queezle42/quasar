@@ -12,12 +12,14 @@ module Quasar.ResourceManager (
   registerAsyncDisposeAction,
   withScopedResourceManager,
   onResourceManager,
+  onResourceManagerSTM,
   captureDisposable,
   captureDisposable_,
   disposeOnError,
   liftResourceManagerIO,
   runInResourceManagerSTM,
   enterResourceManager,
+  enterResourceManagerSTM,
   lockResourceManager,
 
   -- ** Top level initialization
@@ -219,6 +221,9 @@ instance {-# OVERLAPS #-} MonadResourceManager (ResourceManagerT STM) where
 onResourceManager :: (IsResourceManager a, MonadIO m) => a -> ResourceManagerIO r -> m r
 onResourceManager target action = liftIO $ runReaderT action (toResourceManager target)
 
+onResourceManagerSTM :: (IsResourceManager a) => a -> ResourceManagerSTM r -> STM r
+onResourceManagerSTM target action = runReaderT action (toResourceManager target)
+
 liftResourceManagerIO :: (MonadResourceManager m, MonadIO m) => ResourceManagerIO r -> m r
 liftResourceManagerIO action = do
   resourceManager <- askResourceManager
@@ -253,6 +258,14 @@ enterResourceManager :: MonadIO m => ResourceManager -> ResourceManagerIO () -> 
 enterResourceManager resourceManager action = liftIO do
   onResourceManager resourceManager $ lockResourceManager do
     action `catchAll` \ex -> liftIO $ throwToResourceManager resourceManager ex
+
+-- | Run a computation on a resource manager and throw any exception that occurs to the resource manager.
+--
+-- This can be used to run e.g. callbacks that belong to a different resource context.
+enterResourceManagerSTM :: ResourceManager -> ResourceManagerSTM () -> STM ()
+enterResourceManagerSTM resourceManager action = do
+  onResourceManagerSTM resourceManager do
+    action `catchAll` \ex -> throwToResourceManager ex
 
 
 -- * Resource manager implementations
