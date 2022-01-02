@@ -38,6 +38,7 @@ common shared-properties
     MultiParamTypeClasses
     NamedFieldPuns
     NoImplicitPrelude
+    NumericUnderscores
     OverloadedStrings
     PolyKinds
     RankNTypes

@@ -45,7 +45,7 @@ asyncWithUnmask
   -> m (Async r)
 asyncWithUnmask action = do
   resourceManager <- askResourceManager
-  asyncWithHandlerAndUnmask (throwToResourceManager resourceManager . AsyncException) action
+  asyncWithHandlerAndUnmask (onResourceManager resourceManager . throwToResourceManager . AsyncException) action
 
 async_ :: (MonadResourceManager m, MonadIO m, MonadMask m) => ResourceManagerIO () -> m ()
 async_ action = void $ async action

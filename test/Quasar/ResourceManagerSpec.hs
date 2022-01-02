@@ -96,15 +96,13 @@ spec = parallel $ do
       (`shouldThrow` \(_ :: CombinedException) -> True) do
         withRootResourceManager do
           linkExecution do
-            rm <- askResourceManager
-            liftIO $ throwToResourceManager rm TestException
+            throwToResourceManager TestException
             sleepForever
 
     it "combines exceptions from resources with exceptions on the thread" $ io do
       (`shouldThrow` \(combinedExceptions -> exceptions) -> length exceptions == 2) do
         withRootResourceManager do
-          rm <- askResourceManager
-          liftIO $ throwToResourceManager rm TestException
+          throwToResourceManager TestException
           throwM TestException
 
     it "can dispose a resource manager loop" $ io do
@@ -145,6 +143,5 @@ spec = parallel $ do
         withRootResourceManager do
           linkExecution do
             pure ()
-          rm <- askResourceManager
-          liftIO $ throwToResourceManager rm TestException
+          throwToResourceManager TestException
           liftIO $ threadDelay 100000
