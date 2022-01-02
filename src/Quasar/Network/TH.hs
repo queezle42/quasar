@@ -29,7 +29,7 @@ import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
 import Quasar.Network.Runtime.Observable
 import Quasar.Observable
-import Quasar.Prelude
+import Quasar.Prelude hiding (Type)
 import Quasar.ResourceManager
 
 data RpcApi = RpcApi {

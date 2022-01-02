@@ -172,7 +172,7 @@ instance IsResourceManager Channel where
 newRootChannel :: Multiplexer -> ResourceManagerIO Channel
 newRootChannel multiplexer = do
   resourceManager <- askResourceManager
-  liftIO do
+  channel <- liftIO do
     channelHandler <- newTVarIO Nothing
     children <- newTVarIO mempty
     nextSendMessageId <- newTVarIO 0
@@ -180,7 +180,7 @@ newRootChannel multiplexer = do
     receivedCloseMessage <- newTVarIO False
     sentCloseMessage <- newTVarIO False
 
-    let channel = Channel {
+    pure Channel {
       multiplexer,
       resourceManager,
       channelId = 0,
@@ -193,9 +193,9 @@ newRootChannel multiplexer = do
       sentCloseMessage
     }
 
-    attachDisposeAction_ resourceManager $ atomically $ sendChannelCloseMessage channel
+  registerDisposeAction $ atomically $ sendChannelCloseMessage channel
 
-    pure channel
+  pure channel
 
 newChannelSTM :: Channel -> ChannelId -> STM Channel
 newChannelSTM parent@Channel{multiplexer, resourceManager=parentResourceManager} channelId = do
@@ -228,7 +228,7 @@ newChannelSTM parent@Channel{multiplexer, resourceManager=parentResourceManager}
   modifyTVar parent.children $ HM.insert channelId channel
 
   disposable <- newSTMDisposable $ sendChannelCloseMessage channel
-  attachDisposableSTM resourceManager disposable
+  attachDisposable resourceManager disposable
 
   modifyTVar multiplexer.channelsVar $ HM.insert channelId channel
 
@@ -314,7 +314,7 @@ data ReceivedMessageResources = ReceivedMessageResources {
 
 -- | Starts a new multiplexer on the provided connection and blocks until it is closed.
 -- The channel is provided to a setup action and can be closed by calling `dispose`; otherwise the multiplexer will run until the underlying connection is closed.
-runMultiplexer :: MonadResourceManager m => MultiplexerSide -> (Channel -> ResourceManagerIO ()) -> Connection -> m ()
+runMultiplexer :: (MonadResourceManager m, MonadIO m) => MultiplexerSide -> (Channel -> ResourceManagerIO ()) -> Connection -> m ()
 runMultiplexer side channelSetupHook connection = liftResourceManagerIO $ mask_ do
   (rootChannel, result) <- newMultiplexerInternal side connection
   onResourceManager rootChannel $ channelSetupHook rootChannel
@@ -322,7 +322,7 @@ runMultiplexer side channelSetupHook connection = liftResourceManagerIO $ mask_ 
   mapM_ throwM mException
 
 -- | Starts a new multiplexer on an existing connection (e.g. on a connected TCP socket).
-newMultiplexer :: MonadResourceManager m => MultiplexerSide -> Connection -> m Channel
+newMultiplexer :: (MonadResourceManager m, MonadIO m) => MultiplexerSide -> Connection -> m Channel
 newMultiplexer side connection = liftResourceManagerIO $ mask_ do
   resourceManager <- askResourceManager
   (rootChannel, result) <- newMultiplexerInternal side connection
@@ -382,7 +382,7 @@ newMultiplexerInternal side connection = disposeOnError do
           dispose receiveThread
           connection.close
 
-          putAsyncVar_ multiplexerResult =<< peekAwaitable multiplexerException
+          putAsyncVar_ multiplexerResult =<< peekAwaitable (await multiplexerException)
 
         pure Multiplexer {
           side,
@@ -451,7 +451,7 @@ sendThread multiplexer sendFn = do
             closeChannelQueue <- swapTVar multiplexer.closeChannelOutbox []
             case (mMessage, closeChannelQueue) of
               -- Exit when the receive thread has stopped and there is no error and no message left to send
-              (Nothing, []) -> pure () <$ await multiplexer.receiveThreadCompleted
+              (Nothing, []) -> pure () <$ awaitSTM multiplexer.receiveThreadCompleted
               _ -> pure do
                 msg <- execWriterT do
                   formatChannelMessage mMessage

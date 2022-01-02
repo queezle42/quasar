@@ -1,6 +1,7 @@
 module Quasar.Network.MultiplexerSpec (spec) where
 
 import Control.Concurrent.Async (concurrently_)
+import Control.Concurrent.STM
 import Control.Concurrent.MVar
 import Control.Monad.Catch
 import Control.Monad.Reader (ReaderT)
@@ -19,7 +20,7 @@ import Test.Hspec qualified as Hspec
 rm :: ResourceManagerIO a -> IO a
 rm = withRootResourceManager
 
-shouldThrow :: (HasCallStack, Exception e, MonadResourceManager m) => (ReaderT ResourceManager IO a) -> Hspec.Selector e -> m ()
+shouldThrow :: (HasCallStack, Exception e, MonadResourceManager m, MonadIO m) => (ReaderT ResourceManager IO a) -> Hspec.Selector e -> m ()
 shouldThrow action expected = do
   resourceManager <- askResourceManager
   liftIO $ (onResourceManager resourceManager action) `Hspec.shouldThrow` expected
@@ -46,10 +47,10 @@ spec = parallel $ describe "runMultiplexer" $ do
       do MultiplexerSideA
       do
         \channel -> do
-          attachDisposeAction_ channel.resourceManager (putAsyncVar_ var ())
+          liftIO $ atomically $ attachDisposeAction_ channel.resourceManager (putAsyncVar_ var ())
           dispose channel
       do x
-    peekAwaitable var `shouldReturn` Just ()
+    peekAwaitable (await var) `shouldReturn` Just ()
 
   it "can send and receive simple messages" $ do
     recvMVar <- newEmptyMVar
@@ -132,7 +133,7 @@ withEchoServer fn = rm $ bracket setup closePair (\(channel, _) -> fn channel)
       echoChannel <- newMultiplexer MultiplexerSideB echoSocket
       configureEchoHandler echoChannel
       pure (mainChannel, echoChannel)
-    closePair :: MonadResourceManager m => (Channel, Channel) -> m ()
+    closePair :: (Channel, Channel) -> ResourceManagerIO ()
     closePair (x, y) = dispose x >> dispose y
     configureEchoHandler :: MonadIO m => Channel -> m ()
     configureEchoHandler channel = channelSetHandler channel (echoHandler channel)

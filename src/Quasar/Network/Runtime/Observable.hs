@@ -55,7 +55,7 @@ newObservableStub startRetrieveRequest startObserveRequest = pure uncachedObserv
     retrieveFn :: ResourceManagerIO (Awaitable v)
     retrieveFn = startRetrieveRequest
 
-observeToStream :: (Binary v, MonadResourceManager m) => Observable v -> Stream (PackedObservableMessage v) Void -> m ()
+observeToStream :: (Binary v, MonadResourceManager m, MonadIO m, MonadMask m) => Observable v -> Stream (PackedObservableMessage v) Void -> m ()
 observeToStream observable stream = do
   localResourceManager stream do
     observe observable \msg -> do

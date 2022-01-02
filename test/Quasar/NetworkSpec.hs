@@ -29,10 +29,11 @@ import Test.Hspec qualified as Hspec
 import Test.QuickCheck
 import Test.QuickCheck.Monadic
 
-rm :: (forall m. MonadResourceManager m => m a) -> IO a
+-- Type is pinned to IO, otherwise hspec spec type cannot be inferred
+rm :: ResourceManagerIO a -> IO a
 rm = withRootResourceManager
 
-shouldThrow :: (HasCallStack, Exception e, MonadResourceManager m) => (ReaderT ResourceManager IO a) -> Hspec.Selector e -> m ()
+shouldThrow :: (HasCallStack, Exception e, MonadResourceManager m, MonadIO m) => (ReaderT ResourceManager IO a) -> Hspec.Selector e -> m ()
 shouldThrow action expected = do
   resourceManager <- askResourceManager
   liftIO $ (onResourceManager resourceManager action) `Hspec.shouldThrow` expected
