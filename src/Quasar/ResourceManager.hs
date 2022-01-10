@@ -22,6 +22,7 @@ module Quasar.ResourceManager (
   enterResourceManager,
   enterResourceManagerSTM,
   lockResourceManager,
+  newUniqueRM,
 
   -- ** Top level initialization
   withRootResourceManager,
@@ -132,6 +133,8 @@ class MonadFix m => MonadResourceManager m where
   -- embedded in a larger transaction.
   runInSTM :: MonadResourceManager m => STM a -> m a
 
+  maskIfRequired :: MonadResourceManager m => m a -> m a
+
 
 throwToResourceManager :: (Exception e, MonadResourceManager m) => e -> m ()
 throwToResourceManager exception = do
@@ -165,16 +168,16 @@ registerAsyncDisposeAction disposeAction = runInResourceManagerSTM do
 
 -- | Locks the resource manager (which may fail), runs the computation and registeres the resulting disposable.
 --
--- The computation will be run in masked state.
+-- The computation will be run in masked state (if not running atomically in `STM`).
 --
 -- The computation must not block for an unbound amount of time.
-registerNewResource :: (IsDisposable a, MonadResourceManager m, MonadIO m, MonadMask m) => m a -> m a
-registerNewResource action = mask_ $ lockResourceManager do
+registerNewResource :: (IsDisposable a, MonadResourceManager m) => m a -> m a
+registerNewResource action = maskIfRequired $ lockResourceManager do
     resource <- action
     registerDisposable resource
     pure resource
 
-registerNewResource_ :: (IsDisposable a, MonadResourceManager m, MonadIO m, MonadMask m) => m a -> m ()
+registerNewResource_ :: (IsDisposable a, MonadResourceManager m) => m a -> m ()
 registerNewResource_ action = void $ registerNewResource action
 
 withScopedResourceManager :: (MonadResourceManager m, MonadIO m, MonadMask m) => m a -> m a
@@ -197,6 +200,23 @@ instance (MonadAwait m, MonadMask m, MonadIO m, MonadFix m) => MonadResourceMana
 
   runInSTM action = liftIO $ atomically action
 
+  maskIfRequired = mask_
+
+
+-- Overlaps the ResourceManagerT/MonadIO-instance, because `MonadIO` _could_ be specified for `STM` (but that would be
+-- _very_ incorrect, so this is safe).
+instance {-# OVERLAPS #-} MonadResourceManager (ResourceManagerT STM) where
+  localResourceManager resourceManager = local (const (toResourceManager resourceManager))
+
+  askResourceManager = ask
+
+  -- | No-op, since STM is always executed atomically.
+  lockResourceManager = id
+
+  runInSTM action = lift action
+
+  maskIfRequired = id
+
 
 instance {-# OVERLAPPABLE #-} MonadResourceManager m => MonadResourceManager (ReaderT r m) where
   askResourceManager = lift askResourceManager
@@ -211,20 +231,11 @@ instance {-# OVERLAPPABLE #-} MonadResourceManager m => MonadResourceManager (Re
 
   runInSTM action = lift $ runInSTM action
 
+  maskIfRequired action = do
+    x <- ask
+    lift $ maskIfRequired $ runReaderT action x
+
 -- TODO MonadResourceManager instances for StateT, WriterT, RWST, MaybeT, ...
-
-
--- Overlaps the ResourceManagerT-instance, because `MonadIO` _could_ be specified for `STM` (which would be very
--- very incorrect, so this is safe).
-instance {-# OVERLAPS #-} MonadResourceManager (ResourceManagerT STM) where
-  localResourceManager resourceManager = local (const (toResourceManager resourceManager))
-
-  askResourceManager = ask
-
-  -- | No-op, since STM is always executed atomically.
-  lockResourceManager = id
-
-  runInSTM action = lift action
 
 
 onResourceManager :: (IsResourceManager a, MonadIO m) => a -> ResourceManagerIO r -> m r
@@ -275,6 +286,12 @@ enterResourceManagerSTM :: ResourceManager -> ResourceManagerSTM () -> STM ()
 enterResourceManagerSTM resourceManager action = do
   onResourceManagerSTM resourceManager do
     action `catchAll` \ex -> throwToResourceManager ex
+
+
+-- | Create a new `Unique` in a `MonadResourceManager` monad.
+newUniqueRM :: MonadResourceManager m => m Unique
+newUniqueRM = runInSTM newUniqueSTM
+
 
 
 -- * Resource manager implementations
