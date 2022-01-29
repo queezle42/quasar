@@ -103,6 +103,7 @@ library
     Quasar.Timer.TimerFd
     Quasar.Utils.Exceptions
     Quasar.Utils.ExtraT
+    Quasar.Utils.TOnce
   hs-source-dirs:
     src
 
