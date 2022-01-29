@@ -89,6 +89,7 @@ library
     Quasar.Async.Unmanaged
     Quasar.Awaitable
     Quasar.Disposable
+    Quasar.Exceptions
     Quasar.Observable
     Quasar.Observable.Delta
     Quasar.Observable.ObservableHashMap
