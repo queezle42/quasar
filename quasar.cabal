@@ -97,6 +97,7 @@ library
     Quasar.Prelude
     Quasar.PreludeExtras
     Quasar.ResourceManager
+    Quasar.Resources
     Quasar.Subscribable
     Quasar.Timer
     Quasar.Timer.PosixTimer
