@@ -23,6 +23,17 @@
 
     defaultPackage = forAllSystems (system: self.packages.${system}.quasar);
 
-    devShell = forAllSystems (system: self.packages.${system}.quasar.env);
+    devShell = forAllSystems (system:
+      let
+        pkgs = nixpkgs.legacyPackages.${system};
+      in pkgs.mkShell {
+        buildInputs = [
+          pkgs.cabal-install
+          pkgs.ghcid
+          pkgs.haskell-language-server
+        ];
+        inputsFrom = builtins.attrValues self.packages.${system};
+      }
+    );
   };
 }
