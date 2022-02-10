@@ -91,6 +91,7 @@ library
     Quasar.Awaitable
     Quasar.Disposable
     Quasar.Exceptions
+    Quasar.Monad
     Quasar.Observable
     Quasar.Observable.Delta
     Quasar.Observable.ObservableHashMap
