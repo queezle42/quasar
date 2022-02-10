@@ -13,7 +13,8 @@ import Quasar.Awaitable
 import Quasar.Prelude
 
 data TOnceAlreadyFinalized = TOnceAlreadyFinalized
-  deriving (Eq, Show, Exception)
+  deriving stock (Eq, Show)
+  deriving anyclass Exception
 
 newtype TOnce a b = TOnce (TVar (Either a b))
 

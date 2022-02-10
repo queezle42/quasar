@@ -33,13 +33,11 @@ import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Reader
-import Data.List.NonEmpty (nonEmpty)
 import Data.HashSet (HashSet)
 import Data.HashSet qualified as HashSet
 import GHC.Conc (unsafeIOToSTM)
 import Quasar.Awaitable
 import Quasar.Prelude
-import Quasar.Utils.Exceptions
 
 
 -- * Disposable

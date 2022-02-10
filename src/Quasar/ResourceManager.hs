@@ -52,7 +52,7 @@ import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.HashMap.Strict (HashMap)
 import Data.HashMap.Strict qualified as HM
-import Data.List.NonEmpty (NonEmpty(..), (<|), nonEmpty)
+import Data.List.NonEmpty ((<|), nonEmpty)
 import Data.Sequence (Seq(..), (|>))
 import Data.Sequence qualified as Seq
 import Quasar.Async.Unmanaged
@@ -221,7 +221,7 @@ captureDisposable :: MonadResourceManager m => m a -> m (a, Disposable)
 captureDisposable action = do
   resourceManager <- newResourceManager
   result <- localResourceManager resourceManager action
-  pure $ (result, toDisposable resourceManager)
+  pure (result, toDisposable resourceManager)
 
 captureDisposable_ :: MonadResourceManager m => m () -> m Disposable
 captureDisposable_ = snd <<$>> captureDisposable
@@ -442,7 +442,7 @@ instance IsDisposable ResourceManagerCore where
         state <- readTVar stateVar
         case state of
           ResourceManagerNormal -> do
-            writeTVar stateVar $ ResourceManagerDisposing
+            writeTVar stateVar ResourceManagerDisposing
             readTVar lockVar >>= \case
               0 -> do
                 disposables <- takeDisposables
