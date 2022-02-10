@@ -59,15 +59,10 @@ import Data.Sequence qualified as Seq
 import Quasar.Async.Unmanaged
 import Quasar.Awaitable
 import Quasar.Disposable
+import Quasar.Exceptions
 import Quasar.Prelude
 import Quasar.Utils.Exceptions
 
-
-data DisposeException = DisposeException SomeException
-  deriving stock Show
-
-instance Exception DisposeException where
-  displayException (DisposeException inner) = "Exception was thrown while disposing: " <> displayException inner
 
 data FailedToRegisterResource = FailedToRegisterResource
   deriving stock (Eq, Show)

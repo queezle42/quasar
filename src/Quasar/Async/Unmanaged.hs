@@ -18,12 +18,13 @@ module Quasar.Async.Unmanaged (
 import Control.Concurrent (ThreadId, forkIO, forkIOWithUnmask, throwTo)
 import Control.Concurrent.STM
 import Control.Monad.Catch
+import Quasar.Exceptions
 import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Prelude
 
 
--- | An async is an asynchronously running computation that can be cancelled.
+-- | A async is an asynchronously running computation that can be cancelled.
 --
 -- The result (or exception) can be aquired by using the `IsAwaitable` class (e.g. by calling `await` or `awaitIO`).
 -- It is possible to cancel the async by using `dispose` if the operation has not been completed.
@@ -58,31 +59,6 @@ instance IsDisposable (Async r) where
 
 instance Functor Async where
   fmap fn (Async key actionVar finalizerVar resultAwaitable) = Async key actionVar finalizerVar (fn <$> resultAwaitable)
-
-
-data CancelAsync = CancelAsync Unique
-  deriving stock Eq
-instance Show CancelAsync where
-  show _ = "CancelAsync"
-instance Exception CancelAsync where
-
-data AsyncDisposed = AsyncDisposed
-  deriving stock (Eq, Show)
-instance Exception AsyncDisposed where
-
--- TODO Needs a descriptive name. This is similar in functionality to `ExceptionThrownInLinkedThread`
-data AsyncException = AsyncException SomeException
-  deriving stock Show
-  deriving anyclass Exception
-
-
-isCancelAsync :: SomeException -> Bool
-isCancelAsync (fromException @CancelAsync -> Just _) = True
-isCancelAsync _ = False
-
-isAsyncDisposed :: SomeException -> Bool
-isAsyncDisposed (fromException @AsyncDisposed -> Just _) = True
-isAsyncDisposed _ = False
 
 
 
