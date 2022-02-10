@@ -68,32 +68,33 @@ modifyHandle f (ObservableHashMap mvar) = modifyMVar mvar f
 modifyHandle_ :: (Handle k v -> IO (Handle k v)) -> ObservableHashMap k v -> IO ()
 modifyHandle_ f = modifyHandle (fmap (,()) . f)
 
-modifyKeyHandle :: (Eq k, Hashable k) => (KeyHandle v -> IO (KeyHandle v, a)) -> k -> ObservableHashMap k v -> IO a
+modifyKeyHandle :: (Eq k, Hashable k) => (KeyHandle v -> IO (a, KeyHandle v)) -> k -> ObservableHashMap k v -> IO a
 modifyKeyHandle f k = modifyHandle (updateKeyHandle f k)
 
 modifyKeyHandle_ :: forall k v. (Eq k, Hashable k) => (KeyHandle v -> IO (KeyHandle v)) -> k -> ObservableHashMap k v -> IO ()
-modifyKeyHandle_ f = modifyKeyHandle (fmap (,()) . f)
+modifyKeyHandle_ f = modifyKeyHandle (fmap ((), ) . f)
 
-updateKeyHandle :: forall k v a. (Eq k, Hashable k) => (KeyHandle v -> IO (KeyHandle v, a)) -> k -> Handle k v -> IO (Handle k v, a)
+updateKeyHandle :: forall k v a. (Eq k, Hashable k) => (KeyHandle v -> IO (a, KeyHandle v)) -> k -> Handle k v -> IO (Handle k v, a)
 updateKeyHandle f k handle = do
-  (keyHandles', result) <- runExtraT $ HM.alterF updateMaybe k (keyHandles handle)
+  (result, keyHandles') <- runExtraT $ HM.alterF updateMaybe k (keyHandles handle)
   pure (handle {keyHandles = keyHandles'}, result)
   where
     updateMaybe :: Maybe (KeyHandle v) -> ExtraT a IO (Maybe (KeyHandle v))
     updateMaybe = fmap toMaybe . (ExtraT . f) . fromMaybe emptyKeyHandle
+    --updateMaybe = undefined
     emptyKeyHandle :: KeyHandle v
     emptyKeyHandle = KeyHandle Nothing HM.empty
     toMaybe :: KeyHandle v -> Maybe (KeyHandle v)
     toMaybe (KeyHandle Nothing (HM.null -> True)) = Nothing
     toMaybe keyHandle = Just keyHandle
 
-modifyKeyHandleNotifying :: (Eq k, Hashable k) => (KeyHandle v -> IO (KeyHandle v, (Maybe (Delta k v), a))) -> k -> ObservableHashMap k v -> IO a
+modifyKeyHandleNotifying :: (Eq k, Hashable k) => (KeyHandle v -> IO ((a, Maybe (Delta k v)), KeyHandle v)) -> k -> ObservableHashMap k v -> IO a
 modifyKeyHandleNotifying f k = modifyHandle $ \handle -> do
-  (newHandle, (delta, result)) <- updateKeyHandle f k handle
+  (newHandle, (result, delta)) <- updateKeyHandle f k handle
   notifySubscribers newHandle delta
   pure (newHandle, result)
 
-modifyKeyHandleNotifying_ :: (Eq k, Hashable k) => (KeyHandle v -> IO (KeyHandle v, Maybe (Delta k v))) -> k -> ObservableHashMap k v -> IO ()
+modifyKeyHandleNotifying_ :: (Eq k, Hashable k) => (KeyHandle v -> IO (Maybe (Delta k v), KeyHandle v)) -> k -> ObservableHashMap k v -> IO ()
 modifyKeyHandleNotifying_ f k = modifyHandle_ $ \handle -> do
   (newHandle, delta) <- updateKeyHandle f k handle
   notifySubscribers newHandle delta
@@ -135,30 +136,30 @@ observeKey = undefined
 insert :: forall k v m. (Eq k, Hashable k, MonadIO m) => k -> v -> ObservableHashMap k v -> m ()
 insert key value = liftIO . modifyKeyHandleNotifying_ fn key
   where
-    fn :: KeyHandle v -> IO (KeyHandle v, Maybe (Delta k v))
+    fn :: KeyHandle v -> IO (Maybe (Delta k v), KeyHandle v)
     fn keyHandle@KeyHandle{keySubscribers} = do
       mapM_ ($ pure $ Just value) $ HM.elems keySubscribers
-      pure (keyHandle{value=Just value}, Just (Insert key value))
+      pure (Just (Insert key value), keyHandle{value=Just value})
 
 delete :: forall k v m. (Eq k, Hashable k, MonadIO m) => k -> ObservableHashMap k v -> m ()
 delete key = liftIO . modifyKeyHandleNotifying_ fn key
   where
-    fn :: KeyHandle v -> IO (KeyHandle v, Maybe (Delta k v))
+    fn :: KeyHandle v -> IO (Maybe (Delta k v), KeyHandle v)
     fn keyHandle@KeyHandle{value=oldValue, keySubscribers} = do
       mapM_ ($ pure $ Nothing) $ HM.elems keySubscribers
       let delta = if isJust oldValue then Just (Delete key) else Nothing
-      pure (keyHandle{value=Nothing}, delta)
+      pure (delta, keyHandle{value=Nothing})
 
 lookup :: forall k v m. (Eq k, Hashable k, MonadIO m) => k -> ObservableHashMap k v -> m (Maybe v)
 lookup key (ObservableHashMap mvar) = liftIO do
   Handle{keyHandles} <- readMVar mvar
-  pure $ join $ value <$> HM.lookup key keyHandles
+  pure $ value =<< HM.lookup key keyHandles
 
 lookupDelete :: forall k v m. (Eq k, Hashable k, MonadIO m) => k -> ObservableHashMap k v -> m (Maybe v)
 lookupDelete key = liftIO . modifyKeyHandleNotifying fn key
   where
-    fn :: KeyHandle v -> IO (KeyHandle v, (Maybe (Delta k v), Maybe v))
+    fn :: KeyHandle v -> IO ((Maybe v, Maybe (Delta k v)), KeyHandle v)
     fn keyHandle@KeyHandle{value=oldValue, keySubscribers} = do
       mapM_ ($ pure $ Nothing) $ HM.elems keySubscribers
       let delta = if isJust oldValue then Just (Delete key) else Nothing
-      pure (keyHandle{value=Nothing}, (delta, oldValue))
+      pure ((oldValue, delta), keyHandle{value=Nothing})
