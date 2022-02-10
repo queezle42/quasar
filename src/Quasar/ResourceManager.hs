@@ -22,7 +22,6 @@ module Quasar.ResourceManager (
   runInResourceManagerSTM,
   enterResourceManager,
   enterResourceManagerSTM,
-  lockResourceManager,
   newUniqueRM,
 
   -- ** Top level initialization
