@@ -39,6 +39,9 @@ data Disposer
   = FnDisposer Unique TIOWorker ExceptionChannel DisposerState Finalizers
   | ResourceManagerDisposer ResourceManager
 
+instance Resource Disposer where
+  getDisposer = id
+
 type DisposeFn = IO (Awaitable ())
 
 
@@ -125,6 +128,9 @@ data ResourceManagerState
   = ResourceManagerNormal (TVar (HashMap Unique Disposer)) TIOWorker
   | ResourceManagerDisposing (Awaitable [DisposeDependencies])
   | ResourceManagerDisposed
+
+instance Resource ResourceManager where
+  getDisposer = ResourceManagerDisposer
   
 
 newResourceManagerSTM :: TIOWorker -> STM ResourceManager
