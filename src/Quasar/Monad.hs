@@ -10,9 +10,13 @@ module Quasar.Monad (
   QuasarT,
   QuasarIO,
   QuasarSTM,
+
+  liftQuasarIO,
+  runQuasarSTM,
 ) where
 
 import Control.Concurrent.STM
+import Control.Monad.Catch
 import Control.Monad.Reader
 import GHC.Records (HasField(..))
 import Quasar.Async.STMHelper
@@ -57,29 +61,35 @@ newQuasar worker parentExChan parentRM = do
       throwToExceptionChannel parentExChan ex
 
 
-class Monad m => MonadQuasar m where
+class (MonadCatch m, MonadFix m) => MonadQuasar m where
   askQuasar :: m Quasar
   runSTM :: STM a -> m a
+  maskIfRequired :: m a -> m a
 
 type QuasarT = ReaderT Quasar
 type QuasarIO = QuasarT IO
 type QuasarSTM = QuasarT STM
 
 
-instance MonadIO m => MonadQuasar (QuasarT m) where
+instance (MonadIO m, MonadMask m, MonadFix m) => MonadQuasar (QuasarT m) where
   askQuasar = ask
   runSTM t = liftIO (atomically t)
+  maskIfRequired = mask_
 
 -- Overlaps the QuasartT/MonadIO-instance, because `MonadIO` _could_ be specified for `STM` (but that would be _very_ incorrect, so this is safe).
 instance {-# OVERLAPS #-} MonadQuasar (QuasarT STM) where
   askQuasar = ask
   runSTM = lift
+  maskIfRequired = id
 
 
 -- Overlappable so a QuasarT has priority over the base monad.
 instance {-# OVERLAPPABLE #-} MonadQuasar m => MonadQuasar (ReaderT r m) where
   askQuasar = lift askQuasar
   runSTM t = lift (runSTM t)
+  maskIfRequired fn = do
+    x <- ask
+    lift $ maskIfRequired (runReaderT fn x)
 
 -- TODO MonadQuasar instances for StateT, WriterT, RWST, MaybeT, ...
 
@@ -92,3 +102,14 @@ askExceptionChannel = quasarExceptionChannel <$> askQuasar
 
 askResourceManager :: MonadQuasar m => m ResourceManager
 askResourceManager = quasarResourceManager <$> askQuasar
+
+
+liftQuasarIO :: (MonadIO m, MonadQuasar m) => QuasarIO a -> m a
+liftQuasarIO fn = do
+  quasar <- askQuasar
+  liftIO $ runReaderT fn quasar
+
+runQuasarSTM :: MonadQuasar m => QuasarSTM a -> m a
+runQuasarSTM fn = do
+  quasar <- askQuasar
+  runSTM $ runReaderT fn quasar
