@@ -2,6 +2,7 @@ module Quasar.Awaitable (
   -- * MonadAwaitable
   MonadAwait(..),
   peekAwaitable,
+  peekAwaitableSTM,
   awaitSTM,
 
   -- * Awaitable
@@ -104,6 +105,11 @@ instance MonadAwait m => MonadAwait (MaybeT m) where
 -- failed and returns `Nothing` otherwise.
 peekAwaitable :: MonadIO m => Awaitable r -> m (Maybe r)
 peekAwaitable awaitable = liftIO $ atomically $ (Just <$> awaitSTM awaitable) `orElse` pure Nothing
+
+-- | Returns the result (in a `Just`) when the awaitable is completed, throws an `Exception` when the awaitable is
+-- failed and returns `Nothing` otherwise.
+peekAwaitableSTM :: Awaitable r -> STM (Maybe r)
+peekAwaitableSTM awaitable = (Just <$> awaitSTM awaitable) `orElse` pure Nothing
 
 
 

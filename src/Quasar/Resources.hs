@@ -2,21 +2,28 @@ module Quasar.Resources (
   -- * Resources
   Resource(..),
   dispose,
-  disposeEventuallySTM,
-  disposeEventuallySTM_,
+  isDisposing,
   isDisposed,
 
-  -- * Monadic resource management
+  -- * Resource management in the `Quasar` monad
   registerResource,
+  registerNewResource,
   registerDisposeAction,
   registerDisposeTransaction,
+  disposeEventually,
+  disposeEventually_,
 
-  -- * Disposer
+  -- * STM
+  disposeEventuallySTM,
+  disposeEventuallySTM_,
+
+  -- * Types to implement resources
+  -- ** Disposer
   Disposer,
   newIODisposer,
   newSTMDisposer,
 
-  -- * Resource manager
+  -- ** Resource manager
   ResourceManager,
   newResourceManagerSTM,
   attachResource,
@@ -24,6 +31,8 @@ module Quasar.Resources (
 
 
 import Control.Concurrent.STM
+import Control.Monad.Catch
+import Quasar.Awaitable
 import Quasar.Async.STMHelper
 import Quasar.Exceptions
 import Quasar.Monad
@@ -56,3 +65,27 @@ registerDisposeTransaction fn = do
   exChan <- askExceptionChannel
   rm <- askResourceManager
   runSTM $ attachResource rm =<< newSTMDisposer worker exChan fn
+
+registerNewResource :: forall a m. (Resource a, MonadQuasar m) => m a -> m a
+registerNewResource fn = do
+  rm <- askResourceManager
+  disposing <- isJust <$> runSTM (peekAwaitableSTM (isDisposing rm))
+  -- Bail out before creating the resource _if possible_
+  when disposing $ throwM AlreadyDisposing
+
+  maskIfRequired do
+    resource <- fn
+    registerResource resource `catchAll` \ex -> do
+      -- When the resource cannot be registered (because resource manager is now disposing), destroy it to prevent leaks
+      disposeEventually_ resource
+      case ex of
+        (fromException -> Just FailedToAttachResource) -> throwM AlreadyDisposing
+        _ -> throwM ex
+    pure resource
+
+
+disposeEventually :: (Resource r, MonadQuasar m) => r -> m (Awaitable ())
+disposeEventually res = runSTM $ disposeEventuallySTM res
+
+disposeEventually_ :: (Resource r, MonadQuasar m) => r -> m ()
+disposeEventually_ res = runSTM $ disposeEventuallySTM_ res
