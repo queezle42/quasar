@@ -6,6 +6,7 @@ module Quasar.Resources.Disposer (
   dispose,
   disposeEventuallySTM,
   disposeEventuallySTM_,
+  isDisposing,
   isDisposed,
   newPrimitiveDisposer,
 
@@ -20,6 +21,7 @@ import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import Control.Monad (foldM)
 import Control.Monad.Catch
+import Data.Either (isRight)
 import Data.HashMap.Strict (HashMap)
 import Data.HashMap.Strict qualified as HM
 import Data.HashSet (HashSet)
@@ -74,6 +76,13 @@ isDisposed resource =
   case getDisposer resource of
     FnDisposer _ _ _ state _ -> join (toAwaitable state)
     ResourceManagerDisposer resourceManager -> resourceManagerIsDisposed resourceManager
+
+isDisposing :: Resource a => a -> Awaitable ()
+isDisposing resource =
+  case getDisposer resource of
+    FnDisposer _ _ _ state _ -> unsafeAwaitSTM (check . isRight =<< readTOnceState state)
+    ResourceManagerDisposer resourceManager -> resourceManagerIsDisposing resourceManager
+
 
 
 beginDisposeFnDisposer :: TIOWorker -> ExceptionChannel -> DisposerState -> Finalizers -> STM (Awaitable ())
@@ -234,6 +243,13 @@ resourceManagerIsDisposed rm = unsafeAwaitSTM $
   readTVar (resourceManagerState rm) >>= \case
     ResourceManagerDisposed -> pure ()
     _ -> retry
+
+resourceManagerIsDisposing :: ResourceManager -> Awaitable ()
+resourceManagerIsDisposing rm = unsafeAwaitSTM $
+  readTVar (resourceManagerState rm) >>= \case
+    (ResourceManagerNormal _ _) -> retry
+    _ -> pure ()
+
 
 
 -- * Implementation internals
