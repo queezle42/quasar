@@ -3,6 +3,13 @@ module Quasar.Async.V2 (
   async,
   asyncWithUnmask,
 
+  -- ** Async exceptions
+  CancelAsync(..),
+  AsyncDisposed(..),
+  AsyncException(..),
+  isCancelAsync,
+  isAsyncDisposed,
+
   -- ** Unmanaged variants
   unmanagedAsync,
   unmanagedAsyncWithUnmask,
@@ -18,6 +25,7 @@ import Quasar.Exceptions
 import Quasar.Monad
 import Quasar.Prelude
 import Quasar.Resources.Disposer
+import Control.Monad.Reader
 
 
 data Async a = Async (Awaitable a) Disposer
@@ -66,15 +74,21 @@ unmanagedAsyncWithUnmask worker exChan fn = do
       pure (() <$ toAwaitable resultVar)
 
 
-async :: MonadQuasar m => IO a -> m (Async a)
+async :: MonadQuasar m => QuasarIO a -> m (Async a)
 async fn = asyncWithUnmask ($ fn)
 
-asyncWithUnmask :: MonadQuasar m => ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
+asyncWithUnmask :: MonadQuasar m => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO a) -> m (Async a)
 asyncWithUnmask fn = do
+  quasar <- askQuasar
   worker <- askIOWorker
   exChan <- askExceptionChannel
   rm <- askResourceManager
   runSTM do
-    as <- unmanagedAsyncWithUnmask worker exChan fn
+    as <- unmanagedAsyncWithUnmask worker exChan \unmask -> runReaderT (fn (liftUnmask unmask)) quasar
     attachResource rm as
     pure as
+  where
+    liftUnmask :: (forall b. IO b -> IO b) -> QuasarIO a -> QuasarIO a
+    liftUnmask unmask innerAction = do
+      quasar <- askQuasar
+      liftIO $ unmask $ runReaderT innerAction quasar
