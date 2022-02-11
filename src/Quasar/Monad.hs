@@ -3,25 +3,58 @@ module Quasar.Monad (
   newQuasar,
 
   MonadQuasar(..),
+  askIOWorker,
+  askExceptionChannel,
+  askResourceManager,
 
   QuasarT,
   QuasarIO,
   QuasarSTM,
-
 ) where
 
 import Control.Concurrent.STM
+import Control.Monad.Reader
+import GHC.Records (HasField(..))
 import Quasar.Async.STMHelper
 import Quasar.Exceptions
 import Quasar.Prelude
-import Quasar.Resources
-import Control.Monad.Reader
+import Quasar.Resources.Disposer
 
 
+-- Invariant: the resource manager is disposed as soon as an exception is thrown to the channel
 data Quasar = Quasar TIOWorker ExceptionChannel ResourceManager
 
+instance Resource Quasar where
+  getDisposer (Quasar _ _ rm) = getDisposer rm
+
+instance HasField "ioWorker" Quasar TIOWorker where
+  getField = quasarIOWorker
+
+instance HasField "exceptionChannel" Quasar ExceptionChannel where
+  getField = quasarExceptionChannel
+
+instance HasField "resourceManager" Quasar ResourceManager where
+  getField = quasarResourceManager
+
+quasarIOWorker :: Quasar -> TIOWorker
+quasarIOWorker (Quasar worker _ _) = worker
+
+quasarExceptionChannel :: Quasar -> ExceptionChannel
+quasarExceptionChannel (Quasar _ exChan _) = exChan
+
+quasarResourceManager :: Quasar -> ResourceManager
+quasarResourceManager (Quasar _ _ rm) = rm
+
 newQuasar :: TIOWorker -> ExceptionChannel -> ResourceManager -> STM Quasar
-newQuasar = undefined
+newQuasar worker parentExChan parentRM = do
+  rm <- newResourceManagerSTM worker parentExChan
+  attachResource parentRM rm
+  pure $ Quasar worker (ExceptionChannel (disposeOnException rm)) rm
+  where
+    disposeOnException :: ResourceManager -> SomeException -> STM ()
+    disposeOnException rm ex = do
+      disposeEventuallySTM_ rm
+      throwToExceptionChannel parentExChan ex
 
 
 class Monad m => MonadQuasar m where
@@ -49,3 +82,13 @@ instance {-# OVERLAPPABLE #-} MonadQuasar m => MonadQuasar (ReaderT r m) where
   runSTM t = lift (runSTM t)
 
 -- TODO MonadQuasar instances for StateT, WriterT, RWST, MaybeT, ...
+
+
+askIOWorker :: MonadQuasar m => m TIOWorker
+askIOWorker = quasarIOWorker <$> askQuasar
+
+askExceptionChannel :: MonadQuasar m => m ExceptionChannel
+askExceptionChannel = quasarExceptionChannel <$> askQuasar
+
+askResourceManager :: MonadQuasar m => m ResourceManager
+askResourceManager = quasarResourceManager <$> askQuasar
