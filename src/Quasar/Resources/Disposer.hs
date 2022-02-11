@@ -110,7 +110,6 @@ disposerFinalizers (ResourceManagerDisposer rm) = resourceManagerFinalizers rm
 
 
 
-
 data DisposeResult
   = DisposeResultAwait (Awaitable ())
   | DisposeResultDependencies DisposeDependencies
@@ -133,7 +132,7 @@ data ResourceManagerState
 
 instance Resource ResourceManager where
   getDisposer = ResourceManagerDisposer
-  
+
 
 newResourceManagerSTM :: TIOWorker -> ExceptionChannel -> STM ResourceManager
 newResourceManagerSTM worker exChan = do
@@ -171,7 +170,7 @@ attachDisposer resourceManager disposer = do
       -- No finalization required in other states, since all resources are disposed soon
       -- (and awaiting each resource is cheaper than modifying a HashMap until it is empty).
       _ -> pure ()
- 
+
 
 beginDisposeResourceManager :: ResourceManager -> STM (Awaitable ())
 beginDisposeResourceManager rm = do
@@ -262,7 +261,7 @@ runFinalizers (Finalizers finalizerVar) = do
 runFinalizersAfter :: Finalizers -> Awaitable () -> IO ()
 runFinalizersAfter finalizers awaitable = do
   -- Peek awaitable to ensure trivial disposables always run without forking
-  isCompleted <- isJust <$> peekAwaitable awaitable 
+  isCompleted <- isJust <$> peekAwaitable awaitable
   if isCompleted
     then
       atomically $ runFinalizers finalizers

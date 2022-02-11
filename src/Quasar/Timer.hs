@@ -73,7 +73,7 @@ data TimerSchedulerDisposed = TimerSchedulerDisposed
 
 instance Exception TimerSchedulerDisposed
 
-newTimerScheduler :: (MonadResourceManager m, MonadIO m, MonadMask m) => m TimerScheduler
+newTimerScheduler :: (MonadResourceManager m, MonadIO m) => m TimerScheduler
 newTimerScheduler = registerNewResource newUnmanagedTimerScheduler
 
 newUnmanagedTimerScheduler :: MonadIO m => m TimerScheduler
@@ -104,7 +104,8 @@ startSchedulerThread scheduler = toDisposable <$> unmanagedAsync (schedulerThrea
 
       -- Get next timer (blocks when heap is empty)
       nextTimer <- atomically do
-        uncons <$> readTMVar heap' >>= \case
+        mNext <- uncons <$> readTMVar heap'
+        case mNext of
           Nothing -> retry
           Just (timer, _) -> pure timer
 
@@ -152,7 +153,7 @@ startSchedulerThread scheduler = toDisposable <$> unmanagedAsync (schedulerThrea
       disposeSTMDisposable disposable
 
     cleanup :: STM ()
-    cleanup = putTMVar heap' . fromList =<< mapMaybeM cleanupTimer =<< (toList <$> takeTMVar heap')
+    cleanup = putTMVar heap' . fromList =<< mapMaybeM cleanupTimer . toList =<< takeTMVar heap'
 
     cleanupTimer :: Timer -> STM (Maybe Timer)
     cleanupTimer timer = do
@@ -169,7 +170,7 @@ startSchedulerThread scheduler = toDisposable <$> unmanagedAsync (schedulerThrea
       mapM_ dispose timers
 
 
-newTimer :: (MonadResourceManager m, MonadIO m, MonadMask m) => TimerScheduler -> UTCTime -> m Timer
+newTimer :: (MonadResourceManager m, MonadIO m) => TimerScheduler -> UTCTime -> m Timer
 newTimer scheduler time =
   registerNewResource $ newUnmanagedTimer scheduler time
 
@@ -206,7 +207,7 @@ newtype Delay = Delay (Async ())
 instance IsAwaitable () Delay where
   toAwaitable (Delay task) = toAwaitable task `catch` \AsyncDisposed -> throwM TimerCancelled
 
-newDelay :: (MonadResourceManager m, MonadIO m, MonadMask m) => Int -> m Delay
+newDelay :: (MonadResourceManager m, MonadIO m) => Int -> m Delay
 newDelay microseconds = registerNewResource $ newUnmanagedDelay microseconds
 
 newUnmanagedDelay :: MonadIO m => Int -> m Delay

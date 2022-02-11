@@ -166,7 +166,7 @@ instance IsDisposable PosixTimer where
   toDisposable = disposable
 
 
-newPosixTimer :: (MonadResourceManager m, MonadIO m, MonadMask m) => ClockId -> IO () -> m PosixTimer
+newPosixTimer :: (MonadResourceManager m, MonadIO m) => ClockId -> IO () -> m PosixTimer
 newPosixTimer clockId callback = registerNewResource do
   liftIO $ newUnmanagedPosixTimer clockId callback
 
