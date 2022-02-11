@@ -88,6 +88,7 @@ library
     Quasar.Async
     Quasar.Async.Unmanaged
     Quasar.Async.STMHelper
+    Quasar.Async.V2
     Quasar.Awaitable
     Quasar.Disposable
     Quasar.Exceptions

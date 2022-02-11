@@ -83,12 +83,12 @@ beginDisposeFnDisposer worker exChan disposeState finalizers =
     startDisposeFn :: DisposeFn -> STM (Awaitable ())
     startDisposeFn disposeFn = do
       awaitableVar <- newAsyncVarSTM
-      startTrivialIO_ worker exChan (runDisposeFn awaitableVar disposeFn)
+      startShortIO_ worker exChan (runDisposeFn awaitableVar disposeFn)
       pure $ join (toAwaitable awaitableVar)
 
     runDisposeFn :: AsyncVar (Awaitable ()) -> DisposeFn -> IO ()
     runDisposeFn awaitableVar disposeFn = mask_ $ handleAll exceptionHandler do
-      awaitable <- disposeFn 
+      awaitable <- disposeFn
       putAsyncVar_ awaitableVar awaitable
       runFinalizersAfter finalizers awaitable
       where
@@ -185,7 +185,7 @@ beginDisposeResourceManagerInternal rm = do
       dependenciesVar <- newAsyncVarSTM
       writeTVar (resourceManagerState rm) (ResourceManagerDisposing (toAwaitable dependenciesVar))
       attachedDisposers <- HM.elems <$> readTVar attachedResources
-      startTrivialIO_ worker undefined (void $ forkIO (disposeThread dependenciesVar attachedDisposers))
+      startShortIO_ worker undefined (void $ forkIO (disposeThread dependenciesVar attachedDisposers))
       pure $ DisposeDependencies rmKey (toAwaitable dependenciesVar)
     ResourceManagerDisposing deps -> pure $ DisposeDependencies rmKey deps
     ResourceManagerDisposed -> pure $ DisposeDependencies rmKey mempty

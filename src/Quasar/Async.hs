@@ -24,7 +24,6 @@ module Quasar.Async (
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Quasar.Async.Unmanaged
-import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Prelude
 import Quasar.ResourceManager
