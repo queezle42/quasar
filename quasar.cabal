@@ -107,6 +107,8 @@ library
     Quasar.Utils.Exceptions
     Quasar.Utils.ExtraT
     Quasar.Utils.TOnce
+  other-modules:
+    Quasar.Resources.Disposer
   hs-source-dirs:
     src
 
