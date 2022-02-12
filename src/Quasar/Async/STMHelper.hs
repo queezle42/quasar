@@ -1,15 +1,12 @@
 module Quasar.Async.STMHelper (
+  -- * Helper to fork from STM
   TIOWorker,
   newTIOWorker,
   startShortIO,
   startShortIO_,
-  fork,
-  fork_,
-  forkWithUnmask,
-  forkWithUnmask_,
 ) where
 
-import Control.Concurrent (ThreadId, forkIO)
+import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import Control.Exception (BlockedIndefinitelyOnSTM)
 import Control.Monad.Catch
@@ -50,22 +47,3 @@ newTIOWorker = do
       (\(_ :: BlockedIndefinitelyOnSTM) -> pure ())
 
   pure $ TIOWorker jobQueue
-
-
-fork :: IO () -> TIOWorker -> ExceptionChannel -> STM (Awaitable ThreadId)
-fork fn = forkWithUnmask (\unmask -> unmask fn)
-
-fork_ :: IO () -> TIOWorker -> ExceptionChannel -> STM ()
-fork_ fn worker exChan = void $ fork fn worker exChan
-
-
-forkWithUnmask :: ((forall a. IO a -> IO a) -> IO ()) -> TIOWorker -> ExceptionChannel -> STM (Awaitable ThreadId)
-forkWithUnmask fn worker exChan = startShortIO forkFn worker exChan
-  where
-    forkFn :: ShortIO ThreadId
-    forkFn = mask_ $ forkIOWithUnmaskShortIO wrappedFn
-    wrappedFn :: (forall a. IO a -> IO a) -> IO ()
-    wrappedFn unmask = fn unmask `catchAll` \ex -> atomically (throwToExceptionChannel exChan ex)
-
-forkWithUnmask_ :: ((forall a. IO a -> IO a) -> IO ()) -> TIOWorker -> ExceptionChannel -> STM ()
-forkWithUnmask_ fn worker exChan = void $ forkWithUnmask fn worker exChan

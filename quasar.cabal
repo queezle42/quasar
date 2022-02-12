@@ -85,6 +85,7 @@ library
     unordered-containers,
   exposed-modules:
     Quasar
+    Quasar.Async.Fork
     Quasar.Async.STMHelper
     Quasar.Async.V2
     Quasar.Awaitable
