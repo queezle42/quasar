@@ -85,8 +85,6 @@ library
     unordered-containers,
   exposed-modules:
     Quasar
-    Quasar.Async
-    Quasar.Async.Unmanaged
     Quasar.Async.STMHelper
     Quasar.Async.V2
     Quasar.Awaitable
@@ -97,6 +95,8 @@ library
     Quasar.Observable.Delta
     Quasar.Observable.ObservableHashMap
     Quasar.Observable.ObservablePriority
+    Quasar.Old.Async
+    Quasar.Old.UnmanagedAsync
     Quasar.Prelude
     Quasar.PreludeExtras
     Quasar.ResourceManager

@@ -1,4 +1,4 @@
-module Quasar.Async (
+module Quasar.Old.Async (
   -- * Async
   Async,
   async,
@@ -23,8 +23,8 @@ module Quasar.Async (
 
 import Control.Monad.Catch
 import Control.Monad.Reader
-import Quasar.Async.Unmanaged
 import Quasar.Disposable
+import Quasar.Old.UnmanagedAsync
 import Quasar.Prelude
 import Quasar.ResourceManager
 

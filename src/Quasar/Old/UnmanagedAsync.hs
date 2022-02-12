@@ -1,4 +1,4 @@
-module Quasar.Async.Unmanaged (
+module Quasar.Old.UnmanagedAsync (
   -- ** Unmanaged variant
   Async,
   unmanagedAsync,

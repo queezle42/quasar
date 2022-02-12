@@ -55,10 +55,10 @@ import Data.HashMap.Strict qualified as HM
 import Data.List.NonEmpty ((<|), nonEmpty)
 import Data.Sequence (Seq(..), (|>))
 import Data.Sequence qualified as Seq
-import Quasar.Async.Unmanaged
 import Quasar.Awaitable
 import Quasar.Disposable
 import Quasar.Exceptions
+import Quasar.Old.UnmanagedAsync
 import Quasar.Prelude
 import Quasar.Utils.Exceptions
 
