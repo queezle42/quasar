@@ -33,6 +33,7 @@ module Quasar.Resources (
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Quasar.Awaitable
+import Quasar.Async.Fork
 import Quasar.Async.STMHelper
 import Quasar.Exceptions
 import Quasar.Monad
@@ -41,10 +42,10 @@ import Quasar.Resources.Disposer
 
 
 newIODisposer :: IO () -> TIOWorker -> ExceptionChannel -> STM Disposer
-newIODisposer = undefined
+newIODisposer fn worker exChan = newPrimitiveDisposer (startIOThreadShortIO fn exChan) worker exChan
 
 newSTMDisposer :: STM () -> TIOWorker -> ExceptionChannel -> STM Disposer
-newSTMDisposer = undefined
+newSTMDisposer fn = newIODisposer (atomically fn)
 
 
 registerResource :: (Resource a, MonadQuasar m) => a -> m ()
