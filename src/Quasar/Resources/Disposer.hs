@@ -135,7 +135,7 @@ data ResourceManager = ResourceManager {
 }
 
 data ResourceManagerState
-  = ResourceManagerNormal (TVar (HashMap Unique Disposer)) TIOWorker
+  = ResourceManagerNormal (TVar (HashMap Unique Disposer)) TIOWorker ExceptionChannel
   | ResourceManagerDisposing (Awaitable [DisposeDependencies])
   | ResourceManagerDisposed
 
@@ -147,7 +147,7 @@ newResourceManagerSTM :: TIOWorker -> ExceptionChannel -> STM ResourceManager
 newResourceManagerSTM worker exChan = do
   resourceManagerKey <- newUniqueSTM
   attachedResources <- newTVar mempty
-  resourceManagerState <- newTVar (ResourceManagerNormal attachedResources worker)
+  resourceManagerState <- newTVar (ResourceManagerNormal attachedResources worker exChan)
   resourceManagerFinalizers <- newFinalizers
   pure ResourceManager {
     resourceManagerKey,
@@ -163,7 +163,7 @@ attachResource resourceManager resource =
 attachDisposer :: ResourceManager -> Disposer -> STM ()
 attachDisposer resourceManager disposer = do
   readTVar (resourceManagerState resourceManager) >>= \case
-    ResourceManagerNormal attachedResources _ -> do
+    ResourceManagerNormal attachedResources _ _ -> do
       alreadyAttached <- isJust . HM.lookup key <$> readTVar attachedResources
       unless alreadyAttached do
         -- Returns false if the disposer is already finalized
@@ -175,7 +175,7 @@ attachDisposer resourceManager disposer = do
     key = disposerKey disposer
     finalizer :: STM ()
     finalizer = readTVar (resourceManagerState resourceManager) >>= \case
-      ResourceManagerNormal attachedResources _ -> modifyTVar attachedResources (HM.delete key)
+      ResourceManagerNormal attachedResources _ _ -> modifyTVar attachedResources (HM.delete key)
       -- No finalization required in other states, since all resources are disposed soon
       -- (and awaiting each resource is cheaper than modifying a HashMap until it is empty).
       _ -> pure ()
@@ -189,11 +189,11 @@ beginDisposeResourceManager rm = do
 beginDisposeResourceManagerInternal :: ResourceManager -> STM DisposeDependencies
 beginDisposeResourceManagerInternal rm = do
   readTVar (resourceManagerState rm) >>= \case
-    ResourceManagerNormal attachedResources worker -> do
+    ResourceManagerNormal attachedResources worker exChan -> do
       dependenciesVar <- newAsyncVarSTM
       writeTVar (resourceManagerState rm) (ResourceManagerDisposing (toAwaitable dependenciesVar))
       attachedDisposers <- HM.elems <$> readTVar attachedResources
-      startShortIO_ (void $ forkIO (disposeThread dependenciesVar attachedDisposers)) worker undefined
+      startShortIO_ (void $ forkIO (disposeThread dependenciesVar attachedDisposers)) worker exChan
       pure $ DisposeDependencies rmKey (toAwaitable dependenciesVar)
     ResourceManagerDisposing deps -> pure $ DisposeDependencies rmKey deps
     ResourceManagerDisposed -> pure $ DisposeDependencies rmKey mempty
@@ -247,7 +247,7 @@ resourceManagerIsDisposed rm = unsafeAwaitSTM $
 resourceManagerIsDisposing :: ResourceManager -> Awaitable ()
 resourceManagerIsDisposing rm = unsafeAwaitSTM $
   readTVar (resourceManagerState rm) >>= \case
-    (ResourceManagerNormal _ _) -> retry
+    (ResourceManagerNormal _ _ _) -> retry
     _ -> pure ()
 
 
