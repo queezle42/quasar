@@ -12,15 +12,12 @@ import Control.Concurrent
 import Control.Monad.Catch
 import Foreign
 import Foreign.C
-import GHC.Conc (closeFdWith)
-import GHC.IO.Handle.FD
 import Quasar.Awaitable
-import Quasar.Async
-import Quasar.Disposable
+import Quasar.Async.V2
+import Quasar.Monad
 import Quasar.Prelude
-import Quasar.ResourceManager
+import Quasar.Resources
 import Quasar.Timer.PosixTimer
-import System.IO
 import System.Posix.Types
 
 
@@ -43,14 +40,14 @@ newtype TimerFd = TimerFd Fd
   deriving stock (Eq, Show)
   deriving newtype Num
 
-newTimerFd :: (MonadResourceManager m, MonadIO m, MonadMask m) => ClockId -> IO () -> m TimerFd
+newTimerFd :: (MonadQuasar m, MonadIO m, MonadMask m) => ClockId -> IO () -> m TimerFd
 newTimerFd clockId callback = mask_ do
   timer <- liftIO $ runInBoundThread do
     throwErrnoIfMinus1 "timerfd_create" do
       c_timerfd_create (toCClockId clockId) c_TFD_CLOEXEC
 
   workerTask <- async $ liftIO $ worker timer
-  registerAsyncDisposeAction do
+  registerDisposeAction do
     await $ isDisposed workerTask
     timerFdClose timer
 
