@@ -180,17 +180,20 @@ newUnmanagedTimer scheduler time = liftIO do
   key <- newUnique
   completed <- newAsyncVar
   atomically do
-    disposer <- newSTMDisposer (ioWorker scheduler) (exceptionChannel scheduler) do
-      cancelled <- failAsyncVarSTM completed TimerCancelled
-      when cancelled do
-        modifyTVar (activeCount scheduler) (+ (-1))
-        modifyTVar (cancelledCount scheduler) (+ 1)
+    disposer <- newSTMDisposer (disposeFn completed) (ioWorker scheduler) (exceptionChannel scheduler)
     let timer = Timer { key, time, completed, disposer, scheduler }
     tryTakeTMVar (heap scheduler) >>= \case
       Just timers -> putTMVar (heap scheduler) (insert timer timers)
       Nothing -> throwM TimerSchedulerDisposed
     modifyTVar (activeCount scheduler) (+ 1)
     pure timer
+  where
+    disposeFn :: AsyncVar () -> STM ()
+    disposeFn completed = do
+      cancelled <- failAsyncVarSTM completed TimerCancelled
+      when cancelled do
+        modifyTVar (activeCount scheduler) (+ (-1))
+        modifyTVar (cancelledCount scheduler) (+ 1)
 
 
 sleepUntil :: MonadIO m => TimerScheduler -> UTCTime -> m ()

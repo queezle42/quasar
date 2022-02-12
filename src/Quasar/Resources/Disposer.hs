@@ -50,8 +50,8 @@ type DisposeFn = IO (Awaitable ())
 
 
 -- TODO document: IO has to be "short"
-newPrimitiveDisposer :: TIOWorker -> ExceptionChannel -> IO (Awaitable ()) -> STM Disposer
-newPrimitiveDisposer worker exChan fn = do
+newPrimitiveDisposer :: IO (Awaitable ()) -> TIOWorker -> ExceptionChannel -> STM Disposer
+newPrimitiveDisposer fn worker exChan = do
   key <- newUniqueSTM
   FnDisposer key worker exChan <$> newTOnce fn <*> newFinalizers
 
@@ -92,7 +92,7 @@ beginDisposeFnDisposer worker exChan disposeState finalizers =
     startDisposeFn :: DisposeFn -> STM (Awaitable ())
     startDisposeFn disposeFn = do
       awaitableVar <- newAsyncVarSTM
-      startShortIO_ worker exChan (runDisposeFn awaitableVar disposeFn)
+      startShortIO_ (runDisposeFn awaitableVar disposeFn) worker exChan
       pure $ join (toAwaitable awaitableVar)
 
     runDisposeFn :: AsyncVar (Awaitable ()) -> DisposeFn -> IO ()
@@ -193,7 +193,7 @@ beginDisposeResourceManagerInternal rm = do
       dependenciesVar <- newAsyncVarSTM
       writeTVar (resourceManagerState rm) (ResourceManagerDisposing (toAwaitable dependenciesVar))
       attachedDisposers <- HM.elems <$> readTVar attachedResources
-      startShortIO_ worker undefined (void $ forkIO (disposeThread dependenciesVar attachedDisposers))
+      startShortIO_ (void $ forkIO (disposeThread dependenciesVar attachedDisposers)) worker undefined
       pure $ DisposeDependencies rmKey (toAwaitable dependenciesVar)
     ResourceManagerDisposing deps -> pure $ DisposeDependencies rmKey deps
     ResourceManagerDisposed -> pure $ DisposeDependencies rmKey mempty

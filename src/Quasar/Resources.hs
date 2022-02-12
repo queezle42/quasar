@@ -40,10 +40,10 @@ import Quasar.Prelude
 import Quasar.Resources.Disposer
 
 
-newIODisposer :: TIOWorker -> ExceptionChannel -> IO () -> STM Disposer
+newIODisposer :: IO () -> TIOWorker -> ExceptionChannel -> STM Disposer
 newIODisposer = undefined
 
-newSTMDisposer :: TIOWorker -> ExceptionChannel -> STM () -> STM Disposer
+newSTMDisposer :: STM () -> TIOWorker -> ExceptionChannel -> STM Disposer
 newSTMDisposer = undefined
 
 
@@ -57,14 +57,14 @@ registerDisposeAction fn = do
   worker <- askIOWorker
   exChan <- askExceptionChannel
   rm <- askResourceManager
-  runSTM $ attachResource rm =<< newIODisposer worker exChan fn
+  runSTM $ attachResource rm =<< newIODisposer fn worker exChan
 
 registerDisposeTransaction :: MonadQuasar m => STM () -> m ()
 registerDisposeTransaction fn = do
   worker <- askIOWorker
   exChan <- askExceptionChannel
   rm <- askResourceManager
-  runSTM $ attachResource rm =<< newSTMDisposer worker exChan fn
+  runSTM $ attachResource rm =<< newSTMDisposer fn worker exChan
 
 registerNewResource :: forall a m. (Resource a, MonadQuasar m) => m a -> m a
 registerNewResource fn = do

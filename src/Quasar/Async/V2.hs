@@ -37,16 +37,16 @@ instance IsAwaitable a (Async a) where
   toAwaitable (Async awaitable _) = awaitable
 
 
-unmanagedAsync :: TIOWorker -> ExceptionChannel -> IO a -> STM (Async a)
-unmanagedAsync worker exChan fn = unmanagedAsyncWithUnmask worker exChan \unmask -> unmask fn
+unmanagedAsync :: IO a -> TIOWorker -> ExceptionChannel -> STM (Async a)
+unmanagedAsync fn = unmanagedAsyncWithUnmask (\unmask -> unmask fn)
 
-unmanagedAsyncWithUnmask :: forall a. TIOWorker -> ExceptionChannel -> ((forall b. IO b -> IO b) -> IO a) -> STM (Async a)
-unmanagedAsyncWithUnmask worker exChan fn = do
+unmanagedAsyncWithUnmask :: forall a. ((forall b. IO b -> IO b) -> IO a) -> TIOWorker -> ExceptionChannel -> STM (Async a)
+unmanagedAsyncWithUnmask fn worker exChan = do
   key <- newUniqueSTM
   resultVar <- newAsyncVarSTM
   disposer <- mfix \disposer -> do
-    tidAwaitable <- forkWithUnmask worker exChan (runAndPut key resultVar disposer)
-    newPrimitiveDisposer worker exChan (disposeFn key resultVar tidAwaitable)
+    tidAwaitable <- forkWithUnmask (runAndPut key resultVar disposer) worker exChan
+    newPrimitiveDisposer (disposeFn key resultVar tidAwaitable) worker exChan
   pure $ Async (toAwaitable resultVar) disposer
   where
     runAndPut :: Unique -> AsyncVar a -> Disposer -> (forall b. IO b -> IO b) -> IO ()
@@ -84,7 +84,7 @@ asyncWithUnmask fn = do
   exChan <- askExceptionChannel
   rm <- askResourceManager
   runSTM do
-    as <- unmanagedAsyncWithUnmask worker exChan \unmask -> runReaderT (fn (liftUnmask unmask)) quasar
+    as <- unmanagedAsyncWithUnmask (\unmask -> runReaderT (fn (liftUnmask unmask)) quasar) worker exChan
     attachResource rm as
     pure as
   where
