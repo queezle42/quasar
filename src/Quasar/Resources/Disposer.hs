@@ -17,7 +17,6 @@ module Quasar.Resources.Disposer (
 ) where
 
 
-import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import Control.Monad (foldM)
 import Control.Monad.Catch
@@ -30,6 +29,7 @@ import Quasar.Async.STMHelper
 import Quasar.Awaitable
 import Quasar.Exceptions
 import Quasar.Prelude
+import Quasar.Utils.ShortIO
 import Quasar.Utils.TOnce
 
 
@@ -46,11 +46,10 @@ data Disposer
 instance Resource Disposer where
   getDisposer = id
 
-type DisposeFn = IO (Awaitable ())
+type DisposeFn = ShortIO (Awaitable ())
 
 
--- TODO document: IO has to be "short"
-newPrimitiveDisposer :: IO (Awaitable ()) -> TIOWorker -> ExceptionChannel -> STM Disposer
+newPrimitiveDisposer :: ShortIO (Awaitable ()) -> TIOWorker -> ExceptionChannel -> STM Disposer
 newPrimitiveDisposer fn worker exChan = do
   key <- newUniqueSTM
   FnDisposer key worker exChan <$> newTOnce fn <*> newFinalizers
@@ -95,18 +94,18 @@ beginDisposeFnDisposer worker exChan disposeState finalizers =
       startShortIO_ (runDisposeFn awaitableVar disposeFn) worker exChan
       pure $ join (toAwaitable awaitableVar)
 
-    runDisposeFn :: AsyncVar (Awaitable ()) -> DisposeFn -> IO ()
+    runDisposeFn :: AsyncVar (Awaitable ()) -> DisposeFn -> ShortIO ()
     runDisposeFn awaitableVar disposeFn = mask_ $ handleAll exceptionHandler do
       awaitable <- disposeFn
-      putAsyncVar_ awaitableVar awaitable
+      putAsyncVarShortIO_ awaitableVar awaitable
       runFinalizersAfter finalizers awaitable
       where
-        exceptionHandler :: SomeException -> IO ()
+        -- In case of an exception mark disposable as completed to prevent resource managers from being stuck indefinitely
+        exceptionHandler :: SomeException -> ShortIO ()
         exceptionHandler ex = do
-          -- In case of an exception mark disposable as completed to prevent resource managers from being stuck indefinitely
-          putAsyncVar_ awaitableVar (pure ())
-          atomically $ runFinalizers finalizers
-          throwIO $ DisposeException ex
+          putAsyncVarShortIO_ awaitableVar (pure ())
+          runFinalizersShortIO finalizers
+          throwM $ DisposeException ex
 
 disposerKey :: Disposer -> Unique
 disposerKey (FnDisposer key _ _ _ _) = key
@@ -193,7 +192,7 @@ beginDisposeResourceManagerInternal rm = do
       dependenciesVar <- newAsyncVarSTM
       writeTVar (resourceManagerState rm) (ResourceManagerDisposing (toAwaitable dependenciesVar))
       attachedDisposers <- HM.elems <$> readTVar attachedResources
-      startShortIO_ (void $ forkIO (disposeThread dependenciesVar attachedDisposers)) worker exChan
+      startShortIO_ (void $ forkIOShortIO (disposeThread dependenciesVar attachedDisposers)) worker exChan
       pure $ DisposeDependencies rmKey (toAwaitable dependenciesVar)
     ResourceManagerDisposing deps -> pure $ DisposeDependencies rmKey deps
     ResourceManagerDisposed -> pure $ DisposeDependencies rmKey mempty
@@ -274,14 +273,17 @@ runFinalizers (Finalizers finalizerVar) = do
     Just finalizers -> sequence_ finalizers
     Nothing -> throwM $ userError "runFinalizers was called multiple times (it must only be run once)"
 
-runFinalizersAfter :: Finalizers -> Awaitable () -> IO ()
+runFinalizersShortIO :: Finalizers -> ShortIO ()
+runFinalizersShortIO finalizers = unsafeShortIO $ atomically $ runFinalizers finalizers
+
+runFinalizersAfter :: Finalizers -> Awaitable () -> ShortIO ()
 runFinalizersAfter finalizers awaitable = do
   -- Peek awaitable to ensure trivial disposables always run without forking
-  isCompleted <- isJust <$> peekAwaitable awaitable
+  isCompleted <- isJust <$> peekAwaitableShortIO awaitable
   if isCompleted
     then
-      atomically $ runFinalizers finalizers
+      runFinalizersShortIO finalizers
     else
-      void $ forkIO do
+      void $ forkIOShortIO do
         await awaitable
         atomically $ runFinalizers finalizers

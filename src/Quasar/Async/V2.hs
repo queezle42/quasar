@@ -17,7 +17,6 @@ module Quasar.Async.V2 (
 
 import Control.Concurrent (ThreadId)
 import Control.Concurrent.STM
-import Control.Exception (throwTo)
 import Control.Monad.Catch
 import Quasar.Async.STMHelper
 import Quasar.Awaitable
@@ -25,6 +24,7 @@ import Quasar.Exceptions
 import Quasar.Monad
 import Quasar.Prelude
 import Quasar.Resources.Disposer
+import Quasar.Utils.ShortIO
 import Control.Monad.Reader
 
 
@@ -64,12 +64,12 @@ unmanagedAsyncWithUnmask fn worker exChan = do
         Right retVal -> do
           putAsyncVar_ resultVar retVal
           atomically $ disposeEventuallySTM_ disposer
-    disposeFn :: Unique -> AsyncVar a -> Awaitable ThreadId -> IO (Awaitable ())
+    disposeFn :: Unique -> AsyncVar a -> Awaitable ThreadId -> ShortIO (Awaitable ())
     disposeFn key resultVar tidAwaitable = do
       -- Awaits forking of the thread, which should happen immediately (as long as the TIOWorker-invariant isn't broken elsewhere)
-      tid <- await tidAwaitable
+      tid <- unsafeShortIO $ await tidAwaitable
       -- `throwTo` should also happen immediately, as long as `uninterruptibleMask` isn't abused elsewhere
-      throwTo tid (CancelAsync key)
+      throwToShortIO tid (CancelAsync key)
       -- Considered complete once a result (i.e. success or failure) has been stored
       pure (() <$ toAwaitable resultVar)
 
