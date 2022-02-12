@@ -9,6 +9,8 @@ module Quasar.Async.Fork (
   -- ** ShortIO
   forkWithUnmaskShortIO,
   forkWithUnmaskShortIO_,
+  startIOThreadShortIO,
+  startIOThreadWithUnmaskShortIO,
 ) where
 
 import Control.Concurrent (ThreadId)
@@ -49,3 +51,28 @@ forkWithUnmaskShortIO fn exChan = forkFn
 
 forkWithUnmaskShortIO_ :: ((forall a. IO a -> IO a) -> IO ()) -> ExceptionChannel -> ShortIO ()
 forkWithUnmaskShortIO_ fn exChan = void $ forkWithUnmaskShortIO fn exChan
+
+
+-- * Fork in ShortIO while collecting the result (with ExceptionChannel)
+
+startIOThreadWithUnmaskShortIO :: forall a. ((forall b. IO b -> IO b) -> IO a) -> ExceptionChannel -> ShortIO (Awaitable a)
+startIOThreadWithUnmaskShortIO fn exChan = do
+  resultVar <- newAsyncVarShortIO
+  forkWithUnmaskShortIO_ (runAndPut resultVar) exChan
+  pure $ toAwaitable resultVar
+  where
+    runAndPut :: AsyncVar a -> (forall b. IO b -> IO b) -> IO ()
+    runAndPut resultVar unmask = do
+      -- Called in masked state by `forkWithUnmaskShortIO`
+      result <- try $ fn unmask
+      case result of
+        Left ex ->
+          atomically (throwToExceptionChannel exChan ex)
+            `finally`
+              failAsyncVar_ resultVar (AsyncException ex)
+        Right retVal -> do
+          putAsyncVar_ resultVar retVal
+
+
+startIOThreadShortIO :: forall a. IO a -> ExceptionChannel -> ShortIO (Awaitable a)
+startIOThreadShortIO fn = startIOThreadWithUnmaskShortIO ($ fn)
