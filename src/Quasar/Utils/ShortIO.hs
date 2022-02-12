@@ -6,9 +6,11 @@ module Quasar.Utils.ShortIO (
   forkIOShortIO,
   forkIOWithUnmaskShortIO,
   throwToShortIO,
+  newUniqueShortIO,
 
   -- ** Some specific functions required internally
   peekAwaitableShortIO,
+  newAsyncVarShortIO,
   putAsyncVarShortIO_,
 ) where
 
@@ -36,9 +38,15 @@ forkIOWithUnmaskShortIO fn = ShortIO $ forkIOWithUnmask fn
 throwToShortIO :: Exception e => ThreadId -> e -> ShortIO ()
 throwToShortIO tid ex = ShortIO $ throwTo tid ex
 
+newUniqueShortIO :: ShortIO Unique
+newUniqueShortIO = ShortIO newUnique
+
 
 peekAwaitableShortIO :: Awaitable r -> ShortIO (Maybe r)
 peekAwaitableShortIO awaitable = ShortIO $ peekAwaitable awaitable
+
+newAsyncVarShortIO :: ShortIO (AsyncVar a)
+newAsyncVarShortIO = ShortIO newAsyncVar
 
 putAsyncVarShortIO_ :: AsyncVar a -> a -> ShortIO ()
 putAsyncVarShortIO_ var value = ShortIO $ putAsyncVar_ var value
