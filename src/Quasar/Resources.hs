@@ -42,7 +42,7 @@ import Quasar.Resources.Disposer
 
 
 newIODisposer :: IO () -> TIOWorker -> ExceptionChannel -> STM Disposer
-newIODisposer fn worker exChan = newPrimitiveDisposer (startIOThreadShortIO fn exChan) worker exChan
+newIODisposer fn worker exChan = newPrimitiveDisposer (forkAsyncShortIO fn exChan) worker exChan
 
 newSTMDisposer :: STM () -> TIOWorker -> ExceptionChannel -> STM Disposer
 newSTMDisposer fn = newIODisposer (atomically fn)

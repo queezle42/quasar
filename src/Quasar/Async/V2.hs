@@ -1,7 +1,9 @@
 module Quasar.Async.V2 (
   Async,
   async,
+  async_,
   asyncWithUnmask,
+  asyncWithUnmask_,
 
   -- ** Async exceptions
   CancelAsync(..),
@@ -11,8 +13,8 @@ module Quasar.Async.V2 (
   isAsyncDisposed,
 
   -- ** Unmanaged variants
-  unmanagedAsync,
-  unmanagedAsyncWithUnmask,
+  unmanagedAsyncSTM,
+  unmanagedAsyncWithUnmaskSTM,
 ) where
 
 import Control.Concurrent (ThreadId)
@@ -38,15 +40,15 @@ instance IsAwaitable a (Async a) where
   toAwaitable (Async awaitable _) = awaitable
 
 
-unmanagedAsync :: IO a -> TIOWorker -> ExceptionChannel -> STM (Async a)
-unmanagedAsync fn = unmanagedAsyncWithUnmask (\unmask -> unmask fn)
+unmanagedAsyncSTM :: IO a -> TIOWorker -> ExceptionChannel -> STM (Async a)
+unmanagedAsyncSTM fn = unmanagedAsyncWithUnmaskSTM (\unmask -> unmask fn)
 
-unmanagedAsyncWithUnmask :: forall a. ((forall b. IO b -> IO b) -> IO a) -> TIOWorker -> ExceptionChannel -> STM (Async a)
-unmanagedAsyncWithUnmask fn worker exChan = do
+unmanagedAsyncWithUnmaskSTM :: forall a. ((forall b. IO b -> IO b) -> IO a) -> TIOWorker -> ExceptionChannel -> STM (Async a)
+unmanagedAsyncWithUnmaskSTM fn worker exChan = do
   key <- newUniqueSTM
   resultVar <- newAsyncVarSTM
   disposer <- mfix \disposer -> do
-    tidAwaitable <- forkWithUnmask (runAndPut key resultVar disposer) worker exChan
+    tidAwaitable <- forkWithUnmaskSTM (runAndPut key resultVar disposer) worker exChan
     newPrimitiveDisposer (disposeFn key resultVar tidAwaitable) worker exChan
   pure $ Async (toAwaitable resultVar) disposer
   where
@@ -78,6 +80,9 @@ unmanagedAsyncWithUnmask fn worker exChan = do
 async :: MonadQuasar m => QuasarIO a -> m (Async a)
 async fn = asyncWithUnmask ($ fn)
 
+async_ :: MonadQuasar m => QuasarIO () -> m ()
+async_ fn = void $ asyncWithUnmask ($ fn)
+
 asyncWithUnmask :: MonadQuasar m => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO a) -> m (Async a)
 asyncWithUnmask fn = do
   quasar <- askQuasar
@@ -85,7 +90,7 @@ asyncWithUnmask fn = do
   exChan <- askExceptionChannel
   rm <- askResourceManager
   runSTM do
-    as <- unmanagedAsyncWithUnmask (\unmask -> runReaderT (fn (liftUnmask unmask)) quasar) worker exChan
+    as <- unmanagedAsyncWithUnmaskSTM (\unmask -> runReaderT (fn (liftUnmask unmask)) quasar) worker exChan
     attachResource rm as
     pure as
   where
@@ -93,3 +98,6 @@ asyncWithUnmask fn = do
     liftUnmask unmask innerAction = do
       quasar <- askQuasar
       liftIO $ unmask $ runReaderT innerAction quasar
+
+asyncWithUnmask_ :: MonadQuasar m => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO ()) -> m ()
+asyncWithUnmask_ fn = void $ asyncWithUnmask fn
