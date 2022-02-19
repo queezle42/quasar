@@ -33,7 +33,7 @@ startShortIO fn (TIOWorker jobQueue) exChan = do
           failAsyncVar_ resultVar $ toException $ AsyncException ex
         Right result -> putAsyncVar_ resultVar result
 
-startShortIO_ :: forall a. ShortIO a -> TIOWorker -> ExceptionChannel -> STM ()
+startShortIO_ :: ShortIO () -> TIOWorker -> ExceptionChannel -> STM ()
 startShortIO_ x y z = void $ startShortIO x y z
 
 
