@@ -39,13 +39,19 @@ import Quasar.Exceptions
 import Quasar.Monad
 import Quasar.Prelude
 import Quasar.Resources.Disposer
+import Quasar.Utils.ShortIO
 
 
 newIODisposer :: IO () -> TIOWorker -> ExceptionChannel -> STM Disposer
 newIODisposer fn worker exChan = newPrimitiveDisposer (forkAsyncShortIO fn exChan) worker exChan
 
 newSTMDisposer :: STM () -> TIOWorker -> ExceptionChannel -> STM Disposer
-newSTMDisposer fn = newIODisposer (atomically fn)
+newSTMDisposer fn worker exChan = newPrimitiveDisposer disposeFn worker exChan
+  where
+    disposeFn :: ShortIO (Awaitable ())
+    disposeFn = unsafeShortIO $ atomically $
+      -- Spawn a thread only if the transaction retries
+      (pure <$> fn) `orElse` forkAsyncSTM (atomically fn) worker exChan
 
 
 registerResource :: (Resource a, MonadQuasar m) => a -> m ()
