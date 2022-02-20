@@ -25,7 +25,7 @@ module Quasar.Resources (
 
   -- ** Resource manager
   ResourceManager,
-  newResourceManagerSTM,
+  newUnmanagedResourceManagerSTM,
   attachResource,
 ) where
 
@@ -57,26 +57,26 @@ newSTMDisposer fn worker exChan = newPrimitiveDisposer disposeFn worker exChan
 registerResource :: (Resource a, MonadQuasar m) => a -> m ()
 registerResource resource = do
   rm <- askResourceManager
-  runSTM $ attachResource rm resource
+  ensureSTM $ attachResource rm resource
 
 registerDisposeAction :: MonadQuasar m => IO () -> m ()
 registerDisposeAction fn = do
   worker <- askIOWorker
   exChan <- askExceptionChannel
   rm <- askResourceManager
-  runSTM $ attachResource rm =<< newIODisposer fn worker exChan
+  ensureSTM $ attachResource rm =<< newIODisposer fn worker exChan
 
 registerDisposeTransaction :: MonadQuasar m => STM () -> m ()
 registerDisposeTransaction fn = do
   worker <- askIOWorker
   exChan <- askExceptionChannel
   rm <- askResourceManager
-  runSTM $ attachResource rm =<< newSTMDisposer fn worker exChan
+  ensureSTM $ attachResource rm =<< newSTMDisposer fn worker exChan
 
 registerNewResource :: forall a m. (Resource a, MonadQuasar m) => m a -> m a
 registerNewResource fn = do
   rm <- askResourceManager
-  disposing <- isJust <$> runSTM (peekAwaitableSTM (isDisposing rm))
+  disposing <- isJust <$> ensureSTM (peekAwaitableSTM (isDisposing rm))
   -- Bail out before creating the resource _if possible_
   when disposing $ throwM AlreadyDisposing
 
@@ -92,7 +92,7 @@ registerNewResource fn = do
 
 
 disposeEventually :: (Resource r, MonadQuasar m) => r -> m (Awaitable ())
-disposeEventually res = runSTM $ disposeEventuallySTM res
+disposeEventually res = ensureSTM $ disposeEventuallySTM res
 
 disposeEventually_ :: (Resource r, MonadQuasar m) => r -> m ()
-disposeEventually_ res = runSTM $ disposeEventuallySTM_ res
+disposeEventually_ res = ensureSTM $ disposeEventuallySTM_ res

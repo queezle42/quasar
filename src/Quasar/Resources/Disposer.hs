@@ -12,7 +12,7 @@ module Quasar.Resources.Disposer (
 
   -- * Resource manager
   ResourceManager,
-  newResourceManagerSTM,
+  newUnmanagedResourceManagerSTM,
   attachResource,
 ) where
 
@@ -142,8 +142,8 @@ instance Resource ResourceManager where
   getDisposer = ResourceManagerDisposer
 
 
-newResourceManagerSTM :: TIOWorker -> ExceptionChannel -> STM ResourceManager
-newResourceManagerSTM worker exChan = do
+newUnmanagedResourceManagerSTM :: TIOWorker -> ExceptionChannel -> STM ResourceManager
+newUnmanagedResourceManagerSTM worker exChan = do
   resourceManagerKey <- newUniqueSTM
   attachedResources <- newTVar mempty
   resourceManagerState <- newTVar (ResourceManagerNormal attachedResources worker exChan)

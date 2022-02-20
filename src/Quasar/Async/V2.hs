@@ -89,7 +89,7 @@ asyncWithUnmask fn = do
   worker <- askIOWorker
   exChan <- askExceptionChannel
   rm <- askResourceManager
-  runSTM do
+  ensureSTM do
     as <- unmanagedAsyncWithUnmaskSTM (\unmask -> runReaderT (fn (liftUnmask unmask)) quasar) worker exChan
     attachResource rm as
     pure as
