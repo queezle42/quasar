@@ -21,7 +21,7 @@ module Quasar.Prelude
     Control.Monad.unless,
     Control.Monad.void,
     Control.Monad.when,
-    Control.Monad.Fix.mfix,
+    Control.Monad.Fix.MonadFix(..),
     Data.Kind.Type,
     Data.Kind.Constraint,
     Data.Unique.Unique,
