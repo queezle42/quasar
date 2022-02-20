@@ -11,10 +11,6 @@ module Quasar.Async.V2 (
   AsyncException(..),
   isCancelAsync,
   isAsyncDisposed,
-
-  -- ** Unmanaged variants
-  unmanagedAsyncSTM,
-  unmanagedAsyncWithUnmaskSTM,
 ) where
 
 import Control.Concurrent (ThreadId)
