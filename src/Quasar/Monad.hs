@@ -14,6 +14,9 @@ module Quasar.Monad (
   runQuasarIO,
   liftQuasarIO,
   quasarAtomically,
+
+  enterQuasarIO,
+  enterQuasarSTM,
 ) where
 
 import Control.Concurrent.STM
@@ -156,3 +159,9 @@ quasarAtomically (QuasarSTM fn) = do
      effectAwaitableVar <- newTVar (pure ())
      result <- runReaderT fn (quasar, effectAwaitableVar)
      (result <$) <$> readTVar effectAwaitableVar
+
+enterQuasarIO :: MonadIO m => Quasar -> QuasarIO () -> m ()
+enterQuasarIO = undefined
+
+enterQuasarSTM :: MonadQuasar m => Quasar -> QuasarSTM () -> m ()
+enterQuasarSTM = undefined
