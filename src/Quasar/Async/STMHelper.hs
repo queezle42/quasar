@@ -2,8 +2,8 @@ module Quasar.Async.STMHelper (
   -- * Helper to fork from STM
   TIOWorker,
   newTIOWorker,
-  startShortIO,
-  startShortIO_,
+  startShortIOSTM,
+  startShortIOSTM_,
 ) where
 
 import Control.Concurrent (forkIO)
@@ -19,8 +19,8 @@ import Quasar.Utils.ShortIO
 newtype TIOWorker = TIOWorker (TQueue (IO ()))
 
 
-startShortIO :: forall a. ShortIO a -> TIOWorker -> ExceptionChannel -> STM (Awaitable a)
-startShortIO fn (TIOWorker jobQueue) exChan = do
+startShortIOSTM :: forall a. ShortIO a -> TIOWorker -> ExceptionChannel -> STM (Awaitable a)
+startShortIOSTM fn (TIOWorker jobQueue) exChan = do
   resultVar <- newAsyncVarSTM
   writeTQueue jobQueue $ job resultVar
   pure $ toAwaitable resultVar
@@ -33,8 +33,8 @@ startShortIO fn (TIOWorker jobQueue) exChan = do
           failAsyncVar_ resultVar $ toException $ AsyncException ex
         Right result -> putAsyncVar_ resultVar result
 
-startShortIO_ :: ShortIO () -> TIOWorker -> ExceptionChannel -> STM ()
-startShortIO_ x y z = void $ startShortIO x y z
+startShortIOSTM_ :: ShortIO () -> TIOWorker -> ExceptionChannel -> STM ()
+startShortIOSTM_ x y z = void $ startShortIOSTM x y z
 
 
 newTIOWorker :: IO TIOWorker

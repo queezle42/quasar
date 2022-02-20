@@ -91,7 +91,7 @@ beginDisposeFnDisposer worker exChan disposeState finalizers =
     startDisposeFn :: DisposeFn -> STM (Awaitable ())
     startDisposeFn disposeFn = do
       awaitableVar <- newAsyncVarSTM
-      startShortIO_ (runDisposeFn awaitableVar disposeFn) worker exChan
+      startShortIOSTM_ (runDisposeFn awaitableVar disposeFn) worker exChan
       pure $ join (toAwaitable awaitableVar)
 
     runDisposeFn :: AsyncVar (Awaitable ()) -> DisposeFn -> ShortIO ()
@@ -192,7 +192,7 @@ beginDisposeResourceManagerInternal rm = do
       dependenciesVar <- newAsyncVarSTM
       writeTVar (resourceManagerState rm) (ResourceManagerDisposing (toAwaitable dependenciesVar))
       attachedDisposers <- HM.elems <$> readTVar attachedResources
-      startShortIO_ (void $ forkIOShortIO (disposeThread dependenciesVar attachedDisposers)) worker exChan
+      startShortIOSTM_ (void $ forkIOShortIO (disposeThread dependenciesVar attachedDisposers)) worker exChan
       pure $ DisposeDependencies rmKey (toAwaitable dependenciesVar)
     ResourceManagerDisposing deps -> pure $ DisposeDependencies rmKey deps
     ResourceManagerDisposed -> pure $ DisposeDependencies rmKey mempty

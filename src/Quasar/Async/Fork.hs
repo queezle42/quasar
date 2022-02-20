@@ -35,17 +35,17 @@ forkSTM_ fn worker exChan = void $ forkSTM fn worker exChan
 
 
 forkWithUnmaskSTM :: ((forall a. IO a -> IO a) -> IO ()) -> TIOWorker -> ExceptionChannel -> STM (Awaitable ThreadId)
-forkWithUnmaskSTM fn worker exChan = startShortIO (forkWithUnmaskShortIO fn exChan) worker exChan
+forkWithUnmaskSTM fn worker exChan = startShortIOSTM (forkWithUnmaskShortIO fn exChan) worker exChan
 
 forkWithUnmaskSTM_ :: ((forall a. IO a -> IO a) -> IO ()) -> TIOWorker -> ExceptionChannel -> STM ()
 forkWithUnmaskSTM_ fn worker exChan = void $ forkWithUnmaskSTM fn worker exChan
 
 
 forkAsyncSTM :: forall a. IO a -> TIOWorker -> ExceptionChannel -> STM (Awaitable a)
-forkAsyncSTM fn worker exChan = join <$> startShortIO (forkAsyncShortIO fn exChan) worker exChan
+forkAsyncSTM fn worker exChan = join <$> startShortIOSTM (forkAsyncShortIO fn exChan) worker exChan
 
 forkAsyncWithUnmaskSTM :: forall a. ((forall b. IO b -> IO b) -> IO a) -> TIOWorker -> ExceptionChannel -> STM (Awaitable a)
-forkAsyncWithUnmaskSTM fn worker exChan = join <$> startShortIO (forkAsyncWithUnmaskShortIO fn exChan) worker exChan
+forkAsyncWithUnmaskSTM fn worker exChan = join <$> startShortIOSTM (forkAsyncWithUnmaskShortIO fn exChan) worker exChan
 
 
 -- * Fork in ShortIO (with ExceptionChannel)
