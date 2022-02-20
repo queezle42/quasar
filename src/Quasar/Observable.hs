@@ -32,7 +32,6 @@ import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Except
-import Control.Monad.Reader
 import Control.Monad.Trans.Maybe
 import Data.HashMap.Strict qualified as HM
 import Data.IORef
