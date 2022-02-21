@@ -67,7 +67,7 @@ isAsyncDisposed _ = False
 
 
 
-data DisposeException = DisposeException SomeException
+newtype DisposeException = DisposeException SomeException
   deriving stock Show
 
 instance Exception DisposeException where
