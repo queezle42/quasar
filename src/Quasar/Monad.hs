@@ -17,6 +17,8 @@ module Quasar.Monad (
 
   enterQuasarIO,
   enterQuasarSTM,
+
+  startShortIO_,
 ) where
 
 import Control.Concurrent.STM
@@ -94,7 +96,7 @@ instance (MonadIO m, MonadMask m, MonadFix m) => MonadQuasar (QuasarT m) where
   maskIfRequired = mask_
   startShortIO fn = do
     exChan <- askExceptionChannel
-    liftIO $ try (runShortIO fn) >>= \case
+    liftIO $ uninterruptibleMask_ $ try (runShortIO fn) >>= \case
       Left ex -> do
         atomically $ throwToExceptionChannel exChan ex
         pure $ throwM $ toException $ AsyncException ex
@@ -132,6 +134,9 @@ instance {-# OVERLAPPABLE #-} MonadQuasar m => MonadQuasar (ReaderT r m) where
 
 -- TODO MonadQuasar instances for StateT, WriterT, RWST, MaybeT, ...
 
+
+startShortIO_ :: MonadQuasar m => ShortIO () -> m ()
+startShortIO_ fn = void $ startShortIO fn
 
 askIOWorker :: MonadQuasar m => m TIOWorker
 askIOWorker = quasarIOWorker <$> askQuasar

@@ -20,7 +20,7 @@ import Quasar.Prelude
 import Control.Concurrent
 
 newtype ShortIO a = ShortIO (IO a)
-  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadMask)
+  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadMask, MonadFix)
 
 runShortIO :: ShortIO a -> IO a
 runShortIO (ShortIO fn) = fn
