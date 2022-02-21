@@ -1,4 +1,4 @@
-module Quasar.Exception.ExceptionChannel (
+module Quasar.Exceptions.ExceptionChannel (
   panicChannel,
   loggingExceptionChannel,
 ) where
