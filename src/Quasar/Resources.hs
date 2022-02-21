@@ -20,8 +20,8 @@ module Quasar.Resources (
   -- * Types to implement resources
   -- ** Disposer
   Disposer,
-  newIODisposer,
-  newSTMDisposer,
+  newIODisposerSTM,
+  newSTMDisposerSTM,
 
   -- ** Resource manager
   ResourceManager,
@@ -42,11 +42,11 @@ import Quasar.Resources.Disposer
 import Quasar.Utils.ShortIO
 
 
-newIODisposer :: IO () -> TIOWorker -> ExceptionChannel -> STM Disposer
-newIODisposer fn worker exChan = newPrimitiveDisposer (forkAsyncShortIO fn exChan) worker exChan
+newIODisposerSTM :: IO () -> TIOWorker -> ExceptionChannel -> STM Disposer
+newIODisposerSTM fn worker exChan = newPrimitiveDisposer (forkAsyncShortIO fn exChan) worker exChan
 
-newSTMDisposer :: STM () -> TIOWorker -> ExceptionChannel -> STM Disposer
-newSTMDisposer fn worker exChan = newPrimitiveDisposer disposeFn worker exChan
+newSTMDisposerSTM :: STM () -> TIOWorker -> ExceptionChannel -> STM Disposer
+newSTMDisposerSTM fn worker exChan = newPrimitiveDisposer disposeFn worker exChan
   where
     disposeFn :: ShortIO (Awaitable ())
     disposeFn = unsafeShortIO $ atomically $
@@ -64,14 +64,14 @@ registerDisposeAction fn = do
   worker <- askIOWorker
   exChan <- askExceptionChannel
   rm <- askResourceManager
-  ensureSTM $ attachResource rm =<< newIODisposer fn worker exChan
+  ensureSTM $ attachResource rm =<< newIODisposerSTM fn worker exChan
 
 registerDisposeTransaction :: MonadQuasar m => STM () -> m ()
 registerDisposeTransaction fn = do
   worker <- askIOWorker
   exChan <- askExceptionChannel
   rm <- askResourceManager
-  ensureSTM $ attachResource rm =<< newSTMDisposer fn worker exChan
+  ensureSTM $ attachResource rm =<< newSTMDisposerSTM fn worker exChan
 
 registerNewResource :: forall a m. (Resource a, MonadQuasar m) => m a -> m a
 registerNewResource fn = do
