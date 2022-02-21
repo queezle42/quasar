@@ -27,12 +27,12 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
       in pkgs.mkShell {
-        buildInputs = [
+        inputsFrom = pkgs.lib.mapAttrsToList (k: v: v.env or v) self.packages.${system};
+        packages = [
           pkgs.cabal-install
           pkgs.ghcid
           pkgs.haskell-language-server
         ];
-        inputsFrom = builtins.attrValues self.packages.${system};
       }
     );
   };
