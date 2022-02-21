@@ -59,6 +59,7 @@ common shared-properties
     -Wno-unsafe
     -Werror=incomplete-patterns
     -Werror=missing-fields
+    -Werror=missing-home-modules
     -Werror=missing-methods
 
 common shared-executable-properties
@@ -91,6 +92,7 @@ library
     Quasar.Awaitable
     Quasar.Disposable
     Quasar.Exceptions
+    Quasar.Exceptions.ExceptionChannel
     Quasar.Monad
     Quasar.Observable
     Quasar.Observable.Delta
