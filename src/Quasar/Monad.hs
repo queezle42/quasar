@@ -82,6 +82,7 @@ class (MonadCatch m, MonadFix m) => MonadQuasar m where
   startShortIO :: ShortIO a -> m (Awaitable a)
   ensureSTM :: STM a -> m a
   ensureQuasarSTM :: QuasarSTM a -> m a
+  localQuasar :: Quasar -> m a -> m a
 
 type QuasarT = ReaderT Quasar
 type QuasarIO = QuasarT IO
@@ -102,6 +103,7 @@ instance (MonadIO m, MonadMask m, MonadFix m) => MonadQuasar (QuasarT m) where
         pure $ throwM $ toException $ AsyncException ex
       Right result -> pure $ pure result
   ensureQuasarSTM = quasarAtomically
+  localQuasar quasar = local (const quasar)
 
 
 instance MonadQuasar QuasarSTM where
@@ -120,6 +122,7 @@ instance MonadQuasar QuasarSTM where
       modifyTVar effectAwaitableVar (awaitSuccessOrFailure awaitable *>)
       pure awaitable
   ensureQuasarSTM = id
+  localQuasar quasar (QuasarSTM fn) = QuasarSTM (local (first (const quasar)) fn)
 
 
 -- Overlappable so a QuasarT has priority over the base monad.
@@ -131,6 +134,9 @@ instance {-# OVERLAPPABLE #-} MonadQuasar m => MonadQuasar (ReaderT r m) where
     lift $ maskIfRequired (runReaderT fn x)
   startShortIO t = lift (startShortIO t)
   ensureQuasarSTM t = lift (ensureQuasarSTM t)
+  localQuasar quasar fn = do
+    x <- ask
+    lift (localQuasar quasar (runReaderT fn x))
 
 -- TODO MonadQuasar instances for StateT, WriterT, RWST, MaybeT, ...
 
