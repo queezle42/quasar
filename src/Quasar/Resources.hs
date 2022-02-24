@@ -9,7 +9,9 @@ module Quasar.Resources (
   registerResource,
   registerNewResource,
   registerDisposeAction,
+  registerDisposeAction_,
   registerDisposeTransaction,
+  registerDisposeTransaction_,
   disposeEventually,
   disposeEventually_,
   captureResources,
@@ -61,19 +63,31 @@ registerResource resource = do
   rm <- askResourceManager
   ensureSTM $ attachResource rm resource
 
-registerDisposeAction :: MonadQuasar m => IO () -> m ()
+registerDisposeAction :: MonadQuasar m => IO () -> m Disposer
 registerDisposeAction fn = do
   worker <- askIOWorker
   exChan <- askExceptionChannel
   rm <- askResourceManager
-  ensureSTM $ attachResource rm =<< newIODisposerSTM fn worker exChan
+  ensureSTM do
+    disposer <- newIODisposerSTM fn worker exChan
+    attachResource rm disposer
+    pure disposer
 
-registerDisposeTransaction :: MonadQuasar m => STM () -> m ()
+registerDisposeAction_ :: MonadQuasar m => IO () -> m ()
+registerDisposeAction_ fn = void $ registerDisposeAction fn
+
+registerDisposeTransaction :: MonadQuasar m => STM () -> m Disposer
 registerDisposeTransaction fn = do
   worker <- askIOWorker
   exChan <- askExceptionChannel
   rm <- askResourceManager
-  ensureSTM $ attachResource rm =<< newSTMDisposerSTM fn worker exChan
+  ensureSTM do
+    disposer <- newSTMDisposerSTM fn worker exChan
+    attachResource rm disposer
+    pure disposer
+
+registerDisposeTransaction_ :: MonadQuasar m => STM () -> m ()
+registerDisposeTransaction_ fn = void $ registerDisposeTransaction fn
 
 registerNewResource :: forall a m. (Resource a, MonadQuasar m) => m a -> m a
 registerNewResource fn = do
