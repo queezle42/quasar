@@ -21,7 +21,6 @@ module Quasar.Observable (
   observeBlocking,
   fnObservable,
   synchronousFnObservable,
-  unsafeObservableIO,
 
   -- * Helper types
   ObservableCallback,
@@ -407,23 +406,6 @@ instance IsRetrievable v (FailedObservable v) where
 instance IsObservable v (FailedObservable v) where
   observe (FailedObservable ex) callback = do
     liftResourceManagerIO $ callback $ ObservableNotAvailable ex
-
-
--- | Create an observable by simply running an IO action whenever a value is requested or a callback is registered.
---
--- There is no mechanism to send more than one update, so the resulting `Observable` will only be useful in specific
--- situations, e.g. as a primitive for building a cache where a static value has to be calculated/loaded).
---
--- The function supplied to unsafeObservableIO must produce the same value when called multiple times to create a
--- correctly behaving observable.
-unsafeObservableIO :: forall v. IO v -> Observable v
-unsafeObservableIO action = synchronousFnObservable observeFn action
-  where
-    observeFn :: (ObservableMessage v -> ResourceManagerIO ()) -> ResourceManagerIO ()
-    observeFn callback = do
-      callback ObservableLoading
-      value <- (ObservableUpdate <$> liftIO action) `catchAll` (pure . ObservableNotAvailable @v)
-      callback value
 
 
 -- TODO implement
