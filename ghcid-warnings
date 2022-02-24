@@ -7,7 +7,6 @@ nix develop -c cabal clean
   entr -r \
     nix develop -c \
       ghcid \
-        --warnings \
         "--command=cabal repl lib:quasar" \
         "--test=:! \
           cabal test --disable-optimisation --enable-debug-info=2 --test-show-details=direct --ghc-option -fdiagnostics-color=always && \

@@ -31,6 +31,7 @@
         packages = [
           pkgs.cabal-install
           pkgs.ghcid
+          pkgs.entr
           pkgs.haskell-language-server
         ];
       }
