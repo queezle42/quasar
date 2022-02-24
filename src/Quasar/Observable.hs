@@ -59,6 +59,11 @@ instance Applicative ObservableMessage where
   liftA2 _ _ (ObservableNotAvailable ex) = ObservableNotAvailable ex
   liftA2 _ _ ObservableLoading = ObservableLoading
 
+instance Monad ObservableMessage where
+  (ObservableUpdate x) >>= fn = fn x
+  ObservableLoading >>= _ = ObservableLoading
+  (ObservableNotAvailable ex) >>= _ = ObservableNotAvailable ex
+
 
 toObservableUpdate :: MonadThrow m => ObservableMessage a -> m (Maybe a)
 toObservableUpdate (ObservableUpdate value) = pure $ Just value
