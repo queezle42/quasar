@@ -246,7 +246,7 @@ resourceManagerIsDisposed rm = unsafeAwaitSTM $
 resourceManagerIsDisposing :: ResourceManager -> Awaitable ()
 resourceManagerIsDisposing rm = unsafeAwaitSTM $
   readTVar (resourceManagerState rm) >>= \case
-    (ResourceManagerNormal _ _ _) -> retry
+    ResourceManagerNormal {} -> retry
     _ -> pure ()
 
 

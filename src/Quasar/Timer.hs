@@ -141,7 +141,7 @@ startSchedulerThread scheduler = getDisposer <$> async (schedulerThread `finally
           case uncons timers of
             Nothing -> pure timers
             Just (timer, others) -> do
-              if (time timer) <= now
+              if time timer <= now
                 then do
                   fireTimer timer
                   pure others
