@@ -24,8 +24,8 @@ module Quasar.Resources (
   -- * Types to implement resources
   -- ** Disposer
   Disposer,
-  newIODisposerSTM,
-  newSTMDisposerSTM,
+  newUnmanagedIODisposerSTM,
+  newUnmanagedSTMDisposerSTM,
 
   -- ** Resource manager
   ResourceManager,
@@ -46,11 +46,11 @@ import Quasar.Resources.Disposer
 import Quasar.Utils.ShortIO
 
 
-newIODisposerSTM :: IO () -> TIOWorker -> ExceptionChannel -> STM Disposer
-newIODisposerSTM fn worker exChan = newPrimitiveDisposer (forkAsyncShortIO fn exChan) worker exChan
+newUnmanagedIODisposerSTM :: IO () -> TIOWorker -> ExceptionChannel -> STM Disposer
+newUnmanagedIODisposerSTM fn worker exChan = newUnmanagedPrimitiveDisposer (forkAsyncShortIO fn exChan) worker exChan
 
-newSTMDisposerSTM :: STM () -> TIOWorker -> ExceptionChannel -> STM Disposer
-newSTMDisposerSTM fn worker exChan = newPrimitiveDisposer disposeFn worker exChan
+newUnmanagedSTMDisposerSTM :: STM () -> TIOWorker -> ExceptionChannel -> STM Disposer
+newUnmanagedSTMDisposerSTM fn worker exChan = newUnmanagedPrimitiveDisposer disposeFn worker exChan
   where
     disposeFn :: ShortIO (Awaitable ())
     disposeFn = unsafeShortIO $ atomically $
@@ -69,7 +69,7 @@ registerDisposeAction fn = do
   exChan <- askExceptionChannel
   rm <- askResourceManager
   ensureSTM do
-    disposer <- newIODisposerSTM fn worker exChan
+    disposer <- newUnmanagedIODisposerSTM fn worker exChan
     attachResource rm disposer
     pure disposer
 
@@ -82,7 +82,7 @@ registerDisposeTransaction fn = do
   exChan <- askExceptionChannel
   rm <- askResourceManager
   ensureSTM do
-    disposer <- newSTMDisposerSTM fn worker exChan
+    disposer <- newUnmanagedSTMDisposerSTM fn worker exChan
     attachResource rm disposer
     pure disposer
 

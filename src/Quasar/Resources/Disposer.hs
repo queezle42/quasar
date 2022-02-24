@@ -8,7 +8,7 @@ module Quasar.Resources.Disposer (
   disposeEventuallySTM_,
   isDisposing,
   isDisposed,
-  newPrimitiveDisposer,
+  newUnmanagedPrimitiveDisposer,
 
   -- * Resource manager
   ResourceManager,
@@ -49,8 +49,8 @@ instance Resource Disposer where
 type DisposeFn = ShortIO (Awaitable ())
 
 
-newPrimitiveDisposer :: ShortIO (Awaitable ()) -> TIOWorker -> ExceptionChannel -> STM Disposer
-newPrimitiveDisposer fn worker exChan = do
+newUnmanagedPrimitiveDisposer :: ShortIO (Awaitable ()) -> TIOWorker -> ExceptionChannel -> STM Disposer
+newUnmanagedPrimitiveDisposer fn worker exChan = do
   key <- newUniqueSTM
   FnDisposer key worker exChan <$> newTOnce fn <*> newFinalizers
 

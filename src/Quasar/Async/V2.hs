@@ -73,7 +73,7 @@ asyncWithUnmask' fn = maskIfRequired do
     resultVar <- newAsyncVarSTM
     threadIdVar <- newAsyncVarSTM
     -- Disposer is created first to ensure the resource can be safely attached
-    disposer <- newPrimitiveDisposer (disposeFn key resultVar (toAwaitable threadIdVar)) worker exChan
+    disposer <- newUnmanagedPrimitiveDisposer (disposeFn key resultVar (toAwaitable threadIdVar)) worker exChan
     pure (key, resultVar, threadIdVar, disposer)
 
   registerResource disposer
