@@ -297,7 +297,7 @@ newtype ObservableVar v = ObservableVar (MVar (v, HM.HashMap Unique (ObservableC
 instance IsRetrievable v (ObservableVar v) where
   retrieve (ObservableVar mvar) = liftIO $ pure . fst <$> readMVar mvar
 instance IsObservable v (ObservableVar v) where
-  observe observable@(ObservableVar mvar) callback = do
+  observe (ObservableVar mvar) callback = do
     resourceManager <- askResourceManager
 
     registerNewResource_ $ liftIO do
@@ -323,7 +323,7 @@ setObservableVar :: MonadIO m => ObservableVar v -> v -> m ()
 setObservableVar observable value = modifyObservableVar observable (const value)
 
 stateObservableVar :: MonadIO m => ObservableVar v -> (v -> (a, v)) -> m a
-stateObservableVar observable@(ObservableVar mvar) f =
+stateObservableVar (ObservableVar mvar) f =
   liftIO $ modifyMVar mvar $ \(oldState, subscribers) -> do
     let (result, newState) = f oldState
     mapM_ (\callback -> callback (pure newState)) subscribers
