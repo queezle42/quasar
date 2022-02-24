@@ -2,6 +2,7 @@ module Quasar.Monad (
   -- * Quasar
   Quasar,
   newQuasar,
+  withResourceScope,
 
   MonadQuasar(..),
 
@@ -94,7 +95,9 @@ newQuasar = do
   ensureSTM $ newQuasarSTM worker exChan parentRM
 
 
---withResourceScope :: MonadQuasar m => m a -> m a
+withResourceScope :: (MonadQuasar m, MonadIO m, MonadMask m) => m a -> m a
+withResourceScope fn = bracket newQuasar dispose (`localQuasar` fn)
+
 
 
 class (MonadCatch m, MonadFix m) => MonadQuasar m where
