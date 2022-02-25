@@ -30,8 +30,9 @@
         inputsFrom = pkgs.lib.mapAttrsToList (k: v: v.env or v) self.packages.${system};
         packages = [
           pkgs.cabal-install
-          pkgs.ghcid
+          pkgs.zsh
           pkgs.entr
+          pkgs.ghcid
           pkgs.haskell-language-server
         ];
       }
