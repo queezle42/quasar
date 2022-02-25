@@ -13,7 +13,7 @@ import Control.Monad.Catch
 import Foreign
 import Foreign.C
 import Quasar.Awaitable
-import Quasar.Async.V2
+import Quasar.Async
 import Quasar.Monad
 import Quasar.Prelude
 import Quasar.Resources

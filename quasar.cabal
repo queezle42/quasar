@@ -88,7 +88,7 @@ library
     Quasar
     Quasar.Async.Fork
     Quasar.Async.STMHelper
-    Quasar.Async.V2
+    Quasar.Async
     Quasar.Awaitable
     Quasar.Exceptions
     Quasar.Exceptions.ExceptionChannel

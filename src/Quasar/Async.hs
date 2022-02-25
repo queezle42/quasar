@@ -1,4 +1,4 @@
-module Quasar.Async.V2 (
+module Quasar.Async (
   Async,
   async,
   async_,
