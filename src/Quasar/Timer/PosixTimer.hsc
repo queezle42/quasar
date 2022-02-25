@@ -9,7 +9,6 @@ module Quasar.Timer.PosixTimer (
   CITimerSpec(..),
   defaultCITimerSpec,
   newPosixTimer,
-  newUnmanagedPosixTimer,
   setPosixTimer,
   setPosixIntervalTimer,
 ) where
@@ -19,9 +18,9 @@ import Control.Monad.Catch (MonadMask)
 import Control.Monad.STM (atomically)
 import Foreign
 import Foreign.C
-import Quasar.Disposable
 import Quasar.Prelude
-import Quasar.ResourceManager
+import Quasar.Monad
+import Quasar.Resources
 import System.Posix.Types
 
 #include <signal.h>
@@ -159,31 +158,30 @@ toCSetTimeFlags TimeAbsolute = c_TIMER_ABSTIME
 
 data PosixTimer = PosixTimer {
   ctimer :: CTimer,
-  disposable :: Disposable
+  disposer :: Disposer
 }
 
-instance IsDisposable PosixTimer where
-  toDisposable = disposable
+instance Resource PosixTimer where
+  getDisposer = disposer
 
 
-newPosixTimer :: (MonadResourceManager m, MonadIO m) => ClockId -> IO () -> m PosixTimer
-newPosixTimer clockId callback = registerNewResource do
-  liftIO $ newUnmanagedPosixTimer clockId callback
+newPosixTimer :: (MonadQuasar m, MonadIO m) => ClockId -> IO () -> m PosixTimer
+newPosixTimer clockId callback = do
+  (callbackPtr, ctimer) <- liftIO $ runInBoundThread do
+    callbackPtr <- mkSigevNotifyFunction (const callback)
 
-newUnmanagedPosixTimer :: ClockId -> IO () -> IO PosixTimer
-newUnmanagedPosixTimer clockId callback = runInBoundThread do
-  callbackPtr <- mkSigevNotifyFunction (const callback)
+    ctimer <- alloca \ctimerPtr -> do
+      alloca \sigevent -> do
+        poke sigevent $ CSigEventThreadCallback callbackPtr
+        throwErrnoIfMinus1_ "timer_create" do
+          c_timer_create (toCClockId clockId) sigevent ctimerPtr
+        peek ctimerPtr
 
-  ctimer <- alloca \ctimerPtr -> do
-    alloca \sigevent -> do
-      poke sigevent $ CSigEventThreadCallback callbackPtr
-      throwErrnoIfMinus1_ "timer_create" do
-        c_timer_create (toCClockId clockId) sigevent ctimerPtr
-      peek ctimerPtr
+    pure (callbackPtr, ctimer)
 
-  disposable <- atomically $ newDisposable (delete ctimer callbackPtr)
+  disposer <- registerDisposeAction (delete ctimer callbackPtr)
 
-  pure $ PosixTimer { ctimer, disposable }
+  pure $ PosixTimer { ctimer, disposer }
   where
     delete :: CTimer -> FunPtr SigevNotifyFunction -> IO ()
     delete ctimer callbackPtr = do

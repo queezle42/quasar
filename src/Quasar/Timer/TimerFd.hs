@@ -47,7 +47,7 @@ newTimerFd clockId callback = mask_ do
       c_timerfd_create (toCClockId clockId) c_TFD_CLOEXEC
 
   workerTask <- async $ liftIO $ worker timer
-  registerDisposeAction do
+  registerDisposeAction_ do
     await $ isDisposed workerTask
     timerFdClose timer
 
