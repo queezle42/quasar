@@ -51,10 +51,8 @@ forkAsyncWithUnmaskSTM fn worker exChan = join <$> startShortIOSTM (forkAsyncWit
 -- * Fork in ShortIO (with ExceptionChannel)
 
 forkWithUnmaskShortIO :: ((forall a. IO a -> IO a) -> IO ()) -> ExceptionChannel -> ShortIO ThreadId
-forkWithUnmaskShortIO fn exChan = forkFn
+forkWithUnmaskShortIO fn exChan = mask_ $ forkIOWithUnmaskShortIO wrappedFn
   where
-    forkFn :: ShortIO ThreadId
-    forkFn = mask_ $ forkIOWithUnmaskShortIO wrappedFn
     wrappedFn :: (forall a. IO a -> IO a) -> IO ()
     wrappedFn unmask = fn unmask `catchAll` \ex -> atomically (throwToExceptionChannel exChan ex)
 
