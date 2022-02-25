@@ -1,7 +1,7 @@
-#!/usr/bin/env zsh
+#!/usr/bin/env -S nix develop . -c zsh
 
 print -P %F{yellow}Cleaning repository%f
-nix develop -c cabal clean
+cabal clean
 
 (git ls-files test; git ls-files '*.cabal'; git ls-files 'flake.*') | \
   entr -r \
