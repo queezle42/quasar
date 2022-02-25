@@ -104,7 +104,6 @@ library
     Quasar.PreludeExtras
     Quasar.ResourceManager
     Quasar.Resources
-    Quasar.Subscribable
     Quasar.Timer
     Quasar.Timer.PosixTimer
     Quasar.Timer.TimerFd
@@ -136,6 +135,5 @@ test-suite quasar-test
     Quasar.Observable.ObservableHashMapSpec
     Quasar.Observable.ObservablePrioritySpec
     Quasar.ResourceManagerSpec
-    Quasar.SubscribableSpec
   hs-source-dirs:
     test
