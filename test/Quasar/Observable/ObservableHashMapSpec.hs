@@ -1,16 +1,16 @@
 module Quasar.Observable.ObservableHashMapSpec (spec) where
 
 
-import Control.Monad (void)
-import Data.HashMap.Strict qualified as HM
-import Data.IORef
-import Quasar.Awaitable
-import Quasar.Disposable
-import Quasar.Observable
-import Quasar.Observable.Delta
-import Quasar.Observable.ObservableHashMap qualified as OM
+--import Control.Monad (void)
+--import Data.HashMap.Strict qualified as HM
+--import Data.IORef
+--import Quasar.Awaitable
+--import Quasar.Disposable
+--import Quasar.Observable
+--import Quasar.Observable.Delta
+--import Quasar.Observable.ObservableHashMap qualified as OM
 import Quasar.Prelude
-import Quasar.ResourceManager
+--import Quasar.ResourceManager
 import Test.Hspec
 
 shouldReturnM :: (Eq a, Show a, MonadIO m) => m a -> a -> m ()

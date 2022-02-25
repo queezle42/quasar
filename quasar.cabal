@@ -90,7 +90,6 @@ library
     Quasar.Async.STMHelper
     Quasar.Async.V2
     Quasar.Awaitable
-    Quasar.Disposable
     Quasar.Exceptions
     Quasar.Exceptions.ExceptionChannel
     Quasar.Monad
@@ -98,11 +97,8 @@ library
     Quasar.Observable.Delta
     Quasar.Observable.ObservableHashMap
     Quasar.Observable.ObservablePriority
-    Quasar.Old.Async
-    Quasar.Old.UnmanagedAsync
     Quasar.Prelude
     Quasar.PreludeExtras
-    Quasar.ResourceManager
     Quasar.Resources
     Quasar.Timer
     Quasar.Timer.PosixTimer
@@ -130,10 +126,9 @@ test-suite quasar-test
   other-modules:
     Quasar.AsyncSpec
     Quasar.AwaitableSpec
-    Quasar.DisposableSpec
     Quasar.ObservableSpec
     Quasar.Observable.ObservableHashMapSpec
     Quasar.Observable.ObservablePrioritySpec
-    Quasar.ResourceManagerSpec
+    Quasar.ResourcesSpec
   hs-source-dirs:
     test

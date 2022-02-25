@@ -1,14 +1,14 @@
 module Quasar.AsyncSpec (spec) where
 
-import Control.Concurrent
-import Control.Monad (void)
-import Control.Monad.IO.Class
+--import Control.Concurrent
+--import Control.Monad (void)
+--import Control.Monad.IO.Class
 import Prelude
 import Test.Hspec
 --import Quasar.Async
-import Quasar.Awaitable
-import Quasar.ResourceManager
-import System.Timeout
+--import Quasar.Awaitable
+--import Quasar.ResourceManager
+--import System.Timeout
 
 spec :: Spec
 spec = describe "async" $ it "async" $ pendingWith "moving to new implementation..."

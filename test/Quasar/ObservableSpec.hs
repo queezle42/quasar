@@ -1,10 +1,10 @@
 module Quasar.ObservableSpec (spec) where
 
-import Data.IORef
+--import Data.IORef
 import Quasar.Prelude
-import Quasar.Awaitable
-import Quasar.Observable
-import Quasar.ResourceManager
+--import Quasar.Awaitable
+--import Quasar.Observable
+--import Quasar.ResourceManager
 import Test.Hspec
 
 
