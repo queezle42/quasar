@@ -93,6 +93,7 @@ library
     Quasar.Exceptions
     Quasar.Exceptions.ExceptionChannel
     Quasar.Monad
+    Quasar.MonadQuasar.Misc
     Quasar.Observable
     Quasar.Observable.Delta
     Quasar.Observable.ObservableHashMap

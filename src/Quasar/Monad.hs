@@ -15,16 +15,11 @@ module Quasar.Monad (
   liftQuasarIO,
   quasarAtomically,
 
-  enterQuasarIO,
-  enterQuasarSTM,
-
   startShortIO_,
 
-  -- ** High-level initialization
-  runQuasarAndExit,
-  runQuasarAndExitWith,
-  runQuasarCollectExceptions,
-  runQuasarCombineExceptions,
+  -- ** Utils
+  redirectExceptionToSink,
+  redirectExceptionToSink_,
 
   -- ** Get quasar components
   quasarIOWorker,
@@ -38,17 +33,13 @@ module Quasar.Monad (
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Reader
-import Data.List.NonEmpty
 import GHC.Records (HasField(..))
 import Quasar.Async.STMHelper
 import Quasar.Awaitable
 import Quasar.Exceptions
-import Quasar.Exceptions.ExceptionChannel
 import Quasar.Prelude
 import Quasar.Resources.Disposer
-import Quasar.Utils.Exceptions
 import Quasar.Utils.ShortIO
-import System.Exit
 import Data.Bifunctor (first)
 
 
@@ -195,12 +186,6 @@ quasarAtomically (QuasarSTM fn) = do
      result <- runReaderT fn (quasar, effectAwaitableVar)
      (result <$) <$> readTVar effectAwaitableVar
 
-enterQuasarIO :: MonadIO m => Quasar -> QuasarIO () -> m ()
-enterQuasarIO quasar fn = runQuasarIO quasar $ redirectExceptionToSink_ fn
-
-enterQuasarSTM :: MonadQuasar m => Quasar -> QuasarSTM () -> m ()
-enterQuasarSTM quasar fn = ensureQuasarSTM $ localQuasar quasar $ redirectExceptionToSink_ fn
-
 
 redirectExceptionToSink :: MonadQuasar m => m a -> m (Maybe a)
 redirectExceptionToSink fn = do
@@ -219,46 +204,3 @@ withQuasarGeneric worker exChan fn = mask \unmask -> do
   rm <- atomically $ newUnmanagedResourceManagerSTM worker exChan
   let quasar = Quasar worker exChan rm
   unmask (runQuasarIO quasar fn) `finally` dispose rm
-
-
--- * High-level entry helpers
-
-runQuasarAndExit :: QuasarIO () -> IO a
-runQuasarAndExit =
-  runQuasarAndExitWith \case
-   QuasarExitSuccess () -> ExitSuccess
-   QuasarExitAsyncException () -> ExitFailure 1
-   QuasarExitMainThreadFailed -> ExitFailure 1
-
-data QuasarExitState a = QuasarExitSuccess a | QuasarExitAsyncException a | QuasarExitMainThreadFailed
-
-runQuasarAndExitWith :: (QuasarExitState a -> ExitCode) -> QuasarIO a -> IO b
-runQuasarAndExitWith exitCodeFn fn = mask \unmask -> do
-  worker <- newTIOWorker
-  (exChan, exceptionWitness) <- atomically $ newExceptionChannelWitness (loggingExceptionChannel worker)
-  mResult <- unmask $ withQuasarGeneric worker exChan (redirectExceptionToSink fn)
-  failure <- atomically exceptionWitness
-  exitState <- case (mResult, failure) of
-    (Just result, False) -> pure $ QuasarExitSuccess result
-    (Just result, True) -> pure $ QuasarExitAsyncException result
-    (Nothing, True) -> pure QuasarExitMainThreadFailed
-    (Nothing, False) -> do
-      traceIO "Invalid code path reached: Main thread failed but no asynchronous exception was witnessed. This is a bug, please report it to the `quasar`-project."
-      pure QuasarExitMainThreadFailed
-  exitWith $ exitCodeFn exitState
-
-
-runQuasarCollectExceptions :: QuasarIO a -> IO (Either SomeException a, [SomeException])
-runQuasarCollectExceptions fn = do
-  (exChan, collectExceptions) <- atomically $ newExceptionCollector panicChannel
-  worker <- newTIOWorker
-  result <- try $ withQuasarGeneric worker exChan fn
-  exceptions <- atomically collectExceptions
-  pure (result, exceptions)
-
-runQuasarCombineExceptions :: QuasarIO a -> IO a
-runQuasarCombineExceptions fn = do
-  (result, exceptions) <- runQuasarCollectExceptions fn
-  case result of
-    Left (ex :: SomeException) -> maybe (throwM ex) (throwM . CombinedException . (ex <|)) (nonEmpty exceptions)
-    Right fnResult -> maybe (pure fnResult) (throwM . CombinedException) $ nonEmpty exceptions
