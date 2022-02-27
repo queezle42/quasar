@@ -89,9 +89,9 @@ library
     Quasar.Async.Fork
     Quasar.Async.STMHelper
     Quasar.Async
-    Quasar.Awaitable
     Quasar.Exceptions
     Quasar.Exceptions.ExceptionSink
+    Quasar.Future
     Quasar.MonadQuasar
     Quasar.MonadQuasar.Misc
     Quasar.Observable

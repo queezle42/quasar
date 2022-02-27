@@ -12,7 +12,7 @@ import Control.Concurrent
 import Control.Monad.Catch
 import Foreign
 import Foreign.C
-import Quasar.Awaitable
+import Quasar.Future
 import Quasar.Async
 import Quasar.MonadQuasar
 import Quasar.Prelude

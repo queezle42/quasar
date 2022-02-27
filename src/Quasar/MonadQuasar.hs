@@ -35,7 +35,7 @@ import Control.Monad.Catch
 import Control.Monad.Reader
 import GHC.Records (HasField(..))
 import Quasar.Async.STMHelper
-import Quasar.Awaitable
+import Quasar.Future
 import Quasar.Exceptions
 import Quasar.Prelude
 import Quasar.Resources.Disposer

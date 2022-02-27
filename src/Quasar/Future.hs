@@ -1,4 +1,4 @@
-module Quasar.Awaitable (
+module Quasar.Future (
   -- * MonadAwaitable
   MonadAwait(..),
   peekAwaitable,

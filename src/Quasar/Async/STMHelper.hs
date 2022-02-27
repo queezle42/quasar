@@ -10,7 +10,7 @@ import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import Control.Exception (BlockedIndefinitelyOnSTM)
 import Control.Monad.Catch
-import Quasar.Awaitable
+import Quasar.Future
 import Quasar.Exceptions
 import Quasar.Prelude
 import Quasar.Utils.ShortIO

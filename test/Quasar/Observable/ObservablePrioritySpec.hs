@@ -2,7 +2,7 @@ module Quasar.Observable.ObservablePrioritySpec (spec) where
 
 --import Control.Monad (void)
 --import Data.IORef
---import Quasar.Awaitable
+--import Quasar.Future
 --import Quasar.Disposable
 --import Quasar.Observable
 --import Quasar.Observable.ObservablePriority (ObservablePriority)

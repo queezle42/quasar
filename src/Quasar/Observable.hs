@@ -35,7 +35,7 @@ module Quasar.Observable (
 --import Data.HashMap.Strict qualified as HM
 --import Data.IORef
 --import Data.Unique
---import Quasar.Awaitable
+--import Quasar.Future
 --import Quasar.Disposable
 --import Quasar.Prelude
 --import Quasar.ResourceManager

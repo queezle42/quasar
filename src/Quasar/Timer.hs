@@ -23,7 +23,7 @@ import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Foldable (toList)
 import Quasar.Async.STMHelper
 import Quasar.Async
-import Quasar.Awaitable
+import Quasar.Future
 import Quasar.Exceptions
 import Quasar.MonadQuasar
 import Quasar.Prelude

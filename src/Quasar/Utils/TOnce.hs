@@ -9,7 +9,7 @@ module Quasar.Utils.TOnce (
 ) where
 
 import Control.Concurrent.STM
-import Quasar.Awaitable
+import Quasar.Future
 import Quasar.Prelude
 
 data TOnceAlreadyFinalized = TOnceAlreadyFinalized

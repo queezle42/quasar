@@ -5,7 +5,7 @@ import Control.Concurrent.STM
 import Control.Monad.Catch
 import GHC.Conc (unsafeIOToSTM)
 import Test.Hspec
-import Quasar.Awaitable
+import Quasar.Future
 import Quasar.Prelude
 
 data TestException = TestException

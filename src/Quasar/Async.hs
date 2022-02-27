@@ -21,7 +21,7 @@ import Control.Concurrent (ThreadId)
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Quasar.Async.Fork
-import Quasar.Awaitable
+import Quasar.Future
 import Quasar.Exceptions
 import Quasar.MonadQuasar
 import Quasar.Prelude

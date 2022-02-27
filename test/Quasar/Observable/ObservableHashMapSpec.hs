@@ -4,7 +4,7 @@ module Quasar.Observable.ObservableHashMapSpec (spec) where
 --import Control.Monad (void)
 --import Data.HashMap.Strict qualified as HM
 --import Data.IORef
---import Quasar.Awaitable
+--import Quasar.Future
 --import Quasar.Disposable
 --import Quasar.Observable
 --import Quasar.Observable.Delta

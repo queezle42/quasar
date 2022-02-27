@@ -36,7 +36,7 @@ module Quasar.Resources (
 
 import Control.Concurrent.STM
 import Control.Monad.Catch
-import Quasar.Awaitable
+import Quasar.Future
 import Quasar.Async.Fork
 import Quasar.Async.STMHelper
 import Quasar.Exceptions

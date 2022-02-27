@@ -26,7 +26,7 @@ import Data.HashMap.Strict qualified as HM
 import Data.HashSet (HashSet)
 import Data.HashSet qualified as HashSet
 import Quasar.Async.STMHelper
-import Quasar.Awaitable
+import Quasar.Future
 import Quasar.Exceptions
 import Quasar.Prelude
 import Quasar.Utils.ShortIO

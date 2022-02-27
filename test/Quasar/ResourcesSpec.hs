@@ -6,7 +6,7 @@ import Control.Exception
 import Control.Monad.Catch
 import Quasar.Prelude
 import Test.Hspec
-import Quasar.Awaitable
+import Quasar.Future
 import Quasar.Resources
 import Quasar.MonadQuasar
 

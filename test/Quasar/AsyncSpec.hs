@@ -6,7 +6,7 @@ module Quasar.AsyncSpec (spec) where
 import Prelude
 import Test.Hspec
 --import Quasar.Async
---import Quasar.Awaitable
+--import Quasar.Future
 --import Quasar.ResourceManager
 --import System.Timeout
 

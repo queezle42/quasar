@@ -15,7 +15,7 @@ module Quasar.Utils.ShortIO (
 ) where
 
 import Control.Monad.Catch
-import Quasar.Awaitable
+import Quasar.Future
 import Quasar.Prelude
 import Control.Concurrent
 
