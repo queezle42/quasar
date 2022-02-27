@@ -31,13 +31,13 @@ import Quasar.Utils.ShortIO
 import Control.Monad.Reader
 
 
-data Async a = Async (Awaitable a) Disposer
+data Async a = Async (Future a) Disposer
 
 instance Resource (Async a) where
   getDisposer (Async _ disposer) = disposer
 
-instance IsAwaitable a (Async a) where
-  toAwaitable (Async awaitable _) = awaitable
+instance IsFuture a (Async a) where
+  toFuture (Async awaitable _) = awaitable
 
 
 async :: MonadQuasar m => QuasarIO a -> m (Async a)
@@ -73,7 +73,7 @@ asyncWithUnmask' fn = maskIfRequired do
     resultVar <- newAsyncVarSTM
     threadIdVar <- newAsyncVarSTM
     -- Disposer is created first to ensure the resource can be safely attached
-    disposer <- newUnmanagedPrimitiveDisposer (disposeFn key resultVar (toAwaitable threadIdVar)) worker exChan
+    disposer <- newUnmanagedPrimitiveDisposer (disposeFn key resultVar (toFuture threadIdVar)) worker exChan
     pure (key, resultVar, threadIdVar, disposer)
 
   registerResource disposer
@@ -82,7 +82,7 @@ asyncWithUnmask' fn = maskIfRequired do
     threadId <- forkWithUnmaskShortIO (runAndPut exChan key resultVar disposer) exChan
     putAsyncVarShortIO_ threadIdVar threadId
 
-  pure $ Async (toAwaitable resultVar) disposer
+  pure $ Async (toFuture resultVar) disposer
   where
     runAndPut :: ExceptionSink -> Unique -> AsyncVar a -> Disposer -> (forall b. IO b -> IO b) -> IO ()
     runAndPut exChan key resultVar disposer unmask = do
@@ -99,10 +99,10 @@ asyncWithUnmask' fn = maskIfRequired do
         Right retVal -> do
           putAsyncVar_ resultVar retVal
           atomically $ disposeEventuallySTM_ disposer
-    disposeFn :: Unique -> AsyncVar a -> Awaitable ThreadId -> ShortIO (Awaitable ())
-    disposeFn key resultVar threadIdAwaitable = do
+    disposeFn :: Unique -> AsyncVar a -> Future ThreadId -> ShortIO (Future ())
+    disposeFn key resultVar threadIdFuture = do
       -- Should not block or fail (unless the TIOWorker is broken)
-      threadId <- unsafeShortIO $ await threadIdAwaitable
+      threadId <- unsafeShortIO $ await threadIdFuture
       throwToShortIO threadId (CancelAsync key)
       -- Considered complete once a result (i.e. success or failure) has been stored
       pure (awaitSuccessOrFailure resultVar)

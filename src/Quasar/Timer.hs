@@ -53,8 +53,8 @@ instance Ord Timer where
 instance Resource Timer where
   getDisposer Timer{disposer} = disposer
 
-instance IsAwaitable () Timer where
-  toAwaitable Timer{completed} = toAwaitable completed
+instance IsFuture () Timer where
+  toFuture Timer{completed} = toFuture completed
 
 
 data TimerScheduler = TimerScheduler {
@@ -125,7 +125,7 @@ startSchedulerThread scheduler = getDisposer <$> async (schedulerThread `finally
       awaitAny2 (await delay) nextTimerChanged
       dispose delay
       where
-        nextTimerChanged :: Awaitable ()
+        nextTimerChanged :: Future ()
         nextTimerChanged = unsafeAwaitSTM do
           minTimer <- Data.Heap.minimum <$> readTMVar heap'
           unless (minTimer /= nextTimer) retry
@@ -200,14 +200,14 @@ sleepUntil :: MonadIO m => TimerScheduler -> UTCTime -> m ()
 sleepUntil scheduler time = liftIO $ bracketOnError (newUnmanagedTimer scheduler time) dispose await
 
 
--- | Provides an `IsAwaitable` instance that can be awaited successfully after a given number of microseconds.
+-- | Provides an `IsFuture` instance that can be awaited successfully after a given number of microseconds.
 --
--- Based on `threadDelay`. Provides a `IsAwaitable` and a `IsDisposable` instance.
+-- Based on `threadDelay`. Provides a `IsFuture` and a `IsDisposable` instance.
 newtype Delay = Delay (Async ())
   deriving newtype Resource
 
-instance IsAwaitable () Delay where
-  toAwaitable (Delay task) = toAwaitable task `catch` \AsyncDisposed -> throwM TimerCancelled
+instance IsFuture () Delay where
+  toFuture (Delay task) = toFuture task `catch` \AsyncDisposed -> throwM TimerCancelled
 
 newDelay :: MonadQuasar m => Int -> m Delay
 newDelay microseconds = Delay <$> async (liftIO (threadDelay microseconds))

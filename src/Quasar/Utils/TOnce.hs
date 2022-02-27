@@ -18,8 +18,8 @@ data TOnceAlreadyFinalized = TOnceAlreadyFinalized
 
 newtype TOnce a b = TOnce (TVar (Either a b))
 
-instance IsAwaitable b (TOnce a b) where
-  toAwaitable = unsafeAwaitSTM . readTOnceResult
+instance IsFuture b (TOnce a b) where
+  toFuture = unsafeAwaitSTM . readTOnceResult
 
 newTOnce :: a -> STM (TOnce a b)
 newTOnce initial = TOnce <$> newTVar (Left initial)

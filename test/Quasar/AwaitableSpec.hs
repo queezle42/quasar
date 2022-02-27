@@ -15,9 +15,9 @@ instance Exception TestException
 
 spec :: Spec
 spec = parallel $ do
-  describe "Awaitable" $ do
+  describe "Future" $ do
     it "can await pure values" $ do
-      await $ (pure () :: Awaitable ()) :: IO ()
+      await $ (pure () :: Future ()) :: IO ()
 
   describe "AsyncVar" $ do
     it "can be created" $ do
@@ -45,7 +45,7 @@ spec = parallel $ do
 
   describe "awaitAny" $ do
     it "works with completed awaitables" $ do
-      awaitAny2 (pure () :: Awaitable ()) (pure () :: Awaitable ()) :: IO ()
+      awaitAny2 (pure () :: Future ()) (pure () :: Future ()) :: IO ()
 
     it "can be completed later" $ do
       avar1 <- newAsyncVar :: IO (AsyncVar ())

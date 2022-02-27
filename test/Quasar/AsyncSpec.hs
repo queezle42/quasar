@@ -29,7 +29,7 @@ spec = describe "async" $ it "async" $ pendingWith "moving to new implementation
 --      await avar
 --
 --    it "can fmap the result of an already finished async" $ do
---      await (pure () :: Awaitable ()) :: IO ()
+--      await (pure () :: Future ()) :: IO ()
 --
 --    it "can terminate when encountering an asynchronous exception" $ do
 --      never <- newAsyncVar :: IO (AsyncVar ())

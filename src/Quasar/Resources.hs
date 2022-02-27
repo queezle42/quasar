@@ -52,7 +52,7 @@ newUnmanagedIODisposerSTM fn worker exChan = newUnmanagedPrimitiveDisposer (fork
 newUnmanagedSTMDisposerSTM :: STM () -> TIOWorker -> ExceptionSink -> STM Disposer
 newUnmanagedSTMDisposerSTM fn worker exChan = newUnmanagedPrimitiveDisposer disposeFn worker exChan
   where
-    disposeFn :: ShortIO (Awaitable ())
+    disposeFn :: ShortIO (Future ())
     disposeFn = unsafeShortIO $ atomically $
       -- Spawn a thread only if the transaction retries
       (pure <$> fn) `orElse` forkAsyncSTM (atomically fn) worker exChan
@@ -92,7 +92,7 @@ registerDisposeTransaction_ fn = void $ registerDisposeTransaction fn
 registerNewResource :: forall a m. (Resource a, MonadQuasar m) => m a -> m a
 registerNewResource fn = do
   rm <- askResourceManager
-  disposing <- isJust <$> ensureSTM (peekAwaitableSTM (isDisposing rm))
+  disposing <- isJust <$> ensureSTM (peekFutureSTM (isDisposing rm))
   -- Bail out before creating the resource _if possible_
   when disposing $ throwM AlreadyDisposing
 
@@ -107,7 +107,7 @@ registerNewResource fn = do
     pure resource
 
 
-disposeEventually :: (Resource r, MonadQuasar m) => r -> m (Awaitable ())
+disposeEventually :: (Resource r, MonadQuasar m) => r -> m (Future ())
 disposeEventually res = ensureSTM $ disposeEventuallySTM res
 
 disposeEventually_ :: (Resource r, MonadQuasar m) => r -> m ()

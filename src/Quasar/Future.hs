@@ -1,18 +1,18 @@
 module Quasar.Future (
-  -- * MonadAwaitable
+  -- * MonadAwait
   MonadAwait(..),
-  peekAwaitable,
-  peekAwaitableSTM,
+  peekFuture,
+  peekFutureSTM,
   awaitSTM,
 
-  -- * Awaitable
-  IsAwaitable(toAwaitable),
-  Awaitable,
-  successfulAwaitable,
-  failedAwaitable,
-  completedAwaitable,
+  -- * Future
+  IsFuture(toFuture),
+  Future,
+  successfulFuture,
+  failedFuture,
+  completedFuture,
 
-  -- * Awaitable helpers
+  -- * Future helpers
   afix,
   afix_,
   awaitSuccessOrFailure,
@@ -46,7 +46,7 @@ module Quasar.Future (
   tryReadAsyncVarSTM,
 
   -- ** Unsafe implementation helpers
-  unsafeSTMToAwaitable,
+  unsafeSTMToFuture,
   unsafeAwaitSTM,
 ) where
 
@@ -63,7 +63,7 @@ import Quasar.Prelude
 
 class (MonadCatch m, MonadPlus m, MonadFix m) => MonadAwait m where
   -- | Wait until an awaitable is completed and then return it's value (or throw an exception).
-  await :: IsAwaitable r a => a -> m r
+  await :: IsFuture r a => a -> m r
 
 data BlockedIndefinitelyOnAwait = BlockedIndefinitelyOnAwait
   deriving stock Show
@@ -73,15 +73,15 @@ instance Exception BlockedIndefinitelyOnAwait where
 
 
 instance MonadAwait IO where
-  await (toAwaitable -> Awaitable x) =
+  await (toFuture -> Future x) =
     atomically x
       `catch`
         \BlockedIndefinitelyOnSTM -> throwM BlockedIndefinitelyOnAwait
 
--- | `awaitSTM` exists as an explicit alternative to an `Awaitable STM`-instance, to prevent code which creates- and
+-- | `awaitSTM` exists as an explicit alternative to a `Future STM`-instance, to prevent code which creates- and
 -- then awaits resources without knowing it's running in STM (which would block indefinitely when run in STM).
-awaitSTM :: Awaitable a -> STM a
-awaitSTM (toAwaitable -> Awaitable x) =
+awaitSTM :: Future a -> STM a
+awaitSTM (toFuture -> Future x) =
   x `catch` \BlockedIndefinitelyOnSTM -> throwM BlockedIndefinitelyOnAwait
 
 instance MonadAwait m => MonadAwait (ReaderT a m) where
@@ -103,31 +103,31 @@ instance MonadAwait m => MonadAwait (MaybeT m) where
 
 -- | Returns the result (in a `Just`) when the awaitable is completed, throws an `Exception` when the awaitable is
 -- failed and returns `Nothing` otherwise.
-peekAwaitable :: MonadIO m => Awaitable r -> m (Maybe r)
-peekAwaitable awaitable = liftIO $ atomically $ (Just <$> awaitSTM awaitable) `orElse` pure Nothing
+peekFuture :: MonadIO m => Future r -> m (Maybe r)
+peekFuture awaitable = liftIO $ atomically $ (Just <$> awaitSTM awaitable) `orElse` pure Nothing
 
 -- | Returns the result (in a `Just`) when the awaitable is completed, throws an `Exception` when the awaitable is
 -- failed and returns `Nothing` otherwise.
-peekAwaitableSTM :: Awaitable r -> STM (Maybe r)
-peekAwaitableSTM awaitable = (Just <$> awaitSTM awaitable) `orElse` pure Nothing
+peekFutureSTM :: Future r -> STM (Maybe r)
+peekFutureSTM awaitable = (Just <$> awaitSTM awaitable) `orElse` pure Nothing
 
 
 
-class IsAwaitable r a | a -> r where
-  toAwaitable :: a -> Awaitable r
+class IsFuture r a | a -> r where
+  toFuture :: a -> Future r
 
 
 
 
 
-unsafeSTMToAwaitable :: STM a -> Awaitable a
-unsafeSTMToAwaitable = Awaitable
+unsafeSTMToFuture :: STM a -> Future a
+unsafeSTMToFuture = Future
 
 unsafeAwaitSTM :: MonadAwait m => STM a -> m a
-unsafeAwaitSTM = await . unsafeSTMToAwaitable
+unsafeAwaitSTM = await . unsafeSTMToFuture
 
 
-newtype Awaitable r = Awaitable (STM r)
+newtype Future r = Future (STM r)
   deriving newtype (
     Functor,
     Applicative,
@@ -140,43 +140,43 @@ newtype Awaitable r = Awaitable (STM r)
     )
 
 
-instance IsAwaitable r (Awaitable r) where
-  toAwaitable = id
+instance IsFuture r (Future r) where
+  toFuture = id
 
-instance MonadAwait Awaitable where
-  await = toAwaitable
+instance MonadAwait Future where
+  await = toFuture
 
-instance Semigroup r => Semigroup (Awaitable r) where
+instance Semigroup r => Semigroup (Future r) where
   x <> y = liftA2 (<>) x y
 
-instance Monoid r => Monoid (Awaitable r) where
+instance Monoid r => Monoid (Future r) where
   mempty = pure mempty
 
-instance MonadFail Awaitable where
+instance MonadFail Future where
   fail = throwM . userError
 
 
 
 
-completedAwaitable :: Either SomeException r -> Awaitable r
-completedAwaitable = either throwM pure
+completedFuture :: Either SomeException r -> Future r
+completedFuture = either throwM pure
 
 -- | Alias for `pure`.
-successfulAwaitable :: r -> Awaitable r
-successfulAwaitable = pure
+successfulFuture :: r -> Future r
+successfulFuture = pure
 
-failedAwaitable :: SomeException -> Awaitable r
-failedAwaitable = throwM
+failedFuture :: SomeException -> Future r
+failedFuture = throwM
 
 
 
 -- ** AsyncVar
 
--- | The default implementation for an `Awaitable` that can be fulfilled later.
+-- | The default implementation for an `Future` that can be fulfilled later.
 newtype AsyncVar r = AsyncVar (TMVar (Either SomeException r))
 
-instance IsAwaitable r (AsyncVar r) where
-  toAwaitable (AsyncVar var) = unsafeSTMToAwaitable $ either throwM pure =<< readTMVar var
+instance IsFuture r (AsyncVar r) where
+  toFuture (AsyncVar var) = unsafeSTMToFuture $ either throwM pure =<< readTMVar var
 
 
 newAsyncVarSTM :: STM (AsyncVar r)
@@ -236,25 +236,25 @@ putAsyncVarEitherSTM_ var = void . putAsyncVarEitherSTM var
 -- * Utility functions
 
 -- | Await success or failure of another awaitable, then return `()`.
-awaitSuccessOrFailure :: (IsAwaitable r a, MonadAwait m) => a -> m ()
-awaitSuccessOrFailure = await . fireAndForget . toAwaitable
+awaitSuccessOrFailure :: (IsFuture r a, MonadAwait m) => a -> m ()
+awaitSuccessOrFailure = await . fireAndForget . toFuture
   where
     fireAndForget :: MonadCatch m => m r -> m ()
     fireAndForget x = void x `catchAll` const (pure ())
 
-afix :: (MonadIO m, MonadCatch m) => (Awaitable a -> m a) -> m a
+afix :: (MonadIO m, MonadCatch m) => (Future a -> m a) -> m a
 afix action = do
   var <- newAsyncVar
   catchAll
     do
-      result <- action (toAwaitable var)
+      result <- action (toFuture var)
       putAsyncVar_ var result
       pure result
     \ex -> do
       failAsyncVar_ var ex
       throwM ex
 
-afix_ :: (MonadIO m, MonadCatch m) => (Awaitable a -> m a) -> m ()
+afix_ :: (MonadIO m, MonadCatch m) => (Future a -> m a) -> m ()
 afix_ = void . afix
 
 
@@ -262,8 +262,8 @@ afix_ = void . afix
 
 
 -- | Completes as soon as either awaitable completes.
-awaitEither :: MonadAwait m => Awaitable ra -> Awaitable rb -> m (Either ra rb)
-awaitEither (Awaitable x) (Awaitable y) = unsafeAwaitSTM (eitherSTM x y)
+awaitEither :: MonadAwait m => Future ra -> Future rb -> m (Either ra rb)
+awaitEither (Future x) (Future y) = unsafeAwaitSTM (eitherSTM x y)
 
 -- | Helper for `awaitEither`
 eitherSTM :: STM a -> STM b -> STM (Either a b)
@@ -272,7 +272,7 @@ eitherSTM x y = fmap Left x `orElse` fmap Right y
 
 -- Completes as soon as any awaitable in the list is completed and then returns the left-most completed result
 -- (or exception).
-awaitAny :: MonadAwait m => [Awaitable r] -> m r
+awaitAny :: MonadAwait m => [Future r] -> m r
 awaitAny xs = unsafeAwaitSTM $ anySTM $ awaitSTM <$> xs
 
 -- | Helper for `awaitAny`
@@ -282,5 +282,5 @@ anySTM (x:xs) = x `orElse` anySTM xs
 
 
 -- | Like `awaitAny` with two awaitables.
-awaitAny2 :: MonadAwait m => Awaitable r -> Awaitable r -> m r
-awaitAny2 x y = awaitAny [toAwaitable x, toAwaitable y]
+awaitAny2 :: MonadAwait m => Future r -> Future r -> m r
+awaitAny2 x y = awaitAny [toFuture x, toFuture y]

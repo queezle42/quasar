@@ -30,7 +30,7 @@ spec = pure ()
 --    it "is disposed when exiting withRootResourceManager" $ io do
 --      resourceManager <- withRootResourceManager askResourceManager
 --
---      peekAwaitable (isDisposed resourceManager) `shouldReturn` Just ()
+--      peekFuture (isDisposed resourceManager) `shouldReturn` Just ()
 --
 --    it "can be created and disposed with a delay" $ io do
 --      withRootResourceManager $ liftIO $ threadDelay 100000

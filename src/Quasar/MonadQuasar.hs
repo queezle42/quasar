@@ -94,7 +94,7 @@ withResourceScope fn = bracket newQuasar dispose (`localQuasar` fn)
 class (MonadCatch m, MonadFix m) => MonadQuasar m where
   askQuasar :: m Quasar
   maskIfRequired :: m a -> m a
-  startShortIO :: ShortIO a -> m (Awaitable a)
+  startShortIO :: ShortIO a -> m (Future a)
   ensureSTM :: STM a -> m a
   ensureQuasarSTM :: QuasarSTM a -> m a
   localQuasar :: Quasar -> m a -> m a
@@ -102,7 +102,7 @@ class (MonadCatch m, MonadFix m) => MonadQuasar m where
 type QuasarT = ReaderT Quasar
 type QuasarIO = QuasarT IO
 
-newtype QuasarSTM a = QuasarSTM (ReaderT (Quasar, TVar (Awaitable ())) STM a)
+newtype QuasarSTM a = QuasarSTM (ReaderT (Quasar, TVar (Future ())) STM a)
   deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadFix, Alternative)
 
 
@@ -126,7 +126,7 @@ instance MonadQuasar QuasarSTM where
   ensureSTM fn = QuasarSTM (lift fn)
   maskIfRequired = id
   startShortIO fn = do
-    (quasar, effectAwaitableVar) <- QuasarSTM ask
+    (quasar, effectFutureVar) <- QuasarSTM ask
     let
       worker = quasarIOWorker quasar
       exChan = quasarExceptionSink quasar
@@ -134,7 +134,7 @@ instance MonadQuasar QuasarSTM where
     ensureSTM do
       awaitable <- startShortIOSTM fn worker exChan
       -- Await in reverse order, so it is almost guaranteed this only retries once
-      modifyTVar effectAwaitableVar (awaitSuccessOrFailure awaitable *>)
+      modifyTVar effectFutureVar (awaitSuccessOrFailure awaitable *>)
       pure awaitable
   ensureQuasarSTM = id
   localQuasar quasar (QuasarSTM fn) = QuasarSTM (local (first (const quasar)) fn)
@@ -182,9 +182,9 @@ quasarAtomically (QuasarSTM fn) = do
  quasar <- askQuasar
  liftIO do
    await =<< atomically do
-     effectAwaitableVar <- newTVar (pure ())
-     result <- runReaderT fn (quasar, effectAwaitableVar)
-     (result <$) <$> readTVar effectAwaitableVar
+     effectFutureVar <- newTVar (pure ())
+     result <- runReaderT fn (quasar, effectFutureVar)
+     (result <$) <$> readTVar effectFutureVar
 
 
 redirectExceptionToSink :: MonadQuasar m => m a -> m (Maybe a)

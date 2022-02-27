@@ -9,7 +9,7 @@ module Quasar.Utils.ShortIO (
   newUniqueShortIO,
 
   -- ** Some specific functions required internally
-  peekAwaitableShortIO,
+  peekFutureShortIO,
   newAsyncVarShortIO,
   putAsyncVarShortIO_,
 ) where
@@ -42,8 +42,8 @@ newUniqueShortIO :: ShortIO Unique
 newUniqueShortIO = ShortIO newUnique
 
 
-peekAwaitableShortIO :: Awaitable r -> ShortIO (Maybe r)
-peekAwaitableShortIO awaitable = ShortIO $ peekAwaitable awaitable
+peekFutureShortIO :: Future r -> ShortIO (Maybe r)
+peekFutureShortIO awaitable = ShortIO $ peekFuture awaitable
 
 newAsyncVarShortIO :: ShortIO (AsyncVar a)
 newAsyncVarShortIO = ShortIO newAsyncVar

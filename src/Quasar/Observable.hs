@@ -72,7 +72,7 @@ module Quasar.Observable (
 --
 --
 --class IsRetrievable v a | a -> v where
---  retrieve :: (MonadResourceManager m, MonadIO m, MonadMask m) => a -> m (Awaitable v)
+--  retrieve :: (MonadResourceManager m, MonadIO m, MonadMask m) => a -> m (Future v)
 --
 --class IsRetrievable v o => IsObservable v o | o -> v where
 --  -- | Register a callback to observe changes. The callback is called when the value changes, but depending on the
@@ -366,7 +366,7 @@ module Quasar.Observable (
 --
 --
 --data FnObservable v = FnObservable {
---  retrieveFn :: ResourceManagerIO (Awaitable v),
+--  retrieveFn :: ResourceManagerIO (Future v),
 --  observeFn :: (ObservableMessage v -> ResourceManagerIO ()) -> ResourceManagerIO ()
 --}
 --instance IsRetrievable v (FnObservable v) where
@@ -381,7 +381,7 @@ module Quasar.Observable (
 ---- | Implement an Observable by directly providing functions for `retrieve` and `subscribe`.
 --fnObservable
 --  :: ((ObservableMessage v -> ResourceManagerIO ()) -> ResourceManagerIO ())
---  -> ResourceManagerIO (Awaitable v)
+--  -> ResourceManagerIO (Future v)
 --  -> Observable v
 --fnObservable observeFn retrieveFn = toObservable FnObservable{observeFn, retrieveFn}
 --
@@ -393,7 +393,7 @@ module Quasar.Observable (
 --  -> Observable v
 --synchronousFnObservable observeFn synchronousRetrieveFn = fnObservable observeFn retrieveFn
 --  where
---    retrieveFn :: ResourceManagerIO (Awaitable v)
+--    retrieveFn :: ResourceManagerIO (Future v)
 --    retrieveFn = liftIO $ pure <$> synchronousRetrieveFn
 --
 --
