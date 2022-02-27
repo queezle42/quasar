@@ -91,7 +91,7 @@ library
     Quasar.Async
     Quasar.Awaitable
     Quasar.Exceptions
-    Quasar.Exceptions.ExceptionChannel
+    Quasar.Exceptions.ExceptionSink
     Quasar.MonadQuasar
     Quasar.MonadQuasar.Misc
     Quasar.Observable

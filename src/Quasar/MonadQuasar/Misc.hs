@@ -18,7 +18,7 @@ import Data.List.NonEmpty
 import Quasar.Awaitable
 import Quasar.Async
 import Quasar.Async.STMHelper
-import Quasar.Exceptions.ExceptionChannel
+import Quasar.Exceptions.ExceptionSink
 import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Resources

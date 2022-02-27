@@ -1,4 +1,4 @@
-module Quasar.Exceptions.ExceptionChannel (
+module Quasar.Exceptions.ExceptionSink (
   panicChannel,
   loggingExceptionChannel,
   newExceptionChannelWitness,
