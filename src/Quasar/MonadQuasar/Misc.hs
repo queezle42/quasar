@@ -15,16 +15,23 @@ import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Data.List.NonEmpty
+import Quasar.Awaitable
+import Quasar.Async
 import Quasar.Async.STMHelper
 import Quasar.Exceptions.ExceptionChannel
 import Quasar.MonadQuasar
 import Quasar.Prelude
+import Quasar.Resources
 import Quasar.Utils.Exceptions
 import System.Exit
 
 
 execForeignQuasarIO :: MonadIO m => Quasar -> QuasarIO () -> m ()
-execForeignQuasarIO quasar fn = runQuasarIO quasar $ redirectExceptionToSink_ fn
+execForeignQuasarIO quasar fn = runQuasarIO quasar $
+  bracket
+    (async fn)
+    dispose
+    awaitSuccessOrFailure
 
 execForeignQuasarSTM :: MonadQuasar m => Quasar -> QuasarSTM () -> m ()
 execForeignQuasarSTM quasar fn = ensureQuasarSTM $ localQuasar quasar $ redirectExceptionToSink_ fn
