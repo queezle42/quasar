@@ -17,7 +17,7 @@ import Control.Monad.Reader
 import Data.List.NonEmpty
 import Quasar.Async.STMHelper
 import Quasar.Exceptions.ExceptionChannel
-import Quasar.Monad
+import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Utils.Exceptions
 import System.Exit

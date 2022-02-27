@@ -1,4 +1,4 @@
-module Quasar.Monad (
+module Quasar.MonadQuasar (
   -- * Quasar
   Quasar,
   newQuasar,

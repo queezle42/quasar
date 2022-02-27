@@ -40,7 +40,7 @@ import Quasar.Awaitable
 import Quasar.Async.Fork
 import Quasar.Async.STMHelper
 import Quasar.Exceptions
-import Quasar.Monad
+import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Resources.Disposer
 import Quasar.Utils.ShortIO

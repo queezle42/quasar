@@ -25,7 +25,7 @@ import Quasar.Async.STMHelper
 import Quasar.Async
 import Quasar.Awaitable
 import Quasar.Exceptions
-import Quasar.Monad
+import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Resources
 

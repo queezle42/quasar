@@ -8,7 +8,7 @@ import Quasar.Prelude
 import Test.Hspec
 import Quasar.Awaitable
 import Quasar.Resources
-import Quasar.Monad
+import Quasar.MonadQuasar
 
 data TestException = TestException
   deriving stock (Eq, Show)

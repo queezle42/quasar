@@ -14,7 +14,7 @@ import Foreign
 import Foreign.C
 import Quasar.Awaitable
 import Quasar.Async
-import Quasar.Monad
+import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Resources
 import Quasar.Timer.PosixTimer

@@ -23,7 +23,7 @@ import Control.Monad.Catch
 import Quasar.Async.Fork
 import Quasar.Awaitable
 import Quasar.Exceptions
-import Quasar.Monad
+import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Resources
 import Quasar.Resources.Disposer

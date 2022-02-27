@@ -19,7 +19,7 @@ import Control.Monad.STM (atomically)
 import Foreign
 import Foreign.C
 import Quasar.Prelude
-import Quasar.Monad
+import Quasar.MonadQuasar
 import Quasar.Resources
 import System.Posix.Types
 
