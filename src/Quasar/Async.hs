@@ -70,8 +70,8 @@ asyncWithUnmask' fn = maskIfRequired do
 
   (key, resultVar, threadIdVar, disposer) <- ensureSTM do
     key <- newUniqueSTM
-    resultVar <- newAsyncVarSTM
-    threadIdVar <- newAsyncVarSTM
+    resultVar <- newPromiseSTM
+    threadIdVar <- newPromiseSTM
     -- Disposer is created first to ensure the resource can be safely attached
     disposer <- newUnmanagedPrimitiveDisposer (disposeFn key resultVar (toFuture threadIdVar)) worker exChan
     pure (key, resultVar, threadIdVar, disposer)
@@ -80,26 +80,26 @@ asyncWithUnmask' fn = maskIfRequired do
 
   startShortIO_ do
     threadId <- forkWithUnmaskShortIO (runAndPut exChan key resultVar disposer) exChan
-    putAsyncVarShortIO_ threadIdVar threadId
+    fulfillPromiseShortIO threadIdVar threadId
 
   pure $ Async (toFuture resultVar) disposer
   where
-    runAndPut :: ExceptionSink -> Unique -> AsyncVar a -> Disposer -> (forall b. IO b -> IO b) -> IO ()
+    runAndPut :: ExceptionSink -> Unique -> Promise a -> Disposer -> (forall b. IO b -> IO b) -> IO ()
     runAndPut exChan key resultVar disposer unmask = do
       -- Called in masked state by `forkWithUnmask`
       result <- try $ fn unmask
       case result of
         Left (fromException -> Just (CancelAsync ((== key) -> True))) ->
-          failAsyncVar_ resultVar AsyncDisposed
+          breakPromise resultVar AsyncDisposed
         Left ex -> do
           atomically (throwToExceptionSink exChan ex)
             `finally` do
-              failAsyncVar_ resultVar (AsyncException ex)
+              breakPromise resultVar (AsyncException ex)
               atomically $ disposeEventuallySTM_ disposer
         Right retVal -> do
-          putAsyncVar_ resultVar retVal
+          fulfillPromise resultVar retVal
           atomically $ disposeEventuallySTM_ disposer
-    disposeFn :: Unique -> AsyncVar a -> Future ThreadId -> ShortIO (Future ())
+    disposeFn :: Unique -> Promise a -> Future ThreadId -> ShortIO (Future ())
     disposeFn key resultVar threadIdFuture = do
       -- Should not block or fail (unless the TIOWorker is broken)
       threadId <- unsafeShortIO $ await threadIdFuture

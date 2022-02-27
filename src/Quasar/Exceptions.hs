@@ -16,6 +16,7 @@ module Quasar.Exceptions (
   isFailedToAttachResource,
   AlreadyDisposing(..),
   isAlreadyDisposing,
+  PromiseAlreadyCompleted(..),
 ) where
 
 import Control.Concurrent.STM
@@ -100,3 +101,9 @@ instance Exception AlreadyDisposing where
 isAlreadyDisposing :: SomeException -> Bool
 isAlreadyDisposing (fromException @AlreadyDisposing -> Just _) = True
 isAlreadyDisposing _ = False
+
+
+
+data PromiseAlreadyCompleted = PromiseAlreadyCompleted
+  deriving stock Show
+  deriving anyclass Exception

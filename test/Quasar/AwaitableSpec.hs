@@ -19,26 +19,26 @@ spec = parallel $ do
     it "can await pure values" $ do
       await $ (pure () :: Future ()) :: IO ()
 
-  describe "AsyncVar" $ do
+  describe "Promise" $ do
     it "can be created" $ do
-      _ <- newAsyncVar :: IO (AsyncVar ())
+      _ <- newPromise :: IO (Promise ())
       pure ()
 
     it "accepts a value" $ do
-      avar <- newAsyncVar :: IO (AsyncVar ())
-      putAsyncVar_ avar ()
+      avar <- newPromise :: IO (Promise ())
+      fulfillPromise avar ()
 
     it "can be awaited" $ do
-      avar <- newAsyncVar :: IO (AsyncVar ())
-      putAsyncVar_ avar ()
+      avar <- newPromise :: IO (Promise ())
+      fulfillPromise avar ()
 
       await avar
 
     it "can be awaited when completed asynchronously" $ do
-      avar <- newAsyncVar :: IO (AsyncVar ())
+      avar <- newPromise :: IO (Promise ())
       void $ forkIO $ do
         threadDelay 100000
-        putAsyncVar_ avar ()
+        fulfillPromise avar ()
 
       await avar
 
@@ -48,17 +48,17 @@ spec = parallel $ do
       awaitAny2 (pure () :: Future ()) (pure () :: Future ()) :: IO ()
 
     it "can be completed later" $ do
-      avar1 <- newAsyncVar :: IO (AsyncVar ())
-      avar2 <- newAsyncVar :: IO (AsyncVar ())
+      avar1 <- newPromise :: IO (Promise ())
+      avar2 <- newPromise :: IO (Promise ())
       void $ forkIO $ do
         threadDelay 100000
-        putAsyncVar_ avar1 ()
+        fulfillPromise avar1 ()
       awaitAny2 (await avar1) (await avar2)
 
     it "can be completed later by the second parameter" $ do
-      avar1 <- newAsyncVar :: IO (AsyncVar ())
-      avar2 <- newAsyncVar :: IO (AsyncVar ())
+      avar1 <- newPromise :: IO (Promise ())
+      avar2 <- newPromise :: IO (Promise ())
       void $ forkIO $ do
         threadDelay 100000
-        putAsyncVar_ avar2 ()
+        fulfillPromise avar2 ()
       awaitAny2 (await avar1) (await avar2)

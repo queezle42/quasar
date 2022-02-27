@@ -22,28 +22,29 @@ module Quasar.Future (
   awaitAny2,
   awaitEither,
 
-  -- * AsyncVar
-  AsyncVar,
+  -- * Promise
+  Promise,
 
-  -- ** Manage `AsyncVar`s in IO
-  newAsyncVar,
-  putAsyncVarEither,
-  putAsyncVar,
-  putAsyncVar_,
-  failAsyncVar,
-  failAsyncVar_,
-  putAsyncVarEither_,
+  -- ** Manage `Promise`s in IO
+  newPromise,
+  fulfillPromise,
+  breakPromise,
+  completePromise,
 
-  -- ** Manage `AsyncVar`s in STM
-  newAsyncVarSTM,
-  putAsyncVarEitherSTM,
-  putAsyncVarSTM,
-  putAsyncVarSTM_,
-  failAsyncVarSTM,
-  failAsyncVarSTM_,
-  putAsyncVarEitherSTM_,
-  readAsyncVarSTM,
-  tryReadAsyncVarSTM,
+  tryFulfillPromise,
+  tryBreakPromise,
+  tryCompletePromise,
+
+  -- ** Manage `Promise`s in STM
+  newPromiseSTM,
+  fulfillPromiseSTM,
+  breakPromiseSTM,
+  completePromiseSTM,
+  peekPromiseSTM,
+
+  tryFulfillPromiseSTM,
+  tryBreakPromiseSTM,
+  tryCompletePromiseSTM,
 
   -- ** Unsafe implementation helpers
   unsafeSTMToFuture,
@@ -59,6 +60,7 @@ import Control.Monad.State (StateT)
 import Control.Monad.RWS (RWST)
 import Control.Monad.Trans.Maybe
 import Quasar.Prelude
+import Quasar.Exceptions
 
 
 class (MonadCatch m, MonadPlus m, MonadFix m) => MonadAwait m where
@@ -80,7 +82,7 @@ instance MonadAwait IO where
 
 -- | `awaitSTM` exists as an explicit alternative to a `Future STM`-instance, to prevent code which creates- and
 -- then awaits resources without knowing it's running in STM (which would block indefinitely when run in STM).
-awaitSTM :: Future a -> STM a
+awaitSTM :: IsFuture r a => a -> STM r
 awaitSTM (toFuture -> Future x) =
   x `catch` \BlockedIndefinitelyOnSTM -> throwM BlockedIndefinitelyOnAwait
 
@@ -170,66 +172,66 @@ failedFuture = throwM
 
 
 
--- ** AsyncVar
+-- ** Promise
 
 -- | The default implementation for an `Future` that can be fulfilled later.
-newtype AsyncVar r = AsyncVar (TMVar (Either SomeException r))
+newtype Promise r = Promise (TMVar (Either SomeException r))
 
-instance IsFuture r (AsyncVar r) where
-  toFuture (AsyncVar var) = unsafeSTMToFuture $ either throwM pure =<< readTMVar var
-
-
-newAsyncVarSTM :: STM (AsyncVar r)
-newAsyncVarSTM = AsyncVar <$> newEmptyTMVar
-
-newAsyncVar :: MonadIO m => m (AsyncVar r)
-newAsyncVar = liftIO $ AsyncVar <$> newEmptyTMVarIO
+instance IsFuture r (Promise r) where
+  toFuture (Promise var) = unsafeSTMToFuture $ either throwM pure =<< readTMVar var
 
 
-putAsyncVarEither :: forall a m. MonadIO m => AsyncVar a -> Either SomeException a -> m Bool
-putAsyncVarEither var = liftIO . atomically . putAsyncVarEitherSTM var
+newPromiseSTM :: STM (Promise r)
+newPromiseSTM = Promise <$> newEmptyTMVar
 
-putAsyncVarEitherSTM :: AsyncVar a -> Either SomeException a -> STM Bool
-putAsyncVarEitherSTM (AsyncVar var) = tryPutTMVar var
-
-
--- | Get the value of an `AsyncVar` in `STM`. Will retry until the AsyncVar is fulfilled.
-readAsyncVarSTM :: AsyncVar a -> STM a
-readAsyncVarSTM (AsyncVar var) = either throwM pure =<< readTMVar var
-
-tryReadAsyncVarSTM :: forall a. AsyncVar a -> STM (Maybe a)
-tryReadAsyncVarSTM (AsyncVar var) = mapM (either throwM pure) =<< tryReadTMVar var
+newPromise :: MonadIO m => m (Promise r)
+newPromise = liftIO $ Promise <$> newEmptyTMVarIO
 
 
-putAsyncVar :: MonadIO m => AsyncVar a -> a -> m Bool
-putAsyncVar var = putAsyncVarEither var . Right
+completePromiseSTM :: Promise a -> Either SomeException a -> STM ()
+completePromiseSTM var result = do
+  success <- tryCompletePromiseSTM var result
+  unless success $ throwM PromiseAlreadyCompleted
 
-putAsyncVarSTM :: AsyncVar a -> a -> STM Bool
-putAsyncVarSTM var = putAsyncVarEitherSTM var . Right
+tryCompletePromiseSTM :: Promise a -> Either SomeException a -> STM Bool
+tryCompletePromiseSTM (Promise var) = tryPutTMVar var
 
-putAsyncVar_ :: MonadIO m => AsyncVar a -> a -> m ()
-putAsyncVar_ var = void . putAsyncVar var
 
-putAsyncVarSTM_ :: AsyncVar a -> a -> STM ()
-putAsyncVarSTM_ var = void . putAsyncVarSTM var
+peekPromiseSTM :: forall a. Promise a -> STM (Maybe a)
+peekPromiseSTM (Promise var) = mapM (either throwM pure) =<< tryReadTMVar var
 
-failAsyncVar :: (Exception e, MonadIO m) => AsyncVar a -> e -> m Bool
-failAsyncVar var = putAsyncVarEither var . Left . toException
 
-failAsyncVarSTM :: Exception e => AsyncVar a -> e -> STM Bool
-failAsyncVarSTM var = putAsyncVarEitherSTM var . Left . toException
+fulfillPromise :: MonadIO m => Promise a -> a -> m ()
+fulfillPromise var result = liftIO $ atomically $ fulfillPromiseSTM var result
 
-failAsyncVar_ :: (Exception e, MonadIO m) => AsyncVar a -> e -> m ()
-failAsyncVar_ var = void . failAsyncVar var
+fulfillPromiseSTM :: Promise a -> a -> STM ()
+fulfillPromiseSTM var result = completePromiseSTM var (Right result)
 
-failAsyncVarSTM_ :: Exception e => AsyncVar a -> e -> STM ()
-failAsyncVarSTM_ var = void . failAsyncVarSTM var
+breakPromise :: (Exception e, MonadIO m) => Promise a -> e -> m ()
+breakPromise var result = liftIO $ atomically $ breakPromiseSTM var result
 
-putAsyncVarEither_ :: MonadIO m => AsyncVar a -> Either SomeException a -> m ()
-putAsyncVarEither_ var = void . putAsyncVarEither var
+breakPromiseSTM :: Exception e => Promise a -> e -> STM ()
+breakPromiseSTM var result = completePromiseSTM var (Left (toException result))
 
-putAsyncVarEitherSTM_ :: AsyncVar a -> Either SomeException a -> STM ()
-putAsyncVarEitherSTM_ var = void . putAsyncVarEitherSTM var
+completePromise :: MonadIO m => Promise a -> Either SomeException a -> m ()
+completePromise var result = liftIO $ atomically $ completePromiseSTM var result
+
+
+
+tryFulfillPromise :: MonadIO m => Promise a -> a -> m Bool
+tryFulfillPromise var result = liftIO $ atomically $ tryFulfillPromiseSTM var result
+
+tryFulfillPromiseSTM :: Promise a -> a -> STM Bool
+tryFulfillPromiseSTM var result = tryCompletePromiseSTM var (Right result)
+
+tryBreakPromise :: (Exception e, MonadIO m) => Promise a -> e -> m Bool
+tryBreakPromise var result = liftIO $ atomically $ tryBreakPromiseSTM var result
+
+tryBreakPromiseSTM :: Exception e => Promise a -> e -> STM Bool
+tryBreakPromiseSTM var result = tryCompletePromiseSTM var (Left (toException result))
+
+tryCompletePromise :: MonadIO m => Promise a -> Either SomeException a -> m Bool
+tryCompletePromise var result = liftIO $ atomically $ tryCompletePromiseSTM var result
 
 
 
@@ -244,14 +246,14 @@ awaitSuccessOrFailure = await . fireAndForget . toFuture
 
 afix :: (MonadIO m, MonadCatch m) => (Future a -> m a) -> m a
 afix action = do
-  var <- newAsyncVar
+  var <- newPromise
   catchAll
     do
       result <- action (toFuture var)
-      putAsyncVar_ var result
+      fulfillPromise var result
       pure result
     \ex -> do
-      failAsyncVar_ var ex
+      breakPromise var ex
       throwM ex
 
 afix_ :: (MonadIO m, MonadCatch m) => (Future a -> m a) -> m ()

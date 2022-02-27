@@ -67,11 +67,11 @@ forkAsyncShortIO fn = forkAsyncWithUnmaskShortIO ($ fn)
 
 forkAsyncWithUnmaskShortIO :: forall a. ((forall b. IO b -> IO b) -> IO a) -> ExceptionSink -> ShortIO (Future a)
 forkAsyncWithUnmaskShortIO fn exChan = do
-  resultVar <- newAsyncVarShortIO
+  resultVar <- newPromiseShortIO
   forkWithUnmaskShortIO_ (runAndPut resultVar) exChan
   pure $ toFuture resultVar
   where
-    runAndPut :: AsyncVar a -> (forall b. IO b -> IO b) -> IO ()
+    runAndPut :: Promise a -> (forall b. IO b -> IO b) -> IO ()
     runAndPut resultVar unmask = do
       -- Called in masked state by `forkWithUnmaskShortIO`
       result <- try $ fn unmask
@@ -79,6 +79,6 @@ forkAsyncWithUnmaskShortIO fn exChan = do
         Left ex ->
           atomically (throwToExceptionSink exChan ex)
             `finally`
-              failAsyncVar_ resultVar (AsyncException ex)
+              breakPromise resultVar (AsyncException ex)
         Right retVal -> do
-          putAsyncVar_ resultVar retVal
+          fulfillPromise resultVar retVal

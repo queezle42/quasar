@@ -10,8 +10,8 @@ module Quasar.Utils.ShortIO (
 
   -- ** Some specific functions required internally
   peekFutureShortIO,
-  newAsyncVarShortIO,
-  putAsyncVarShortIO_,
+  newPromiseShortIO,
+  fulfillPromiseShortIO,
 ) where
 
 import Control.Monad.Catch
@@ -45,8 +45,8 @@ newUniqueShortIO = ShortIO newUnique
 peekFutureShortIO :: Future r -> ShortIO (Maybe r)
 peekFutureShortIO awaitable = ShortIO $ peekFuture awaitable
 
-newAsyncVarShortIO :: ShortIO (AsyncVar a)
-newAsyncVarShortIO = ShortIO newAsyncVar
+newPromiseShortIO :: ShortIO (Promise a)
+newPromiseShortIO = ShortIO newPromise
 
-putAsyncVarShortIO_ :: AsyncVar a -> a -> ShortIO ()
-putAsyncVarShortIO_ var value = ShortIO $ putAsyncVar_ var value
+fulfillPromiseShortIO :: Promise a -> a -> ShortIO ()
+fulfillPromiseShortIO var value = ShortIO $ fulfillPromise var value

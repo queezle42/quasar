@@ -90,20 +90,20 @@ beginDisposeFnDisposer worker exChan disposeState finalizers =
   where
     startDisposeFn :: DisposeFn -> STM (Future ())
     startDisposeFn disposeFn = do
-      awaitableVar <- newAsyncVarSTM
+      awaitableVar <- newPromiseSTM
       startShortIOSTM_ (runDisposeFn awaitableVar disposeFn) worker exChan
       pure $ join (toFuture awaitableVar)
 
-    runDisposeFn :: AsyncVar (Future ()) -> DisposeFn -> ShortIO ()
+    runDisposeFn :: Promise (Future ()) -> DisposeFn -> ShortIO ()
     runDisposeFn awaitableVar disposeFn = mask_ $ handleAll exceptionHandler do
       awaitable <- disposeFn
-      putAsyncVarShortIO_ awaitableVar awaitable
+      fulfillPromiseShortIO awaitableVar awaitable
       runFinalizersAfter finalizers awaitable
       where
         -- In case of an exception mark disposable as completed to prevent resource managers from being stuck indefinitely
         exceptionHandler :: SomeException -> ShortIO ()
         exceptionHandler ex = do
-          putAsyncVarShortIO_ awaitableVar (pure ())
+          fulfillPromiseShortIO awaitableVar (pure ())
           runFinalizersShortIO finalizers
           throwM $ DisposeException ex
 
@@ -189,7 +189,7 @@ beginDisposeResourceManagerInternal :: ResourceManager -> STM DisposeDependencie
 beginDisposeResourceManagerInternal rm = do
   readTVar (resourceManagerState rm) >>= \case
     ResourceManagerNormal attachedResources worker exChan -> do
-      dependenciesVar <- newAsyncVarSTM
+      dependenciesVar <- newPromiseSTM
       writeTVar (resourceManagerState rm) (ResourceManagerDisposing (toFuture dependenciesVar))
       attachedDisposers <- HM.elems <$> readTVar attachedResources
       startShortIOSTM_ (void $ forkIOShortIO (disposeThread dependenciesVar attachedDisposers)) worker exChan
@@ -197,14 +197,14 @@ beginDisposeResourceManagerInternal rm = do
     ResourceManagerDisposing deps -> pure $ DisposeDependencies rmKey deps
     ResourceManagerDisposed -> pure $ DisposeDependencies rmKey mempty
   where
-    disposeThread :: AsyncVar [DisposeDependencies] -> [Disposer] -> IO ()
+    disposeThread :: Promise [DisposeDependencies] -> [Disposer] -> IO ()
     disposeThread dependenciesVar attachedDisposers = do
       -- Begin to dispose all attached resources
       results <- mapM (atomically . resourceManagerBeginDispose) attachedDisposers
       -- Await direct resource awaitables and collect indirect dependencies
       dependencies <- await (collectDependencies results)
       -- Publish "direct dependencies complete"-status
-      putAsyncVar_ dependenciesVar dependencies
+      fulfillPromise dependenciesVar dependencies
       -- Await indirect dependencies
       awaitDisposeDependencies $ DisposeDependencies rmKey (pure dependencies)
       -- Set state to disposed and run finalizers

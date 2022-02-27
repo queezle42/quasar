@@ -22,17 +22,17 @@ spec = describe "async" $ it "async" $ pendingWith "moving to new implementation
 --
 --  describe "await" $ do
 --    it "can await the result of an async that is completed later" $ do
---      avar <- newAsyncVar :: IO (AsyncVar ())
+--      avar <- newPromise :: IO (Promise ())
 --      void $ forkIO $ do
 --        threadDelay 100000
---        putAsyncVar_ avar ()
+--        fulfillPromise avar ()
 --      await avar
 --
 --    it "can fmap the result of an already finished async" $ do
 --      await (pure () :: Future ()) :: IO ()
 --
 --    it "can terminate when encountering an asynchronous exception" $ do
---      never <- newAsyncVar :: IO (AsyncVar ())
+--      never <- newPromise :: IO (Promise ())
 --
 --      result <- timeout 100000 $ withRootResourceManager $
 --        await never

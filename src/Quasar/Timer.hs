@@ -39,7 +39,7 @@ instance Exception TimerCancelled
 data Timer = Timer {
   key :: Unique,
   time :: UTCTime,
-  completed :: AsyncVar (),
+  completed :: Promise (),
   disposer :: Disposer,
   scheduler :: TimerScheduler
 }
@@ -149,7 +149,7 @@ startSchedulerThread scheduler = getDisposer <$> async (schedulerThread `finally
 
     fireTimer :: Timer -> STM ()
     fireTimer Timer{completed, disposer} = do
-      result <- putAsyncVarSTM completed ()
+      result <- tryFulfillPromiseSTM completed ()
       modifyTVar (if result then activeCount' else cancelledCount') (+ (-1))
       disposeEventuallySTM_ disposer
 
@@ -158,7 +158,7 @@ startSchedulerThread scheduler = getDisposer <$> async (schedulerThread `finally
 
     cleanupTimer :: Timer -> STM (Maybe Timer)
     cleanupTimer timer = do
-      cancelled <- ((False <$ readAsyncVarSTM (completed timer)) `catch` \TimerCancelled -> pure True) `orElse` pure False
+      cancelled <- ((False <$ awaitSTM (completed timer)) `catch` \TimerCancelled -> pure True) `orElse` pure False
       if cancelled
         then do
           modifyTVar cancelledCount' (+ (-1))
@@ -178,7 +178,7 @@ newTimer scheduler time = registerNewResource $ newUnmanagedTimer scheduler time
 newUnmanagedTimer :: MonadIO m => TimerScheduler -> UTCTime -> m Timer
 newUnmanagedTimer scheduler time = liftIO do
   key <- newUnique
-  completed <- newAsyncVar
+  completed <- newPromise
   atomically do
     disposer <- newUnmanagedSTMDisposerSTM (disposeFn completed) (ioWorker scheduler) (exceptionSink scheduler)
     let timer = Timer { key, time, completed, disposer, scheduler }
@@ -188,9 +188,9 @@ newUnmanagedTimer scheduler time = liftIO do
     modifyTVar (activeCount scheduler) (+ 1)
     pure timer
   where
-    disposeFn :: AsyncVar () -> STM ()
+    disposeFn :: Promise () -> STM ()
     disposeFn completed = do
-      cancelled <- failAsyncVarSTM completed TimerCancelled
+      cancelled <- tryBreakPromiseSTM completed TimerCancelled
       when cancelled do
         modifyTVar (activeCount scheduler) (+ (-1))
         modifyTVar (cancelledCount scheduler) (+ 1)

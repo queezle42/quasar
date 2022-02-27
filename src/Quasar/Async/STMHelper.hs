@@ -21,17 +21,17 @@ newtype TIOWorker = TIOWorker (TQueue (IO ()))
 
 startShortIOSTM :: forall a. ShortIO a -> TIOWorker -> ExceptionSink -> STM (Future a)
 startShortIOSTM fn (TIOWorker jobQueue) exChan = do
-  resultVar <- newAsyncVarSTM
+  resultVar <- newPromiseSTM
   writeTQueue jobQueue $ job resultVar
   pure $ toFuture resultVar
   where
-    job :: AsyncVar a -> IO ()
+    job :: Promise a -> IO ()
     job resultVar = do
       try (runShortIO fn) >>= \case
         Left ex -> do
           atomically $ throwToExceptionSink exChan ex
-          failAsyncVar_ resultVar $ toException $ AsyncException ex
-        Right result -> putAsyncVar_ resultVar result
+          breakPromise resultVar $ toException $ AsyncException ex
+        Right result -> fulfillPromise resultVar result
 
 startShortIOSTM_ :: ShortIO () -> TIOWorker -> ExceptionSink -> STM ()
 startShortIOSTM_ x y z = void $ startShortIOSTM x y z
