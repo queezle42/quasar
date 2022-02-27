@@ -66,7 +66,7 @@ async' fn = asyncWithUnmask' ($ fn)
 asyncWithUnmask' :: forall a m. MonadQuasar m => ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
 asyncWithUnmask' fn = maskIfRequired do
   worker <- askIOWorker
-  exChan <- askExceptionChannel
+  exChan <- askExceptionSink
 
   (key, resultVar, threadIdVar, disposer) <- ensureSTM do
     key <- newUniqueSTM
@@ -84,7 +84,7 @@ asyncWithUnmask' fn = maskIfRequired do
 
   pure $ Async (toAwaitable resultVar) disposer
   where
-    runAndPut :: ExceptionChannel -> Unique -> AsyncVar a -> Disposer -> (forall b. IO b -> IO b) -> IO ()
+    runAndPut :: ExceptionSink -> Unique -> AsyncVar a -> Disposer -> (forall b. IO b -> IO b) -> IO ()
     runAndPut exChan key resultVar disposer unmask = do
       -- Called in masked state by `forkWithUnmask`
       result <- try $ fn unmask
@@ -92,7 +92,7 @@ asyncWithUnmask' fn = maskIfRequired do
         Left (fromException -> Just (CancelAsync ((== key) -> True))) ->
           failAsyncVar_ resultVar AsyncDisposed
         Left ex -> do
-          atomically (throwToExceptionChannel exChan ex)
+          atomically (throwToExceptionSink exChan ex)
             `finally` do
               failAsyncVar_ resultVar (AsyncException ex)
               atomically $ disposeEventuallySTM_ disposer

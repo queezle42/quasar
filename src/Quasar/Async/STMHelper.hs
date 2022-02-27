@@ -19,7 +19,7 @@ import Quasar.Utils.ShortIO
 newtype TIOWorker = TIOWorker (TQueue (IO ()))
 
 
-startShortIOSTM :: forall a. ShortIO a -> TIOWorker -> ExceptionChannel -> STM (Awaitable a)
+startShortIOSTM :: forall a. ShortIO a -> TIOWorker -> ExceptionSink -> STM (Awaitable a)
 startShortIOSTM fn (TIOWorker jobQueue) exChan = do
   resultVar <- newAsyncVarSTM
   writeTQueue jobQueue $ job resultVar
@@ -29,11 +29,11 @@ startShortIOSTM fn (TIOWorker jobQueue) exChan = do
     job resultVar = do
       try (runShortIO fn) >>= \case
         Left ex -> do
-          atomically $ throwToExceptionChannel exChan ex
+          atomically $ throwToExceptionSink exChan ex
           failAsyncVar_ resultVar $ toException $ AsyncException ex
         Right result -> putAsyncVar_ resultVar result
 
-startShortIOSTM_ :: ShortIO () -> TIOWorker -> ExceptionChannel -> STM ()
+startShortIOSTM_ :: ShortIO () -> TIOWorker -> ExceptionSink -> STM ()
 startShortIOSTM_ x y z = void $ startShortIOSTM x y z
 
 

@@ -63,7 +63,7 @@ data TimerScheduler = TimerScheduler {
   cancelledCount :: TVar Int,
   disposer :: Disposer,
   ioWorker :: TIOWorker,
-  exceptionChannel :: ExceptionChannel
+  exceptionSink :: ExceptionSink
 }
 
 instance Resource TimerScheduler where
@@ -80,7 +80,7 @@ newTimerScheduler = liftQuasarIO do
   activeCount <- liftIO $ newTVarIO 0
   cancelledCount <- liftIO $ newTVarIO 0
   ioWorker <- askIOWorker
-  exceptionChannel <- askExceptionChannel
+  exceptionSink <- askExceptionSink
   mfix \scheduler -> do
     disposer <- startSchedulerThread scheduler
     pure TimerScheduler {
@@ -89,7 +89,7 @@ newTimerScheduler = liftQuasarIO do
       cancelledCount,
       disposer,
       ioWorker,
-      exceptionChannel
+      exceptionSink
     }
 
 startSchedulerThread :: TimerScheduler -> QuasarIO Disposer
@@ -180,7 +180,7 @@ newUnmanagedTimer scheduler time = liftIO do
   key <- newUnique
   completed <- newAsyncVar
   atomically do
-    disposer <- newUnmanagedSTMDisposerSTM (disposeFn completed) (ioWorker scheduler) (exceptionChannel scheduler)
+    disposer <- newUnmanagedSTMDisposerSTM (disposeFn completed) (ioWorker scheduler) (exceptionSink scheduler)
     let timer = Timer { key, time, completed, disposer, scheduler }
     tryTakeTMVar (heap scheduler) >>= \case
       Just timers -> putTMVar (heap scheduler) (insert timer timers)

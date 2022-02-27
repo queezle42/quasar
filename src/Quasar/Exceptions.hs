@@ -1,8 +1,8 @@
 module Quasar.Exceptions (
-  ExceptionChannel(..),
-  throwToExceptionChannel,
-  catchInChannel,
-  catchAllInChannel,
+  ExceptionSink(..),
+  throwToExceptionSink,
+  catchSink,
+  catchAllSink,
 
   -- * Exceptions
   CancelAsync(..),
@@ -23,22 +23,21 @@ import Control.Monad.Catch
 import Quasar.Prelude
 
 
-newtype ExceptionChannel = ExceptionChannel (SomeException -> STM ())
+newtype ExceptionSink = ExceptionSink (SomeException -> STM ())
 
 
-throwToExceptionChannel :: Exception e => ExceptionChannel -> e -> STM ()
-throwToExceptionChannel (ExceptionChannel channelFn) ex = channelFn (toException ex)
+throwToExceptionSink :: Exception e => ExceptionSink -> e -> STM ()
+throwToExceptionSink (ExceptionSink channelFn) ex = channelFn (toException ex)
 
--- TODO better name?
-catchInChannel :: forall e. Exception e => (e -> STM ()) -> ExceptionChannel -> ExceptionChannel
-catchInChannel handler parentChannel = ExceptionChannel $ mapM_ wrappedHandler . fromException
+catchSink :: forall e. Exception e => (e -> STM ()) -> ExceptionSink -> ExceptionSink
+catchSink handler parentSink = ExceptionSink $ mapM_ wrappedHandler . fromException
   where
     wrappedHandler :: e -> STM ()
-    wrappedHandler ex = catchAll (handler ex) (throwToExceptionChannel parentChannel)
+    wrappedHandler ex = catchAll (handler ex) (throwToExceptionSink parentSink)
 
 
-catchAllInChannel :: (SomeException -> STM ()) -> ExceptionChannel -> ExceptionChannel
-catchAllInChannel = catchInChannel
+catchAllSink :: (SomeException -> STM ()) -> ExceptionSink -> ExceptionSink
+catchAllSink = catchSink
 
 
 newtype CancelAsync = CancelAsync Unique

@@ -46,10 +46,10 @@ import Quasar.Resources.Disposer
 import Quasar.Utils.ShortIO
 
 
-newUnmanagedIODisposerSTM :: IO () -> TIOWorker -> ExceptionChannel -> STM Disposer
+newUnmanagedIODisposerSTM :: IO () -> TIOWorker -> ExceptionSink -> STM Disposer
 newUnmanagedIODisposerSTM fn worker exChan = newUnmanagedPrimitiveDisposer (forkAsyncShortIO fn exChan) worker exChan
 
-newUnmanagedSTMDisposerSTM :: STM () -> TIOWorker -> ExceptionChannel -> STM Disposer
+newUnmanagedSTMDisposerSTM :: STM () -> TIOWorker -> ExceptionSink -> STM Disposer
 newUnmanagedSTMDisposerSTM fn worker exChan = newUnmanagedPrimitiveDisposer disposeFn worker exChan
   where
     disposeFn :: ShortIO (Awaitable ())
@@ -66,7 +66,7 @@ registerResource resource = do
 registerDisposeAction :: MonadQuasar m => IO () -> m Disposer
 registerDisposeAction fn = do
   worker <- askIOWorker
-  exChan <- askExceptionChannel
+  exChan <- askExceptionSink
   rm <- askResourceManager
   ensureSTM do
     disposer <- newUnmanagedIODisposerSTM fn worker exChan
@@ -79,7 +79,7 @@ registerDisposeAction_ fn = void $ registerDisposeAction fn
 registerDisposeTransaction :: MonadQuasar m => STM () -> m Disposer
 registerDisposeTransaction fn = do
   worker <- askIOWorker
-  exChan <- askExceptionChannel
+  exChan <- askExceptionSink
   rm <- askResourceManager
   ensureSTM do
     disposer <- newUnmanagedSTMDisposerSTM fn worker exChan

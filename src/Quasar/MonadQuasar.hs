@@ -23,10 +23,10 @@ module Quasar.MonadQuasar (
 
   -- ** Get quasar components
   quasarIOWorker,
-  quasarExceptionChannel,
+  quasarExceptionSink,
   quasarResourceManager,
   askIOWorker,
-  askExceptionChannel,
+  askExceptionSink,
   askResourceManager,
 ) where
 
@@ -44,7 +44,7 @@ import Data.Bifunctor (first)
 
 
 -- Invariant: the resource manager is disposed as soon as an exception is thrown to the channel
-data Quasar = Quasar TIOWorker ExceptionChannel ResourceManager
+data Quasar = Quasar TIOWorker ExceptionSink ResourceManager
 
 instance Resource Quasar where
   getDisposer (Quasar _ _ rm) = getDisposer rm
@@ -52,8 +52,8 @@ instance Resource Quasar where
 instance HasField "ioWorker" Quasar TIOWorker where
   getField = quasarIOWorker
 
-instance HasField "exceptionChannel" Quasar ExceptionChannel where
-  getField = quasarExceptionChannel
+instance HasField "exceptionSink" Quasar ExceptionSink where
+  getField = quasarExceptionSink
 
 instance HasField "resourceManager" Quasar ResourceManager where
   getField = quasarResourceManager
@@ -61,27 +61,27 @@ instance HasField "resourceManager" Quasar ResourceManager where
 quasarIOWorker :: Quasar -> TIOWorker
 quasarIOWorker (Quasar worker _ _) = worker
 
-quasarExceptionChannel :: Quasar -> ExceptionChannel
-quasarExceptionChannel (Quasar _ exChan _) = exChan
+quasarExceptionSink :: Quasar -> ExceptionSink
+quasarExceptionSink (Quasar _ exChan _) = exChan
 
 quasarResourceManager :: Quasar -> ResourceManager
 quasarResourceManager (Quasar _ _ rm) = rm
 
-newQuasarSTM :: TIOWorker -> ExceptionChannel -> ResourceManager -> STM Quasar
+newQuasarSTM :: TIOWorker -> ExceptionSink -> ResourceManager -> STM Quasar
 newQuasarSTM worker parentExChan parentRM = do
   rm <- newUnmanagedResourceManagerSTM worker parentExChan
   attachResource parentRM rm
-  pure $ Quasar worker (ExceptionChannel (disposeOnException rm)) rm
+  pure $ Quasar worker (ExceptionSink (disposeOnException rm)) rm
   where
     disposeOnException :: ResourceManager -> SomeException -> STM ()
     disposeOnException rm ex = do
       disposeEventuallySTM_ rm
-      throwToExceptionChannel parentExChan ex
+      throwToExceptionSink parentExChan ex
 
 newQuasar :: MonadQuasar m => m Quasar
 newQuasar = do
   worker <- askIOWorker
-  exChan <- askExceptionChannel
+  exChan <- askExceptionSink
   parentRM <- askResourceManager
   ensureSTM $ newQuasarSTM worker exChan parentRM
 
@@ -111,10 +111,10 @@ instance (MonadIO m, MonadMask m, MonadFix m) => MonadQuasar (QuasarT m) where
   ensureSTM t = liftIO (atomically t)
   maskIfRequired = mask_
   startShortIO fn = do
-    exChan <- askExceptionChannel
+    exChan <- askExceptionSink
     liftIO $ uninterruptibleMask_ $ try (runShortIO fn) >>= \case
       Left ex -> do
-        atomically $ throwToExceptionChannel exChan ex
+        atomically $ throwToExceptionSink exChan ex
         pure $ throwM $ toException $ AsyncException ex
       Right result -> pure $ pure result
   ensureQuasarSTM = quasarAtomically
@@ -129,7 +129,7 @@ instance MonadQuasar QuasarSTM where
     (quasar, effectAwaitableVar) <- QuasarSTM ask
     let
       worker = quasarIOWorker quasar
-      exChan = quasarExceptionChannel quasar
+      exChan = quasarExceptionSink quasar
 
     ensureSTM do
       awaitable <- startShortIOSTM fn worker exChan
@@ -162,8 +162,8 @@ startShortIO_ fn = void $ startShortIO fn
 askIOWorker :: MonadQuasar m => m TIOWorker
 askIOWorker = quasarIOWorker <$> askQuasar
 
-askExceptionChannel :: MonadQuasar m => m ExceptionChannel
-askExceptionChannel = quasarExceptionChannel <$> askQuasar
+askExceptionSink :: MonadQuasar m => m ExceptionSink
+askExceptionSink = quasarExceptionSink <$> askQuasar
 
 askResourceManager :: MonadQuasar m => m ResourceManager
 askResourceManager = quasarResourceManager <$> askQuasar
@@ -189,9 +189,9 @@ quasarAtomically (QuasarSTM fn) = do
 
 redirectExceptionToSink :: MonadQuasar m => m a -> m (Maybe a)
 redirectExceptionToSink fn = do
-  exChan <- askExceptionChannel
+  exChan <- askExceptionSink
   (Just <$> fn) `catchAll`
-    \ex -> ensureSTM (Nothing <$ throwToExceptionChannel exChan ex)
+    \ex -> ensureSTM (Nothing <$ throwToExceptionSink exChan ex)
 
 redirectExceptionToSink_ :: MonadQuasar m => m a -> m ()
 redirectExceptionToSink_ fn = void $ redirectExceptionToSink fn
@@ -199,7 +199,7 @@ redirectExceptionToSink_ fn = void $ redirectExceptionToSink fn
 
 -- * Quasar initialization
 
-withQuasarGeneric :: TIOWorker -> ExceptionChannel -> QuasarIO a -> IO a
+withQuasarGeneric :: TIOWorker -> ExceptionSink -> QuasarIO a -> IO a
 withQuasarGeneric worker exChan fn = mask \unmask -> do
   rm <- atomically $ newUnmanagedResourceManagerSTM worker exChan
   let quasar = Quasar worker exChan rm

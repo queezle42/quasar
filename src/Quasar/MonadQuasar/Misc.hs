@@ -52,7 +52,7 @@ data QuasarExitState a = QuasarExitSuccess a | QuasarExitAsyncException a | Quas
 runQuasarAndExitWith :: (QuasarExitState a -> ExitCode) -> QuasarIO a -> IO b
 runQuasarAndExitWith exitCodeFn fn = mask \unmask -> do
   worker <- newTIOWorker
-  (exChan, exceptionWitness) <- atomically $ newExceptionChannelWitness (loggingExceptionChannel worker)
+  (exChan, exceptionWitness) <- atomically $ newExceptionWitnessSink (loggingExceptionSink worker)
   mResult <- unmask $ withQuasarGeneric worker exChan (redirectExceptionToSink fn)
   failure <- atomically exceptionWitness
   exitState <- case (mResult, failure) of
@@ -67,7 +67,7 @@ runQuasarAndExitWith exitCodeFn fn = mask \unmask -> do
 
 runQuasarCollectExceptions :: QuasarIO a -> IO (Either SomeException a, [SomeException])
 runQuasarCollectExceptions fn = do
-  (exChan, collectExceptions) <- atomically $ newExceptionCollector panicChannel
+  (exChan, collectExceptions) <- atomically $ newExceptionCollector panicSink
   worker <- newTIOWorker
   result <- try $ withQuasarGeneric worker exChan fn
   exceptions <- atomically collectExceptions

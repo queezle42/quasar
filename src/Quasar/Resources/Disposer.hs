@@ -40,7 +40,7 @@ class Resource a where
 type DisposerState = TOnce DisposeFn (Awaitable ())
 
 data Disposer
-  = FnDisposer Unique TIOWorker ExceptionChannel DisposerState Finalizers
+  = FnDisposer Unique TIOWorker ExceptionSink DisposerState Finalizers
   | ResourceManagerDisposer ResourceManager
 
 instance Resource Disposer where
@@ -49,7 +49,7 @@ instance Resource Disposer where
 type DisposeFn = ShortIO (Awaitable ())
 
 
-newUnmanagedPrimitiveDisposer :: ShortIO (Awaitable ()) -> TIOWorker -> ExceptionChannel -> STM Disposer
+newUnmanagedPrimitiveDisposer :: ShortIO (Awaitable ()) -> TIOWorker -> ExceptionSink -> STM Disposer
 newUnmanagedPrimitiveDisposer fn worker exChan = do
   key <- newUniqueSTM
   FnDisposer key worker exChan <$> newTOnce fn <*> newFinalizers
@@ -84,7 +84,7 @@ isDisposing resource =
 
 
 
-beginDisposeFnDisposer :: TIOWorker -> ExceptionChannel -> DisposerState -> Finalizers -> STM (Awaitable ())
+beginDisposeFnDisposer :: TIOWorker -> ExceptionSink -> DisposerState -> Finalizers -> STM (Awaitable ())
 beginDisposeFnDisposer worker exChan disposeState finalizers =
   mapFinalizeTOnce disposeState startDisposeFn
   where
@@ -134,7 +134,7 @@ data ResourceManager = ResourceManager {
 }
 
 data ResourceManagerState
-  = ResourceManagerNormal (TVar (HashMap Unique Disposer)) TIOWorker ExceptionChannel
+  = ResourceManagerNormal (TVar (HashMap Unique Disposer)) TIOWorker ExceptionSink
   | ResourceManagerDisposing (Awaitable [DisposeDependencies])
   | ResourceManagerDisposed
 
@@ -142,7 +142,7 @@ instance Resource ResourceManager where
   getDisposer = ResourceManagerDisposer
 
 
-newUnmanagedResourceManagerSTM :: TIOWorker -> ExceptionChannel -> STM ResourceManager
+newUnmanagedResourceManagerSTM :: TIOWorker -> ExceptionSink -> STM ResourceManager
 newUnmanagedResourceManagerSTM worker exChan = do
   resourceManagerKey <- newUniqueSTM
   attachedResources <- newTVar mempty
