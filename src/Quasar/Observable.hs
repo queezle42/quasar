@@ -114,10 +114,10 @@ instance IsObservable v (Observable v) where
 instance Functor Observable where
   fmap f = mapObservable f
 
---instance Applicative Observable where
---  pure = toObservable . ConstObservable
---  liftA2 fn x y = toObservable $ LiftA2Observable fn x y
---
+instance Applicative Observable where
+  pure = toObservable . ConstObservable
+  liftA2 fn x y = toObservable $ LiftA2Observable fn x y
+
 --instance Monad Observable where
 --  x >>= y = toObservable $ BindObservable x y
 --
@@ -220,31 +220,27 @@ instance IsObservable v (MappedObservable v) where
   mapObservable f1 (MappedObservable f2 upstream) = Observable $ MappedObservable (f1 . f2) upstream
 
 
----- | Merge two observables using a given merge function. Whenever one of the inputs is updated, the resulting
----- observable updates according to the merge function.
-----
----- There is no caching involed, every subscriber effectively subscribes to both input observables.
---data LiftA2Observable r = forall r0 r1. LiftA2Observable (r0 -> r1 -> r) (Observable r0) (Observable r1)
+-- | Merge two observables using a given merge function. Whenever one of the inputs is updated, the resulting
+-- observable updates according to the merge function.
 --
---instance IsRetrievable r (LiftA2Observable r) where
---  retrieve (LiftA2Observable fn fx fy) =
---    liftA2 (liftA2 fn) (retrieve fx) (retrieve fy)
---
---instance IsObservable r (LiftA2Observable r) where
---  observe (LiftA2Observable fn fx fy) callback = do
---    var0 <- liftIO $ newTVarIO Nothing
---    var1 <- liftIO $ newTVarIO Nothing
---    observe fx (mergeCallback var0 var1 . writeTVar var0 . Just)
---    observe fy (mergeCallback var0 var1 . writeTVar var1 . Just)
---    where
---      mergeCallback var0 var1 update = do
---        mMerged <- liftIO $ atomically do
---          update
---          runMaybeT $ liftA2 (liftA2 fn) (MaybeT (readTVar var0)) (MaybeT (readTVar var1))
---
---        -- Run the callback only once both values have been received
---        mapM_ callback mMerged
+-- There is no caching involed, every subscriber effectively subscribes to both input observables.
+data LiftA2Observable r = forall r0 r1. LiftA2Observable (r0 -> r1 -> r) (Observable r0) (Observable r1)
 
+instance IsRetrievable r (LiftA2Observable r) where
+  retrieve (LiftA2Observable fn fx fy) =
+    liftA2 fn (retrieve fx) (retrieve fy)
+
+instance IsObservable r (LiftA2Observable r) where
+  observe (LiftA2Observable fn fx fy) callback = do
+    -- TODO use alternative to ensureSTM
+    var0 <- ensureSTM $ newTVar Nothing
+    var1 <- ensureSTM $ newTVar Nothing
+    let callCallback = do
+          mergedValue <- ensureSTM $ runMaybeT $ liftA2 (liftA2 fn) (MaybeT (readTVar var0)) (MaybeT (readTVar var1))
+          -- Run the callback only once both values have been received
+          mapM_ callback mergedValue
+    observe fx (\update -> ensureSTM (writeTVar var0 (Just update)) >> callCallback)
+    observe fy (\update -> ensureSTM (writeTVar var1 (Just update)) >> callCallback)
 
 
 --data BindObservable r = forall a. BindObservable (Observable a) (a -> Observable r)
