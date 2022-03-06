@@ -1,11 +1,9 @@
-{-# LANGUAGE ViewPatterns #-}
-
 module Quasar.Observable (
   ---- * Observable core types
-  --IsRetrievable(..),
-  --IsObservable(..),
-  --Observable(..),
-  --ObservableMessage(..),
+  IsRetrievable(..),
+  IsObservable(..),
+  Observable(..),
+  ObservableMessage(..),
   --toObservableUpdate,
 
   ---- * ObservableVar
@@ -26,80 +24,121 @@ module Quasar.Observable (
   --ObservableCallback,
 ) where
 
---import Control.Applicative
---import Control.Concurrent.MVar
---import Control.Concurrent.STM
---import Control.Monad.Catch
---import Control.Monad.Except
---import Control.Monad.Trans.Maybe
---import Data.HashMap.Strict qualified as HM
---import Data.IORef
---import Data.Unique
---import Quasar.Future
---import Quasar.Disposable
---import Quasar.Prelude
---import Quasar.ResourceManager
---
---data ObservableMessage a
---  = ObservableUpdate a
---  | ObservableLoading
---  | ObservableNotAvailable SomeException
---  deriving stock (Show, Generic)
---
---instance Functor ObservableMessage where
---  fmap fn (ObservableUpdate x) = ObservableUpdate (fn x)
---  fmap _ ObservableLoading = ObservableLoading
---  fmap _ (ObservableNotAvailable ex) = ObservableNotAvailable ex
---
---instance Applicative ObservableMessage where
---  pure = ObservableUpdate
---  liftA2 fn (ObservableUpdate x) (ObservableUpdate y) = ObservableUpdate (fn x y)
---  liftA2 _ (ObservableNotAvailable ex) _ = ObservableNotAvailable ex
---  liftA2 _ ObservableLoading _ = ObservableLoading
---  liftA2 _ _ (ObservableNotAvailable ex) = ObservableNotAvailable ex
---  liftA2 _ _ ObservableLoading = ObservableLoading
---
---instance Monad ObservableMessage where
---  (ObservableUpdate x) >>= fn = fn x
---  ObservableLoading >>= _ = ObservableLoading
---  (ObservableNotAvailable ex) >>= _ = ObservableNotAvailable ex
---
---
+import Control.Applicative
+import Control.Concurrent.MVar
+import Control.Concurrent.STM
+import Control.Monad.Catch
+import Control.Monad.Except
+import Control.Monad.Trans.Maybe
+import Data.HashMap.Strict qualified as HM
+import Data.IORef
+import Data.Unique
+import Quasar.Future
+import Quasar.Prelude
+import Quasar.MonadQuasar
+
+data ObservableMessage a
+  = ObservableUpdate a
+  | ObservableLoading
+  | ObservableNotAvailable SomeException
+  deriving stock (Show, Generic)
+
+instance Functor ObservableMessage where
+  fmap fn (ObservableUpdate x) = ObservableUpdate (fn x)
+  fmap _ ObservableLoading = ObservableLoading
+  fmap _ (ObservableNotAvailable ex) = ObservableNotAvailable ex
+
+instance Applicative ObservableMessage where
+  pure = ObservableUpdate
+  liftA2 fn (ObservableUpdate x) (ObservableUpdate y) = ObservableUpdate (fn x y)
+  liftA2 _ (ObservableNotAvailable ex) _ = ObservableNotAvailable ex
+  liftA2 _ ObservableLoading _ = ObservableLoading
+  liftA2 _ _ (ObservableNotAvailable ex) = ObservableNotAvailable ex
+  liftA2 _ _ ObservableLoading = ObservableLoading
+
+instance Monad ObservableMessage where
+  (ObservableUpdate x) >>= fn = fn x
+  ObservableLoading >>= _ = ObservableLoading
+  (ObservableNotAvailable ex) >>= _ = ObservableNotAvailable ex
+
+
+-- TODO rename or delete
 --toObservableUpdate :: MonadThrow m => ObservableMessage a -> m (Maybe a)
 --toObservableUpdate (ObservableUpdate value) = pure $ Just value
 --toObservableUpdate ObservableLoading = pure Nothing
 --toObservableUpdate (ObservableNotAvailable ex) = throwM ex
+
+
+class IsRetrievable v a | a -> v where
+  retrieve :: (MonadQuasar m, MonadIO m) => a -> m v
+
+class IsRetrievable v o => IsObservable v o | o -> v where
+  -- | Register a callback to observe changes. The callback is called when the value changes, but depending on the
+  -- delivery method (e.g. network) intermediate values may be skipped.
+  --
+  -- A correct implementation of observe must call the callback during registration (if no value is available
+  -- immediately an `ObservableLoading` will be delivered).
+  --
+  -- The callback should return without blocking, otherwise other callbacks will be delayed. If the value can't be
+  -- processed immediately, use `observeBlocking` instead or manually pass the value to a thread that processes the
+  -- data.
+  observe
+    :: (MonadQuasar m)
+    => o -- ^ observable
+    -> ObservableCallback v -- ^ callback
+    -> m ()
+  observe observable = observe (toObservable observable)
+
+  toObservable :: o -> Observable v
+  toObservable = Observable
+
+  mapObservable :: (v -> a) -> o -> Observable a
+  mapObservable f = Observable . MappedObservable f
+
+  {-# MINIMAL toObservable | observe #-}
+
+
+type ObservableCallback v = ObservableMessage v -> QuasarSTM ()
+
+
+
+-- | Existential quantification wrapper for the IsObservable type class.
+data Observable v = forall o. IsObservable v o => Observable o
+instance IsRetrievable v (Observable v) where
+  retrieve (Observable o) = retrieve o
+instance IsObservable v (Observable v) where
+  observe (Observable o) = observe o
+  toObservable = id
+  mapObservable f (Observable o) = mapObservable f o
+
+instance Functor Observable where
+  fmap f = mapObservable f
+
+--instance Applicative Observable where
+--  pure = toObservable . ConstObservable
+--  liftA2 fn x y = toObservable $ LiftA2Observable fn x y
 --
+--instance Monad Observable where
+--  x >>= y = toObservable $ BindObservable x y
 --
---class IsRetrievable v a | a -> v where
---  retrieve :: (MonadResourceManager m, MonadIO m, MonadMask m) => a -> m (Future v)
+--instance MonadThrow Observable where
+--  throwM :: forall e v. Exception e => e -> Observable v
+--  throwM = toObservable . FailedObservable @v . toException
 --
---class IsRetrievable v o => IsObservable v o | o -> v where
---  -- | Register a callback to observe changes. The callback is called when the value changes, but depending on the
---  -- delivery method (e.g. network) intermediate values may be skipped.
---  --
---  -- A correct implementation of observe must call the callback during registration (if no value is available
---  -- immediately an `ObservableLoading` will be delivered).
---  --
---  -- The callback must return without blocking, otherwise other callbacks will be delayed. If the value can't be
---  -- processed immediately, use `observeBlocking` instead or manually pass the value to a thread that processes the
---  -- data, e.g. by using STM.
---  observe
---    :: (MonadResourceManager m, MonadIO m, MonadMask m)
---    => o -- ^ observable
---    -> (ObservableMessage v -> ResourceManagerIO ()) -- ^ callback
---    -> m ()
---  observe observable = observe (toObservable observable)
+--instance MonadCatch Observable where
+--  catch action handler = toObservable $ CatchObservable action handler
 --
---  toObservable :: o -> Observable v
---  toObservable = Observable
+--instance MonadFail Observable where
+--  fail = throwM . userError
 --
---  mapObservable :: (v -> a) -> o -> Observable a
---  mapObservable f = Observable . MappedObservable f
+--instance Alternative Observable where
+--  empty = fail "empty"
+--  x <|> y = x `catchAll` const y
 --
---  {-# MINIMAL toObservable | observe #-}
---
---
+--instance MonadPlus Observable
+
+
+
 ---- | Observe an observable by handling updates on the current thread.
 ----
 ---- `observeBlocking` will run the handler whenever the observable changes (forever / until an exception is encountered).
@@ -163,55 +202,51 @@ module Quasar.Observable (
 --    \ObserveWhileCompleted -> pure ()
 --
 --
---type ObservableCallback v = ObservableMessage v -> IO ()
+
+
+newtype ConstObservable v = ConstObservable v
+instance IsRetrievable v (ConstObservable v) where
+  retrieve (ConstObservable x) = pure x
+instance IsObservable v (ConstObservable v) where
+  observe (ConstObservable x) callback =
+    ensureQuasarSTM $ callback $ ObservableUpdate x
+
+
+data MappedObservable b = forall a o. IsObservable a o => MappedObservable (a -> b) o
+instance IsRetrievable v (MappedObservable v) where
+  retrieve (MappedObservable f observable) = f <$> retrieve observable
+instance IsObservable v (MappedObservable v) where
+  observe (MappedObservable fn observable) callback = observe observable (callback . fmap fn)
+  mapObservable f1 (MappedObservable f2 upstream) = Observable $ MappedObservable (f1 . f2) upstream
+
+
+---- | Merge two observables using a given merge function. Whenever one of the inputs is updated, the resulting
+---- observable updates according to the merge function.
+----
+---- There is no caching involed, every subscriber effectively subscribes to both input observables.
+--data LiftA2Observable r = forall r0 r1. LiftA2Observable (r0 -> r1 -> r) (Observable r0) (Observable r1)
 --
+--instance IsRetrievable r (LiftA2Observable r) where
+--  retrieve (LiftA2Observable fn fx fy) =
+--    liftA2 (liftA2 fn) (retrieve fx) (retrieve fy)
 --
----- | Existential quantification wrapper for the IsObservable type class.
---data Observable v = forall o. IsObservable v o => Observable o
---instance IsRetrievable v (Observable v) where
---  retrieve (Observable o) = retrieve o
---instance IsObservable v (Observable v) where
---  observe (Observable o) = observe o
---  toObservable = id
---  mapObservable f (Observable o) = mapObservable f o
+--instance IsObservable r (LiftA2Observable r) where
+--  observe (LiftA2Observable fn fx fy) callback = do
+--    var0 <- liftIO $ newTVarIO Nothing
+--    var1 <- liftIO $ newTVarIO Nothing
+--    observe fx (mergeCallback var0 var1 . writeTVar var0 . Just)
+--    observe fy (mergeCallback var0 var1 . writeTVar var1 . Just)
+--    where
+--      mergeCallback var0 var1 update = do
+--        mMerged <- liftIO $ atomically do
+--          update
+--          runMaybeT $ liftA2 (liftA2 fn) (MaybeT (readTVar var0)) (MaybeT (readTVar var1))
 --
---instance Functor Observable where
---  fmap f = mapObservable f
---
---instance Applicative Observable where
---  pure = toObservable . ConstObservable
---  liftA2 fn x y = toObservable $ LiftA2Observable fn x y
---
---instance Monad Observable where
---  x >>= y = toObservable $ BindObservable x y
---
---instance MonadThrow Observable where
---  throwM :: forall e v. Exception e => e -> Observable v
---  throwM = toObservable . FailedObservable @v . toException
---
---instance MonadCatch Observable where
---  catch action handler = toObservable $ CatchObservable action handler
---
---instance MonadFail Observable where
---  fail = throwM . userError
---
---instance Alternative Observable where
---  empty = fail "empty"
---  x <|> y = x `catchAll` const y
---
---instance MonadPlus Observable
---
---
---
---data MappedObservable b = forall a o. IsObservable a o => MappedObservable (a -> b) o
---instance IsRetrievable v (MappedObservable v) where
---  retrieve (MappedObservable f observable) = f <<$>> retrieve observable
---instance IsObservable v (MappedObservable v) where
---  observe (MappedObservable fn observable) callback = observe observable (callback . fmap fn)
---  mapObservable f1 (MappedObservable f2 upstream) = Observable $ MappedObservable (f1 . f2) upstream
---
---
---
+--        -- Run the callback only once both values have been received
+--        mapM_ callback mMerged
+
+
+
 --data BindObservable r = forall a. BindObservable (Observable a) (a -> Observable r)
 --
 --instance IsRetrievable r (BindObservable r) where
@@ -339,32 +374,6 @@ module Quasar.Observable (
 --
 --
 --
----- | Merge two observables using a given merge function. Whenever one of the inputs is updated, the resulting
----- observable updates according to the merge function.
-----
----- There is no caching involed, every subscriber effectively subscribes to both input observables.
---data LiftA2Observable r = forall r0 r1. LiftA2Observable (r0 -> r1 -> r) (Observable r0) (Observable r1)
---
---instance IsRetrievable r (LiftA2Observable r) where
---  retrieve (LiftA2Observable fn fx fy) =
---    liftA2 (liftA2 fn) (retrieve fx) (retrieve fy)
---
---instance IsObservable r (LiftA2Observable r) where
---  observe (LiftA2Observable fn fx fy) callback = do
---    var0 <- liftIO $ newTVarIO Nothing
---    var1 <- liftIO $ newTVarIO Nothing
---    observe fx (mergeCallback var0 var1 . writeTVar var0 . Just)
---    observe fy (mergeCallback var0 var1 . writeTVar var1 . Just)
---    where
---      mergeCallback var0 var1 update = do
---        mMerged <- liftIO $ atomically do
---          update
---          runMaybeT $ liftA2 (liftA2 fn) (MaybeT (readTVar var0)) (MaybeT (readTVar var1))
---
---        -- Run the callback only once both values have been received
---        mapM_ callback mMerged
---
---
 --data FnObservable v = FnObservable {
 --  retrieveFn :: ResourceManagerIO (Future v),
 --  observeFn :: (ObservableMessage v -> ResourceManagerIO ()) -> ResourceManagerIO ()
@@ -395,16 +404,8 @@ module Quasar.Observable (
 --  where
 --    retrieveFn :: ResourceManagerIO (Future v)
 --    retrieveFn = liftIO $ pure <$> synchronousRetrieveFn
---
---
---newtype ConstObservable v = ConstObservable v
---instance IsRetrievable v (ConstObservable v) where
---  retrieve (ConstObservable x) = pure $ pure x
---instance IsObservable v (ConstObservable v) where
---  observe (ConstObservable x) callback = do
---    liftResourceManagerIO $ callback $ ObservableUpdate x
---
---
+
+
 --newtype FailedObservable v = FailedObservable SomeException
 --instance IsRetrievable v (FailedObservable v) where
 --  retrieve (FailedObservable ex) = liftIO $ throwIO ex
