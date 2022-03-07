@@ -2,7 +2,6 @@
   inputs = {
     quasar = {
       url = gitlab:jens/quasar?host=git.c3pb.de;
-      inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
