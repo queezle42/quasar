@@ -1,4 +1,4 @@
-#!/usr/bin/env -S nix shell . -c zsh
+#!/usr/bin/env -S nix develop . -c zsh
 
 print -P %F{yellow}Cleaning repository%f
 nix develop -c cabal clean
