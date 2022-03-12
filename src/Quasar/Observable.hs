@@ -1,9 +1,9 @@
 module Quasar.Observable (
-  ---- * Observable core types
+  -- * Observable core types
   IsRetrievable(..),
   IsObservable(..),
   Observable(..),
-  ObservableMessage(..),
+  ObservableState(..),
   --toObservableUpdate,
 
   ---- * ObservableVar
@@ -25,54 +25,56 @@ module Quasar.Observable (
 ) where
 
 import Control.Applicative
-import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Except
 import Control.Monad.Trans.Maybe
 import Data.HashMap.Strict qualified as HM
-import Data.IORef
 import Data.Unique
+import Quasar.Async
 import Quasar.Future
 import Quasar.Prelude
 import Quasar.MonadQuasar
+import Quasar.MonadQuasar.Misc
+import Quasar.Resources
 
-data ObservableMessage a
-  = ObservableUpdate a
+data ObservableState a
+  = ObservableValue a
   | ObservableLoading
   | ObservableNotAvailable SomeException
   deriving stock (Show, Generic)
 
-instance Functor ObservableMessage where
-  fmap fn (ObservableUpdate x) = ObservableUpdate (fn x)
+instance Functor ObservableState where
+  fmap fn (ObservableValue x) = ObservableValue (fn x)
   fmap _ ObservableLoading = ObservableLoading
   fmap _ (ObservableNotAvailable ex) = ObservableNotAvailable ex
 
-instance Applicative ObservableMessage where
-  pure = ObservableUpdate
-  liftA2 fn (ObservableUpdate x) (ObservableUpdate y) = ObservableUpdate (fn x y)
+instance Applicative ObservableState where
+  pure = ObservableValue
+  liftA2 fn (ObservableValue x) (ObservableValue y) = ObservableValue (fn x y)
   liftA2 _ (ObservableNotAvailable ex) _ = ObservableNotAvailable ex
   liftA2 _ ObservableLoading _ = ObservableLoading
   liftA2 _ _ (ObservableNotAvailable ex) = ObservableNotAvailable ex
   liftA2 _ _ ObservableLoading = ObservableLoading
 
-instance Monad ObservableMessage where
-  (ObservableUpdate x) >>= fn = fn x
+instance Monad ObservableState where
+  (ObservableValue x) >>= fn = fn x
   ObservableLoading >>= _ = ObservableLoading
   (ObservableNotAvailable ex) >>= _ = ObservableNotAvailable ex
 
 
 -- TODO rename or delete
---toObservableUpdate :: MonadThrow m => ObservableMessage a -> m (Maybe a)
---toObservableUpdate (ObservableUpdate value) = pure $ Just value
+--toObservableUpdate :: MonadThrow m => ObservableState a -> m (Maybe a)
+--toObservableUpdate (ObservableValue value) = pure $ Just value
 --toObservableUpdate ObservableLoading = pure Nothing
 --toObservableUpdate (ObservableNotAvailable ex) = throwM ex
 
 
-class IsRetrievable v a | a -> v where
-  retrieve :: (MonadQuasar m, MonadIO m) => a -> m v
 
-class IsRetrievable v o => IsObservable v o | o -> v where
+class IsRetrievable r a | a -> r where
+  retrieve :: (MonadQuasar m, MonadIO m) => a -> m r
+
+class IsRetrievable r a => IsObservable r a | a -> r where
   -- | Register a callback to observe changes. The callback is called when the value changes, but depending on the
   -- delivery method (e.g. network) intermediate values may be skipped.
   --
@@ -84,29 +86,29 @@ class IsRetrievable v o => IsObservable v o | o -> v where
   -- data.
   observe
     :: (MonadQuasar m)
-    => o -- ^ observable
-    -> ObservableCallback v -- ^ callback
+    => a -- ^ observable
+    -> ObservableCallback r -- ^ callback
     -> m ()
   observe observable = observe (toObservable observable)
 
-  toObservable :: o -> Observable v
+  toObservable :: a -> Observable r
   toObservable = Observable
 
-  mapObservable :: (v -> a) -> o -> Observable a
+  mapObservable :: (r -> r2) -> a -> Observable r2
   mapObservable f = Observable . MappedObservable f
 
   {-# MINIMAL toObservable | observe #-}
 
 
-type ObservableCallback v = ObservableMessage v -> QuasarSTM ()
+type ObservableCallback v = ObservableState v -> QuasarSTM ()
 
 
 
 -- | Existential quantification wrapper for the IsObservable type class.
-data Observable v = forall o. IsObservable v o => Observable o
-instance IsRetrievable v (Observable v) where
+data Observable r = forall a. IsObservable r a => Observable a
+instance IsRetrievable r (Observable r) where
   retrieve (Observable o) = retrieve o
-instance IsObservable v (Observable v) where
+instance IsObservable r (Observable r) where
   observe (Observable o) = observe o
   toObservable = id
   mapObservable f (Observable o) = mapObservable f o
@@ -148,7 +150,7 @@ instance Applicative Observable where
 --observeBlocking
 --  :: (IsObservable v o, MonadResourceManager m, MonadIO m, MonadMask m)
 --  => o
---  -> (ObservableMessage v -> m ())
+--  -> (ObservableState v -> m ())
 --  -> m a
 --observeBlocking observable handler = do
 --  -- `withScopedResourceManager` removes the `observe` callback when the `handler` fails.
@@ -173,7 +175,7 @@ instance Applicative Observable where
 --observeWhile
 --  :: (IsObservable v o, MonadResourceManager m, MonadIO m, MonadMask m)
 --  => o
---  -> (ObservableMessage v -> m (Maybe a))
+--  -> (ObservableState v -> m (Maybe a))
 --  -> m a
 --observeWhile observable callback = do
 --  resultVar <- liftIO $ newIORef unreachableCodePath
@@ -191,7 +193,7 @@ instance Applicative Observable where
 --observeWhile_
 --  :: (IsObservable v o, MonadResourceManager m, MonadIO m, MonadMask m)
 --  => o
---  -> (ObservableMessage v -> m Bool)
+--  -> (ObservableState v -> m Bool)
 --  -> m ()
 --observeWhile_ observable callback =
 --  catch
@@ -209,7 +211,7 @@ instance IsRetrievable v (ConstObservable v) where
   retrieve (ConstObservable x) = pure x
 instance IsObservable v (ConstObservable v) where
   observe (ConstObservable x) callback =
-    ensureQuasarSTM $ callback $ ObservableUpdate x
+    ensureQuasarSTM $ callback $ ObservableValue x
 
 
 data MappedObservable b = forall a o. IsObservable a o => MappedObservable (a -> b) o
@@ -270,13 +272,13 @@ instance IsObservable r (LiftA2Observable r) where
 --        disposeEventually_ oldDisposable
 --
 --        disposable <- case message of
---          (ObservableUpdate x) -> captureDisposable_ $ observe (fn x) (rightCallback keyVar key)
+--          (ObservableValue x) -> captureDisposable_ $ observe (fn x) (rightCallback keyVar key)
 --          ObservableLoading -> noDisposable <$ callback ObservableLoading
 --          (ObservableNotAvailable ex) -> noDisposable <$ callback (ObservableNotAvailable ex)
 --
 --        liftIO $ atomically $ putTMVar disposableVar disposable
 --
---      rightCallback :: TMVar Unique -> Unique -> ObservableMessage r -> ResourceManagerIO ()
+--      rightCallback :: TMVar Unique -> Unique -> ObservableState r -> ResourceManagerIO ()
 --      rightCallback keyVar key message =
 --        bracket
 --          -- Take key var to prevent parallel callbacks
@@ -317,7 +319,7 @@ instance IsObservable r (LiftA2Observable r) where
 --
 --        liftIO $ atomically $ putTMVar disposableVar disposable
 --
---      rightCallback :: TMVar Unique -> Unique -> ObservableMessage r -> ResourceManagerIO ()
+--      rightCallback :: TMVar Unique -> Unique -> ObservableState r -> ResourceManagerIO ()
 --      rightCallback keyVar key message =
 --        bracket
 --          -- Take key var to prevent parallel callbacks
@@ -372,7 +374,7 @@ instance IsObservable r (LiftA2Observable r) where
 --
 --data FnObservable v = FnObservable {
 --  retrieveFn :: ResourceManagerIO (Future v),
---  observeFn :: (ObservableMessage v -> ResourceManagerIO ()) -> ResourceManagerIO ()
+--  observeFn :: (ObservableState v -> ResourceManagerIO ()) -> ResourceManagerIO ()
 --}
 --instance IsRetrievable v (FnObservable v) where
 --  retrieve FnObservable{retrieveFn} = liftResourceManagerIO retrieveFn
@@ -385,7 +387,7 @@ instance IsObservable r (LiftA2Observable r) where
 --
 ---- | Implement an Observable by directly providing functions for `retrieve` and `subscribe`.
 --fnObservable
---  :: ((ObservableMessage v -> ResourceManagerIO ()) -> ResourceManagerIO ())
+--  :: ((ObservableState v -> ResourceManagerIO ()) -> ResourceManagerIO ())
 --  -> ResourceManagerIO (Future v)
 --  -> Observable v
 --fnObservable observeFn retrieveFn = toObservable FnObservable{observeFn, retrieveFn}
@@ -393,7 +395,7 @@ instance IsObservable r (LiftA2Observable r) where
 ---- | Implement an Observable by directly providing functions for `retrieve` and `subscribe`.
 --synchronousFnObservable
 --  :: forall v.
---  ((ObservableMessage v -> ResourceManagerIO ()) -> ResourceManagerIO ())
+--  ((ObservableState v -> ResourceManagerIO ()) -> ResourceManagerIO ())
 --  -> IO v
 --  -> Observable v
 --synchronousFnObservable observeFn synchronousRetrieveFn = fnObservable observeFn retrieveFn
