@@ -229,8 +229,11 @@ instance IsObservable v (MappedObservable v) where
 data LiftA2Observable r = forall r0 r1. LiftA2Observable (r0 -> r1 -> r) (Observable r0) (Observable r1)
 
 instance IsRetrievable r (LiftA2Observable r) where
-  retrieve (LiftA2Observable fn fx fy) =
-    liftA2 fn (retrieve fx) (retrieve fy)
+  retrieve (LiftA2Observable fn fx fy) = do
+    -- LATER: keep backpressure for parallel network requests
+    x <- async $ retrieve fx
+    y <- async $ retrieve fy
+    liftIO $ liftA2 fn (await x) (await y)
 
 instance IsObservable r (LiftA2Observable r) where
   observe (LiftA2Observable fn fx fy) callback = do
