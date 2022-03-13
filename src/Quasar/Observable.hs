@@ -209,28 +209,28 @@ instance MonadFail Observable where
 --
 
 
-newtype ConstObservable r = ConstObservable r
-instance IsRetrievable r (ConstObservable r) where
+newtype ConstObservable a = ConstObservable a
+instance IsRetrievable a (ConstObservable a) where
   retrieve (ConstObservable x) = pure x
-instance IsObservable r (ConstObservable r) where
+instance IsObservable a (ConstObservable a) where
   observe (ConstObservable x) callback = ensureQuasarSTM $
     callback $ ObservableValue x
   pingObservable _ = pure ()
 
 
-newtype ThrowObservable r = ThrowObservable SomeException
-instance IsRetrievable r (ThrowObservable r) where
+newtype ThrowObservable a = ThrowObservable SomeException
+instance IsRetrievable a (ThrowObservable a) where
   retrieve (ThrowObservable ex) = throwM ex
-instance IsObservable r (ThrowObservable r) where
+instance IsObservable a (ThrowObservable a) where
   observe (ThrowObservable ex) callback = ensureQuasarSTM $
     callback $ ObservableNotAvailable ex
   pingObservable _ = pure ()
 
 
-data MappedObservable r = forall a. MappedObservable (a -> r) (Observable a)
-instance IsRetrievable r (MappedObservable r) where
+data MappedObservable a = forall b. MappedObservable (b -> a) (Observable b)
+instance IsRetrievable a (MappedObservable a) where
   retrieve (MappedObservable f observable) = f <$> retrieve observable
-instance IsObservable r (MappedObservable r) where
+instance IsObservable a (MappedObservable a) where
   observe (MappedObservable fn observable) callback = observe observable (callback . fmap fn)
   pingObservable (MappedObservable _ observable) = pingObservable observable
   mapObservable f1 (MappedObservable f2 upstream) = toObservable $ MappedObservable (f1 . f2) upstream
@@ -242,13 +242,13 @@ instance IsObservable r (MappedObservable r) where
 -- There is no caching involed, every subscriber effectively subscribes to both input observables.
 data LiftA2Observable r = forall a b. LiftA2Observable (a -> b -> r) (Observable a) (Observable b)
 
-instance IsRetrievable r (LiftA2Observable r) where
+instance IsRetrievable a (LiftA2Observable a) where
   retrieve (LiftA2Observable fn fx fy) = liftQuasarIO do
     -- LATER: keep backpressure for parallel network requests
     future <- async $ retrieve fy
     liftA2 fn (retrieve fx) (await future)
 
-instance IsObservable r (LiftA2Observable r) where
+instance IsObservable a (LiftA2Observable a) where
   observe (LiftA2Observable fn fx fy) callback = ensureQuasarSTM do
     var0 <- liftSTM $ newTVar Nothing
     var1 <- liftSTM $ newTVar Nothing
@@ -268,14 +268,14 @@ instance IsObservable r (LiftA2Observable r) where
   mapObservable f1 (LiftA2Observable f2 fx fy) = toObservable $ LiftA2Observable (\x y -> f1 (f2 x y)) fx fy
 
 
-data BindObservable r = forall a. BindObservable (Observable a) (a -> Observable r)
+data BindObservable a = forall b. BindObservable (Observable b) (b -> Observable a)
 
-instance IsRetrievable r (BindObservable r) where
+instance IsRetrievable a (BindObservable a) where
   retrieve (BindObservable fx fn) = do
     x <- retrieve fx
     retrieve $ fn x
 
-instance IsObservable r (BindObservable r) where
+instance IsObservable a (BindObservable a) where
   observe (BindObservable fx fn) callback = ensureQuasarSTM do
     callback ObservableLoading
     keyVar <- newTVar =<< newUniqueSTM
@@ -294,7 +294,7 @@ instance IsObservable r (BindObservable r) where
             ObservableNotAvailable ex -> callback (ObservableNotAvailable ex)
         writeTVar disposableVar disposer
         where
-          rightCallback :: Unique -> ObservableCallback r
+          rightCallback :: Unique -> ObservableCallback a
           rightCallback callbackKey rmsg = do
             activeKey <- readTVar keyVar
             when (callbackKey == activeKey) (callback rmsg)
