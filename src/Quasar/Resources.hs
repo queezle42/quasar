@@ -26,6 +26,7 @@ module Quasar.Resources (
   Disposer,
   newUnmanagedIODisposerSTM,
   newUnmanagedSTMDisposerSTM,
+  trivialDisposer,
 
   -- ** Resource manager
   ResourceManager,
