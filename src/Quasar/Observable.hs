@@ -211,19 +211,19 @@ instance Applicative Observable where
 --
 
 
-newtype ConstObservable v = ConstObservable v
-instance IsRetrievable v (ConstObservable v) where
+newtype ConstObservable r = ConstObservable r
+instance IsRetrievable r (ConstObservable r) where
   retrieve (ConstObservable x) = pure x
-instance IsObservable v (ConstObservable v) where
+instance IsObservable r (ConstObservable r) where
   observe (ConstObservable x) callback =
     ensureQuasarSTM $ callback $ ObservableValue x
   pingObservable _ = pure ()
 
 
-data MappedObservable b = forall a o. IsObservable a o => MappedObservable (a -> b) o
-instance IsRetrievable v (MappedObservable v) where
+data MappedObservable r = forall r2 a. IsObservable r2 a => MappedObservable (r2 -> r) a
+instance IsRetrievable r (MappedObservable r) where
   retrieve (MappedObservable f observable) = f <$> retrieve observable
-instance IsObservable v (MappedObservable v) where
+instance IsObservable r (MappedObservable r) where
   observe (MappedObservable fn observable) callback = observe observable (callback . fmap fn)
   mapObservable f1 (MappedObservable f2 upstream) = Observable $ MappedObservable (f1 . f2) upstream
   pingObservable (MappedObservable _ observable) = pingObservable observable
