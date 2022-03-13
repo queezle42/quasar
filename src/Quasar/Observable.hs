@@ -19,8 +19,8 @@ module Quasar.Observable (
   --observeWhile_,
   --observeBlocking,
 
-  ---- * Helper types
-  --ObservableCallback,
+  -- * Helper types
+  ObservableCallback,
 ) where
 
 import Control.Applicative
@@ -130,17 +130,17 @@ instance MonadThrow Observable where
   throwM :: forall e v. Exception e => e -> Observable v
   throwM = toObservable . ThrowObservable @v . toException
 
---instance MonadCatch Observable where
---  catch action handler = toObservable $ CatchObservable action handler
---
+instance MonadCatch Observable where
+  catch action handler = toObservable $ CatchObservable action handler
+
 instance MonadFail Observable where
   fail = throwM . userError
 
---instance Alternative Observable where
---  empty = fail "empty"
---  x <|> y = x `catchAll` const y
---
---instance MonadPlus Observable
+instance Alternative Observable where
+  empty = fail "empty"
+  x <|> y = x `catchAll` const y
+
+instance MonadPlus Observable
 
 
 
@@ -306,47 +306,37 @@ instance IsObservable a (BindObservable a) where
   mapObservable f (BindObservable fx fn) = toObservable $ BindObservable fx (f <<$>> fn)
 
 
---data CatchObservable e r = Exception e => CatchObservable (Observable r) (e -> Observable r)
---
---instance IsRetrievable r (CatchObservable e r) where
---  retrieve (CatchObservable fx fn) = retrieve fx `catch` \ex -> retrieve (fn ex)
---
---instance IsObservable r (CatchObservable e r) where
---  observe (CatchObservable fx fn) callback = do
---    disposableVar <- liftIO $ newTMVarIO noDisposable
---    keyVar <- liftIO $ newTMVarIO =<< newUnique
---
---    observe fx (leftCallback disposableVar keyVar)
---    where
---      leftCallback disposableVar keyVar message = do
---        key <- liftIO newUnique
---
---        oldDisposable <- liftIO $ atomically do
---          -- Blocks while `rightCallback` is running
---          void $ swapTMVar keyVar key
---
---          takeTMVar disposableVar
---
---        disposeEventually_ oldDisposable
---
---        disposable <- case message of
---          (ObservableNotAvailable (fromException -> Just ex)) ->
---            captureDisposable_ $ observe (fn ex) (rightCallback keyVar key)
---          msg -> noDisposable <$ callback msg
---
---        liftIO $ atomically $ putTMVar disposableVar disposable
---
---      rightCallback :: TMVar Unique -> Unique -> ObservableState r -> ResourceManagerIO ()
---      rightCallback keyVar key message =
---        bracket
---          -- Take key var to prevent parallel callbacks
---          (liftIO $ atomically $ takeTMVar keyVar)
---          -- Put key back
---          (liftIO . atomically . putTMVar keyVar)
---          -- Ignore all callbacks that arrive from the old `fn` when a new `fx` has been observed
---          (\currentKey -> when (key == currentKey) $ callback message)
---
---
+data CatchObservable e a = Exception e => CatchObservable (Observable a) (e -> Observable a)
+
+instance IsRetrievable a (CatchObservable e a) where
+  retrieve (CatchObservable fx fn) = retrieve fx `catch` \ex -> retrieve (fn ex)
+
+instance IsObservable a (CatchObservable e a) where
+  observe (CatchObservable fx fn) callback = ensureQuasarSTM do
+    callback ObservableLoading
+    keyVar <- newTVar =<< newUniqueSTM
+    disposableVar <- liftSTM $ newTVar trivialDisposer
+    observe fx (leftCallback keyVar disposableVar)
+    where
+      leftCallback keyVar disposableVar lmsg = do
+        disposeEventually_ =<< readTVar disposableVar
+        key <- newUniqueSTM
+        -- Dispose is not instant, so a key is used to disarm the callback derived from the last (now outdated) value
+        writeTVar keyVar key
+        disposer <- captureResources_
+          case lmsg of
+            ObservableNotAvailable (fromException -> Just ex) -> observe (fn ex) (rightCallback key)
+            _ -> callback lmsg
+        writeTVar disposableVar disposer
+        where
+          rightCallback :: Unique -> ObservableCallback a
+          rightCallback callbackKey rmsg = do
+            activeKey <- readTVar keyVar
+            when (callbackKey == activeKey) (callback rmsg)
+
+  pingObservable (CatchObservable fx fn) = do
+    pingObservable fx `catch` \ex -> pingObservable (fn ex)
+
 
 newtype ObserverRegistry a = ObserverRegistry (TVar (HM.HashMap Unique (ObservableCallback a)))
 
