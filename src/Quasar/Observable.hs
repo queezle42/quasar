@@ -9,6 +9,7 @@ module Quasar.Observable (
   -- * ObservableVar
   ObservableVar,
   newObservableVar,
+  newObservableVarIO,
   setObservableVar,
   modifyObservableVar,
   stateObservableVar,
@@ -376,8 +377,8 @@ instance IsObservable a (ObservableVar a) where
 
   pingObservable _ = pure ()
 
-newObservableVar :: a -> STM (ObservableVar a)
-newObservableVar x = ObservableVar <$> newTVar x <*> newObserverRegistry
+newObservableVar :: MonadSTM m => a -> m (ObservableVar a)
+newObservableVar x = liftSTM $ ObservableVar <$> newTVar x <*> newObserverRegistry
 
 newObservableVarIO :: MonadIO m => a -> m (ObservableVar a)
 newObservableVarIO x = liftIO $ ObservableVar <$> newTVarIO x <*> newObserverRegistryIO
@@ -389,7 +390,14 @@ modifyObservableVar :: MonadQuasar m => ObservableVar a -> (a -> a) -> m ()
 modifyObservableVar var f = stateObservableVar var (((), ) . f)
 
 stateObservableVar :: MonadQuasar m => ObservableVar a -> (a -> (r, a)) -> m r
-stateObservableVar (ObservableVar var registry) f = undefined
+stateObservableVar (ObservableVar var registry) f = ensureQuasarSTM do
+  (result, newValue) <- liftSTM do
+    oldValue <- readTVar var
+    let (result, newValue) = f oldValue
+    writeTVar var newValue
+    pure (result, newValue)
+  updateObservers registry $ ObservableValue newValue
+  pure result
 
 --newtype ObservableVar v = ObservableVar (MVar (v, HM.HashMap Unique (ObservableCallback v)))
 --instance IsRetrievable v (ObservableVar v) where
