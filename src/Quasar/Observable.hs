@@ -126,16 +126,16 @@ instance Applicative Observable where
 instance Monad Observable where
   x >>= f = toObservable $ BindObservable x f
 
---instance MonadThrow Observable where
---  throwM :: forall e v. Exception e => e -> Observable v
---  throwM = toObservable . FailedObservable @v . toException
---
+instance MonadThrow Observable where
+  throwM :: forall e v. Exception e => e -> Observable v
+  throwM = toObservable . ThrowObservable @v . toException
+
 --instance MonadCatch Observable where
 --  catch action handler = toObservable $ CatchObservable action handler
 --
---instance MonadFail Observable where
---  fail = throwM . userError
---
+instance MonadFail Observable where
+  fail = throwM . userError
+
 --instance Alternative Observable where
 --  empty = fail "empty"
 --  x <|> y = x `catchAll` const y
@@ -213,8 +213,17 @@ newtype ConstObservable r = ConstObservable r
 instance IsRetrievable r (ConstObservable r) where
   retrieve (ConstObservable x) = pure x
 instance IsObservable r (ConstObservable r) where
-  observe (ConstObservable x) callback =
-    ensureQuasarSTM $ callback $ ObservableValue x
+  observe (ConstObservable x) callback = ensureQuasarSTM $
+    callback $ ObservableValue x
+  pingObservable _ = pure ()
+
+
+newtype ThrowObservable r = ThrowObservable SomeException
+instance IsRetrievable r (ThrowObservable r) where
+  retrieve (ThrowObservable ex) = throwM ex
+instance IsObservable r (ThrowObservable r) where
+  observe (ThrowObservable ex) callback = ensureQuasarSTM $
+    callback $ ObservableNotAvailable ex
   pingObservable _ = pure ()
 
 
@@ -394,14 +403,6 @@ stateObservableVar (ObservableVar var registry) f = ensureQuasarSTM do
   pure result
 
 
---newtype FailedObservable v = FailedObservable SomeException
---instance IsRetrievable v (FailedObservable v) where
---  retrieve (FailedObservable ex) = liftIO $ throwIO ex
---instance IsObservable v (FailedObservable v) where
---  observe (FailedObservable ex) callback = do
---    liftResourceManagerIO $ callback $ ObservableNotAvailable ex
---
---
 ---- TODO implement
 ----cacheObservable :: IsObservable v o => o -> Observable v
 ----cacheObservable = undefined
