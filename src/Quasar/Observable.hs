@@ -100,7 +100,7 @@ class IsRetrievable r a => IsObservable r a | a -> r where
   toObservable = Observable
 
   mapObservable :: (r -> r2) -> a -> Observable r2
-  mapObservable f = Observable . MappedObservable f
+  mapObservable f = Observable . MappedObservable f . toObservable
 
   {-# MINIMAL toObservable | observe, pingObservable #-}
 
@@ -220,20 +220,20 @@ instance IsObservable r (ConstObservable r) where
   pingObservable _ = pure ()
 
 
-data MappedObservable r = forall r2 a. IsObservable r2 a => MappedObservable (r2 -> r) a
+data MappedObservable r = forall a. MappedObservable (a -> r) (Observable a)
 instance IsRetrievable r (MappedObservable r) where
   retrieve (MappedObservable f observable) = f <$> retrieve observable
 instance IsObservable r (MappedObservable r) where
   observe (MappedObservable fn observable) callback = observe observable (callback . fmap fn)
-  mapObservable f1 (MappedObservable f2 upstream) = Observable $ MappedObservable (f1 . f2) upstream
   pingObservable (MappedObservable _ observable) = pingObservable observable
+  mapObservable f1 (MappedObservable f2 upstream) = Observable $ MappedObservable (f1 . f2) upstream
 
 
 -- | Merge two observables using a given merge function. Whenever one of the inputs is updated, the resulting
 -- observable updates according to the merge function.
 --
 -- There is no caching involed, every subscriber effectively subscribes to both input observables.
-data LiftA2Observable r = forall r0 r1. LiftA2Observable (r0 -> r1 -> r) (Observable r0) (Observable r1)
+data LiftA2Observable r = forall a b. LiftA2Observable (a -> b -> r) (Observable a) (Observable b)
 
 instance IsRetrievable r (LiftA2Observable r) where
   retrieve (LiftA2Observable fn fx fy) = liftQuasarIO do
@@ -258,6 +258,7 @@ instance IsObservable r (LiftA2Observable r) where
     pingObservable fx
     await future
 
+  mapObservable f1 (LiftA2Observable f2 fx fy) = Observable $ LiftA2Observable (\x y -> f1 (f2 x y)) fx fy
 
 --data BindObservable r = forall a. BindObservable (Observable a) (a -> Observable r)
 --
