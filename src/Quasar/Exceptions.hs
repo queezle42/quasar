@@ -19,7 +19,6 @@ module Quasar.Exceptions (
   PromiseAlreadyCompleted(..),
 ) where
 
-import Control.Concurrent.STM
 import Control.Monad.Catch
 import Quasar.Prelude
 

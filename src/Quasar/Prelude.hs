@@ -1,6 +1,7 @@
 module Quasar.Prelude
   ( module Prelude,
     module Quasar.PreludeExtras,
+    module Quasar.PreludeSTM,
     (>=>),
     (<=<),
     (<|>),
@@ -98,6 +99,7 @@ import GHC.Generics qualified
 import GHC.Stack.Types qualified
 import GHC.Types qualified
 import Quasar.PreludeExtras
+import Quasar.PreludeSTM
 
 {-# WARNING head "Partial Function." #-}
 head :: [a] -> a

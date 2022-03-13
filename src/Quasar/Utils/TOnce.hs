@@ -8,7 +8,6 @@ module Quasar.Utils.TOnce (
   readTOnceResult,
 ) where
 
-import Control.Concurrent.STM
 import Quasar.Future
 import Quasar.Prelude
 

@@ -34,7 +34,6 @@ module Quasar.Resources (
 ) where
 
 
-import Control.Concurrent.STM
 import Control.Monad.Catch
 import Quasar.Future
 import Quasar.Async.Fork

@@ -51,7 +51,6 @@ module Quasar.Future (
   unsafeAwaitSTM,
 ) where
 
-import Control.Concurrent.STM
 import Control.Exception (BlockedIndefinitelyOnSTM(..))
 import Control.Monad.Catch
 import Control.Monad.Reader

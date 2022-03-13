@@ -25,7 +25,6 @@ module Quasar.Observable (
 ) where
 
 import Control.Applicative
-import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Except
 import Control.Monad.Trans.Maybe

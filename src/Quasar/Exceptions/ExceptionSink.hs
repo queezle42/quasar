@@ -7,7 +7,6 @@ module Quasar.Exceptions.ExceptionSink (
 ) where
 
 import Control.Concurrent (forkIO)
-import Control.Concurrent.STM
 import Control.Exception (BlockedIndefinitelyOnSTM(..))
 import Control.Monad.Catch
 import Debug.Trace qualified as Trace

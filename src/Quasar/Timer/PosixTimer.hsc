@@ -15,7 +15,6 @@ module Quasar.Timer.PosixTimer (
 
 import Control.Concurrent
 import Control.Monad.Catch (MonadMask)
-import Control.Monad.STM (atomically)
 import Foreign
 import Foreign.C
 import Quasar.Prelude

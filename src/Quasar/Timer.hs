@@ -16,7 +16,6 @@ module Quasar.Timer (
 ) where
 
 import Control.Concurrent
-import Control.Concurrent.STM
 import Control.Monad.Catch
 import Data.Heap
 import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)

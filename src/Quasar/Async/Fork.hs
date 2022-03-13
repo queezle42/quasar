@@ -16,7 +16,6 @@ module Quasar.Async.Fork (
 ) where
 
 import Control.Concurrent (ThreadId)
-import Control.Concurrent.STM
 import Control.Monad.Catch
 import Quasar.Async.STMHelper
 import Quasar.Future

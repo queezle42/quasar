@@ -11,7 +11,6 @@ module Quasar.MonadQuasar.Misc (
 ) where
 
 
-import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Data.List.NonEmpty

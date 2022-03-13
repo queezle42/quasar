@@ -7,7 +7,6 @@ module Quasar.Async.STMHelper (
 ) where
 
 import Control.Concurrent (forkIO)
-import Control.Concurrent.STM
 import Control.Exception (BlockedIndefinitelyOnSTM)
 import Control.Monad.Catch
 import Quasar.Future

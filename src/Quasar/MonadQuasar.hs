@@ -30,7 +30,6 @@ module Quasar.MonadQuasar (
   askResourceManager,
 ) where
 
-import Control.Concurrent.STM
 import Control.Monad.Catch
 import Control.Monad.Reader
 import GHC.Records (HasField(..))
@@ -103,7 +102,7 @@ type QuasarT = ReaderT Quasar
 type QuasarIO = QuasarT IO
 
 newtype QuasarSTM a = QuasarSTM (ReaderT (Quasar, TVar (Future ())) STM a)
-  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadFix, Alternative)
+  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadFix, Alternative, MonadSTM)
 
 
 instance (MonadIO m, MonadMask m, MonadFix m) => MonadQuasar (QuasarT m) where

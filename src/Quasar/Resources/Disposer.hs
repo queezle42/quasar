@@ -17,7 +17,6 @@ module Quasar.Resources.Disposer (
 ) where
 
 
-import Control.Concurrent.STM
 import Control.Monad (foldM)
 import Control.Monad.Catch
 import Data.Either (isRight)
