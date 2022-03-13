@@ -6,12 +6,12 @@ module Quasar.Observable (
   ObservableState(..),
   --toObservableUpdate,
 
-  ---- * ObservableVar
-  --ObservableVar,
-  --newObservableVar,
-  --setObservableVar,
-  --modifyObservableVar,
-  --stateObservableVar,
+  -- * ObservableVar
+  ObservableVar,
+  newObservableVar,
+  setObservableVar,
+  modifyObservableVar,
+  stateObservableVar,
 
   ---- * Helper functions
   --observeWhile,
@@ -347,7 +347,54 @@ instance IsObservable r (LiftA2Observable r) where
 --          (\currentKey -> when (key == currentKey) $ callback message)
 --
 --
---
+
+newtype ObserverRegistry a = ObserverRegistry (TVar (HM.HashMap Unique (ObservableCallback a)))
+
+newObserverRegistry :: STM (ObserverRegistry a)
+newObserverRegistry = ObserverRegistry <$> newTVar mempty
+
+newObserverRegistryIO :: MonadIO m => m (ObserverRegistry a)
+newObserverRegistryIO = liftIO $ ObserverRegistry <$> newTVarIO mempty
+
+registerObserver :: ObserverRegistry a -> ObservableCallback a -> ObservableState a -> QuasarSTM ()
+registerObserver (ObserverRegistry var) callback currentState = do
+  quasar <- askQuasar
+  key <- ensureSTM newUniqueSTM
+  ensureSTM $ modifyTVar var (HM.insert key (execForeignQuasarSTM quasar . callback))
+  registerDisposeTransaction_ $ modifyTVar var (HM.delete key)
+  callback currentState
+
+updateObservers :: ObserverRegistry a -> ObservableState a -> QuasarSTM ()
+updateObservers (ObserverRegistry var) newState =
+  mapM_ ($ newState) . HM.elems =<< ensureSTM (readTVar var)
+
+
+data ObservableVar a = ObservableVar (TVar a) (ObserverRegistry a)
+
+instance IsRetrievable a (ObservableVar a) where
+  retrieve (ObservableVar var _registry) = liftIO $ readTVarIO var
+
+instance IsObservable a (ObservableVar a) where
+  observe (ObservableVar var registry) callback = ensureQuasarSTM do
+    registerObserver registry callback . ObservableValue =<< ensureSTM (readTVar var)
+
+  pingObservable _ = pure ()
+
+newObservableVar :: a -> STM (ObservableVar a)
+newObservableVar x = ObservableVar <$> newTVar x <*> newObserverRegistry
+
+newObservableVarIO :: MonadIO m => a -> m (ObservableVar a)
+newObservableVarIO x = liftIO $ ObservableVar <$> newTVarIO x <*> newObserverRegistryIO
+
+setObservableVar :: MonadQuasar m => ObservableVar a -> a -> m ()
+setObservableVar var = modifyObservableVar var . const
+
+modifyObservableVar :: MonadQuasar m => ObservableVar a -> (a -> a) -> m ()
+modifyObservableVar var f = stateObservableVar var (((), ) . f)
+
+stateObservableVar :: MonadQuasar m => ObservableVar a -> (a -> (r, a)) -> m r
+stateObservableVar (ObservableVar var registry) f = undefined
+
 --newtype ObservableVar v = ObservableVar (MVar (v, HM.HashMap Unique (ObservableCallback v)))
 --instance IsRetrievable v (ObservableVar v) where
 --  retrieve (ObservableVar mvar) = liftIO $ pure . fst <$> readMVar mvar
