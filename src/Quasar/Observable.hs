@@ -18,8 +18,6 @@ module Quasar.Observable (
   --observeWhile,
   --observeWhile_,
   --observeBlocking,
-  --fnObservable,
-  --synchronousFnObservable,
 
   ---- * Helper types
   --ObservableCallback,
@@ -394,38 +392,6 @@ stateObservableVar (ObservableVar var registry) f = ensureQuasarSTM do
     pure (result, newValue)
   updateObservers registry $ ObservableValue newValue
   pure result
-
-
---data FnObservable v = FnObservable {
---  retrieveFn :: ResourceManagerIO (Future v),
---  observeFn :: (ObservableState v -> ResourceManagerIO ()) -> ResourceManagerIO ()
---}
---instance IsRetrievable v (FnObservable v) where
---  retrieve FnObservable{retrieveFn} = liftResourceManagerIO retrieveFn
---instance IsObservable v (FnObservable v) where
---  observe FnObservable{observeFn} callback = liftResourceManagerIO $ observeFn callback
---  mapObservable f FnObservable{retrieveFn, observeFn} = Observable $ FnObservable {
---    retrieveFn = f <<$>> retrieveFn,
---    observeFn = \listener -> observeFn (listener . fmap f)
---  }
---
----- | Implement an Observable by directly providing functions for `retrieve` and `subscribe`.
---fnObservable
---  :: ((ObservableState v -> ResourceManagerIO ()) -> ResourceManagerIO ())
---  -> ResourceManagerIO (Future v)
---  -> Observable v
---fnObservable observeFn retrieveFn = toObservable FnObservable{observeFn, retrieveFn}
---
----- | Implement an Observable by directly providing functions for `retrieve` and `subscribe`.
---synchronousFnObservable
---  :: forall v.
---  ((ObservableState v -> ResourceManagerIO ()) -> ResourceManagerIO ())
---  -> IO v
---  -> Observable v
---synchronousFnObservable observeFn synchronousRetrieveFn = fnObservable observeFn retrieveFn
---  where
---    retrieveFn :: ResourceManagerIO (Future v)
---    retrieveFn = liftIO $ pure <$> synchronousRetrieveFn
 
 
 --newtype FailedObservable v = FailedObservable SomeException
