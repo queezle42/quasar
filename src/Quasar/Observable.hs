@@ -237,9 +237,8 @@ data LiftA2Observable r = forall r0 r1. LiftA2Observable (r0 -> r1 -> r) (Observ
 instance IsRetrievable r (LiftA2Observable r) where
   retrieve (LiftA2Observable fn fx fy) = liftQuasarIO do
     -- LATER: keep backpressure for parallel network requests
-    x <- async $ retrieve fx
-    y <- async $ retrieve fy
-    liftA2 fn (await x) (await y)
+    future <- async $ retrieve fy
+    liftA2 fn (retrieve fx) (await future)
 
 instance IsObservable r (LiftA2Observable r) where
   observe (LiftA2Observable fn fx fy) callback = ensureQuasarSTM do
@@ -254,10 +253,9 @@ instance IsObservable r (LiftA2Observable r) where
 
   pingObservable (LiftA2Observable _ fx fy) = liftQuasarIO do
     -- LATER: keep backpressure for parallel network requests
-    x <- async $ pingObservable fx
-    y <- async $ pingObservable fy
-    await x
-    await y
+    future <- async $ pingObservable fy
+    pingObservable fx
+    await future
 
 
 --data BindObservable r = forall a. BindObservable (Observable a) (a -> Observable r)
