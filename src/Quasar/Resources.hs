@@ -16,6 +16,7 @@ module Quasar.Resources (
   disposeEventually_,
   captureResources,
   captureResources_,
+  disposeOnError,
 
   -- * STM
   disposeEventuallySTM,
@@ -123,3 +124,10 @@ captureResources fn = do
 
 captureResources_ :: MonadQuasar m => m () -> m Disposer
 captureResources_ fn = snd <$> captureResources fn
+
+
+-- | Runs the computation in a new resource scope, which is disposed when an exception happenes. When the computation succeeds, resources are kept.
+disposeOnError :: (MonadQuasar m, MonadIO m, MonadMask m) => m a -> m a
+disposeOnError fn = mask \unmask -> do
+  quasar <- newQuasar
+  unmask (localQuasar quasar fn) `onError` dispose quasar
