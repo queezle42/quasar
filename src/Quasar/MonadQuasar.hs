@@ -2,6 +2,7 @@ module Quasar.MonadQuasar (
   -- * Quasar
   Quasar,
   newQuasar,
+  newQuasarSTM,
   withResourceScope,
 
   MonadQuasar(..),
