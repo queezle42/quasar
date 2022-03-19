@@ -31,10 +31,12 @@ execForeignQuasarIO quasar fn = runQuasarIO quasar $
     (async fn)
     dispose
     awaitSuccessOrFailure
+{-# SPECIALIZE execForeignQuasarIO :: Quasar -> QuasarIO () -> IO () #-}
 
 execForeignQuasarSTM :: MonadQuasar m => Quasar -> QuasarSTM () -> m ()
 execForeignQuasarSTM quasar fn = ensureQuasarSTM $ localQuasar quasar $ redirectExceptionToSink_ fn
-
+{-# SPECIALIZE execForeignQuasarSTM :: Quasar -> QuasarSTM () -> QuasarIO () #-}
+{-# SPECIALIZE execForeignQuasarSTM :: Quasar -> QuasarSTM () -> QuasarSTM () #-}
 
 
 -- * High-level entry helpers

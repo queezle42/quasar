@@ -82,10 +82,13 @@ newResourceScopeSTM parent = do
 
 newResourceScope :: MonadQuasar m => m Quasar
 newResourceScope = ensureSTM . newResourceScopeSTM =<< askQuasar
+{-# SPECIALIZE newResourceScope :: QuasarIO Quasar #-}
+{-# SPECIALIZE newResourceScope :: QuasarSTM Quasar #-}
 
 
 withResourceScope :: (MonadQuasar m, MonadIO m, MonadMask m) => m a -> m a
 withResourceScope fn = bracket newResourceScope dispose (`localQuasar` fn)
+{-# SPECIALIZE withResourceScope :: QuasarIO a -> QuasarIO a #-}
 
 
 class (MonadCatch m, MonadFix m) => MonadQuasar m where
@@ -104,6 +107,7 @@ newtype QuasarSTM a = QuasarSTM (ReaderT (Quasar, TVar (Future ())) STM a)
 
 
 instance (MonadIO m, MonadMask m, MonadFix m) => MonadQuasar (QuasarT m) where
+  {-# SPECIALIZE instance MonadQuasar QuasarIO #-}
   askQuasar = ask
   ensureSTM t = liftIO (atomically t)
   maskIfRequired = mask_
@@ -182,6 +186,7 @@ quasarAtomically (QuasarSTM fn) = do
      effectFutureVar <- newTVar (pure ())
      result <- runReaderT fn (quasar, effectFutureVar)
      (result <$) <$> readTVar effectFutureVar
+{-# SPECIALIZE quasarAtomically :: QuasarSTM a -> QuasarIO a #-}
 
 
 redirectExceptionToSink :: MonadQuasar m => m a -> m (Maybe a)
@@ -189,9 +194,13 @@ redirectExceptionToSink fn = do
   exChan <- askExceptionSink
   (Just <$> fn) `catchAll`
     \ex -> ensureSTM (Nothing <$ throwToExceptionSink exChan ex)
+{-# SPECIALIZE redirectExceptionToSink :: QuasarIO a -> QuasarIO (Maybe a) #-}
+{-# SPECIALIZE redirectExceptionToSink :: QuasarSTM a -> QuasarSTM (Maybe a) #-}
 
 redirectExceptionToSink_ :: MonadQuasar m => m a -> m ()
 redirectExceptionToSink_ fn = void $ redirectExceptionToSink fn
+{-# SPECIALIZE redirectExceptionToSink_ :: QuasarIO a -> QuasarIO () #-}
+{-# SPECIALIZE redirectExceptionToSink_ :: QuasarSTM a -> QuasarSTM () #-}
 
 
 -- * Quasar initialization
