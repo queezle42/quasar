@@ -117,7 +117,7 @@ disposeEventually_ res = ensureSTM $ disposeEventuallySTM_ res
 
 captureResources :: MonadQuasar m => m a -> m (a, Disposer)
 captureResources fn = do
-  quasar <- newQuasar
+  quasar <- newResourceScope
   localQuasar quasar do
     result <- fn
     pure (result, getDisposer (quasarResourceManager quasar))
@@ -129,5 +129,5 @@ captureResources_ fn = snd <$> captureResources fn
 -- | Runs the computation in a new resource scope, which is disposed when an exception happenes. When the computation succeeds, resources are kept.
 disposeOnError :: (MonadQuasar m, MonadIO m, MonadMask m) => m a -> m a
 disposeOnError fn = mask \unmask -> do
-  quasar <- newQuasar
+  quasar <- newResourceScope
   unmask (localQuasar quasar fn) `onError` dispose quasar

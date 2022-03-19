@@ -1,8 +1,8 @@
 module Quasar.MonadQuasar (
   -- * Quasar
   Quasar,
-  newQuasar,
-  newQuasarSTM,
+  newResourceScope,
+  newResourceScopeSTM,
   withResourceScope,
 
   MonadQuasar(..),
@@ -67,28 +67,25 @@ quasarExceptionSink (Quasar _ exChan _) = exChan
 quasarResourceManager :: Quasar -> ResourceManager
 quasarResourceManager (Quasar _ _ rm) = rm
 
-newQuasarSTM :: TIOWorker -> ExceptionSink -> ResourceManager -> STM Quasar
-newQuasarSTM worker parentExChan parentRM = do
-  rm <- newUnmanagedResourceManagerSTM worker parentExChan
-  attachResource parentRM rm
+newResourceScopeSTM :: Quasar -> STM Quasar
+newResourceScopeSTM parent = do
+  rm <- newUnmanagedResourceManagerSTM worker parentExceptionSink
+  attachResource (quasarResourceManager parent) rm
   pure $ Quasar worker (ExceptionSink (disposeOnException rm)) rm
   where
+    worker = quasarIOWorker parent
+    parentExceptionSink = quasarExceptionSink parent
     disposeOnException :: ResourceManager -> SomeException -> STM ()
     disposeOnException rm ex = do
       disposeEventuallySTM_ rm
-      throwToExceptionSink parentExChan ex
+      throwToExceptionSink parentExceptionSink ex
 
-newQuasar :: MonadQuasar m => m Quasar
-newQuasar = do
-  worker <- askIOWorker
-  exChan <- askExceptionSink
-  parentRM <- askResourceManager
-  ensureSTM $ newQuasarSTM worker exChan parentRM
+newResourceScope :: MonadQuasar m => m Quasar
+newResourceScope = ensureSTM . newResourceScopeSTM =<< askQuasar
 
 
 withResourceScope :: (MonadQuasar m, MonadIO m, MonadMask m) => m a -> m a
-withResourceScope fn = bracket newQuasar dispose (`localQuasar` fn)
-
+withResourceScope fn = bracket newResourceScope dispose (`localQuasar` fn)
 
 
 class (MonadCatch m, MonadFix m) => MonadQuasar m where
