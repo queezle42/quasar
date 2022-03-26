@@ -94,6 +94,7 @@ class IsRetrievable r a => IsObservable r a | a -> r where
     :: (MonadQuasar m, MonadIO m)
     => a -- ^ observable
     -> m ()
+  pingObservable observable = pingObservable (toObservable observable)
 
   toObservable :: a -> Observable r
   toObservable = Observable
