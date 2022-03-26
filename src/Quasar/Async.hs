@@ -25,9 +25,8 @@ import Quasar.Exceptions
 import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Resources
-import Quasar.Resources.Disposer
-import Quasar.Utils.ShortIO
 import Control.Monad.Reader
+import Control.Exception (throwTo)
 
 
 data Async a = Async (Future a) Disposer
@@ -39,13 +38,13 @@ instance IsFuture a (Async a) where
   toFuture (Async awaitable _) = awaitable
 
 
-async :: MonadQuasar m => QuasarIO a -> m (Async a)
+async :: (MonadQuasar m, MonadIO m) => QuasarIO a -> m (Async a)
 async fn = asyncWithUnmask ($ fn)
 
-async_ :: MonadQuasar m => QuasarIO () -> m ()
+async_ :: (MonadQuasar m, MonadIO m) => QuasarIO () -> m ()
 async_ fn = void $ asyncWithUnmask ($ fn)
 
-asyncWithUnmask :: MonadQuasar m => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO a) -> m (Async a)
+asyncWithUnmask :: (MonadQuasar m, MonadIO m) => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO a) -> m (Async a)
 asyncWithUnmask fn = do
   quasar <- askQuasar
   asyncWithUnmask' (\unmask -> runReaderT (fn (liftUnmask unmask)) quasar)
@@ -55,14 +54,14 @@ asyncWithUnmask fn = do
       quasar <- askQuasar
       liftIO $ unmask $ runReaderT innerAction quasar
 
-asyncWithUnmask_ :: MonadQuasar m => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO ()) -> m ()
+asyncWithUnmask_ :: (MonadQuasar m, MonadIO m) => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO ()) -> m ()
 asyncWithUnmask_ fn = void $ asyncWithUnmask fn
 
 
-async' :: MonadQuasar m => IO a -> m (Async a)
+async' :: (MonadQuasar m, MonadIO m) => IO a -> m (Async a)
 async' fn = asyncWithUnmask' ($ fn)
 
-asyncWithUnmask' :: forall a m. MonadQuasar m => ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
+asyncWithUnmask' :: forall a m. (MonadQuasar m, MonadIO m) => ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
 asyncWithUnmask' fn = maskIfRequired do
   worker <- askIOWorker
   exChan <- askExceptionSink
@@ -72,14 +71,14 @@ asyncWithUnmask' fn = maskIfRequired do
     resultVar <- newPromiseSTM
     threadIdVar <- newPromiseSTM
     -- Disposer is created first to ensure the resource can be safely attached
-    disposer <- newUnmanagedPrimitiveDisposer (disposeFn key resultVar (toFuture threadIdVar)) worker exChan
+    disposer <- newUnmanagedIODisposer (disposeFn key resultVar (toFuture threadIdVar)) worker exChan
     pure (key, resultVar, threadIdVar, disposer)
 
   registerResource disposer
 
-  startShortIO_ do
-    threadId <- forkWithUnmaskShortIO (runAndPut exChan key resultVar disposer) exChan
-    fulfillPromiseShortIO threadIdVar threadId
+  liftIO do
+    threadId <- forkWithUnmask (runAndPut exChan key resultVar disposer) exChan
+    fulfillPromise threadIdVar threadId
 
   pure $ Async (toFuture resultVar) disposer
   where
@@ -98,10 +97,10 @@ asyncWithUnmask' fn = maskIfRequired do
         Right retVal -> do
           fulfillPromise resultVar retVal
           atomically $ disposeEventuallySTM_ disposer
-    disposeFn :: Unique -> Promise a -> Future ThreadId -> ShortIO (Future ())
+    disposeFn :: Unique -> Promise a -> Future ThreadId -> IO ()
     disposeFn key resultVar threadIdFuture = do
       -- Should not block or fail (unless the TIOWorker is broken)
-      threadId <- unsafeShortIO $ await threadIdFuture
-      throwToShortIO threadId (CancelAsync key)
-      -- Considered complete once a result (i.e. success or failure) has been stored
-      pure (awaitSuccessOrFailure resultVar)
+      threadId <- await threadIdFuture
+      throwTo threadId (CancelAsync key)
+      -- Disposing is considered complete once a result (i.e. success or failure) has been stored
+      awaitSuccessOrFailure resultVar

@@ -5,8 +5,6 @@ module Quasar.Utils.ShortIO (
 
   forkIOShortIO,
   forkIOWithUnmaskShortIO,
-  throwToShortIO,
-  newUniqueShortIO,
 
   -- ** Some specific functions required internally
   peekFutureShortIO,
@@ -34,12 +32,6 @@ forkIOShortIO fn = ShortIO $ forkIO fn
 
 forkIOWithUnmaskShortIO :: ((forall a. IO a -> IO a) -> IO ()) -> ShortIO ThreadId
 forkIOWithUnmaskShortIO fn = ShortIO $ forkIOWithUnmask fn
-
-throwToShortIO :: Exception e => ThreadId -> e -> ShortIO ()
-throwToShortIO tid ex = ShortIO $ throwTo tid ex
-
-newUniqueShortIO :: ShortIO Unique
-newUniqueShortIO = ShortIO newUnique
 
 
 peekFutureShortIO :: Future r -> ShortIO (Maybe r)

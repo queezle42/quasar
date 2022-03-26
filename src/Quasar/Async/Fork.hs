@@ -1,5 +1,12 @@
 module Quasar.Async.Fork (
   -- * Forking with an asynchronous exception channel
+
+  -- ** IO
+  forkWithUnmask,
+  forkWithUnmask_,
+  forkAsync,
+  forkAsyncWithUnmask,
+
   -- ** STM
   forkSTM,
   forkSTM_,
@@ -7,15 +14,9 @@ module Quasar.Async.Fork (
   forkWithUnmaskSTM_,
   forkAsyncSTM,
   forkAsyncWithUnmaskSTM,
-
-  -- ** ShortIO
-  forkWithUnmaskShortIO,
-  forkWithUnmaskShortIO_,
-  forkAsyncShortIO,
-  forkAsyncWithUnmaskShortIO,
 ) where
 
-import Control.Concurrent (ThreadId)
+import Control.Concurrent (ThreadId, forkIOWithUnmask)
 import Control.Monad.Catch
 import Quasar.Async.STMHelper
 import Quasar.Future
@@ -34,40 +35,43 @@ forkSTM_ fn worker exChan = void $ forkSTM fn worker exChan
 
 
 forkWithUnmaskSTM :: ((forall a. IO a -> IO a) -> IO ()) -> TIOWorker -> ExceptionSink -> STM (Future ThreadId)
-forkWithUnmaskSTM fn worker exChan = startShortIOSTM (forkWithUnmaskShortIO fn exChan) worker exChan
+-- TODO change TIOWorker behavior for spawning threads, so no `unsafeShortIO` is necessary
+forkWithUnmaskSTM fn worker exChan = startShortIOSTM (unsafeShortIO $ forkWithUnmask fn exChan) worker exChan
 
 forkWithUnmaskSTM_ :: ((forall a. IO a -> IO a) -> IO ()) -> TIOWorker -> ExceptionSink -> STM ()
 forkWithUnmaskSTM_ fn worker exChan = void $ forkWithUnmaskSTM fn worker exChan
 
 
 forkAsyncSTM :: forall a. IO a -> TIOWorker -> ExceptionSink -> STM (Future a)
-forkAsyncSTM fn worker exChan = join <$> startShortIOSTM (forkAsyncShortIO fn exChan) worker exChan
+-- TODO change TIOWorker behavior for spawning threads, so no `unsafeShortIO` is necessary
+forkAsyncSTM fn worker exChan = join <$> startShortIOSTM (unsafeShortIO $ forkAsync fn exChan) worker exChan
 
 forkAsyncWithUnmaskSTM :: forall a. ((forall b. IO b -> IO b) -> IO a) -> TIOWorker -> ExceptionSink -> STM (Future a)
-forkAsyncWithUnmaskSTM fn worker exChan = join <$> startShortIOSTM (forkAsyncWithUnmaskShortIO fn exChan) worker exChan
+-- TODO change TIOWorker behavior for spawning threads, so no `unsafeShortIO` is necessary
+forkAsyncWithUnmaskSTM fn worker exChan = join <$> startShortIOSTM (unsafeShortIO $ forkAsyncWithUnmask fn exChan) worker exChan
 
 
--- * Fork in ShortIO (with ExceptionSink)
+-- * Fork in IO, redirecting errors to an ExceptionSink
 
-forkWithUnmaskShortIO :: ((forall a. IO a -> IO a) -> IO ()) -> ExceptionSink -> ShortIO ThreadId
-forkWithUnmaskShortIO fn exChan = mask_ $ forkIOWithUnmaskShortIO wrappedFn
+forkWithUnmask :: ((forall a. IO a -> IO a) -> IO ()) -> ExceptionSink -> IO ThreadId
+forkWithUnmask fn exChan = mask_ $ forkIOWithUnmask wrappedFn
   where
     wrappedFn :: (forall a. IO a -> IO a) -> IO ()
     wrappedFn unmask = fn unmask `catchAll` \ex -> atomically (throwToExceptionSink exChan ex)
 
-forkWithUnmaskShortIO_ :: ((forall a. IO a -> IO a) -> IO ()) -> ExceptionSink -> ShortIO ()
-forkWithUnmaskShortIO_ fn exChan = void $ forkWithUnmaskShortIO fn exChan
+forkWithUnmask_ :: ((forall a. IO a -> IO a) -> IO ()) -> ExceptionSink -> IO ()
+forkWithUnmask_ fn exChan = void $ forkWithUnmask fn exChan
 
 
--- * Fork in ShortIO while collecting the result (with ExceptionSink)
+-- * Fork in IO while collecting the result, redirecting errors to an ExceptionSink
 
-forkAsyncShortIO :: forall a. IO a -> ExceptionSink -> ShortIO (Future a)
-forkAsyncShortIO fn = forkAsyncWithUnmaskShortIO ($ fn)
+forkAsync :: forall a. IO a -> ExceptionSink -> IO (Future a)
+forkAsync fn = forkAsyncWithUnmask ($ fn)
 
-forkAsyncWithUnmaskShortIO :: forall a. ((forall b. IO b -> IO b) -> IO a) -> ExceptionSink -> ShortIO (Future a)
-forkAsyncWithUnmaskShortIO fn exChan = do
-  resultVar <- newPromiseShortIO
-  forkWithUnmaskShortIO_ (runAndPut resultVar) exChan
+forkAsyncWithUnmask :: forall a. ((forall b. IO b -> IO b) -> IO a) -> ExceptionSink -> IO (Future a)
+forkAsyncWithUnmask fn exChan = do
+  resultVar <- newPromise
+  forkWithUnmask_ (runAndPut resultVar) exChan
   pure $ toFuture resultVar
   where
     runAndPut :: Promise a -> (forall b. IO b -> IO b) -> IO ()

@@ -179,7 +179,7 @@ newUnmanagedTimer scheduler time = liftIO do
   key <- newUnique
   completed <- newPromise
   atomically do
-    disposer <- newUnmanagedSTMDisposerSTM (disposeFn completed) (ioWorker scheduler) (exceptionSink scheduler)
+    disposer <- newUnmanagedSTMDisposer (disposeFn completed) (ioWorker scheduler) (exceptionSink scheduler)
     let timer = Timer { key, time, completed, disposer, scheduler }
     tryTakeTMVar (heap scheduler) >>= \case
       Just timers -> putTMVar (heap scheduler) (insert timer timers)
@@ -208,7 +208,7 @@ newtype Delay = Delay (Async ())
 instance IsFuture () Delay where
   toFuture (Delay task) = toFuture task `catch` \AsyncDisposed -> throwM TimerCancelled
 
-newDelay :: MonadQuasar m => Int -> m Delay
+newDelay :: (MonadQuasar m, MonadIO m) => Int -> m Delay
 newDelay microseconds = Delay <$> async (liftIO (threadDelay microseconds))
 
 

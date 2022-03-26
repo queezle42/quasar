@@ -25,8 +25,8 @@ module Quasar.Resources (
   -- * Types to implement resources
   -- ** Disposer
   Disposer,
-  newUnmanagedIODisposerSTM,
-  newUnmanagedSTMDisposerSTM,
+  newUnmanagedIODisposer,
+  newUnmanagedSTMDisposer,
   trivialDisposer,
 
   -- ** Resource manager
@@ -47,11 +47,12 @@ import Quasar.Resources.Disposer
 import Quasar.Utils.ShortIO
 
 
-newUnmanagedIODisposerSTM :: IO () -> TIOWorker -> ExceptionSink -> STM Disposer
-newUnmanagedIODisposerSTM fn worker exChan = newUnmanagedPrimitiveDisposer (forkAsyncShortIO fn exChan) worker exChan
+newUnmanagedIODisposer :: IO () -> TIOWorker -> ExceptionSink -> STM Disposer
+-- TODO change TIOWorker behavior for spawning threads, so no `unsafeShortIO` is necessary
+newUnmanagedIODisposer fn worker exChan = newUnmanagedPrimitiveDisposer (unsafeShortIO $ forkAsync fn exChan) worker exChan
 
-newUnmanagedSTMDisposerSTM :: STM () -> TIOWorker -> ExceptionSink -> STM Disposer
-newUnmanagedSTMDisposerSTM fn worker exChan = newUnmanagedPrimitiveDisposer disposeFn worker exChan
+newUnmanagedSTMDisposer :: STM () -> TIOWorker -> ExceptionSink -> STM Disposer
+newUnmanagedSTMDisposer fn worker exChan = newUnmanagedPrimitiveDisposer disposeFn worker exChan
   where
     disposeFn :: ShortIO (Future ())
     disposeFn = unsafeShortIO $ atomically $
@@ -70,7 +71,7 @@ registerDisposeAction fn = do
   exChan <- askExceptionSink
   rm <- askResourceManager
   ensureSTM do
-    disposer <- newUnmanagedIODisposerSTM fn worker exChan
+    disposer <- newUnmanagedIODisposer fn worker exChan
     attachResource rm disposer
     pure disposer
 
@@ -83,7 +84,7 @@ registerDisposeTransaction fn = do
   exChan <- askExceptionSink
   rm <- askResourceManager
   ensureSTM do
-    disposer <- newUnmanagedSTMDisposerSTM fn worker exChan
+    disposer <- newUnmanagedSTMDisposer fn worker exChan
     attachResource rm disposer
     pure disposer
 
