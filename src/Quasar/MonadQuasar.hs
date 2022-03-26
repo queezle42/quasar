@@ -16,8 +16,6 @@ module Quasar.MonadQuasar (
   liftQuasarIO,
   quasarAtomically,
 
-  startShortIO_,
-
   -- ** Utils
   redirectExceptionToSink,
   redirectExceptionToSink_,
@@ -39,7 +37,6 @@ import Quasar.Future
 import Quasar.Exceptions
 import Quasar.Prelude
 import Quasar.Resources.Disposer
-import Quasar.Utils.ShortIO
 import Data.Bifunctor (first)
 
 
@@ -94,7 +91,6 @@ withResourceScope fn = bracket newResourceScope dispose (`localQuasar` fn)
 class (MonadCatch m, MonadFix m) => MonadQuasar m where
   askQuasar :: m Quasar
   maskIfRequired :: m a -> m a
-  startShortIO :: ShortIO a -> m (Future a)
   ensureSTM :: STM a -> m a
   ensureQuasarSTM :: QuasarSTM a -> m a
   localQuasar :: Quasar -> m a -> m a
@@ -111,13 +107,6 @@ instance (MonadIO m, MonadMask m, MonadFix m) => MonadQuasar (QuasarT m) where
   askQuasar = ask
   ensureSTM t = liftIO (atomically t)
   maskIfRequired = mask_
-  startShortIO fn = do
-    exChan <- askExceptionSink
-    liftIO $ uninterruptibleMask_ $ try (runShortIO fn) >>= \case
-      Left ex -> do
-        atomically $ throwToExceptionSink exChan ex
-        pure $ throwM $ toException $ AsyncException ex
-      Right result -> pure $ pure result
   ensureQuasarSTM = quasarAtomically
   localQuasar quasar = local (const quasar)
 
@@ -126,17 +115,6 @@ instance MonadQuasar QuasarSTM where
   askQuasar = QuasarSTM (asks fst)
   ensureSTM fn = QuasarSTM (lift fn)
   maskIfRequired = id
-  startShortIO fn = do
-    (quasar, effectFutureVar) <- QuasarSTM ask
-    let
-      worker = quasarIOWorker quasar
-      exChan = quasarExceptionSink quasar
-
-    ensureSTM do
-      awaitable <- startShortIOSTM fn worker exChan
-      -- Await in reverse order, so it is almost guaranteed this only retries once
-      modifyTVar effectFutureVar (awaitSuccessOrFailure awaitable *>)
-      pure awaitable
   ensureQuasarSTM = id
   localQuasar quasar (QuasarSTM fn) = QuasarSTM (local (first (const quasar)) fn)
 
@@ -148,7 +126,6 @@ instance {-# OVERLAPPABLE #-} MonadQuasar m => MonadQuasar (ReaderT r m) where
   maskIfRequired fn = do
     x <- ask
     lift $ maskIfRequired (runReaderT fn x)
-  startShortIO t = lift (startShortIO t)
   ensureQuasarSTM t = lift (ensureQuasarSTM t)
   localQuasar quasar fn = do
     x <- ask
@@ -156,9 +133,6 @@ instance {-# OVERLAPPABLE #-} MonadQuasar m => MonadQuasar (ReaderT r m) where
 
 -- TODO MonadQuasar instances for StateT, WriterT, RWST, MaybeT, ...
 
-
-startShortIO_ :: MonadQuasar m => ShortIO () -> m ()
-startShortIO_ fn = void $ startShortIO fn
 
 askIOWorker :: MonadQuasar m => m TIOWorker
 askIOWorker = quasarIOWorker <$> askQuasar
