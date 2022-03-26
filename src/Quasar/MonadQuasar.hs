@@ -33,18 +33,20 @@ import Control.Monad.Catch
 import Control.Monad.Reader
 import GHC.Records (HasField(..))
 import Quasar.Async.STMHelper
-import Quasar.Future
 import Quasar.Exceptions
+import Quasar.Logger
 import Quasar.Prelude
 import Quasar.Resources.Disposer
-import Data.Bifunctor (first)
 
 
 -- Invariant: the resource manager is disposed as soon as an exception is thrown to the channel
-data Quasar = Quasar TIOWorker ExceptionSink ResourceManager
+data Quasar = Quasar Logger TIOWorker ExceptionSink ResourceManager
 
 instance Resource Quasar where
-  getDisposer (Quasar _ _ rm) = getDisposer rm
+  getDisposer (Quasar _ _ _ rm) = getDisposer rm
+
+instance HasField "logger" Quasar Logger where
+  getField = quasarLogger
 
 instance HasField "ioWorker" Quasar TIOWorker where
   getField = quasarIOWorker
@@ -55,21 +57,25 @@ instance HasField "exceptionSink" Quasar ExceptionSink where
 instance HasField "resourceManager" Quasar ResourceManager where
   getField = quasarResourceManager
 
+quasarLogger :: Quasar -> Logger
+quasarLogger (Quasar logger _ _ _) = logger
+
 quasarIOWorker :: Quasar -> TIOWorker
-quasarIOWorker (Quasar worker _ _) = worker
+quasarIOWorker (Quasar _ worker _ _) = worker
 
 quasarExceptionSink :: Quasar -> ExceptionSink
-quasarExceptionSink (Quasar _ exChan _) = exChan
+quasarExceptionSink (Quasar _ _ exChan _) = exChan
 
 quasarResourceManager :: Quasar -> ResourceManager
-quasarResourceManager (Quasar _ _ rm) = rm
+quasarResourceManager (Quasar _ _ _ rm) = rm
 
 newResourceScopeSTM :: Quasar -> STM Quasar
 newResourceScopeSTM parent = do
   rm <- newUnmanagedResourceManagerSTM worker parentExceptionSink
   attachResource (quasarResourceManager parent) rm
-  pure $ Quasar worker (ExceptionSink (disposeOnException rm)) rm
+  pure $ Quasar logger worker (ExceptionSink (disposeOnException rm)) rm
   where
+    logger = quasarLogger parent
     worker = quasarIOWorker parent
     parentExceptionSink = quasarExceptionSink parent
     disposeOnException :: ResourceManager -> SomeException -> STM ()
@@ -98,25 +104,31 @@ class (MonadCatch m, MonadFix m) => MonadQuasar m where
 type QuasarT = ReaderT Quasar
 type QuasarIO = QuasarT IO
 
-newtype QuasarSTM a = QuasarSTM (ReaderT (Quasar, TVar (Future ())) STM a)
+newtype QuasarSTM a = QuasarSTM (QuasarT STM a)
   deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadFix, Alternative, MonadSTM)
 
 
 instance (MonadIO m, MonadMask m, MonadFix m) => MonadQuasar (QuasarT m) where
-  {-# SPECIALIZE instance MonadQuasar QuasarIO #-}
   askQuasar = ask
   ensureSTM t = liftIO (atomically t)
   maskIfRequired = mask_
   ensureQuasarSTM = quasarAtomically
   localQuasar quasar = local (const quasar)
+  {-# SPECIALIZE instance MonadQuasar QuasarIO #-}
+
+instance (MonadIO m, MonadMask m, MonadFix m) => MonadLogger (QuasarT m) where
+  logMessage msg = do
+    logger <- askLogger
+    liftIO $ logger msg
+  {-# SPECIALIZE instance MonadLogger QuasarIO #-}
 
 
 instance MonadQuasar QuasarSTM where
-  askQuasar = QuasarSTM (asks fst)
+  askQuasar = QuasarSTM ask
   ensureSTM fn = QuasarSTM (lift fn)
   maskIfRequired = id
   ensureQuasarSTM = id
-  localQuasar quasar (QuasarSTM fn) = QuasarSTM (local (first (const quasar)) fn)
+  localQuasar quasar (QuasarSTM fn) = QuasarSTM (local (const quasar) fn)
 
 
 -- Overlappable so a QuasarT has priority over the base monad.
@@ -133,6 +145,9 @@ instance {-# OVERLAPPABLE #-} MonadQuasar m => MonadQuasar (ReaderT r m) where
 
 -- TODO MonadQuasar instances for StateT, WriterT, RWST, MaybeT, ...
 
+
+askLogger :: MonadQuasar m => m Logger
+askLogger = quasarLogger <$> askQuasar
 
 askIOWorker :: MonadQuasar m => m TIOWorker
 askIOWorker = quasarIOWorker <$> askQuasar
@@ -154,12 +169,8 @@ runQuasarIO quasar fn = liftIO $ runReaderT fn quasar
 
 quasarAtomically :: (MonadQuasar m, MonadIO m) => QuasarSTM a -> m a
 quasarAtomically (QuasarSTM fn) = do
- quasar <- askQuasar
- liftIO do
-   await =<< atomically do
-     effectFutureVar <- newTVar (pure ())
-     result <- runReaderT fn (quasar, effectFutureVar)
-     (result <$) <$> readTVar effectFutureVar
+  quasar <- askQuasar
+  atomically $ runReaderT fn quasar
 {-# SPECIALIZE quasarAtomically :: QuasarSTM a -> QuasarIO a #-}
 
 
@@ -179,8 +190,8 @@ redirectExceptionToSink_ fn = void $ redirectExceptionToSink fn
 
 -- * Quasar initialization
 
-withQuasarGeneric :: TIOWorker -> ExceptionSink -> QuasarIO a -> IO a
-withQuasarGeneric worker exChan fn = mask \unmask -> do
+withQuasarGeneric :: Logger -> TIOWorker -> ExceptionSink -> QuasarIO a -> IO a
+withQuasarGeneric logger worker exChan fn = mask \unmask -> do
   rm <- atomically $ newUnmanagedResourceManagerSTM worker exChan
-  let quasar = Quasar worker exChan rm
+  let quasar = Quasar logger worker exChan rm
   unmask (runQuasarIO quasar fn) `finally` dispose rm

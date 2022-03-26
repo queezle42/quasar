@@ -19,6 +19,7 @@ import Quasar.Async
 import Quasar.Async.STMHelper
 import Quasar.Exceptions.ExceptionSink
 import Quasar.MonadQuasar
+import Quasar.Logger
 import Quasar.Prelude
 import Quasar.Resources
 import Quasar.Utils.Exceptions
@@ -41,7 +42,7 @@ execForeignQuasarSTM quasar fn = ensureQuasarSTM $ localQuasar quasar $ redirect
 
 -- * High-level entry helpers
 
-runQuasarAndExit :: QuasarIO () -> IO a
+runQuasarAndExit :: Logger -> QuasarIO () -> IO a
 runQuasarAndExit =
   runQuasarAndExitWith \case
    QuasarExitSuccess () -> ExitSuccess
@@ -50,11 +51,11 @@ runQuasarAndExit =
 
 data QuasarExitState a = QuasarExitSuccess a | QuasarExitAsyncException a | QuasarExitMainThreadFailed
 
-runQuasarAndExitWith :: (QuasarExitState a -> ExitCode) -> QuasarIO a -> IO b
-runQuasarAndExitWith exitCodeFn fn = mask \unmask -> do
+runQuasarAndExitWith :: (QuasarExitState a -> ExitCode) -> Logger -> QuasarIO a -> IO b
+runQuasarAndExitWith exitCodeFn logger fn = mask \unmask -> do
   worker <- newTIOWorker
   (exChan, exceptionWitness) <- atomically $ newExceptionWitnessSink (loggingExceptionSink worker)
-  mResult <- unmask $ withQuasarGeneric worker exChan (redirectExceptionToSink fn)
+  mResult <- unmask $ withQuasarGeneric logger worker exChan (redirectExceptionToSink fn)
   failure <- atomically exceptionWitness
   exitState <- case (mResult, failure) of
     (Just result, False) -> pure $ QuasarExitSuccess result
@@ -66,17 +67,17 @@ runQuasarAndExitWith exitCodeFn fn = mask \unmask -> do
   exitWith $ exitCodeFn exitState
 
 
-runQuasarCollectExceptions :: QuasarIO a -> IO (Either SomeException a, [SomeException])
-runQuasarCollectExceptions fn = do
+runQuasarCollectExceptions :: Logger -> QuasarIO a -> IO (Either SomeException a, [SomeException])
+runQuasarCollectExceptions logger fn = do
   (exChan, collectExceptions) <- atomically $ newExceptionCollector panicSink
   worker <- newTIOWorker
-  result <- try $ withQuasarGeneric worker exChan fn
+  result <- try $ withQuasarGeneric logger worker exChan fn
   exceptions <- atomically collectExceptions
   pure (result, exceptions)
 
-runQuasarCombineExceptions :: QuasarIO a -> IO a
-runQuasarCombineExceptions fn = do
-  (result, exceptions) <- runQuasarCollectExceptions fn
+runQuasarCombineExceptions :: Logger -> QuasarIO a -> IO a
+runQuasarCombineExceptions logger fn = do
+  (result, exceptions) <- runQuasarCollectExceptions logger fn
   case result of
     Left (ex :: SomeException) -> maybe (throwM ex) (throwM . CombinedException . (ex <|)) (nonEmpty exceptions)
     Right fnResult -> maybe (pure fnResult) (throwM . CombinedException) $ nonEmpty exceptions
