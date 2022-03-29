@@ -32,7 +32,7 @@ import Control.Exception (throwTo)
 data Async a = Async (Future a) Disposer
 
 instance Resource (Async a) where
-  getDisposer (Async _ disposer) = disposer
+  getDisposer (Async _ disposer) = [disposer]
 
 instance IsFuture a (Async a) where
   toFuture (Async awaitable _) = awaitable

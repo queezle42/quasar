@@ -116,14 +116,14 @@ disposeEventually_ :: (Resource r, MonadQuasar m) => r -> m ()
 disposeEventually_ res = ensureSTM $ disposeEventuallySTM_ res
 
 
-captureResources :: MonadQuasar m => m a -> m (a, Disposer)
+captureResources :: MonadQuasar m => m a -> m (a, [Disposer])
 captureResources fn = do
   quasar <- newResourceScope
   localQuasar quasar do
     result <- fn
     pure (result, getDisposer (quasarResourceManager quasar))
 
-captureResources_ :: MonadQuasar m => m () -> m Disposer
+captureResources_ :: MonadQuasar m => m () -> m [Disposer]
 captureResources_ fn = snd <$> captureResources fn
 
 

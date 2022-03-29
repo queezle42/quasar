@@ -6,8 +6,6 @@ module Quasar.Resources.Disposer (
   dispose,
   disposeEventuallySTM,
   disposeEventuallySTM_,
-  isDisposing,
-  isDisposed,
   newUnmanagedPrimitiveDisposer,
   trivialDisposer,
 
@@ -35,7 +33,13 @@ import GHC.IO (unsafePerformIO, unsafeDupablePerformIO)
 
 
 class Resource a where
-  getDisposer :: a -> Disposer
+  getDisposer :: a -> [Disposer]
+
+  isDisposed :: a -> Future ()
+  isDisposed r = foldMap isDisposed $ getDisposer r
+
+  isDisposing :: a -> Future ()
+  isDisposing r = awaitAny $ isDisposing <$> getDisposer r
 
 
 type DisposerState = TOnce DisposeFn (Future ())
@@ -46,6 +50,17 @@ data Disposer
   | ResourceManagerDisposer ResourceManager
 
 instance Resource Disposer where
+  getDisposer disposer = [disposer]
+
+  isDisposed TrivialDisposer = pure ()
+  isDisposed (FnDisposer _ _ _ state _) = join (toFuture state)
+  isDisposed (ResourceManagerDisposer resourceManager) = resourceManagerIsDisposed resourceManager
+
+  isDisposing TrivialDisposer = pure ()
+  isDisposing (FnDisposer _ _ _ state _) = unsafeAwaitSTM (check . isRight =<< readTOnceState state)
+  isDisposing (ResourceManagerDisposer resourceManager) = resourceManagerIsDisposing resourceManager
+
+instance Resource [Disposer] where
   getDisposer = id
 
 type DisposeFn = ShortIO (Future ())
@@ -65,31 +80,18 @@ dispose :: (MonadIO m, Resource r) => r -> m ()
 dispose resource = liftIO $ await =<< atomically (disposeEventuallySTM resource)
 
 disposeEventuallySTM :: Resource r => r -> STM (Future ())
-disposeEventuallySTM resource =
-  case getDisposer resource of
-    TrivialDisposer -> pure (pure ())
-    FnDisposer _ worker exChan state finalizers -> do
+disposeEventuallySTM resource = mconcat <$> mapM f (getDisposer resource)
+  where
+    f :: Disposer -> STM (Future ())
+    f TrivialDisposer = pure (pure ())
+    f (FnDisposer _ worker exChan state finalizers) =
       beginDisposeFnDisposer worker exChan state finalizers
-    ResourceManagerDisposer resourceManager ->
+    f (ResourceManagerDisposer resourceManager) =
       beginDisposeResourceManager resourceManager
 
 disposeEventuallySTM_ :: Resource r => r -> STM ()
 disposeEventuallySTM_ resource = void $ disposeEventuallySTM resource
 
-
-isDisposed :: Resource a => a -> Future ()
-isDisposed resource =
-  case getDisposer resource of
-    TrivialDisposer -> pure ()
-    FnDisposer _ _ _ state _ -> join (toFuture state)
-    ResourceManagerDisposer resourceManager -> resourceManagerIsDisposed resourceManager
-
-isDisposing :: Resource a => a -> Future ()
-isDisposing resource =
-  case getDisposer resource of
-    TrivialDisposer -> pure ()
-    FnDisposer _ _ _ state _ -> unsafeAwaitSTM (check . isRight =<< readTOnceState state)
-    ResourceManagerDisposer resourceManager -> resourceManagerIsDisposing resourceManager
 
 
 
@@ -132,7 +134,6 @@ disposerFinalizers (FnDisposer _ _ _ _ finalizers) = finalizers
 disposerFinalizers (ResourceManagerDisposer rm) = resourceManagerFinalizers rm
 
 
-
 data DisposeResult
   = DisposeResultAwait (Future ())
   | DisposeResultDependencies DisposeDependencies
@@ -154,7 +155,9 @@ data ResourceManagerState
   | ResourceManagerDisposed
 
 instance Resource ResourceManager where
-  getDisposer = ResourceManagerDisposer
+  getDisposer rm = [ResourceManagerDisposer rm]
+  isDisposed = resourceManagerIsDisposed
+  isDisposing = resourceManagerIsDisposing
 
 
 newUnmanagedResourceManagerSTM :: TIOWorker -> ExceptionSink -> STM ResourceManager
@@ -172,7 +175,7 @@ newUnmanagedResourceManagerSTM worker exChan = do
 
 attachResource :: Resource a => ResourceManager -> a -> STM ()
 attachResource resourceManager resource =
-  attachDisposer resourceManager (getDisposer resource)
+  mapM_ (attachDisposer resourceManager) (getDisposer resource)
 
 attachDisposer :: ResourceManager -> Disposer -> STM ()
 attachDisposer resourceManager disposer = do
@@ -183,7 +186,7 @@ attachDisposer resourceManager disposer = do
         -- Returns false if the disposer is already finalized
         attachedFinalizer <- registerFinalizer (disposerFinalizers disposer) finalizer
         when attachedFinalizer $ modifyTVar attachedResources (HM.insert key disposer)
-    _ -> undefined -- failed to attach resource; arguably this should just dispose?
+    _ -> throwM $ userError "failed to attach resource" -- TODO throw proper exception
   where
     key :: Unique
     key = disposerKey disposer

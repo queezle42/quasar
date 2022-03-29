@@ -50,7 +50,7 @@ instance Ord Timer where
   x `compare` y = time x `compare` time y
 
 instance Resource Timer where
-  getDisposer Timer{disposer} = disposer
+  getDisposer Timer{disposer} = [disposer]
 
 instance IsFuture () Timer where
   toFuture Timer{completed} = toFuture completed
@@ -60,13 +60,13 @@ data TimerScheduler = TimerScheduler {
   heap :: TMVar (Heap Timer),
   activeCount :: TVar Int,
   cancelledCount :: TVar Int,
-  disposer :: Disposer,
+  thread :: Async (),
   ioWorker :: TIOWorker,
   exceptionSink :: ExceptionSink
 }
 
 instance Resource TimerScheduler where
-  getDisposer TimerScheduler{disposer} = disposer
+  getDisposer TimerScheduler{thread} = getDisposer thread
 
 data TimerSchedulerDisposed = TimerSchedulerDisposed
   deriving stock (Eq, Show)
@@ -81,18 +81,18 @@ newTimerScheduler = liftQuasarIO do
   ioWorker <- askIOWorker
   exceptionSink <- askExceptionSink
   mfix \scheduler -> do
-    disposer <- startSchedulerThread scheduler
+    thread <- startSchedulerThread scheduler
     pure TimerScheduler {
       heap,
       activeCount,
       cancelledCount,
-      disposer,
+      thread,
       ioWorker,
       exceptionSink
     }
 
-startSchedulerThread :: TimerScheduler -> QuasarIO Disposer
-startSchedulerThread scheduler = getDisposer <$> async (schedulerThread `finally` liftIO cancelAll)
+startSchedulerThread :: TimerScheduler -> QuasarIO (Async ())
+startSchedulerThread scheduler = async (schedulerThread `finally` liftIO cancelAll)
   where
     heap' :: TMVar (Heap Timer)
     heap' = heap scheduler
