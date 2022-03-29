@@ -4,8 +4,8 @@ module Quasar.Async.Fork (
   -- ** IO
   forkWithUnmask,
   forkWithUnmask_,
-  forkAsync,
-  forkAsyncWithUnmask,
+  forkFuture,
+  forkFutureWithUnmask,
 
   -- ** STM
   forkSTM,
@@ -44,11 +44,11 @@ forkWithUnmaskSTM_ fn worker exChan = void $ forkWithUnmaskSTM fn worker exChan
 
 forkAsyncSTM :: forall a. IO a -> TIOWorker -> ExceptionSink -> STM (Future a)
 -- TODO change TIOWorker behavior for spawning threads, so no `unsafeShortIO` is necessary
-forkAsyncSTM fn worker exChan = join <$> startShortIOSTM (unsafeShortIO $ forkAsync fn exChan) worker exChan
+forkAsyncSTM fn worker exChan = join <$> startShortIOSTM (unsafeShortIO $ forkFuture fn exChan) worker exChan
 
 forkAsyncWithUnmaskSTM :: forall a. ((forall b. IO b -> IO b) -> IO a) -> TIOWorker -> ExceptionSink -> STM (Future a)
 -- TODO change TIOWorker behavior for spawning threads, so no `unsafeShortIO` is necessary
-forkAsyncWithUnmaskSTM fn worker exChan = join <$> startShortIOSTM (unsafeShortIO $ forkAsyncWithUnmask fn exChan) worker exChan
+forkAsyncWithUnmaskSTM fn worker exChan = join <$> startShortIOSTM (unsafeShortIO $ forkFutureWithUnmask fn exChan) worker exChan
 
 
 -- * Fork in IO, redirecting errors to an ExceptionSink
@@ -65,11 +65,11 @@ forkWithUnmask_ fn exChan = void $ forkWithUnmask fn exChan
 
 -- * Fork in IO while collecting the result, redirecting errors to an ExceptionSink
 
-forkAsync :: forall a. IO a -> ExceptionSink -> IO (Future a)
-forkAsync fn = forkAsyncWithUnmask ($ fn)
+forkFuture :: forall a. IO a -> ExceptionSink -> IO (Future a)
+forkFuture fn = forkFutureWithUnmask ($ fn)
 
-forkAsyncWithUnmask :: forall a. ((forall b. IO b -> IO b) -> IO a) -> ExceptionSink -> IO (Future a)
-forkAsyncWithUnmask fn exChan = do
+forkFutureWithUnmask :: forall a. ((forall b. IO b -> IO b) -> IO a) -> ExceptionSink -> IO (Future a)
+forkFutureWithUnmask fn exChan = do
   resultVar <- newPromise
   forkWithUnmask_ (runAndPut resultVar) exChan
   pure $ toFuture resultVar

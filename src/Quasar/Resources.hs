@@ -49,7 +49,7 @@ import Quasar.Utils.ShortIO
 
 newUnmanagedIODisposer :: IO () -> TIOWorker -> ExceptionSink -> STM Disposer
 -- TODO change TIOWorker behavior for spawning threads, so no `unsafeShortIO` is necessary
-newUnmanagedIODisposer fn worker exChan = newUnmanagedPrimitiveDisposer (unsafeShortIO $ forkAsync fn exChan) worker exChan
+newUnmanagedIODisposer fn worker exChan = newUnmanagedPrimitiveDisposer (unsafeShortIO $ forkFuture fn exChan) worker exChan
 
 newUnmanagedSTMDisposer :: STM () -> TIOWorker -> ExceptionSink -> STM Disposer
 newUnmanagedSTMDisposer fn worker exChan = newUnmanagedPrimitiveDisposer disposeFn worker exChan
