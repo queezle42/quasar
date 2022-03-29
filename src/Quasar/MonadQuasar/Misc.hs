@@ -34,9 +34,8 @@ execForeignQuasarIO quasar fn = runQuasarIO quasar $
     awaitSuccessOrFailure
 {-# SPECIALIZE execForeignQuasarIO :: Quasar -> QuasarIO () -> IO () #-}
 
-execForeignQuasarSTM :: MonadQuasar m => Quasar -> QuasarSTM () -> m ()
-execForeignQuasarSTM quasar fn = ensureQuasarSTM $ localQuasar quasar $ redirectExceptionToSink_ fn
-{-# SPECIALIZE execForeignQuasarSTM :: Quasar -> QuasarSTM () -> QuasarIO () #-}
+execForeignQuasarSTM :: MonadSTM m => Quasar -> QuasarSTM () -> m ()
+execForeignQuasarSTM quasar fn = liftSTM $ runQuasarSTM quasar $ redirectExceptionToSink_ fn
 {-# SPECIALIZE execForeignQuasarSTM :: Quasar -> QuasarSTM () -> QuasarSTM () #-}
 
 

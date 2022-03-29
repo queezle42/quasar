@@ -13,6 +13,7 @@ module Quasar.MonadQuasar (
 
   withQuasarGeneric,
   runQuasarIO,
+  runQuasarSTM,
   liftQuasarIO,
   quasarAtomically,
 
@@ -166,6 +167,11 @@ liftQuasarIO fn = do
 
 runQuasarIO :: MonadIO m => Quasar -> QuasarIO a -> m a
 runQuasarIO quasar fn = liftIO $ runReaderT fn quasar
+{-# SPECIALIZE runQuasarIO :: Quasar -> QuasarIO a -> IO a #-}
+
+runQuasarSTM :: MonadSTM m => Quasar -> QuasarSTM a -> m a
+runQuasarSTM quasar (QuasarSTM fn) = liftSTM $ runReaderT fn quasar
+{-# SPECIALIZE runQuasarSTM :: Quasar -> QuasarSTM a -> STM a #-}
 
 quasarAtomically :: (MonadQuasar m, MonadIO m) => QuasarSTM a -> m a
 quasarAtomically (QuasarSTM fn) = do
