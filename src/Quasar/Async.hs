@@ -62,25 +62,20 @@ async' :: (MonadQuasar m, MonadIO m) => IO a -> m (Async a)
 async' fn = asyncWithUnmask' ($ fn)
 
 asyncWithUnmask' :: forall a m. (MonadQuasar m, MonadIO m) => ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
-asyncWithUnmask' fn = maskIfRequired do
-  worker <- askIOWorker
+asyncWithUnmask' fn = liftQuasarIO do
   exChan <- askExceptionSink
 
-  (key, resultVar, threadIdVar, disposer) <- ensureSTM do
-    key <- newUniqueSTM
-    resultVar <- newPromiseSTM
-    threadIdVar <- newPromiseSTM
+  key <- liftIO newUnique
+  resultVar <- newPromise
+
+  afixExtra \threadIdFuture -> mask_ do
+
     -- Disposer is created first to ensure the resource can be safely attached
-    disposer <- newUnmanagedIODisposer (disposeFn key resultVar (toFuture threadIdVar)) worker exChan
-    pure (key, resultVar, threadIdVar, disposer)
+    disposer <- registerDisposeAction (disposeFn key resultVar threadIdFuture)
 
-  registerResource disposer
+    threadId <- liftIO $ forkWithUnmask (runAndPut exChan key resultVar disposer) exChan
 
-  liftIO do
-    threadId <- forkWithUnmask (runAndPut exChan key resultVar disposer) exChan
-    fulfillPromise threadIdVar threadId
-
-  pure $ Async (toFuture resultVar) disposer
+    pure (Async (toFuture resultVar) disposer, threadId)
   where
     runAndPut :: ExceptionSink -> Unique -> Promise a -> Disposer -> (forall b. IO b -> IO b) -> IO ()
     runAndPut exChan key resultVar disposer unmask = do

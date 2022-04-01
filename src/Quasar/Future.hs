@@ -15,6 +15,7 @@ module Quasar.Future (
   -- * Future helpers
   afix,
   afix_,
+  afixExtra,
   awaitSuccessOrFailure,
 
   -- ** Awaiting multiple awaitables
@@ -257,6 +258,18 @@ afix action = do
 
 afix_ :: (MonadIO m, MonadCatch m) => (Future a -> m a) -> m ()
 afix_ = void . afix
+
+afixExtra :: (MonadIO m, MonadCatch m) => (Future a -> m (r, a)) -> m r
+afixExtra action = do
+  var <- newPromise
+  catchAll
+    do
+      (result, fixResult) <- action (toFuture var)
+      fulfillPromise var fixResult
+      pure result
+    \ex -> do
+      breakPromise var ex
+      throwM ex
 
 
 -- ** Awaiting multiple awaitables
