@@ -1,5 +1,5 @@
 module Quasar.Logger (
-  MonadLogger(..),
+  MonadLog(..),
   LogLevel(..),
   logCritical,
   logError,
@@ -8,7 +8,8 @@ module Quasar.Logger (
   logDebug,
   logString,
 
-  LoggerT,
+  LogWriterT,
+  LogWriter,
   LogMessage,
   Logger,
   stderrLogger,
@@ -29,35 +30,36 @@ data LogLevel
 
 data LogMessage = LogMessage LogLevel String
 
-type LoggerT = WriterT [LogMessage]
+type LogWriterT = WriterT [LogMessage]
+type LogWriter = LogWriterT Identity
 
-class Monad m => MonadLogger m where
+class Monad m => MonadLog m where
   logMessage :: LogMessage -> m ()
 
-instance Monad m => MonadLogger (LoggerT m) where
+instance Monad m => MonadLog (LogWriterT m) where
   logMessage msg = tell [msg]
 
-instance {-# OVERLAPPABLE #-} MonadLogger m => MonadLogger (ReaderT r m) where
+instance {-# OVERLAPPABLE #-} MonadLog m => MonadLog (ReaderT r m) where
   logMessage = lift . logMessage
 
 -- TODO MonadQuasar instances for StateT, WriterT, RWST, MaybeT, ...
 
-logCritical :: MonadLogger m => String -> m ()
+logCritical :: MonadLog m => String -> m ()
 logCritical = logString LogLevelCritical
 
-logError :: MonadLogger m => String -> m ()
+logError :: MonadLog m => String -> m ()
 logError = logString LogLevelError
 
-logWarning :: MonadLogger m => String -> m ()
+logWarning :: MonadLog m => String -> m ()
 logWarning = logString LogLevelWarning
 
-logInfo :: MonadLogger m => String -> m ()
+logInfo :: MonadLog m => String -> m ()
 logInfo = logString LogLevelInfo
 
-logDebug :: MonadLogger m => String -> m ()
+logDebug :: MonadLog m => String -> m ()
 logDebug = logString LogLevelDebug
 
-logString :: MonadLogger m => LogLevel -> String -> m ()
+logString :: MonadLog m => LogLevel -> String -> m ()
 logString level msg = logMessage $ LogMessage level msg
 
 

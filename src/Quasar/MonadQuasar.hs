@@ -117,11 +117,11 @@ instance (MonadIO m, MonadMask m, MonadFix m) => MonadQuasar (QuasarT m) where
   localQuasar quasar = local (const quasar)
   {-# SPECIALIZE instance MonadQuasar QuasarIO #-}
 
-instance (MonadIO m, MonadMask m, MonadFix m) => MonadLogger (QuasarT m) where
+instance (MonadIO m, MonadMask m, MonadFix m) => MonadLog (QuasarT m) where
   logMessage msg = do
     logger <- askLogger
     liftIO $ logger msg
-  {-# SPECIALIZE instance MonadLogger QuasarIO #-}
+  {-# SPECIALIZE instance MonadLog QuasarIO #-}
 
 
 instance MonadQuasar QuasarSTM where

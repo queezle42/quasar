@@ -9,6 +9,7 @@ module Quasar.Prelude
     Control.Applicative.Alternative,
     Data.Foldable.sequenceA_,
     Data.Foldable.traverse_,
+    Data.Functor.Identity.Identity,
     module Control.Concurrent.MVar,
     Control.Exception.Exception,
     Control.Exception.SomeException,
@@ -87,6 +88,7 @@ import Control.Monad qualified
 import Control.Monad.Fix qualified
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Foldable qualified
+import Data.Functor.Identity qualified
 import Data.Hashable qualified
 import Data.Int qualified
 import Data.Kind qualified
