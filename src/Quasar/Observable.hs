@@ -77,7 +77,7 @@ class IsRetrievable r a => IsObservable r a | a -> r where
   -- processed immediately, use `observeBlocking` instead or manually pass the value to a thread that processes the
   -- data.
   observe
-    :: (MonadQuasar m)
+    :: (MonadQuasar m, MonadSTM m)
     => a -- ^ observable
     -> ObservableCallback r -- ^ callback
     -> m [Disposer]
@@ -99,11 +99,11 @@ class IsRetrievable r a => IsObservable r a | a -> r where
 
 
 observe_
-    :: (IsObservable r a, MonadQuasar m)
+    :: (IsObservable r a, MonadQuasar m, MonadSTM m)
     => a -- ^ observable
     -> ObservableCallback r -- ^ callback
     -> m ()
-observe_ observable callback = void $ observe observable callback
+observe_ observable callback = liftQuasarSTM $ void $ observe observable callback
 
 
 type ObservableCallback v = ObservableState v -> QuasarSTM ()
@@ -163,7 +163,7 @@ observeBlocking observable handler = do
 
   bracket
     do
-      observe observable \msg -> liftSTM do
+      quasarAtomically $ observe observable \msg -> liftSTM do
         void $ tryTakeTMVar var
         putTMVar var msg
     dispose
@@ -215,7 +215,7 @@ newtype ConstObservable a = ConstObservable a
 instance IsRetrievable a (ConstObservable a) where
   retrieve (ConstObservable x) = pure x
 instance IsObservable a (ConstObservable a) where
-  observe (ConstObservable x) callback = ensureQuasarSTM do
+  observe (ConstObservable x) callback = liftQuasarSTM do
     callback $ ObservableValue x
     pure []
   pingObservable _ = pure ()
@@ -225,7 +225,7 @@ newtype ThrowObservable a = ThrowObservable SomeException
 instance IsRetrievable a (ThrowObservable a) where
   retrieve (ThrowObservable ex) = throwM ex
 instance IsObservable a (ThrowObservable a) where
-  observe (ThrowObservable ex) callback = ensureQuasarSTM do
+  observe (ThrowObservable ex) callback = liftQuasarSTM do
     callback $ ObservableNotAvailable ex
     pure []
   pingObservable _ = pure ()
@@ -253,7 +253,7 @@ instance IsRetrievable a (LiftA2Observable a) where
     liftA2 fn (retrieve fx) (await future)
 
 instance IsObservable a (LiftA2Observable a) where
-  observe (LiftA2Observable fn fx fy) callback = ensureQuasarSTM do
+  observe (LiftA2Observable fn fx fy) callback = liftQuasarSTM do
     var0 <- liftSTM $ newTVar Nothing
     var1 <- liftSTM $ newTVar Nothing
     let callCallback = do
@@ -281,7 +281,7 @@ instance IsRetrievable a (BindObservable a) where
     retrieve $ fn x
 
 instance IsObservable a (BindObservable a) where
-  observe (BindObservable fx fn) callback = ensureQuasarSTM do
+  observe (BindObservable fx fn) callback = liftQuasarSTM do
     callback ObservableLoading
     keyVar <- newTVar =<< newUniqueSTM
     disposableVar <- liftSTM $ newTVar []
@@ -317,7 +317,7 @@ instance IsRetrievable a (CatchObservable e a) where
   retrieve (CatchObservable fx fn) = retrieve fx `catch` \ex -> retrieve (fn ex)
 
 instance IsObservable a (CatchObservable e a) where
-  observe (CatchObservable fx fn) callback = ensureQuasarSTM do
+  observe (CatchObservable fx fn) callback = liftQuasarSTM do
     callback ObservableLoading
     keyVar <- newTVar =<< newUniqueSTM
     disposableVar <- liftSTM $ newTVar []
@@ -354,8 +354,8 @@ newObserverRegistryIO = liftIO $ ObserverRegistry <$> newTVarIO mempty
 registerObserver :: ObserverRegistry a -> ObservableCallback a -> ObservableState a -> QuasarSTM [Disposer]
 registerObserver (ObserverRegistry var) callback currentState = do
   quasar <- askQuasar
-  key <- ensureSTM newUniqueSTM
-  ensureSTM $ modifyTVar var (HM.insert key (execForeignQuasarSTM quasar . callback))
+  key <- newUniqueSTM
+  modifyTVar var (HM.insert key (execForeignQuasarSTM quasar . callback))
   disposer <- registerDisposeTransaction $ modifyTVar var (HM.delete key)
   callback currentState
   pure [disposer]
@@ -371,8 +371,8 @@ instance IsRetrievable a (ObservableVar a) where
   retrieve (ObservableVar var _registry) = liftIO $ readTVarIO var
 
 instance IsObservable a (ObservableVar a) where
-  observe (ObservableVar var registry) callback = ensureQuasarSTM do
-    registerObserver registry callback . ObservableValue =<< ensureSTM (readTVar var)
+  observe (ObservableVar var registry) callback = liftQuasarSTM do
+    registerObserver registry callback . ObservableValue =<< readTVar var
 
   pingObservable _ = pure ()
 

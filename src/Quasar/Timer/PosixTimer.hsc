@@ -178,7 +178,7 @@ newPosixTimer clockId callback = do
 
     pure (callbackPtr, ctimer)
 
-  disposer <- registerDisposeAction (delete ctimer callbackPtr)
+  disposer <- registerDisposeActionIO (delete ctimer callbackPtr)
 
   pure $ PosixTimer { ctimer, disposer }
   where

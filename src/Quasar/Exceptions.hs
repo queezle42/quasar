@@ -1,6 +1,7 @@
 module Quasar.Exceptions (
   ExceptionSink(..),
   throwToExceptionSink,
+  throwToExceptionSinkIO,
   catchSink,
   catchAllSink,
 
@@ -26,8 +27,11 @@ import Quasar.Prelude
 newtype ExceptionSink = ExceptionSink (SomeException -> STM ())
 
 
-throwToExceptionSink :: Exception e => ExceptionSink -> e -> STM ()
-throwToExceptionSink (ExceptionSink channelFn) ex = channelFn (toException ex)
+throwToExceptionSink :: (Exception e, MonadSTM m) => ExceptionSink -> e -> m ()
+throwToExceptionSink (ExceptionSink channelFn) ex = liftSTM $ channelFn (toException ex)
+
+throwToExceptionSinkIO :: (Exception e, MonadIO m) => ExceptionSink -> e -> m ()
+throwToExceptionSinkIO sink ex = atomically $ throwToExceptionSink sink ex
 
 catchSink :: forall e. Exception e => (e -> STM ()) -> ExceptionSink -> ExceptionSink
 catchSink handler parentSink = ExceptionSink $ mapM_ wrappedHandler . fromException

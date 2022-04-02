@@ -54,7 +54,7 @@ runQuasarAndExitWith :: (QuasarExitState a -> ExitCode) -> Logger -> QuasarIO a 
 runQuasarAndExitWith exitCodeFn logger fn = mask \unmask -> do
   worker <- newTIOWorker
   (exChan, exceptionWitness) <- atomically $ newExceptionWitnessSink (loggingExceptionSink worker)
-  mResult <- unmask $ withQuasarGeneric logger worker exChan (redirectExceptionToSink fn)
+  mResult <- unmask $ withQuasarGeneric logger worker exChan (redirectExceptionToSinkIO fn)
   failure <- atomically exceptionWitness
   exitState <- case (mResult, failure) of
     (Just result, False) -> pure $ QuasarExitSuccess result

@@ -71,7 +71,7 @@ asyncWithUnmask' fn = liftQuasarIO do
   afixExtra \threadIdFuture -> mask_ do
 
     -- Disposer is created first to ensure the resource can be safely attached
-    disposer <- registerDisposeAction (disposeFn key resultVar threadIdFuture)
+    disposer <- registerDisposeActionIO (disposeFn key resultVar threadIdFuture)
 
     threadId <- liftIO $ forkWithUnmask (runAndPut exChan key resultVar disposer) exChan
 
@@ -88,10 +88,10 @@ asyncWithUnmask' fn = liftQuasarIO do
           atomically (throwToExceptionSink exChan ex)
             `finally` do
               breakPromise resultVar (AsyncException ex)
-              atomically $ disposeEventuallySTM_ disposer
+              disposeEventuallyIO_ disposer
         Right retVal -> do
           fulfillPromise resultVar retVal
-          atomically $ disposeEventuallySTM_ disposer
+          disposeEventuallyIO_ disposer
     disposeFn :: Unique -> Promise a -> Future ThreadId -> IO ()
     disposeFn key resultVar threadIdFuture = do
       -- Should not block or fail (unless the TIOWorker is broken)

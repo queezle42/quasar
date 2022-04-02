@@ -40,14 +40,14 @@ newtype TimerFd = TimerFd Fd
   deriving stock (Eq, Show)
   deriving newtype Num
 
-newTimerFd :: (MonadQuasar m, MonadIO m, MonadMask m) => ClockId -> IO () -> m TimerFd
-newTimerFd clockId callback = mask_ do
+newTimerFd :: (MonadQuasar m, MonadIO m) => ClockId -> IO () -> m TimerFd
+newTimerFd clockId callback = liftQuasarIO $ mask_ do
   timer <- liftIO $ runInBoundThread do
     throwErrnoIfMinus1 "timerfd_create" do
       c_timerfd_create (toCClockId clockId) c_TFD_CLOEXEC
 
   workerTask <- async $ liftIO $ worker timer
-  registerDisposeAction_ do
+  registerDisposeActionIO_ do
     await $ isDisposed workerTask
     timerFdClose timer
 

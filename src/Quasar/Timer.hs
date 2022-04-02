@@ -150,7 +150,7 @@ startSchedulerThread scheduler = async (schedulerThread `finally` liftIO cancelA
     fireTimer Timer{completed, disposer} = do
       result <- tryFulfillPromiseSTM completed ()
       modifyTVar (if result then activeCount' else cancelledCount') (+ (-1))
-      disposeEventuallySTM_ disposer
+      disposeEventually_ disposer
 
     cleanup :: STM ()
     cleanup = putTMVar heap' . fromList =<< mapMaybeM cleanupTimer . toList =<< takeTMVar heap'
@@ -170,7 +170,7 @@ startSchedulerThread scheduler = async (schedulerThread `finally` liftIO cancelA
       mapM_ dispose timers
 
 
-newTimer :: (MonadQuasar m, MonadIO m) => TimerScheduler -> UTCTime -> m Timer
+newTimer :: (MonadQuasar m, MonadIO m, MonadMask m) => TimerScheduler -> UTCTime -> m Timer
 newTimer scheduler time = registerNewResource $ newUnmanagedTimer scheduler time
 
 
