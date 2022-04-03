@@ -2,6 +2,8 @@ module Quasar.Async.Fork (
   -- * Forking with an asynchronous exception channel
 
   -- ** IO
+  fork,
+  fork_,
   forkWithUnmask,
   forkWithUnmask_,
   forkFuture,
@@ -52,6 +54,12 @@ forkAsyncWithUnmaskSTM fn worker exChan = join <$> startShortIOSTM (unsafeShortI
 
 
 -- * Fork in IO, redirecting errors to an ExceptionSink
+
+fork :: IO () -> ExceptionSink -> IO ThreadId
+fork fn exSink = forkWithUnmask ($ fn) exSink
+
+fork_ :: IO () -> ExceptionSink -> IO ()
+fork_ fn exSink = void $ fork fn exSink
 
 forkWithUnmask :: ((forall a. IO a -> IO a) -> IO ()) -> ExceptionSink -> IO ThreadId
 forkWithUnmask fn exChan = mask_ $ forkIOWithUnmask wrappedFn
