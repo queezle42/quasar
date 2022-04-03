@@ -1,10 +1,13 @@
 module Quasar.MonadQuasar (
   -- * Quasar
   Quasar,
+  newQuasar,
+  withQuasar,
   newResourceScope,
   newResourceScopeIO,
   newResourceScopeSTM,
   withResourceScope,
+  catchQuasar,
 
   MonadQuasar(..),
 
@@ -12,7 +15,6 @@ module Quasar.MonadQuasar (
   QuasarIO,
   QuasarSTM,
 
-  withQuasarGeneric,
   runQuasarIO,
   runQuasarSTM,
   liftQuasarIO,
@@ -78,11 +80,17 @@ newResourceScopeSTM :: Quasar -> STM Quasar
 newResourceScopeSTM parent = do
   rm <- newUnmanagedResourceManagerSTM worker parentExceptionSink
   attachResource (quasarResourceManager parent) rm
-  pure $ Quasar logger worker (ExceptionSink (disposeOnException rm)) rm
+  pure $ newQuasar logger worker parentExceptionSink rm
   where
     logger = quasarLogger parent
     worker = quasarIOWorker parent
     parentExceptionSink = quasarExceptionSink parent
+
+-- | Construct a quasar, ensuring the Quasar invarinat, i.e. when an exception is thrown to the quasar, the provided resource manager will be disposed.
+newQuasar :: Logger -> TIOWorker -> ExceptionSink -> ResourceManager -> Quasar
+newQuasar logger worker parentExceptionSink resourceManager = do
+  Quasar logger worker (ExceptionSink (disposeOnException resourceManager)) resourceManager
+  where
     disposeOnException :: ResourceManager -> SomeException -> STM ()
     disposeOnException rm ex = do
       disposeEventuallySTM_ rm
@@ -208,10 +216,21 @@ redirectExceptionToSinkIO_ fn = void $ redirectExceptionToSinkIO fn
 {-# SPECIALIZE redirectExceptionToSinkIO_ :: QuasarIO a -> QuasarIO () #-}
 
 
+catchQuasar :: MonadQuasar m => forall e. Exception e => (e -> STM ()) -> m a -> m a
+catchQuasar handler fn = do
+  exSink <- catchSink handler <$> askExceptionSink
+  replaceExceptionSink exSink fn
+
+replaceExceptionSink :: MonadQuasar m => ExceptionSink -> m a -> m a
+replaceExceptionSink exSink fn = do
+  quasar <- askQuasar
+  let q = newQuasar (quasarLogger quasar) (quasarIOWorker quasar) exSink (quasarResourceManager quasar)
+  localQuasar q fn
+
 -- * Quasar initialization
 
-withQuasarGeneric :: Logger -> TIOWorker -> ExceptionSink -> QuasarIO a -> IO a
-withQuasarGeneric logger worker exChan fn = mask \unmask -> do
+withQuasar :: Logger -> TIOWorker -> ExceptionSink -> QuasarIO a -> IO a
+withQuasar logger worker exChan fn = mask \unmask -> do
   rm <- atomically $ newUnmanagedResourceManagerSTM worker exChan
-  let quasar = Quasar logger worker exChan rm
+  let quasar = newQuasar logger worker exChan rm
   unmask (runQuasarIO quasar fn) `finally` dispose rm
