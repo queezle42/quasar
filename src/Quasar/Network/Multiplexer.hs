@@ -447,7 +447,7 @@ sendThread multiplexer sendFn = do
               (Nothing, []) -> pure () <$ awaitSTM multiplexer.receiveThreadCompleted
               _ -> pure do
                 msg <- execWriterT do
-                  formatChannelMessage mMessage
+                  mapM_ formatChannelMessage mMessage
                   -- closeChannelQueue is used as a queue, so it has to be reversed to keep the order of close messages
                   formatCloseMessages (reverse closeChannelQueue)
                 liftIO $ send msg
@@ -467,9 +467,8 @@ sendThread multiplexer sendFn = do
         tell $ Binary.put $ ChannelProtocolError message
       send msg
     sendException (ReceivedChannelProtocolException _ _) = pure ()
-    formatChannelMessage :: Maybe (ChannelId, NewChannelCount, BSL.ByteString) -> WriterT Put (StateT ChannelId IO) ()
-    formatChannelMessage Nothing = pure ()
-    formatChannelMessage (Just (channelId, newChannelCount, message)) = do
+    formatChannelMessage :: (ChannelId, NewChannelCount, BSL.ByteString) -> WriterT Put (StateT ChannelId IO) ()
+    formatChannelMessage (channelId, newChannelCount, message) = do
       switchToChannel channelId
       tell do
         Binary.put (ChannelMessage newChannelCount messageLength)
