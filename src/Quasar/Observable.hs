@@ -1,11 +1,12 @@
 module Quasar.Observable (
   -- * Observable core types
+  Observable(..),
+  ObservableState(..),
   IsRetrievable(..),
   IsObservable(..),
   observe_,
-  Observable(..),
-  ObservableState(..),
-  --toObservableUpdate,
+  observeIO,
+  observeIO_,
 
   -- * ObservableVar
   ObservableVar,
@@ -104,6 +105,20 @@ observe_
     -> ObservableCallback r -- ^ callback
     -> m ()
 observe_ observable callback = liftQuasarSTM $ void $ observe observable callback
+
+observeIO
+  :: (IsObservable r a, MonadQuasar m, MonadIO m)
+  => a -- ^ observable
+  -> ObservableCallback r -- ^ callback
+  -> m [Disposer]
+observeIO observable callback = quasarAtomically $ observe observable callback
+
+observeIO_
+  :: (IsObservable r a, MonadQuasar m, MonadIO m)
+  => a -- ^ observable
+  -> ObservableCallback r -- ^ callback
+  -> m ()
+observeIO_ observable callback = quasarAtomically $ observe_ observable callback
 
 
 type ObservableCallback v = ObservableState v -> QuasarSTM ()
