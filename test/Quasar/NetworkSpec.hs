@@ -12,17 +12,11 @@ module Quasar.NetworkSpec (spec) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.MVar
-import Control.Concurrent.STM
-import Control.Monad.Reader (ReaderT)
-import Quasar.Prelude
-import Quasar.Async
-import Quasar.Awaitable
-import Quasar.Disposable
+import Quasar
 import Quasar.Network
 import Quasar.Network.Runtime (withStandaloneClient)
 import Quasar.Network.TH (makeRpc)
-import Quasar.Observable
-import Quasar.ResourceManager
+import Quasar.Prelude
 import Test.Hspec.Core.Spec
 import Test.Hspec.Expectations.Lifted
 import Test.Hspec qualified as Hspec
@@ -30,13 +24,13 @@ import Test.QuickCheck
 import Test.QuickCheck.Monadic
 
 -- Type is pinned to IO, otherwise hspec spec type cannot be inferred
-rm :: ResourceManagerIO a -> IO a
-rm = withRootResourceManager
+rm :: QuasarIO a -> IO a
+rm = runQuasarCombineExceptions (stderrLogger LogLevelWarning)
 
-shouldThrow :: (HasCallStack, Exception e, MonadResourceManager m, MonadIO m) => (ReaderT ResourceManager IO a) -> Hspec.Selector e -> m ()
+shouldThrow :: (HasCallStack, Exception e, MonadQuasar m, MonadIO m) => QuasarIO a -> Hspec.Selector e -> m ()
 shouldThrow action expected = do
-  resourceManager <- askResourceManager
-  liftIO $ (onResourceManager resourceManager action) `Hspec.shouldThrow` expected
+  quasar <- askQuasar
+  liftIO $ runQuasarIO quasar action `Hspec.shouldThrow` expected
 
 
 $(makeRpc $ rpcApi "Example" $ do
@@ -136,15 +130,15 @@ spec = parallel $ do
 
   describe "ObservableExample" $ do
     it "can retrieve values" $ rm do
-      var <- newObservableVar 42
+      var <- newObservableVarIO 42
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
         observable <- liftIO $ intObservable client
-        (retrieve observable >>= await) `shouldReturn` 42
-        setObservableVar var 13
-        (retrieve observable >>= await) `shouldReturn` 13
+        retrieve observable `shouldReturn` 42
+        atomically $ setObservableVar var 13
+        retrieve observable `shouldReturn` 13
 
     it "receives the current value when calling observe" $ rm do
-      var <- newObservableVar 41
+      var <- newObservableVarIO 41
 
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
 
@@ -152,67 +146,67 @@ spec = parallel $ do
         observable <- liftIO $ intObservable client
 
         -- Change the value before calling `observe`
-        setObservableVar var 42
+        atomically $ setObservableVar var 42
 
-        observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
+        observeIO_ observable $ \msg -> writeTVar resultVar msg
 
         liftIO $ join $ atomically $ readTVar resultVar >>=
           \case
-            ObservableUpdate x -> pure $ x `shouldBe` 42
+            ObservableValue x -> pure $ x `shouldBe` 42
             ObservableLoading -> retry
             ObservableNotAvailable ex -> pure $ throwIO ex
 
     it "receives continuous updates when observing" $ rm do
-      var <- newObservableVar 42
+      var <- newObservableVarIO 42
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
         resultVar <- liftIO $ newTVarIO ObservableLoading
         observable <- liftIO $ intObservable client
 
-        observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
+        observeIO_ observable $ \msg -> writeTVar resultVar msg
 
         let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=
               \case
                 -- Send and receive are running asynchronously, so this retries until the expected value is received.
                 -- Blocks forever if the wrong or no value is received.
-                ObservableUpdate x -> if (x == expected) then pure (pure ()) else retry
+                ObservableValue x -> if (x == expected) then pure (pure ()) else retry
                 ObservableLoading -> retry
                 ObservableNotAvailable ex -> pure $ throwIO ex
 
         latestShouldBe 42
-        setObservableVar var 13
+        atomically $ setObservableVar var 13
         latestShouldBe 13
-        setObservableVar var (-1)
+        atomically $ setObservableVar var (-1)
         latestShouldBe (-1)
-        setObservableVar var 42
+        atomically $ setObservableVar var 42
         latestShouldBe 42
 
     it "receives no further updates after unsubscribing" $ rm do
-      var <- newObservableVar 42
+      var <- newObservableVarIO 42
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
         resultVar <- liftIO $ newTVarIO ObservableLoading
         observable <- liftIO $ intObservable client
 
-        disposable <- captureDisposable_ $ observe observable $ \msg -> liftIO $ atomically $ writeTVar resultVar msg
+        disposer <- observeIO observable $ \msg -> writeTVar resultVar msg
 
         let latestShouldBe = \expected -> liftIO $ join $ atomically $ readTVar resultVar >>=
               \case
                 -- Send and receive are running asynchronously, so this retries until the expected value is received.
                 -- Blocks forever if the wrong or no value is received.
-                ObservableUpdate x -> if (x < 0)
+                ObservableValue x -> if x < 0
                   then pure (fail "received a message after unsubscribing")
-                  else if (x == expected) then pure (pure ()) else retry
+                  else if x == expected then pure (pure ()) else retry
                 ObservableLoading -> retry
                 ObservableNotAvailable ex -> pure $ throwIO ex
 
         latestShouldBe 42
-        setObservableVar var 13
+        atomically $ setObservableVar var 13
         latestShouldBe 13
-        setObservableVar var 42
+        atomically $ setObservableVar var 42
         latestShouldBe 42
 
-        dispose disposable
+        dispose disposer
 
-        setObservableVar var (-1)
+        atomically $ setObservableVar var (-1)
         liftIO $ threadDelay 10000
 
         latestShouldBe 42

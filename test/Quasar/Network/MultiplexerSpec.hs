@@ -1,29 +1,27 @@
 module Quasar.Network.MultiplexerSpec (spec) where
 
 import Control.Concurrent.Async (concurrently_)
-import Control.Concurrent.STM
 import Control.Concurrent.MVar
 import Control.Monad.Catch
 import Control.Monad.Reader (ReaderT)
 import Data.ByteString.Lazy qualified as BSL
-import Quasar.Awaitable
-import Quasar.Disposable
+import Quasar
+import Quasar.MonadQuasar.Misc
 import Quasar.Network.Multiplexer
 import Quasar.Network.Connection
 import Quasar.Prelude
-import Quasar.ResourceManager
 import Test.Hspec.Core.Spec
 import Test.Hspec.Expectations.Lifted
 import Test.Hspec qualified as Hspec
 
 -- Type is pinned to IO, otherwise hspec spec type cannot be inferred
-rm :: ResourceManagerIO a -> IO a
-rm = withRootResourceManager
+rm :: QuasarIO a -> IO a
+rm = runQuasarCombineExceptions (stderrLogger LogLevelWarning)
 
-shouldThrow :: (HasCallStack, Exception e, MonadResourceManager m, MonadIO m) => (ReaderT ResourceManager IO a) -> Hspec.Selector e -> m ()
+shouldThrow :: (HasCallStack, Exception e, MonadQuasar m, MonadIO m) => QuasarIO a -> Hspec.Selector e -> m ()
 shouldThrow action expected = do
-  resourceManager <- askResourceManager
-  liftIO $ (onResourceManager resourceManager action) `Hspec.shouldThrow` expected
+  quasar <- askQuasar
+  liftIO $ runQuasarIO quasar action `Hspec.shouldThrow` expected
 
 spec :: Spec
 spec = parallel $ describe "runMultiplexer" $ do
@@ -39,23 +37,23 @@ spec = parallel $ describe "runMultiplexer" $ do
       do rm (runMultiplexer MultiplexerSideA (\rootChannel -> await (isDisposed rootChannel)) x)
       do rm (runMultiplexer MultiplexerSideB dispose y)
 
-  it "can dispose a resource" $ rm do
-    var <- newAsyncVar
+  it "will dispose an attached resource" $ rm do
+    var <- newPromise
     (x, y) <- newConnectionPair
     void $ newMultiplexer MultiplexerSideB y
     runMultiplexer
       do MultiplexerSideA
       do
         \channel -> do
-          liftIO $ atomically $ attachDisposeAction_ channel.resourceManager (putAsyncVar_ var ())
+          runQuasarIO channel.quasar $ registerDisposeTransactionIO_ (fulfillPromiseSTM var ())
           dispose channel
       do x
-    peekAwaitable (await var) `shouldReturn` Just ()
+    peekFuture (await var) `shouldReturn` Just ()
 
   it "can send and receive simple messages" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
-      channelSetSimpleHandler channel ((liftIO . putMVar recvMVar) :: BSL.ByteString -> ResourceManagerIO ())
+      channelSetSimpleHandler channel ((liftIO . putMVar recvMVar) :: BSL.ByteString -> QuasarIO ())
       channelSendSimple channel "foobar"
       liftIO $ takeMVar recvMVar `shouldReturn` "foobar"
       channelSendSimple channel "test"
@@ -66,7 +64,7 @@ spec = parallel $ describe "runMultiplexer" $ do
   it "can create sub-channels" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
-      channelSetHandler channel ((\_ -> liftIO . putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> ResourceManagerIO ())
+      channelSetHandler channel ((\_ -> liftIO . putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> QuasarIO ())
       SentMessageResources{createdChannels=[_]} <- channelSend_ channel defaultMessageConfiguration{createChannels=1} "create a channel"
       liftIO $ takeMVar recvMVar `shouldReturn` "create a channel"
       SentMessageResources{createdChannels=[_, _, _]} <- channelSend_ channel defaultMessageConfiguration{createChannels=3} "create more channels"
@@ -79,14 +77,14 @@ spec = parallel $ describe "runMultiplexer" $ do
     c2RecvMVar <- newEmptyMVar
     c3RecvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
-      channelSetSimpleHandler channel $ (liftIO . putMVar recvMVar :: BSL.ByteString -> ResourceManagerIO ())
+      channelSetSimpleHandler channel $ (liftIO . putMVar recvMVar :: BSL.ByteString -> QuasarIO ())
       channelSendSimple channel "foobar"
       liftIO $ takeMVar recvMVar `shouldReturn` "foobar"
 
       SentMessageResources{createdChannels=[c1, c2]} <- channelSend_ channel defaultMessageConfiguration{createChannels=2}  "create channels"
       liftIO $ takeMVar recvMVar `shouldReturn` "create channels"
-      channelSetSimpleHandler c1 (liftIO . putMVar c1RecvMVar :: BSL.ByteString -> ResourceManagerIO ())
-      channelSetSimpleHandler c2 (liftIO . putMVar c2RecvMVar :: BSL.ByteString -> ResourceManagerIO ())
+      channelSetSimpleHandler c1 (liftIO . putMVar c1RecvMVar :: BSL.ByteString -> QuasarIO ())
+      channelSetSimpleHandler c2 (liftIO . putMVar c2RecvMVar :: BSL.ByteString -> QuasarIO ())
 
       channelSendSimple c1 "test"
       liftIO $ takeMVar c1RecvMVar `shouldReturn` "test"
@@ -99,7 +97,7 @@ spec = parallel $ describe "runMultiplexer" $ do
 
       SentMessageResources{createdChannels=[c3]} <- channelSend_ channel  defaultMessageConfiguration{createChannels=1} "create another channel"
       liftIO $ takeMVar recvMVar `shouldReturn` "create another channel"
-      channelSetSimpleHandler c3 (liftIO . putMVar c3RecvMVar :: BSL.ByteString -> ResourceManagerIO ())
+      channelSetSimpleHandler c3 (liftIO . putMVar c3RecvMVar :: BSL.ByteString -> QuasarIO ())
 
       channelSendSimple c3 "test5"
       liftIO $ takeMVar c3RecvMVar `shouldReturn` "test5"
@@ -123,21 +121,21 @@ spec = parallel $ describe "runMultiplexer" $ do
     runMultiplexer MultiplexerSideA (liftIO . testAction) connection
 
 
-withEchoServer :: (Channel -> ResourceManagerIO ()) -> IO ()
+withEchoServer :: (Channel -> QuasarIO ()) -> IO ()
 withEchoServer fn = rm $ bracket setup closePair (\(channel, _) -> fn channel)
   where
-    setup :: ResourceManagerIO (Channel, Channel)
+    setup :: QuasarIO (Channel, Channel)
     setup = do
       (mainSocket, echoSocket) <- newConnectionPair
       mainChannel <- newMultiplexer MultiplexerSideA mainSocket
       echoChannel <- newMultiplexer MultiplexerSideB echoSocket
       configureEchoHandler echoChannel
       pure (mainChannel, echoChannel)
-    closePair :: (Channel, Channel) -> ResourceManagerIO ()
+    closePair :: (Channel, Channel) -> QuasarIO ()
     closePair (x, y) = dispose x >> dispose y
     configureEchoHandler :: MonadIO m => Channel -> m ()
     configureEchoHandler channel = channelSetHandler channel (echoHandler channel)
-    echoHandler :: Channel -> ReceivedMessageResources -> BSL.ByteString -> ResourceManagerIO ()
+    echoHandler :: Channel -> ReceivedMessageResources -> BSL.ByteString -> QuasarIO ()
     echoHandler channel resources msg = do
       mapM_ configureEchoHandler resources.createdChannels
       channelSendSimple channel msg

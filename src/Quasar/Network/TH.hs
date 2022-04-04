@@ -23,14 +23,11 @@ import Data.Binary (Binary)
 import GHC.Records.Compat (HasField)
 import Language.Haskell.TH hiding (interruptible)
 import Language.Haskell.TH.Syntax
-import Quasar.Async
-import Quasar.Awaitable
+import Quasar
 import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
 import Quasar.Network.Runtime.Observable
-import Quasar.Observable
 import Quasar.Prelude hiding (Type)
-import Quasar.ResourceManager
 
 data RpcApi = RpcApi {
   name :: String,
@@ -165,7 +162,7 @@ clientRequestStub api req = do
     optionalResultType :: Q [Type]
     optionalResultType = case req.mResponse of
                             Nothing -> pure []
-                            Just resp -> sequence [[t|Awaitable $(buildTupleType (sequence ((.ty) <$> resp.fields)))|]]
+                            Just resp -> sequence [[t|Future $(buildTupleType (sequence ((.ty) <$> resp.fields)))|]]
 
     clientRequestStub' :: Name -> Name -> [Name] -> Q [Q Dec]
     clientRequestStub' clientStubPrimeName clientVarName argNames = do
@@ -372,7 +369,7 @@ generateObservable api observable = pure Code {
     observeRequest = Request {
       name = observable.name <> "_observe",
       fields = [],
-      createdResources = [RequestCreateStream [t|Void|] [t|PackedObservableMessage $(observable.ty)|]],
+      createdResources = [RequestCreateStream [t|Void|] [t|PackedObservableState $(observable.ty)|]],
       mResponse = Nothing,
       handlerE = \ctx -> [|observeToStream $(observableE ctx) $(ctx.resourceEs !! 0)|]
       }
@@ -382,7 +379,7 @@ generateObservable api observable = pure Code {
       fields = [],
       createdResources = [],
       mResponse = Just retrieveResponse,
-      handlerE = \ctx -> [|retrieve $(observableE ctx)|]
+      handlerE = \ctx -> [|callRetrieve $(observableE ctx)|]
       }
     retrieveResponse :: Response
     retrieveResponse = Response {
@@ -524,7 +521,7 @@ clientRequestStubSig api req = makeStubSig (sequence ((clientType api) : ((.ty) 
     optionalResultType :: Q [Type]
     optionalResultType = case req.mResponse of
                             Nothing -> pure []
-                            Just resp -> sequence [[t|Awaitable $(buildTupleType (sequence ((.ty) <$> resp.fields)))|]]
+                            Just resp -> sequence [[t|Future $(buildTupleType (sequence ((.ty) <$> resp.fields)))|]]
 
 clientRequestStubSigDec :: RpcApi -> Request -> Q Dec
 clientRequestStubSigDec api req = sigD (clientRequestStubName api req) (clientRequestStubSig api req)
@@ -552,11 +549,11 @@ createResource RequestCreateChannel channelE = [|pure $channelE|]
 createResource (RequestCreateStream _up _down) channelE = [|newStream $channelE|]
 
 implResultType :: Request -> Q Type
-implResultType req = [t|ResourceManagerIO $(resultType)|]
+implResultType req = [t|QuasarIO $(resultType)|]
   where
     resultType = case req.mResponse of
       Nothing -> [t|()|]
-      Just resp -> [t|Awaitable $(buildTupleType (sequence ((.ty) <$> resp.fields)))|]
+      Just resp -> [t|Future $(buildTupleType (sequence ((.ty) <$> resp.fields)))|]
 
 -- * Template Haskell helper functions
 

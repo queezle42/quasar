@@ -37,7 +37,6 @@ module Quasar.Network (
   Stream,
   streamSend,
   streamSetHandler,
-  streamClose,
 ) where
 
 import Quasar.Network.TH

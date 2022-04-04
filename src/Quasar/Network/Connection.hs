@@ -20,7 +20,6 @@ module Quasar.Network.Connection (
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (Async, async, cancel, link, waitCatch, withAsync)
 import Control.Concurrent.MVar
-import Control.Concurrent.STM
 import Control.Exception (interruptible)
 import Control.Monad.Catch
 import Data.ByteString qualified as BS
@@ -184,16 +183,15 @@ traceConnection name connection =
     close
   }
   where
-    trace msg = traceIO $ mconcat [ "connection ", name, " ", msg ]
+    traceMsg msg = traceIO $ mconcat [ "connection ", name, " ", msg ]
     send bytes = do
-      trace $ "send: " <> show bytes
+      traceMsg $ "send: " <> show bytes
       connection.send bytes
     receive = do
-      trace $ "receiving..."
+      traceMsg $ "receiving..."
       chunk <- connection.receive
-      trace $ "received: " <> show chunk
+      traceMsg $ "received: " <> show chunk
       pure chunk
     close = do
-      trace $ "closing"
+      traceMsg $ "closing"
       connection.close
-
