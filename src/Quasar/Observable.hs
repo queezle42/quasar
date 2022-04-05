@@ -15,13 +15,16 @@ module Quasar.Observable (
   setObservableVar,
   modifyObservableVar,
   stateObservableVar,
+  observableVarHasObservers,
 
   ---- * Helper functions
   observeBlocking,
   observeUntil,
   observeUntil_,
 
-  -- * Helper types
+  -- * Helpers
+
+  -- ** Helper types
   ObservableCallback,
 ) where
 
@@ -263,7 +266,7 @@ data LiftA2Observable r = forall a b. LiftA2Observable (a -> b -> r) (Observable
 
 instance IsRetrievable a (LiftA2Observable a) where
   retrieve (LiftA2Observable fn fx fy) = liftQuasarIO do
-    -- LATER: keep backpressure for parallel network requests
+    -- TODO LATER: keep backpressure for parallel network requests
     future <- async $ retrieve fy
     liftA2 fn (retrieve fx) (await future)
 
@@ -379,6 +382,9 @@ updateObservers :: ObserverRegistry a -> ObservableState a -> STM ()
 updateObservers (ObserverRegistry var) newState =
   mapM_ ($ newState) . HM.elems =<< readTVar var
 
+observerRegistryHasObservers :: ObserverRegistry a -> STM Bool
+observerRegistryHasObservers (ObserverRegistry var) = not . HM.null <$> readTVar var
+
 
 data ObservableVar a = ObservableVar (TVar a) (ObserverRegistry a)
 
@@ -411,6 +417,8 @@ stateObservableVar (ObservableVar var registry) f = liftSTM do
     updateObservers registry $ ObservableValue newValue
     pure result
 
+observableVarHasObservers :: ObservableVar a -> STM Bool
+observableVarHasObservers (ObservableVar _ registry) = observerRegistryHasObservers registry
 
 ---- TODO implement
 ----cacheObservable :: IsObservable v o => o -> Observable v
