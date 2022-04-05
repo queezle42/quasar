@@ -1,5 +1,5 @@
 module Quasar.Observable (
-  -- * Observable core types
+  -- * Observable core
   Observable(..),
   ObservableState(..),
   IsRetrievable(..),
@@ -7,6 +7,11 @@ module Quasar.Observable (
   observe_,
   observeIO,
   observeIO_,
+
+  -- ** Control flow utilities
+  observeBlocking,
+  observeUntil,
+  observeUntil_,
 
   -- * ObservableVar
   ObservableVar,
@@ -17,15 +22,19 @@ module Quasar.Observable (
   stateObservableVar,
   observableVarHasObservers,
 
-  ---- * Helper functions
-  observeBlocking,
-  observeUntil,
-  observeUntil_,
-
   -- * Helpers
 
   -- ** Helper types
   ObservableCallback,
+
+  -- ** Observable implementation primitive
+  ObservablePrim,
+  newObservablePrim,
+  newObservablePrimIO,
+  setObservablePrim,
+  modifyObservablePrim,
+  stateObservablePrim,
+  observablePrimHasObservers,
 ) where
 
 import Control.Applicative
@@ -404,21 +413,69 @@ newObservableVarIO :: MonadIO m => a -> m (ObservableVar a)
 newObservableVarIO x = liftIO $ ObservableVar <$> newTVarIO x <*> newObserverRegistryIO
 
 setObservableVar :: MonadSTM m => ObservableVar a -> a -> m ()
-setObservableVar var = modifyObservableVar var . const
+setObservableVar (ObservableVar var registry) newValue = liftSTM do
+  writeTVar var newValue
+  updateObservers registry $ ObservableValue newValue
+
+readObservableVar :: MonadSTM m => ObservableVar a -> m a
+readObservableVar (ObservableVar var _) = readTVar var
 
 modifyObservableVar :: MonadSTM m => ObservableVar a -> (a -> a) -> m ()
 modifyObservableVar var f = stateObservableVar var (((), ) . f)
 
 stateObservableVar :: MonadSTM m => ObservableVar a -> (a -> (r, a)) -> m r
-stateObservableVar (ObservableVar var registry) f = liftSTM do
-    oldValue <- readTVar var
-    let (result, newValue) = f oldValue
-    writeTVar var newValue
-    updateObservers registry $ ObservableValue newValue
-    pure result
+stateObservableVar var f = liftSTM do
+  oldValue <- readObservableVar var
+  let (result, newValue) = f oldValue
+  setObservableVar var newValue
+  pure result
 
 observableVarHasObservers :: ObservableVar a -> STM Bool
 observableVarHasObservers (ObservableVar _ registry) = observerRegistryHasObservers registry
+
+
+data ObservablePrim a = ObservablePrim (TVar (ObservableState a)) (ObserverRegistry a)
+
+instance IsRetrievable a (ObservablePrim a) where
+  retrieve var = atomically $
+    readObservablePrim var >>= \case
+      ObservableLoading -> retry
+      ObservableValue value -> pure value
+      ObservableNotAvailable ex -> throwM ex
+
+instance IsObservable a (ObservablePrim a) where
+  observe (ObservablePrim var registry) callback = liftQuasarSTM do
+    registerObserver registry callback =<< readTVar var
+
+  pingObservable _ = pure ()
+
+newObservablePrim :: MonadSTM m => ObservableState a -> m (ObservablePrim a)
+newObservablePrim x = liftSTM $ ObservablePrim <$> newTVar x <*> newObserverRegistry
+
+newObservablePrimIO :: MonadIO m => ObservableState a -> m (ObservablePrim a)
+newObservablePrimIO x = liftIO $ ObservablePrim <$> newTVarIO x <*> newObserverRegistryIO
+
+setObservablePrim :: MonadSTM m => ObservablePrim a -> ObservableState a -> m ()
+setObservablePrim (ObservablePrim var registry) newState = liftSTM do
+  writeTVar var newState
+  updateObservers registry $ newState
+
+readObservablePrim :: MonadSTM m => ObservablePrim a -> m (ObservableState a)
+readObservablePrim (ObservablePrim var _) = readTVar var
+
+modifyObservablePrim :: MonadSTM m => ObservablePrim a -> (ObservableState a -> ObservableState a) -> m ()
+modifyObservablePrim var f = stateObservablePrim var (((), ) . f)
+
+stateObservablePrim :: MonadSTM m => ObservablePrim a -> (ObservableState a -> (r, ObservableState a)) -> m r
+stateObservablePrim var f = liftSTM do
+  oldValue <- readObservablePrim var
+  let (result, newValue) = f oldValue
+  setObservablePrim var newValue
+  pure result
+
+observablePrimHasObservers :: ObservablePrim a -> STM Bool
+observablePrimHasObservers (ObservablePrim _ registry) = observerRegistryHasObservers registry
+
 
 ---- TODO implement
 ----cacheObservable :: IsObservable v o => o -> Observable v
