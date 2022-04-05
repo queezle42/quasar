@@ -42,7 +42,7 @@ instance Monad m => MonadLog (LogWriterT m) where
 instance {-# OVERLAPPABLE #-} MonadLog m => MonadLog (ReaderT r m) where
   logMessage = lift . logMessage
 
--- TODO MonadQuasar instances for StateT, WriterT, RWST, MaybeT, ...
+-- TODO MonadLog instances for StateT, WriterT, RWST, MaybeT, ...
 
 logCritical :: MonadLog m => String -> m ()
 logCritical = logString LogLevelCritical
