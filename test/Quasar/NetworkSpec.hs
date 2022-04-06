@@ -132,7 +132,7 @@ spec = parallel $ do
     it "can retrieve values" $ rm do
       var <- newObservableVarIO 42
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
-        observable <- liftIO $ intObservable client
+        observable <- intObservable client
         retrieve observable `shouldReturn` 42
         atomically $ setObservableVar var 13
         retrieve observable `shouldReturn` 13
@@ -142,8 +142,8 @@ spec = parallel $ do
 
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
 
-        resultVar <- liftIO $ newTVarIO ObservableLoading
-        observable <- liftIO $ intObservable client
+        resultVar <- newTVarIO ObservableLoading
+        observable <- intObservable client
 
         -- Change the value before calling `observe`
         atomically $ setObservableVar var 42
@@ -159,8 +159,8 @@ spec = parallel $ do
     it "receives continuous updates when observing" $ rm do
       var <- newObservableVarIO 42
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
-        resultVar <- liftIO $ newTVarIO ObservableLoading
-        observable <- liftIO $ intObservable client
+        resultVar <- newTVarIO ObservableLoading
+        observable <- intObservable client
 
         observeIO_ observable $ \msg -> writeTVar resultVar msg
 
@@ -168,7 +168,7 @@ spec = parallel $ do
               \case
                 -- Send and receive are running asynchronously, so this retries until the expected value is received.
                 -- Blocks forever if the wrong or no value is received.
-                ObservableValue x -> if (x == expected) then pure (pure ()) else retry
+                ObservableValue x -> if x == expected then pure (pure ()) else retry
                 ObservableLoading -> retry
                 ObservableNotAvailable ex -> pure $ throwIO ex
 
@@ -183,8 +183,8 @@ spec = parallel $ do
     it "receives no further updates after unsubscribing" $ rm do
       var <- newObservableVarIO 42
       withStandaloneClient @ObservableExampleProtocol (ObservableExampleProtocolImpl (toObservable var)) $ \client -> do
-        resultVar <- liftIO $ newTVarIO ObservableLoading
-        observable <- liftIO $ intObservable client
+        resultVar <- newTVarIO ObservableLoading
+        observable <- intObservable client
 
         disposer <- observeIO observable $ \msg -> writeTVar resultVar msg
 

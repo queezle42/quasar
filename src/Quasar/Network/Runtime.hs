@@ -25,8 +25,10 @@ module Quasar.Network.Runtime (
   -- * Stream
   Stream,
   streamSend,
+  streamSendDeferred,
   streamSetHandler,
   streamQuasar,
+  unsafeQueueStreamMessage,
 
   -- * Test implementation
   withStandaloneClient,
@@ -79,7 +81,7 @@ clientSend client config req = liftIO $ channelSend_ client.channel config (enco
 clientRequest :: forall p m a. (MonadIO m, RpcProtocol p) => Client p -> (ProtocolResponse p -> Maybe a) -> MessageConfiguration -> ProtocolRequest p -> m (Future a, SentMessageResources)
 clientRequest client checkResponse config req = do
   resultPromise <- newPromise
-  sentMessageResources <- liftIO $ channelSend client.channel config (encode req) \msgId ->
+  sentMessageResources <- liftIO $ sendChannelMessage client.channel config (encode req) \msgId ->
     modifyTVar client.callbacksVar $ HM.insert msgId (requestCompletedCallback resultPromise msgId)
   pure (toFuture resultPromise, sentMessageResources)
   where
@@ -93,7 +95,7 @@ clientRequest client checkResponse config req = do
         Just result -> fulfillPromise resultPromise result
 
 -- TODO use new direct decoder api instead
-clientHandleChannelMessage :: forall p. RpcProtocol p => Client p -> ReceivedMessageResources -> ProtocolResponseWrapper p -> QuasarIO ()
+clientHandleChannelMessage :: Client p -> ReceivedMessageResources -> ProtocolResponseWrapper p -> QuasarIO ()
 clientHandleChannelMessage client resources (requestId, resp) = liftIO clientHandleResponse
   where
     clientHandleResponse :: IO ()
@@ -135,6 +137,13 @@ newStream = liftIO . pure . Stream
 
 streamSend :: (Binary up, MonadIO m) => Stream up down -> up -> m ()
 streamSend (Stream channel) value = liftIO $ channelSendSimple channel (encode value)
+
+streamSendDeferred :: (Binary up, MonadIO m) => Stream up down -> STM up -> m ()
+streamSendDeferred (Stream channel) value = liftIO $ channelSendSimpleDeferred channel (encode <$> value)
+
+unsafeQueueStreamMessage :: (Binary up, MonadSTM m) => Stream up down -> up -> m ()
+unsafeQueueStreamMessage (Stream channel) value = liftSTM do
+  unsafeQueueChannelMessageSimple channel (encode value)
 
 streamSetHandler :: (Binary down, MonadIO m) => Stream up down -> (down -> QuasarIO ()) -> m ()
 streamSetHandler (Stream channel) handler = liftIO $ channelSetSimpleBinaryHandler channel handler
@@ -307,9 +316,9 @@ connectToServer server connection =
     formatException (fromException -> Just (ConnectionLost (ReceiveFailed (fromException -> Just EOF)))) =
       mconcat ["Client connection lost (", connection.description, ")"]
     formatException (fromException -> Just (ConnectionLost ex)) =
-      mconcat ["Client connection lost (", connection.description, "): ", (displayException ex)]
+      mconcat ["Client connection lost (", connection.description, "): ", displayException ex]
     formatException ex =
-      mconcat ["Client exception (", connection.description, "): ", (displayException ex)]
+      mconcat ["Client exception (", connection.description, "): ", displayException ex]
 
     logUntilDone :: Future () -> TQueue String -> QuasarIO ()
     logUntilDone done messageQueue =

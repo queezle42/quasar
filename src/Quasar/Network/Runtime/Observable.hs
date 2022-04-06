@@ -1,65 +1,124 @@
 module Quasar.Network.Runtime.Observable (
-  PackedObservableMessage,
-  newObservableStub,
+  PackedObservableState,
+  newObservableClient,
   observeToStream,
+  callRetrieve,
 ) where
 
 import Data.Binary (Binary)
 import Control.Monad.Catch
-import Quasar.Async
-import Quasar.Awaitable
-import Quasar.Disposable
+import Quasar
 import Quasar.Network.Exception
 import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
-import Quasar.Observable
 import Quasar.Prelude
-import Quasar.ResourceManager
 
-data PackedObservableMessage v
-  = PackedObservableUpdate v
+data PackedObservableState a
+  = PackedObservableValue a
   | PackedObservableLoading
   | PackedObservableNotAvailable PackedException
   deriving stock (Eq, Show, Generic)
   deriving anyclass (Binary)
 
-packObservableMessage :: ObservableMessage r -> PackedObservableMessage r
-packObservableMessage (ObservableUpdate x) = PackedObservableUpdate x
-packObservableMessage (ObservableLoading) = PackedObservableLoading
-packObservableMessage (ObservableNotAvailable ex) = PackedObservableNotAvailable (packException ex)
+packObservableState :: ObservableState r -> PackedObservableState r
+packObservableState (ObservableValue x) = PackedObservableValue x
+packObservableState ObservableLoading = PackedObservableLoading
+packObservableState (ObservableNotAvailable ex) = PackedObservableNotAvailable (packException ex)
 
-unpackObservableMessage :: PackedObservableMessage r -> ObservableMessage r
-unpackObservableMessage (PackedObservableUpdate x) = ObservableUpdate x
-unpackObservableMessage (PackedObservableLoading) = ObservableLoading
-unpackObservableMessage (PackedObservableNotAvailable ex) = ObservableNotAvailable (unpackException ex)
+unpackObservableState :: PackedObservableState r -> ObservableState r
+unpackObservableState (PackedObservableValue x) = ObservableValue x
+unpackObservableState PackedObservableLoading = ObservableLoading
+unpackObservableState (PackedObservableNotAvailable ex) = ObservableNotAvailable (unpackException ex)
 
-newObservableStub
-  :: forall v. Binary v
-  => (forall m. MonadIO m => m (Awaitable v))
-  -> (forall m. MonadIO m => m (Stream Void (PackedObservableMessage v)))
-  -> IO (Observable v)
-newObservableStub startRetrieveRequest startObserveRequest = pure uncachedObservable -- TODO cache
+data ObservableClient a =
+  ObservableClient {
+    quasar :: Quasar,
+    beginRetrieve :: IO (Future a),
+    createObservableStream :: IO (Stream Void (PackedObservableState a)),
+    observablePrim :: ObservablePrim a,
+    activeStreamVar :: TVar (Maybe (Stream Void (PackedObservableState a)))
+  }
+
+instance IsRetrievable a (ObservableClient a) where
+  -- TODO use withResourceScope to abort on async exception (once supported by the code generator)
+  retrieve client = liftIO $ client.beginRetrieve >>= await
+
+instance IsObservable a (ObservableClient a) where
+  observe client callback = liftQuasarSTM do
+    sub <- observe client.observablePrim callback
+    -- Register to clients quasar as well to ensure observers are unsubscribed when the client thread is cancelled
+    runQuasarSTM client.quasar $ registerResource sub
+    pure sub
+  pingObservable = undefined
+
+
+-- | Should be used in generated code (not implemented yet). Has to be run in context of the parent streams `Quasar`.
+newObservableClient
+  :: forall a. Binary a
+  => IO (Future a)
+  -> IO (Stream Void (PackedObservableState a))
+  -> QuasarIO (Observable a)
+newObservableClient beginRetrieve createObservableStream = do
+  quasar <- askQuasar
+  observablePrim <- newObservablePrimIO ObservableLoading
+  activeStreamVar <- newTVarIO Nothing
+  let client = ObservableClient {
+    quasar,
+    beginRetrieve,
+    createObservableStream,
+    observablePrim,
+    activeStreamVar
+  }
+  async_ $ manageObservableClient client
+  pure $ toObservable client
+
+manageObservableClient :: Binary a => ObservableClient a -> QuasarIO ()
+manageObservableClient ObservableClient{createObservableStream, observablePrim, activeStreamVar} = mask_ $ forever do
+  atomically $ check =<< observablePrimHasObservers observablePrim
+
+  stream <- liftIO createObservableStream
+  streamSetHandler stream handler
+  atomically $ writeTVar activeStreamVar (Just stream)
+
+  atomically $ check . not =<< observablePrimHasObservers observablePrim
+  mapM_ dispose =<< atomically (swapTVar activeStreamVar Nothing)
+  atomically $ setObservablePrim observablePrim ObservableLoading
   where
-    uncachedObservable :: Observable v
-    uncachedObservable = fnObservable observeFn retrieveFn
-    observeFn :: (ObservableMessage v -> ResourceManagerIO ()) -> ResourceManagerIO ()
-    observeFn callback = do
-      callback ObservableLoading
-      registerNewResource_ do
-        -- TODO send updates about the connection status
-        stream <- startObserveRequest
-        resourceManager <- askResourceManager
-        -- TODO FIXME enterResourceManager may fail if the resource manager is disposing (before the stream is disposed)
-        streamSetHandler stream (enterResourceManager resourceManager . callback . unpackObservableMessage)
-        pure $ toDisposable stream
-    retrieveFn :: ResourceManagerIO (Awaitable v)
-    retrieveFn = startRetrieveRequest
+    handler (unpackObservableState -> state) = atomically $ setObservablePrim observablePrim state
 
-observeToStream :: (Binary v, MonadResourceManager m, MonadIO m, MonadMask m) => Observable v -> Stream (PackedObservableMessage v) Void -> m ()
+-- | Used in generated code to call `retrieve`.
+callRetrieve :: Observable a -> QuasarIO (Future a)
+-- TODO LATER rewrite `retrieve` to keep backpressure across multiple hops
+callRetrieve x = toFuture <$> async (retrieve x)
+
+-- | Used in generated code to call `observe`.
+observeToStream :: forall a. Binary a => Observable a -> Stream (PackedObservableState a) Void -> QuasarIO ()
 observeToStream observable stream = do
-  localResourceManager stream do
-    observe observable \msg -> do
+  runQuasarIO (streamQuasar stream) do
+    -- Initial state is defined as loading, no extra message has to be sent
+    isLoading <- newTVarIO True
+    outbox <- newTVarIO Nothing
+    async_ $ liftIO $ sendThread isLoading outbox
+    quasarAtomically $ observe_ observable (callback isLoading outbox)
+
+  where
+    callback :: TVar Bool -> TVar (Maybe (ObservableState a)) -> ObservableCallback a
+    callback isLoading outbox state = liftSTM do
+      unlessM (readTVar isLoading) do
+        unsafeQueueStreamMessage stream PackedObservableLoading
+        writeTVar isLoading True
+      writeTVar outbox (Just state)
+
+    sendThread :: TVar Bool -> TVar (Maybe (ObservableState a)) -> IO ()
+    sendThread isLoading outbox = forever do
+      atomically $ check . isJust =<< readTVar outbox
       catch
-        -- TODO streamSend is blocking, but the callback should return immediately
-        do streamSend stream $ packObservableMessage msg
+        (streamSendDeferred stream payloadHook)
         \ChannelNotConnected -> pure ()
+      where
+        payloadHook :: STM (PackedObservableState a)
+        payloadHook = do
+          writeTVar isLoading False
+          swapTVar outbox Nothing >>= \case
+            Just state -> pure $ packObservableState state
+            Nothing -> unreachableCodePathM

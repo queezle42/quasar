@@ -394,12 +394,12 @@ generateObservable api observable = pure Code {
     observableE ctx = [|$(varE serverImplFieldName) $(ctx.implRecordE)|]
     observableStubDec :: [Q Dec]
     observableStubDec = [
-      sigD (mkName observable.name) [t|$(clientType api) -> IO (Observable $(observable.ty))|],
+      sigD (mkName observable.name) [t|$(clientType api) -> QuasarIO (Observable $(observable.ty))|],
       do
         clientName <- newName "client"
         let clientE = varE clientName
         funD (mkName observable.name) [
-          clause [varP clientName] (normalB [|newObservableStub ($retrieveE $clientE) ($observeE $clientE)|]) []
+          clause [varP clientName] (normalB [|newObservableClient ($retrieveE $clientE) ($observeE $clientE)|]) []
           ]
       ]
     observeE :: Q Exp

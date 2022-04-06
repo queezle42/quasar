@@ -88,9 +88,10 @@ library
     Quasar.Network.Exception
     Quasar.Network.Multiplexer
     Quasar.Network.Runtime
-    Quasar.Network.Runtime.Observable
     Quasar.Network.SocketLocation
     Quasar.Network.TH
+  other-modules:
+    Quasar.Network.Runtime.Observable
   build-depends:
     base >=4.7 && <5,
     async,

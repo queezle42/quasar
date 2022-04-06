@@ -1,12 +1,11 @@
 module Quasar.Network.MultiplexerSpec (spec) where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (concurrently_)
 import Control.Concurrent.MVar
 import Control.Monad.Catch
-import Control.Monad.Reader (ReaderT)
 import Data.ByteString.Lazy qualified as BSL
 import Quasar
-import Quasar.MonadQuasar.Misc
 import Quasar.Network.Multiplexer
 import Quasar.Network.Connection
 import Quasar.Prelude
