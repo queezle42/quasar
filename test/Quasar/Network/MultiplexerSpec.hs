@@ -1,6 +1,5 @@
 module Quasar.Network.MultiplexerSpec (spec) where
 
-import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (concurrently_)
 import Control.Concurrent.MVar
 import Control.Monad.Catch

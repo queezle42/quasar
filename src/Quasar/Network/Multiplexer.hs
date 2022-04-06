@@ -92,6 +92,7 @@ data MultiplexerMessage
 data OutboxMessage
   = OutboxSendMessage ChannelId NewChannelCount BSL.ByteString
   | OutboxCloseChannel ChannelId
+  deriving stock Show
 
 data Multiplexer = Multiplexer {
   side :: MultiplexerSide,
@@ -233,7 +234,8 @@ newChannelSTM parent@Channel{multiplexer, quasar=parentQuasar} channelId = do
 
 sendChannelCloseMessage :: Channel -> STM ()
 sendChannelCloseMessage channel = do
-  unlessM (readTVar channel.sentCloseMessage) do
+  alreadySent <- readTVar channel.sentCloseMessage
+  unless alreadySent do
     modifyTVar channel.multiplexer.outbox (OutboxCloseChannel channel.channelId :)
     -- Mark as closed and propagate close state to children
     markAsClosed channel
@@ -241,7 +243,7 @@ sendChannelCloseMessage channel = do
   where
     markAsClosed :: Channel -> STM ()
     markAsClosed markChannel = do
-      writeTVar channel.sentCloseMessage True
+      writeTVar markChannel.sentCloseMessage True
       children <- readTVar markChannel.children
       mapM_ markAsClosed children
 
@@ -416,7 +418,7 @@ toMultiplexerException ex = LocalException ex
 
 -- | Await a lost connection.
 --
--- For module-internal use only, since it does not follow awaitable rules (it never completes when the the connection
+-- For module-internal use only, since it does not follow awaitable best practices (it never completes when the the connection
 -- does not fail).
 awaitConnectionLost :: Multiplexer -> Future ()
 awaitConnectionLost multiplexer =
@@ -438,6 +440,9 @@ sendThread multiplexer sendFn = do
       atomically $ check =<< readTVar multiplexer.receivedHeader
   evalStateT sendLoop 0
   where
+    send :: MonadIO m => Put -> m ()
+    send chunks = liftIO $ sendFn (Binary.runPut chunks) `catchAll` (throwM . ConnectionLost . SendFailed)
+
     sendLoop :: StateT ChannelId IO ()
     sendLoop = do
       join $ liftIO $ atomically do
@@ -455,8 +460,7 @@ sendThread multiplexer sendFn = do
                   mapM_ formatMessage (reverse messages)
                 liftIO $ send bytes
                 sendLoop
-    send :: MonadIO m => Put -> m ()
-    send chunks = liftIO $ sendFn (Binary.runPut chunks) `catchAll` (throwM . ConnectionLost . SendFailed)
+
     sendException :: MultiplexerException -> StateT ChannelId IO ()
     sendException (ConnectionLost _) = pure ()
     sendException (InvalidMagicBytes _) = pure ()
@@ -470,6 +474,7 @@ sendThread multiplexer sendFn = do
         tell $ Binary.put $ ChannelProtocolError message
       send msg
     sendException (ReceivedChannelProtocolException _ _) = pure ()
+
     formatMessage :: OutboxMessage -> WriterT Put (StateT ChannelId IO) ()
     formatMessage (OutboxSendMessage channelId newChannelCount message) = do
       switchToChannel channelId
@@ -481,6 +486,7 @@ sendThread multiplexer sendFn = do
     formatMessage (OutboxCloseChannel channelId) = do
       switchToChannel channelId
       tell $ Binary.put CloseChannel
+
     switchToChannel :: ChannelId -> WriterT Put (StateT ChannelId IO) ()
     switchToChannel channelId = do
       currentChannelId <- State.get
@@ -579,6 +585,7 @@ receiveThread multiplexer readFn = do
       disposeEventuallyIO_ channel
       pure if channel.channelId /= 0
         then Just Nothing
+        -- Terminate receive thread
         else Nothing
 
     execReceivedMultiplexerMessage _ (MultiplexerProtocolError msg) = throwM $ RemoteException $
