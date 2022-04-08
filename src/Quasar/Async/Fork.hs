@@ -56,7 +56,7 @@ forkAsyncWithUnmaskSTM fn worker exChan = join <$> startShortIOSTM (unsafeShortI
 -- * Fork in IO, redirecting errors to an ExceptionSink
 
 fork :: IO () -> ExceptionSink -> IO ThreadId
-fork fn exSink = forkWithUnmask ($ fn) exSink
+fork fn exSink = forkWithUnmask (\unmask -> unmask fn) exSink
 
 fork_ :: IO () -> ExceptionSink -> IO ()
 fork_ fn exSink = void $ fork fn exSink
@@ -74,7 +74,7 @@ forkWithUnmask_ fn exChan = void $ forkWithUnmask fn exChan
 -- * Fork in IO while collecting the result, redirecting errors to an ExceptionSink
 
 forkFuture :: forall a. IO a -> ExceptionSink -> IO (Future a)
-forkFuture fn = forkFutureWithUnmask ($ fn)
+forkFuture fn = forkFutureWithUnmask (\unmask -> unmask fn)
 
 forkFutureWithUnmask :: forall a. ((forall b. IO b -> IO b) -> IO a) -> ExceptionSink -> IO (Future a)
 forkFutureWithUnmask fn exChan = do

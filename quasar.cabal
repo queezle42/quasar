@@ -55,6 +55,7 @@ common shared-properties
     -Weverything
     -Wno-all-missed-specialisations
     -Wno-missing-safe-haskell-mode
+    -Wno-missing-kind-signatures
     -Wno-missing-import-lists
     -Wno-unsafe
     -Werror=incomplete-patterns

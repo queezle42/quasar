@@ -44,10 +44,10 @@ instance IsFuture a (Async a) where
 
 
 async :: (MonadQuasar m, MonadIO m) => QuasarIO a -> m (Async a)
-async fn = asyncWithUnmask ($ fn)
+async fn = asyncWithUnmask (\unmask -> unmask fn)
 
 async_ :: (MonadQuasar m, MonadIO m) => QuasarIO () -> m ()
-async_ fn = void $ asyncWithUnmask ($ fn)
+async_ fn = void $ asyncWithUnmask (\unmask -> unmask fn)
 
 asyncWithUnmask :: (MonadQuasar m, MonadIO m) => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO a) -> m (Async a)
 asyncWithUnmask fn = do
@@ -64,7 +64,7 @@ asyncWithUnmask_ fn = void $ asyncWithUnmask fn
 
 
 async' :: (MonadQuasar m, MonadIO m) => IO a -> m (Async a)
-async' fn = asyncWithUnmask' ($ fn)
+async' fn = asyncWithUnmask' (\unmask -> unmask fn)
 
 asyncWithUnmask' :: forall a m. (MonadQuasar m, MonadIO m) => ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
 asyncWithUnmask' fn = liftQuasarIO do
@@ -74,7 +74,7 @@ asyncWithUnmask' fn = liftQuasarIO do
 
 
 unmanagedAsync :: forall a m. MonadIO m => TIOWorker -> ExceptionSink -> IO a -> m (Async a)
-unmanagedAsync worker exSink fn = liftIO $ unmanagedAsyncWithUnmask worker exSink ($ fn)
+unmanagedAsync worker exSink fn = liftIO $ unmanagedAsyncWithUnmask worker exSink (\unmask -> unmask fn)
 
 unmanagedAsyncWithUnmask :: forall a m. MonadIO m => TIOWorker -> ExceptionSink -> ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
 unmanagedAsyncWithUnmask worker exSink fn = liftIO $ spawnAsync (\_ -> pure ()) worker exSink fn

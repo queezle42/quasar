@@ -1,4 +1,8 @@
 {
+  inputs = {
+    nixpkgs.url = github:NixOS/nixpkgs/nixos-unstable;
+  };
+
   outputs = { self, nixpkgs }:
   with nixpkgs.lib;
   let
@@ -7,7 +11,11 @@
   in {
     packages = forAllSystems (system:
       let pkgs = import nixpkgs { inherit system; overlays = [ self.overlay ]; };
-      in { quasar = pkgs.haskellPackages.quasar; }
+      in rec {
+        default = ghc922.quasar;
+        quasar = pkgs.haskellPackages.quasar;
+        ghc922.quasar = pkgs.haskell.packages.ghc922.quasar;
+      }
     );
 
     overlay = final: prev: {
@@ -21,13 +29,11 @@
       };
     };
 
-    defaultPackage = forAllSystems (system: self.packages.${system}.quasar);
-
     devShell = forAllSystems (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
       in pkgs.mkShell {
-        inputsFrom = pkgs.lib.mapAttrsToList (k: v: v.env or v) self.packages.${system};
+        inputsFrom = [ self.packages.${system}.default.env ];
         packages = [
           pkgs.cabal-install
           pkgs.zsh
