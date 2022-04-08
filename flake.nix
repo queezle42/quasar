@@ -1,5 +1,6 @@
 {
   inputs = {
+    nixpkgs.url = github:NixOS/nixpkgs/nixos-unstable;
     quasar = {
       url = gitlab:jens/quasar?host=git.c3pb.de;
     };
@@ -16,20 +17,21 @@
         self.overlay
         quasar.overlay
       ]; };
-      in { inherit (pkgs.haskellPackages) quasar-network; }
+      in rec {
+        default = quasar-network;
+        quasar-network = pkgs.haskell.packages.ghc922.quasar-network;
+      }
     );
 
-    overlay = self: super: {
-      haskell = super.haskell // {
-        packageOverrides = hself: hsuper: super.haskell.packageOverrides hself hsuper // {
-          quasar-network = import ./. { pkgs = self; haskellPackages = hself; };
+    overlay = final: prev: {
+      haskell = prev.haskell // {
+        packageOverrides = hfinal: hprev: prev.haskell.packageOverrides hfinal hprev // {
+          quasar-network = import ./. { pkgs = final; haskellPackages = hfinal; };
         };
       };
     };
 
     overlays.quasar = quasar.overlay;
-
-    defaultPackage = forAllSystems (system: self.packages.${system}.quasar-network);
 
     devShell = forAllSystems (system:
       let

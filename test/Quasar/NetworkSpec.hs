@@ -16,6 +16,7 @@ import Quasar
 import Quasar.Network
 import Quasar.Network.Runtime (withStandaloneClient)
 import Quasar.Network.TH (makeRpc)
+import Quasar.Network.Multiplexer
 import Quasar.Prelude
 import Test.Hspec.Core.Spec
 import Test.Hspec.Expectations.Lifted

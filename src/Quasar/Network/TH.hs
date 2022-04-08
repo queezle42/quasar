@@ -14,15 +14,14 @@ module Quasar.Network.TH (
   makeRpc,
   -- TODO: re-add functions that generate only client and server later
   RpcProtocol(ProtocolRequest, ProtocolResponse),
-  HasProtocolImpl
+  HasProtocolImpl,
 ) where
 
 import Control.Monad.State (State, execState)
 import Control.Monad.State qualified as State
 import Data.Binary (Binary)
-import GHC.Records.Compat (HasField)
-import Language.Haskell.TH hiding (interruptible)
-import Language.Haskell.TH.Syntax
+import GHC.Records (HasField)
+import Language.Haskell.TH hiding (Code, interruptible)
 import Quasar
 import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
@@ -212,7 +211,7 @@ clientRequestStub api req = do
         requestDataE :: Q Exp
         requestDataE = applyVars (conE (requestConName api req))
         messageConfigurationE :: Q Exp
-        messageConfigurationE = [|defaultMessageConfiguration{createChannels = $(litE $ integerL $ toInteger $ numPipelinedChannels req)}|]
+        messageConfigurationE = [|MessageConfiguration False $(litE $ integerL $ toInteger $ numPipelinedChannels req)|]
         sendE :: Q Exp -> Q Exp
         sendE msgExp = [|$typedSend $clientE $messageConfigurationE $msgExp|]
         requestE :: Response -> Q Exp -> Q Exp

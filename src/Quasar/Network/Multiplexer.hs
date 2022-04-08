@@ -1,6 +1,6 @@
 module Quasar.Network.Multiplexer (
   -- * Channel type
-  Channel,
+  Channel(quasar),
 
   -- * Sending and receiving messages
   MessageId,

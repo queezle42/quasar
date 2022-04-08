@@ -40,7 +40,7 @@ data ObservableClient a =
   }
 
 instance IsRetrievable a (ObservableClient a) where
-  -- TODO use withResourceScope to abort on async exception (once supported by the code generator)
+  -- TODO use withResourceScope to abort on async exception (once aborting requests is supported by the code generator)
   retrieve client = liftIO $ client.beginRetrieve >>= await
 
 instance IsObservable a (ObservableClient a) where
