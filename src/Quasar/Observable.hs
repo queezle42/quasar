@@ -172,6 +172,12 @@ instance Alternative Observable where
 
 instance MonadPlus Observable
 
+instance Semigroup a => Semigroup (Observable a) where
+  x <> y = liftA2 (<>) x y
+
+instance Monoid a => Monoid (Observable a) where
+  mempty = pure mempty
+
 
 
 -- | Observe an observable by handling updates on the current thread.
