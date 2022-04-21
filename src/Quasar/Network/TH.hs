@@ -107,7 +107,7 @@ setFixedHandler handler = State.modify (\fun -> fun{fixedHandler = Just handler}
 -- | Generates rpc protocol types, rpc client and rpc server
 makeRpc :: RpcApi -> Q [Dec]
 makeRpc api = do
-  code <- mconcat <$> sequence ((generateFunction api <$> api.functions) <> (generateObservable api <$> api.observables))
+  code <- mconcat <$> sequence ((generateFunction api <$> api.functions))
   mconcat <$> sequence [makeProtocol api code, makeClient api code, makeServer api code]
 
 makeProtocol :: RpcApi -> Code -> Q [Dec]
@@ -357,54 +357,54 @@ data RequestHandlerContext = RequestHandlerContext {
 
 -- * Rpc function code generator
 
-generateObservable :: RpcApi -> RpcObservable -> Q Code
-generateObservable api observable = pure Code {
-  clientStubDecs = observableStubDec,
-  requests = [observeRequest, retrieveRequest],
-  serverImplFields = [varDefaultBangType serverImplFieldName serverImplFieldSig]
-}
-  where
-    observeRequest :: Request
-    observeRequest = Request {
-      name = observable.name <> "_observe",
-      fields = [],
-      createdResources = [RequestCreateStream [t|Void|] [t|PackedObservableState $(observable.ty)|]],
-      mResponse = Nothing,
-      handlerE = \ctx -> [|observeToStream $(observableE ctx) $(ctx.resourceEs !! 0)|]
-      }
-    retrieveRequest :: Request
-    retrieveRequest = Request {
-      name = observable.name <> "_retrieve",
-      fields = [],
-      createdResources = [],
-      mResponse = Just retrieveResponse,
-      handlerE = \ctx -> [|callRetrieve $(observableE ctx)|]
-      }
-    retrieveResponse :: Response
-    retrieveResponse = Response {
-      name = observable.name <> "_retrieve",
-      fields = [Field "result" observable.ty]
-    }
-    serverImplFieldName :: Name
-    serverImplFieldName = mkName (observable.name <> "Impl")
-    serverImplFieldSig :: Q Type
-    serverImplFieldSig = [t|Observable $(observable.ty)|]
-    observableE :: RequestHandlerContext -> Q Exp
-    observableE ctx = [|$(varE serverImplFieldName) $(ctx.implRecordE)|]
-    observableStubDec :: [Q Dec]
-    observableStubDec = [
-      sigD (mkName observable.name) [t|$(clientType api) -> QuasarIO (Observable $(observable.ty))|],
-      do
-        clientName <- newName "client"
-        let clientE = varE clientName
-        funD (mkName observable.name) [
-          clause [varP clientName] (normalB [|newObservableClient ($retrieveE $clientE) ($observeE $clientE)|]) []
-          ]
-      ]
-    observeE :: Q Exp
-    observeE = clientRequestStubE api observeRequest
-    retrieveE :: Q Exp
-    retrieveE = clientRequestStubE api retrieveRequest
+--generateObservable :: RpcApi -> RpcObservable -> Q Code
+--generateObservable api observable = pure Code {
+--  clientStubDecs = observableStubDec,
+--  requests = [observeRequest, retrieveRequest],
+--  serverImplFields = [varDefaultBangType serverImplFieldName serverImplFieldSig]
+--}
+--  where
+--    observeRequest :: Request
+--    observeRequest = Request {
+--      name = observable.name <> "_observe",
+--      fields = [],
+--      createdResources = [RequestCreateStream [t|Void|] [t|PackedObservableState $(observable.ty)|]],
+--      mResponse = Nothing,
+--      handlerE = \ctx -> [|observeToStream $(observableE ctx) $(ctx.resourceEs !! 0)|]
+--      }
+--    retrieveRequest :: Request
+--    retrieveRequest = Request {
+--      name = observable.name <> "_retrieve",
+--      fields = [],
+--      createdResources = [],
+--      mResponse = Just retrieveResponse,
+--      handlerE = \ctx -> [|callRetrieve $(observableE ctx)|]
+--      }
+--    retrieveResponse :: Response
+--    retrieveResponse = Response {
+--      name = observable.name <> "_retrieve",
+--      fields = [Field "result" observable.ty]
+--    }
+--    serverImplFieldName :: Name
+--    serverImplFieldName = mkName (observable.name <> "Impl")
+--    serverImplFieldSig :: Q Type
+--    serverImplFieldSig = [t|Observable $(observable.ty)|]
+--    observableE :: RequestHandlerContext -> Q Exp
+--    observableE ctx = [|$(varE serverImplFieldName) $(ctx.implRecordE)|]
+--    observableStubDec :: [Q Dec]
+--    observableStubDec = [
+--      sigD (mkName observable.name) [t|$(clientType api) -> QuasarIO (Observable $(observable.ty))|],
+--      do
+--        clientName <- newName "client"
+--        let clientE = varE clientName
+--        funD (mkName observable.name) [
+--          clause [varP clientName] (normalB [|newObservableClient ($retrieveE $clientE) ($observeE $clientE)|]) []
+--          ]
+--      ]
+--    observeE :: Q Exp
+--    observeE = clientRequestStubE api observeRequest
+--    retrieveE :: Q Exp
+--    retrieveE = clientRequestStubE api retrieveRequest
 
 generateFunction :: RpcApi -> RpcFunction -> Q Code
 generateFunction api fun = do

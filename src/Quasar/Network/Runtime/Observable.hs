@@ -1,8 +1,8 @@
 module Quasar.Network.Runtime.Observable (
-  PackedObservableState,
-  newObservableClient,
-  observeToStream,
-  callRetrieve,
+  --PackedObservableState,
+  --newObservableClient,
+  --observeToStream,
+  --callRetrieve,
 ) where
 
 import Data.Binary (Binary)

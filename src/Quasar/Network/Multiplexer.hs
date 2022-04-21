@@ -509,7 +509,7 @@ receiveThread multiplexer readFn = do
     readBytes :: IO BS.ByteString
     readBytes = readFn `catchAll` \ex -> throwM $ ConnectionLost $ ReceiveFailed ex
 
-    -- | Reads and verifies magic bytes. Returns bytes left over from the received chunk(s).
+    -- Reads and verifies magic bytes. Returns bytes left over from the received chunk(s).
     checkMagicBytes :: IO BS.ByteString
     checkMagicBytes = checkMagicBytes' ""
       where
