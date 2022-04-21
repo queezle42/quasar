@@ -1,8 +1,6 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 module Quasar.Network.Runtime.Observable (
-  --PackedObservableState,
-  --newObservableClient,
-  --observeToStream,
-  --callRetrieve,
 ) where
 
 import Data.Binary (Binary)
@@ -12,6 +10,19 @@ import Quasar.Network.Exception
 import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
 import Quasar.Prelude
+
+
+instance NetworkObject a => NetworkReference (Observable a) where
+  type ConstructorData (Observable a) = ()
+  type NetworkReferenceChannel (Observable a) = Stream a Bool
+  sendReference :: Observable a -> ((), Stream a Bool -> QuasarIO ())
+  sendReference observable = ((), undefined)
+  receiveReference :: ConstructorData (Observable a) -> Stream Bool a -> QuasarIO (Observable a)
+  receiveReference () channel = undefined
+
+instance NetworkObject a => NetworkObject (Observable a) where
+  type NetworkStrategy (Observable a) = NetworkReference
+
 
 data PackedObservableState a
   = PackedObservableValue a
@@ -29,6 +40,7 @@ unpackObservableState :: PackedObservableState r -> ObservableState r
 unpackObservableState (PackedObservableValue x) = ObservableValue x
 unpackObservableState PackedObservableLoading = ObservableLoading
 unpackObservableState (PackedObservableNotAvailable ex) = ObservableNotAvailable (unpackException ex)
+
 
 data ObservableClient a =
   ObservableClient {

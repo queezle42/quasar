@@ -1,3 +1,5 @@
+{-# LANGUAGE UndecidableSuperClasses #-}
+
 module Quasar.Network.Runtime (
   -- * Client
   Client,
@@ -33,6 +35,12 @@ module Quasar.Network.Runtime (
   -- * Test implementation
   withStandaloneClient,
 
+  -- * Interacting with objects over network
+  NetworkObject(..),
+  NetworkReference(..),
+  IsNetworkStrategy(..),
+  IsChannel(..),
+
   -- * Internal runtime interface
   RpcProtocol(..),
   HasProtocolImpl(..),
@@ -43,7 +51,7 @@ module Quasar.Network.Runtime (
 ) where
 
 import Control.Monad.Catch
-import Data.Binary (Binary, encode)
+import Data.Binary (Binary(get, put), Get, Put, encode)
 import Data.HashMap.Strict qualified as HM
 import Network.Socket qualified as Socket
 import Quasar
@@ -53,6 +61,78 @@ import Quasar.Network.Multiplexer
 import Quasar.Prelude
 import System.Posix.Files (getFileStatus, isSocket, fileExist, removeLink)
 
+-- * Interacting with objects over network
+
+
+class (IsChannel (ReverseChannelType a), a ~ ReverseChannelType (ReverseChannelType a)) => IsChannel a where
+  type ReverseChannelType a
+  castChannel :: Channel -> a
+
+instance IsChannel Channel where
+  type ReverseChannelType Channel = Channel
+  castChannel :: Channel -> Channel
+  castChannel = id
+
+instance IsChannel (Stream up down) where
+  type ReverseChannelType (Stream up down) = (Stream down up)
+  castChannel :: Channel -> Stream up down
+  castChannel = Stream
+
+
+-- | Describes how a typeclass is used to send- and receive `NetworkObject`s.
+class IsNetworkStrategy (s :: (Type -> Constraint)) where
+  type ChannelIsRequired s :: Bool
+  sendObject :: forall a. (NetworkObject a, NetworkStrategy a ~ s) => a -> (Put, Maybe (Channel -> QuasarIO ()))
+  receiveObject :: forall a. (NetworkObject a, NetworkStrategy a ~ s) => Get (Either a (Channel -> QuasarIO a))
+
+instance IsNetworkStrategy Binary where
+  -- Copy by value by using `Binary`
+  type ChannelIsRequired Binary = 'False
+  sendObject x = (put x, Nothing)
+  receiveObject = Left <$> get
+
+instance IsNetworkStrategy NetworkReference where
+  -- Send an object by reference with the `NetworkReference` class
+  type ChannelIsRequired NetworkReference = 'True
+
+  sendObject :: forall a. (NetworkObject a, NetworkStrategy a ~ NetworkReference) => a -> (Put, Maybe (Channel -> QuasarIO ()))
+  sendObject x = (put cdata, Just (\channel -> fn (castChannel channel)))
+    where
+      (cdata, fn) = sendReference x
+
+  receiveObject :: forall a. (NetworkObject a, NetworkStrategy a ~ NetworkReference) => Get (Either a (Channel -> QuasarIO a))
+  receiveObject = Right . fn <$> get
+    where
+      fn :: ConstructorData a -> Channel -> QuasarIO a
+      fn cdata channel = receiveReference cdata (castChannel channel)
+
+class (IsNetworkStrategy (NetworkStrategy a), (NetworkStrategy a) a) => NetworkObject a where
+  type NetworkStrategy a :: (Type -> Constraint)
+
+
+class (Binary (ConstructorData a), IsChannel (NetworkReferenceChannel a)) => NetworkReference a where
+  type ConstructorData a
+  type NetworkReferenceChannel a
+  sendReference :: a -> (ConstructorData a, NetworkReferenceChannel a -> QuasarIO ())
+  receiveReference :: (ConstructorData a -> ReverseChannelType (NetworkReferenceChannel a) -> QuasarIO a)
+
+
+instance NetworkObject Bool where
+  type NetworkStrategy Bool = Binary
+
+instance NetworkObject Int where
+  type NetworkStrategy Int = Binary
+
+instance NetworkObject Float where
+  type NetworkStrategy Float = Binary
+
+instance NetworkObject Double where
+  type NetworkStrategy Double = Binary
+
+instance NetworkObject String where
+  type NetworkStrategy String = Binary
+
+-- * Old internal RPC types
 
 class (Binary (ProtocolRequest p), Binary (ProtocolResponse p)) => RpcProtocol p where
   -- "Up"
