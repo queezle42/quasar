@@ -64,6 +64,7 @@ library
     Quasar.Network.Runtime
     Quasar.Network.SocketLocation
     Quasar.Network.TH
+    Quasar.Network.TH.Spec
   other-modules:
     Quasar.Network.Runtime.Observable
   build-depends:
@@ -71,6 +72,7 @@ library
     async,
     binary,
     bytestring,
+    containers,
     exceptions,
     mtl,
     network,
