@@ -93,7 +93,7 @@ class IsRetrievable r a => IsObservable r a | a -> r where
     :: (MonadQuasar m, MonadSTM m)
     => a -- ^ observable
     -> ObservableCallback r -- ^ callback
-    -> m [Disposer]
+    -> m Disposer
   observe observable = observe (toObservable observable)
 
   pingObservable
@@ -122,7 +122,7 @@ observeIO
   :: (IsObservable r a, MonadQuasar m, MonadIO m)
   => a -- ^ observable
   -> ObservableCallback r -- ^ callback
-  -> m [Disposer]
+  -> m Disposer
 observeIO observable callback = quasarAtomically $ observe observable callback
 
 observeIO_
@@ -250,7 +250,7 @@ instance IsRetrievable a (ConstObservable a) where
 instance IsObservable a (ConstObservable a) where
   observe (ConstObservable x) callback = liftQuasarSTM do
     callback $ ObservableValue x
-    pure []
+    pure trivialDisposer
   pingObservable _ = pure ()
 
 
@@ -260,7 +260,7 @@ instance IsRetrievable a (ThrowObservable a) where
 instance IsObservable a (ThrowObservable a) where
   observe (ThrowObservable ex) callback = liftQuasarSTM do
     callback $ ObservableNotAvailable ex
-    pure []
+    pure trivialDisposer
   pingObservable _ = pure ()
 
 
@@ -317,7 +317,7 @@ instance IsObservable a (BindObservable a) where
   observe (BindObservable fx fn) callback = liftQuasarSTM do
     callback ObservableLoading
     keyVar <- newTVar =<< newUniqueSTM
-    disposableVar <- liftSTM $ newTVar []
+    disposableVar <- liftSTM (newTVar trivialDisposer)
     observe fx (leftCallback keyVar disposableVar)
     where
       leftCallback keyVar disposableVar lmsg = do
@@ -328,8 +328,8 @@ instance IsObservable a (BindObservable a) where
         disposer <-
           case lmsg of
             ObservableValue x -> observe (fn x) (rightCallback key)
-            ObservableLoading -> [] <$ callback ObservableLoading
-            ObservableNotAvailable ex -> [] <$ callback (ObservableNotAvailable ex)
+            ObservableLoading -> trivialDisposer <$ callback ObservableLoading
+            ObservableNotAvailable ex -> trivialDisposer <$ callback (ObservableNotAvailable ex)
         writeTVar disposableVar disposer
         where
           rightCallback :: Unique -> ObservableCallback a
@@ -353,7 +353,7 @@ instance IsObservable a (CatchObservable e a) where
   observe (CatchObservable fx fn) callback = liftQuasarSTM do
     callback ObservableLoading
     keyVar <- newTVar =<< newUniqueSTM
-    disposableVar <- liftSTM $ newTVar []
+    disposableVar <- liftSTM $ newTVar trivialDisposer
     observe fx (leftCallback keyVar disposableVar)
     where
       leftCallback keyVar disposableVar lmsg = do
@@ -364,7 +364,7 @@ instance IsObservable a (CatchObservable e a) where
         disposer <-
           case lmsg of
             ObservableNotAvailable (fromException -> Just ex) -> observe (fn ex) (rightCallback key)
-            _ -> [] <$ callback lmsg
+            _ -> trivialDisposer <$ callback lmsg
         writeTVar disposableVar disposer
         where
           rightCallback :: Unique -> ObservableCallback a
@@ -384,14 +384,14 @@ newObserverRegistry = ObserverRegistry <$> newTVar mempty
 newObserverRegistryIO :: MonadIO m => m (ObserverRegistry a)
 newObserverRegistryIO = liftIO $ ObserverRegistry <$> newTVarIO mempty
 
-registerObserver :: ObserverRegistry a -> ObservableCallback a -> ObservableState a -> QuasarSTM [Disposer]
+registerObserver :: ObserverRegistry a -> ObservableCallback a -> ObservableState a -> QuasarSTM Disposer
 registerObserver (ObserverRegistry var) callback currentState = do
   quasar <- askQuasar
   key <- newUniqueSTM
   modifyTVar var (HM.insert key (execForeignQuasarSTM quasar . callback))
   disposer <- registerDisposeTransaction $ modifyTVar var (HM.delete key)
   callback currentState
-  pure [disposer]
+  pure disposer
 
 updateObservers :: ObserverRegistry a -> ObservableState a -> STM ()
 updateObservers (ObserverRegistry var) newState =

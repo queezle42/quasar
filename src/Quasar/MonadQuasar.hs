@@ -50,7 +50,7 @@ import Quasar.Resources.Disposer
 data Quasar = Quasar Logger TIOWorker ExceptionSink ResourceManager
 
 instance Resource Quasar where
-  getDisposer (Quasar _ _ _ rm) = getDisposer rm
+  toDisposer (Quasar _ _ _ rm) = toDisposer rm
 
 instance HasField "logger" Quasar Logger where
   getField = quasarLogger

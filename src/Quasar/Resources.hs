@@ -147,24 +147,24 @@ disposeEventuallyIO_ :: (Resource r, MonadIO m) => r -> m ()
 disposeEventuallyIO_ res = atomically $ void $ disposeEventually res
 
 
-captureResources :: (MonadQuasar m, MonadSTM m) => m a -> m (a, [Disposer])
+captureResources :: (MonadQuasar m, MonadSTM m) => m a -> m (a, Disposer)
 captureResources fn = do
   quasar <- newResourceScope
   localQuasar quasar do
     result <- fn
-    pure (result, getDisposer (quasarResourceManager quasar))
+    pure (result, toDisposer (quasarResourceManager quasar))
 
-captureResources_ :: (MonadQuasar m, MonadSTM m) => m () -> m [Disposer]
+captureResources_ :: (MonadQuasar m, MonadSTM m) => m () -> m Disposer
 captureResources_ fn = snd <$> captureResources fn
 
-captureResourcesIO :: (MonadQuasar m, MonadIO m) => m a -> m (a, [Disposer])
+captureResourcesIO :: (MonadQuasar m, MonadIO m) => m a -> m (a, Disposer)
 captureResourcesIO fn = do
   quasar <- newResourceScopeIO
   localQuasar quasar do
     result <- fn
-    pure (result, getDisposer (quasarResourceManager quasar))
+    pure (result, toDisposer (quasarResourceManager quasar))
 
-captureResourcesIO_ :: (MonadQuasar m, MonadIO m) => m () -> m [Disposer]
+captureResourcesIO_ :: (MonadQuasar m, MonadIO m) => m () -> m Disposer
 captureResourcesIO_ fn = snd <$> captureResourcesIO fn
 
 

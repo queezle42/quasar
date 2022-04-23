@@ -29,49 +29,52 @@ import Quasar.Exceptions
 import Quasar.Prelude
 import Quasar.Utils.ShortIO
 import Quasar.Utils.TOnce
-import GHC.IO (unsafePerformIO, unsafeDupablePerformIO)
 
 
 class Resource a where
-  getDisposer :: a -> [Disposer]
+  toDisposer :: a -> Disposer
 
   isDisposed :: a -> Future ()
-  isDisposed r = foldMap isDisposed $ getDisposer r
+  isDisposed r = isDisposed (toDisposer r)
 
   isDisposing :: a -> Future ()
-  isDisposing r = awaitAny $ isDisposing <$> getDisposer r
+  isDisposing r = isDisposing (toDisposer r)
 
 
 type DisposerState = TOnce DisposeFn (Future ())
 
-data Disposer
-  = TrivialDisposer
-  | FnDisposer Unique TIOWorker ExceptionSink DisposerState Finalizers
+data DisposerElement
+  = FnDisposer Unique TIOWorker ExceptionSink DisposerState Finalizers
   | ResourceManagerDisposer ResourceManager
 
-instance Resource Disposer where
-  getDisposer disposer = [disposer]
+instance Resource DisposerElement where
+  toDisposer disposer = Disposer [disposer]
 
-  isDisposed TrivialDisposer = pure ()
   isDisposed (FnDisposer _ _ _ state _) = join (toFuture state)
   isDisposed (ResourceManagerDisposer resourceManager) = resourceManagerIsDisposed resourceManager
 
-  isDisposing TrivialDisposer = pure ()
   isDisposing (FnDisposer _ _ _ state _) = unsafeAwaitSTM (check . isRight =<< readTOnceState state)
   isDisposing (ResourceManagerDisposer resourceManager) = resourceManagerIsDisposing resourceManager
 
-instance Resource [Disposer] where
-  getDisposer = id
+
+newtype Disposer = Disposer [DisposerElement]
+  deriving newtype (Semigroup, Monoid)
+
+instance Resource Disposer where
+  toDisposer = id
+  isDisposed (Disposer ds) = foldMap isDisposed ds
+  isDisposing (Disposer ds) = awaitAny $ isDisposing <$> ds
+
 
 type DisposeFn = ShortIO (Future ())
 
 
 -- | A trivial disposer that does not perform any action when disposed.
 trivialDisposer :: Disposer
-trivialDisposer = TrivialDisposer
+trivialDisposer = mempty
 
 newUnmanagedPrimitiveDisposer :: ShortIO (Future ()) -> TIOWorker -> ExceptionSink -> STM Disposer
-newUnmanagedPrimitiveDisposer fn worker exChan = do
+newUnmanagedPrimitiveDisposer fn worker exChan = toDisposer <$> do
   key <- newUniqueSTM
   FnDisposer key worker exChan <$> newTOnce fn <*> newFinalizers
 
@@ -80,10 +83,9 @@ dispose :: (MonadIO m, Resource r) => r -> m ()
 dispose resource = liftIO $ await =<< atomically (disposeEventuallySTM resource)
 
 disposeEventuallySTM :: Resource r => r -> STM (Future ())
-disposeEventuallySTM resource = mconcat <$> mapM f (getDisposer resource)
+disposeEventuallySTM (toDisposer -> Disposer ds) = mconcat <$> mapM f ds
   where
-    f :: Disposer -> STM (Future ())
-    f TrivialDisposer = pure (pure ())
+    f :: DisposerElement -> STM (Future ())
     f (FnDisposer _ worker exChan state finalizers) =
       beginDisposeFnDisposer worker exChan state finalizers
     f (ResourceManagerDisposer resourceManager) =
@@ -118,18 +120,12 @@ beginDisposeFnDisposer worker exChan disposeState finalizers =
           runFinalizersShortIO finalizers
           throwM $ DisposeException ex
 
-disposerKey :: Disposer -> Unique
-disposerKey TrivialDisposer = trivialDisposableKey
+disposerKey :: DisposerElement -> Unique
 disposerKey (FnDisposer key _ _ _ _) = key
 disposerKey (ResourceManagerDisposer resourceManager) = resourceManagerKey resourceManager
 
 
-trivialDisposableKey :: Unique
-trivialDisposableKey = unsafePerformIO newUnique
-{-# NOINLINE trivialDisposableKey #-}
-
-disposerFinalizers :: Disposer -> Finalizers
-disposerFinalizers TrivialDisposer = completedFinalizers
+disposerFinalizers :: DisposerElement -> Finalizers
 disposerFinalizers (FnDisposer _ _ _ _ finalizers) = finalizers
 disposerFinalizers (ResourceManagerDisposer rm) = resourceManagerFinalizers rm
 
@@ -150,12 +146,12 @@ data ResourceManager = ResourceManager {
 }
 
 data ResourceManagerState
-  = ResourceManagerNormal (TVar (HashMap Unique Disposer)) TIOWorker ExceptionSink
+  = ResourceManagerNormal (TVar (HashMap Unique DisposerElement)) TIOWorker ExceptionSink
   | ResourceManagerDisposing (Future [DisposeDependencies])
   | ResourceManagerDisposed
 
 instance Resource ResourceManager where
-  getDisposer rm = [ResourceManagerDisposer rm]
+  toDisposer rm = Disposer [ResourceManagerDisposer rm]
   isDisposed = resourceManagerIsDisposed
   isDisposing = resourceManagerIsDisposing
 
@@ -174,10 +170,10 @@ newUnmanagedResourceManagerSTM worker exChan = do
 
 
 attachResource :: Resource a => ResourceManager -> a -> STM ()
-attachResource resourceManager resource =
-  mapM_ (attachDisposer resourceManager) (getDisposer resource)
+attachResource resourceManager (toDisposer -> Disposer ds) =
+  mapM_ (attachDisposer resourceManager) ds
 
-attachDisposer :: ResourceManager -> Disposer -> STM ()
+attachDisposer :: ResourceManager -> DisposerElement -> STM ()
 attachDisposer resourceManager disposer = do
   readTVar (resourceManagerState resourceManager) >>= \case
     ResourceManagerNormal attachedResources _ _ -> do
@@ -215,7 +211,7 @@ beginDisposeResourceManagerInternal rm = do
     ResourceManagerDisposing deps -> pure $ DisposeDependencies rmKey deps
     ResourceManagerDisposed -> pure $ DisposeDependencies rmKey mempty
   where
-    disposeThread :: Promise [DisposeDependencies] -> [Disposer] -> IO ()
+    disposeThread :: Promise [DisposeDependencies] -> [DisposerElement] -> IO ()
     disposeThread dependenciesVar attachedDisposers = do
       -- Begin to dispose all attached resources
       results <- mapM (atomically . resourceManagerBeginDispose) attachedDisposers
@@ -233,8 +229,7 @@ beginDisposeResourceManagerInternal rm = do
     rmKey :: Unique
     rmKey = resourceManagerKey rm
 
-    resourceManagerBeginDispose :: Disposer -> STM DisposeResult
-    resourceManagerBeginDispose TrivialDisposer = pure $ DisposeResultAwait $ pure ()
+    resourceManagerBeginDispose :: DisposerElement -> STM DisposeResult
     resourceManagerBeginDispose (FnDisposer _ worker exChan state finalizers) =
       DisposeResultAwait <$> beginDisposeFnDisposer worker exChan state finalizers
     resourceManagerBeginDispose (ResourceManagerDisposer resourceManager) =
@@ -297,7 +292,7 @@ runFinalizersShortIO finalizers = unsafeShortIO $ atomically $ runFinalizers fin
 
 runFinalizersAfter :: Finalizers -> Future () -> ShortIO ()
 runFinalizersAfter finalizers awaitable = do
-  -- Peek awaitable to ensure trivial disposables always run without forking
+  -- Peek awaitable to ensure trivial disposers always run without forking
   isCompleted <- isJust <$> peekFutureShortIO awaitable
   if isCompleted
     then
@@ -306,6 +301,3 @@ runFinalizersAfter finalizers awaitable = do
       void $ forkIOShortIO do
         await awaitable
         atomically $ runFinalizers finalizers
-
-completedFinalizers :: Finalizers
-completedFinalizers = unsafeDupablePerformIO $ Finalizers <$> newEmptyTMVarIO

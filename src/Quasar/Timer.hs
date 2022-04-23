@@ -50,7 +50,7 @@ instance Ord Timer where
   x `compare` y = time x `compare` time y
 
 instance Resource Timer where
-  getDisposer Timer{disposer} = [disposer]
+  toDisposer Timer{disposer} = disposer
 
 instance IsFuture () Timer where
   toFuture Timer{completed} = toFuture completed
@@ -66,7 +66,7 @@ data TimerScheduler = TimerScheduler {
 }
 
 instance Resource TimerScheduler where
-  getDisposer TimerScheduler{thread} = getDisposer thread
+  toDisposer TimerScheduler{thread} = toDisposer thread
 
 data TimerSchedulerDisposed = TimerSchedulerDisposed
   deriving stock (Eq, Show)
