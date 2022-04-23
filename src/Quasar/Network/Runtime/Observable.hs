@@ -1,3 +1,4 @@
+-- Contains the network instances for `Observable` (from the same family of libraries)
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Quasar.Network.Runtime.Observable (
@@ -12,43 +13,85 @@ import Quasar.Network.Runtime
 import Quasar.Prelude
 
 
-instance NetworkObject a => NetworkReference (Observable a) where
-  type ConstructorData (Observable a) = ()
-  type NetworkReferenceChannel (Observable a) = Stream a Bool
-  sendReference :: Observable a -> ((), Stream a Bool -> QuasarIO ())
-  sendReference observable = ((), undefined)
-  receiveReference :: ConstructorData (Observable a) -> Stream Bool a -> QuasarIO (Observable a)
-  receiveReference () channel = undefined
+data ObservableRequest
+  = Start
+  | Stop
 
-instance NetworkObject a => NetworkObject (Observable a) where
-  type NetworkStrategy (Observable a) = NetworkReference
-
-
-data PackedObservableState a
+data ObservableResponse a
   = PackedObservableValue a
   | PackedObservableLoading
   | PackedObservableNotAvailable PackedException
   deriving stock (Eq, Show, Generic)
   deriving anyclass (Binary)
 
-packObservableState :: ObservableState r -> PackedObservableState r
+packObservableState :: ObservableState r -> ObservableResponse r
 packObservableState (ObservableValue x) = PackedObservableValue x
 packObservableState ObservableLoading = PackedObservableLoading
 packObservableState (ObservableNotAvailable ex) = PackedObservableNotAvailable (packException ex)
 
-unpackObservableState :: PackedObservableState r -> ObservableState r
+unpackObservableState :: ObservableResponse r -> ObservableState r
 unpackObservableState (PackedObservableValue x) = ObservableValue x
 unpackObservableState PackedObservableLoading = ObservableLoading
 unpackObservableState (PackedObservableNotAvailable ex) = ObservableNotAvailable (unpackException ex)
 
 
+instance NetworkObject a => NetworkReference (Observable a) where
+  type NetworkReferenceChannel (Observable a) = Stream (ObservableResponse a) ObservableRequest
+  sendReference = sendObservableReference
+  receiveReference = receiveObservableReference
+
+instance NetworkObject a => NetworkObject (Observable a) where
+  type NetworkStrategy (Observable a) = NetworkReference
+
+
+data ProxyState
+  = Stopped
+  | Started
+  | StartRequestedWaitingForChannel
+
+data ObservableProxy a =
+  ObservableProxy {
+    channelFuture :: Future (Stream ObservableRequest (ObservableResponse a)),
+    proxyState :: TVar ProxyState,
+    prim :: ObservablePrim a
+  }
+
+sendObservableReference :: NetworkObject a => Observable a -> Stream (ObservableResponse a) ObservableRequest -> QuasarIO ()
+sendObservableReference observable = undefined
+
+receiveObservableReference :: NetworkObject a => Future (Stream ObservableRequest (ObservableResponse a)) -> QuasarIO (Observable a)
+receiveObservableReference channelFuture = liftIO do
+  proxyState <- newTVarIO Stopped
+  prim <- newObservablePrimIO ObservableLoading
+  pure $ toObservable $
+    ObservableProxy {
+      channelFuture,
+      proxyState,
+      prim
+    }
+
+instance NetworkObject a => IsRetrievable a (ObservableProxy a) where
+  retrieve proxy = undefined
+
+
+instance NetworkObject a => IsObservable a (ObservableProxy a) where
+  observe proxy = undefined
+  pingObservable proxy = undefined
+
+
+
+
+
+
+-- * Old code
+
 data ObservableClient a =
   ObservableClient {
     quasar :: Quasar,
     beginRetrieve :: IO (Future a),
-    createObservableStream :: IO (Stream Void (PackedObservableState a)),
+    createObservableStream :: IO (Stream Void (ObservableResponse a)),
     observablePrim :: ObservablePrim a,
-    activeStreamVar :: TVar (Maybe (Stream Void (PackedObservableState a)))
+    activeStreamVar :: TVar (Maybe (Stream Void (ObservableResponse a)))
   }
 
 instance IsRetrievable a (ObservableClient a) where
@@ -68,7 +111,7 @@ instance IsObservable a (ObservableClient a) where
 newObservableClient
   :: forall a. Binary a
   => IO (Future a)
-  -> IO (Stream Void (PackedObservableState a))
+  -> IO (Stream Void (ObservableResponse a))
   -> QuasarIO (Observable a)
 newObservableClient beginRetrieve createObservableStream = do
   quasar <- askQuasar
@@ -104,7 +147,7 @@ callRetrieve :: Observable a -> QuasarIO (Future a)
 callRetrieve x = toFuture <$> async (retrieve x)
 
 -- | Used in generated code to call `observe`.
-observeToStream :: forall a. Binary a => Observable a -> Stream (PackedObservableState a) Void -> QuasarIO ()
+observeToStream :: forall a. Binary a => Observable a -> Stream (ObservableResponse a) Void -> QuasarIO ()
 observeToStream observable stream = do
   runQuasarIO (streamQuasar stream) do
     -- Initial state is defined as loading, no extra message has to be sent
@@ -128,7 +171,7 @@ observeToStream observable stream = do
         (streamSendDeferred stream payloadHook)
         \ChannelNotConnected -> pure ()
       where
-        payloadHook :: STM (PackedObservableState a)
+        payloadHook :: STM (ObservableResponse a)
         payloadHook = do
           writeTVar isLoading False
           swapTVar outbox Nothing >>= \case

@@ -80,41 +80,36 @@ instance IsChannel (Stream up down) where
 
 
 -- | Describes how a typeclass is used to send- and receive `NetworkObject`s.
-class IsNetworkStrategy (s :: (Type -> Constraint)) where
+type IsNetworkStrategy :: (Type -> Constraint) -> Constraint
+class IsNetworkStrategy s where
   type ChannelIsRequired s :: Bool
-  sendObject :: forall a. (NetworkObject a, NetworkStrategy a ~ s) => a -> (Put, Maybe (Channel -> QuasarIO ()))
-  receiveObject :: forall a. (NetworkObject a, NetworkStrategy a ~ s) => Get (Either a (Channel -> QuasarIO a))
+  sendObject :: forall a. (NetworkObject a, NetworkStrategy a ~ s) => a -> Either Put (Channel -> QuasarIO ())
+  receiveObject :: forall a. (NetworkObject a, NetworkStrategy a ~ s) => Either (Get a) (Future Channel -> QuasarIO a)
 
 instance IsNetworkStrategy Binary where
   -- Copy by value by using `Binary`
   type ChannelIsRequired Binary = 'False
-  sendObject x = (put x, Nothing)
-  receiveObject = Left <$> get
+  sendObject x = Left (put x)
+  receiveObject = Left get
 
 instance IsNetworkStrategy NetworkReference where
   -- Send an object by reference with the `NetworkReference` class
   type ChannelIsRequired NetworkReference = 'True
 
-  sendObject :: forall a. (NetworkObject a, NetworkStrategy a ~ NetworkReference) => a -> (Put, Maybe (Channel -> QuasarIO ()))
-  sendObject x = (put cdata, Just (\channel -> fn (castChannel channel)))
-    where
-      (cdata, fn) = sendReference x
+  sendObject :: forall a. (NetworkObject a, NetworkStrategy a ~ NetworkReference) => a -> Either Put (Channel -> QuasarIO ())
+  sendObject x = Right (\channel -> sendReference x (castChannel channel))
 
-  receiveObject :: forall a. (NetworkObject a, NetworkStrategy a ~ NetworkReference) => Get (Either a (Channel -> QuasarIO a))
-  receiveObject = Right . fn <$> get
-    where
-      fn :: ConstructorData a -> Channel -> QuasarIO a
-      fn cdata channel = receiveReference cdata (castChannel channel)
+  receiveObject :: forall a. (NetworkObject a, NetworkStrategy a ~ NetworkReference) => Either (Get a) (Future Channel -> QuasarIO a)
+  receiveObject = Right (\channel -> receiveReference (castChannel <$> channel))
 
 class (IsNetworkStrategy (NetworkStrategy a), (NetworkStrategy a) a) => NetworkObject a where
   type NetworkStrategy a :: (Type -> Constraint)
 
 
-class (Binary (ConstructorData a), IsChannel (NetworkReferenceChannel a)) => NetworkReference a where
-  type ConstructorData a
+class IsChannel (NetworkReferenceChannel a) => NetworkReference a where
   type NetworkReferenceChannel a
-  sendReference :: a -> (ConstructorData a, NetworkReferenceChannel a -> QuasarIO ())
-  receiveReference :: (ConstructorData a -> ReverseChannelType (NetworkReferenceChannel a) -> QuasarIO a)
+  sendReference :: a -> (NetworkReferenceChannel a -> QuasarIO ())
+  receiveReference :: (Future (ReverseChannelType (NetworkReferenceChannel a)) -> QuasarIO a)
 
 
 instance NetworkObject Bool where
@@ -131,6 +126,8 @@ instance NetworkObject Double where
 
 instance NetworkObject String where
   type NetworkStrategy String = Binary
+
+
 
 -- * Old internal RPC types
 
