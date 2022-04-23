@@ -64,6 +64,7 @@ library
     Quasar.Network.Runtime
     Quasar.Network.SocketLocation
     Quasar.Network.TH
+    Quasar.Network.TH.Generator
     Quasar.Network.TH.Spec
   other-modules:
     Quasar.Network.Runtime.Observable
