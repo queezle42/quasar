@@ -44,6 +44,16 @@ class Resource a where
   isDisposing r = isDisposing (toDisposer r)
 
 
+
+newtype Disposer = Disposer [DisposerElement]
+  deriving newtype (Semigroup, Monoid)
+
+instance Resource Disposer where
+  toDisposer = id
+  isDisposed (Disposer ds) = foldMap isDisposed ds
+  isDisposing (Disposer ds) = awaitAny $ isDisposing <$> ds
+
+
 type DisposerState = TOnce DisposeFn (Future ())
 
 data DisposerElement
@@ -58,15 +68,6 @@ instance Resource DisposerElement where
 
   isDisposing (FnDisposer _ _ _ state _) = unsafeAwaitSTM (check . isRight =<< readTOnceState state)
   isDisposing (ResourceManagerDisposer resourceManager) = resourceManagerIsDisposing resourceManager
-
-
-newtype Disposer = Disposer [DisposerElement]
-  deriving newtype (Semigroup, Monoid)
-
-instance Resource Disposer where
-  toDisposer = id
-  isDisposed (Disposer ds) = foldMap isDisposed ds
-  isDisposing (Disposer ds) = awaitAny $ isDisposing <$> ds
 
 
 type DisposeFn = ShortIO (Future ())
