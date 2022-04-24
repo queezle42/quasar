@@ -96,19 +96,13 @@ class IsRetrievable r a => IsObservable r a | a -> r where
     -> m Disposer
   observe observable = observe (toObservable observable)
 
-  pingObservable
-    :: (MonadQuasar m, MonadIO m)
-    => a -- ^ observable
-    -> m ()
-  pingObservable observable = pingObservable (toObservable observable)
-
   toObservable :: a -> Observable r
   toObservable = Observable
 
   mapObservable :: (r -> r2) -> a -> Observable r2
   mapObservable f = Observable . MappedObservable f . toObservable
 
-  {-# MINIMAL toObservable | observe, pingObservable #-}
+  {-# MINIMAL toObservable | observe #-}
 
 
 observe_
@@ -251,7 +245,6 @@ instance IsObservable a (ConstObservable a) where
   observe (ConstObservable x) callback = liftQuasarSTM do
     callback $ ObservableValue x
     pure trivialDisposer
-  pingObservable _ = pure ()
 
 
 newtype ThrowObservable a = ThrowObservable SomeException
@@ -261,7 +254,6 @@ instance IsObservable a (ThrowObservable a) where
   observe (ThrowObservable ex) callback = liftQuasarSTM do
     callback $ ObservableNotAvailable ex
     pure trivialDisposer
-  pingObservable _ = pure ()
 
 
 data MappedObservable a = forall b. MappedObservable (b -> a) (Observable b)
@@ -269,7 +261,6 @@ instance IsRetrievable a (MappedObservable a) where
   retrieve (MappedObservable f observable) = f <$> retrieve observable
 instance IsObservable a (MappedObservable a) where
   observe (MappedObservable fn observable) callback = observe observable (callback . fmap fn)
-  pingObservable (MappedObservable _ observable) = pingObservable observable
   mapObservable f1 (MappedObservable f2 upstream) = toObservable $ MappedObservable (f1 . f2) upstream
 
 
@@ -296,12 +287,6 @@ instance IsObservable a (LiftA2Observable a) where
     dx <- observe fx (\update -> liftSTM (writeTVar var0 (Just update)) >> callCallback)
     dy <- observe fy (\update -> liftSTM (writeTVar var1 (Just update)) >> callCallback)
     pure $ dx <> dy
-
-  pingObservable (LiftA2Observable _ fx fy) = liftQuasarIO do
-    -- LATER: keep backpressure for parallel network requests
-    future <- async $ pingObservable fy
-    pingObservable fx
-    await future
 
   mapObservable f1 (LiftA2Observable f2 fx fy) = toObservable $ LiftA2Observable (\x y -> f1 (f2 x y)) fx fy
 
@@ -342,10 +327,6 @@ instance IsObservable a (BindObservable a) where
             activeKey <- readTVar keyVar
             when (callbackKey == activeKey) (callback rmsg)
 
-  pingObservable (BindObservable fx fn) = do
-    x <- retrieve fx
-    pingObservable (fn x)
-
   mapObservable f (BindObservable fx fn) = toObservable $ BindObservable fx (f <<$>> fn)
 
 
@@ -381,9 +362,6 @@ instance IsObservable a (CatchObservable e a) where
             activeKey <- readTVar keyVar
             when (callbackKey == activeKey) (callback rmsg)
 
-  pingObservable (CatchObservable fx fn) = do
-    pingObservable fx `catch` \ex -> pingObservable (fn ex)
-
 
 newtype ObserverRegistry a = ObserverRegistry (TVar (HM.HashMap Unique (ObservableState a -> STM ())))
 
@@ -418,8 +396,6 @@ instance IsRetrievable a (ObservableVar a) where
 instance IsObservable a (ObservableVar a) where
   observe (ObservableVar var registry) callback = liftQuasarSTM do
     registerObserver registry callback . ObservableValue =<< readTVar var
-
-  pingObservable _ = pure ()
 
 newObservableVar :: MonadSTM m => a -> m (ObservableVar a)
 newObservableVar x = liftSTM $ ObservableVar <$> newTVar x <*> newObserverRegistry
@@ -461,8 +437,6 @@ instance IsRetrievable a (ObservablePrim a) where
 instance IsObservable a (ObservablePrim a) where
   observe (ObservablePrim var registry) callback = liftQuasarSTM do
     registerObserver registry callback =<< readTVar var
-
-  pingObservable _ = pure ()
 
 newObservablePrim :: MonadSTM m => ObservableState a -> m (ObservablePrim a)
 newObservablePrim x = liftSTM $ ObservablePrim <$> newTVar x <*> newObserverRegistry
