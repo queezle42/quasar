@@ -1,6 +1,6 @@
 module Quasar.Observable (
   -- * Observable core
-  Observable(..),
+  Observable,
   ObservableState(..),
   IsRetrievable(..),
   IsObservable(..),
