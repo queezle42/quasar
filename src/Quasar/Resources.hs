@@ -43,26 +43,10 @@ module Quasar.Resources (
 
 import Control.Monad.Catch
 import Quasar.Future
-import Quasar.Async.Fork
-import Quasar.Async.STMHelper
 import Quasar.Exceptions
 import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Resources.Disposer
-import Quasar.Utils.ShortIO
-
-
-newUnmanagedIODisposer :: IO () -> TIOWorker -> ExceptionSink -> STM Disposer
--- TODO change TIOWorker behavior for spawning threads, so no `unsafeShortIO` is necessary
-newUnmanagedIODisposer fn worker exChan = newUnmanagedPrimitiveDisposer (unsafeShortIO $ forkFuture fn exChan) worker exChan
-
-newUnmanagedSTMDisposer :: STM () -> TIOWorker -> ExceptionSink -> STM Disposer
-newUnmanagedSTMDisposer fn worker exChan = newUnmanagedPrimitiveDisposer disposeFn worker exChan
-  where
-    disposeFn :: ShortIO (Future ())
-    disposeFn = unsafeShortIO $ atomically $
-      -- Spawn a thread only if the transaction retries
-      (pure <$> fn) `orElse` forkAsyncSTM (atomically fn) worker exChan
 
 
 registerResource :: (Resource a, MonadQuasar m, MonadSTM m) => a -> m ()
