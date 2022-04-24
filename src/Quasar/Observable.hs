@@ -127,8 +127,7 @@ observeIO_
 observeIO_ observable callback = quasarAtomically $ observe_ observable callback
 
 
-type ObservableCallback v = ObservableState v -> QuasarSTM ()
-
+type ObservableCallback a = ObservableState a -> QuasarSTM ()
 
 
 -- | Existential quantification wrapper for the IsObservable type class.
@@ -278,8 +277,8 @@ instance IsRetrievable a (LiftA2Observable a) where
 
 instance IsObservable a (LiftA2Observable a) where
   observe (LiftA2Observable fn fx fy) callback = liftQuasarSTM do
-    var0 <- liftSTM $ newTVar Nothing
-    var1 <- liftSTM $ newTVar Nothing
+    var0 <- newTVar Nothing
+    var1 <- newTVar Nothing
     let callCallback = do
           mergedValue <- liftSTM $ runMaybeT $ liftA2 (liftA2 fn) (MaybeT (readTVar var0)) (MaybeT (readTVar var1))
           -- Run the callback only once both values have been received
