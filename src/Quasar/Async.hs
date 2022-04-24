@@ -52,12 +52,12 @@ async_ fn = void $ asyncWithUnmask (\unmask -> unmask fn)
 asyncWithUnmask :: (MonadQuasar m, MonadIO m) => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO a) -> m (Async a)
 asyncWithUnmask fn = do
   quasar <- askQuasar
-  asyncWithUnmask' (\unmask -> runReaderT (fn (liftUnmask unmask)) quasar)
+  asyncWithUnmask' (\unmask -> runQuasarIO quasar (fn (liftUnmask unmask)))
   where
     liftUnmask :: (forall b. IO b -> IO b) -> QuasarIO a -> QuasarIO a
     liftUnmask unmask innerAction = do
       quasar <- askQuasar
-      liftIO $ unmask $ runReaderT innerAction quasar
+      liftIO $ unmask $ runQuasarIO quasar innerAction
 
 asyncWithUnmask_ :: (MonadQuasar m, MonadIO m) => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO ()) -> m ()
 asyncWithUnmask_ fn = void $ asyncWithUnmask fn

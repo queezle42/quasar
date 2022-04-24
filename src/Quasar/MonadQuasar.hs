@@ -41,9 +41,11 @@ import Control.Monad.Reader
 import GHC.Records (HasField(..))
 import Quasar.Async.STMHelper
 import Quasar.Exceptions
+import Quasar.Future
 import Quasar.Logger
 import Quasar.Prelude
 import Quasar.Resources.Disposer
+import Control.Monad.Base (MonadBase)
 
 
 -- Invariant: the resource manager is disposed as soon as an exception is thrown to the channel
@@ -115,22 +117,47 @@ class (MonadCatch m, MonadFix m) => MonadQuasar m where
   localQuasar :: Quasar -> m a -> m a
 
 type QuasarT = ReaderT Quasar
-type QuasarIO = QuasarT IO
+
+newtype QuasarIO a = QuasarIO (QuasarT IO a)
+  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadMask, MonadFail, MonadFix, Alternative, MonadPlus, MonadBase IO, MonadIO)
+
+instance Semigroup a => Semigroup (QuasarIO a) where
+  fx <> fy = liftA2 (<>) fx fy
+
+instance Monoid a => Monoid (QuasarIO a) where
+  mempty = pure mempty
+
+instance MonadAwait QuasarIO where
+  await awaitable = liftIO (await awaitable)
+
 
 newtype QuasarSTM a = QuasarSTM (QuasarT STM a)
-  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadFix, Alternative, MonadSTM)
+  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadFix, Alternative, MonadPlus, MonadSTM)
 
+instance Semigroup a => Semigroup (QuasarSTM a) where
+  fx <> fy = liftA2 (<>) fx fy
+
+instance Monoid a => Monoid (QuasarSTM a) where
+  mempty = pure mempty
+
+instance MonadFail QuasarSTM where
+  fail msg = throwM (userError msg)
+
+
+instance MonadQuasar QuasarIO where
+  askQuasar = QuasarIO ask
+  localQuasar quasar (QuasarIO fn) = QuasarIO (local (const quasar) fn)
 
 instance (MonadIO m, MonadMask m, MonadFix m) => MonadQuasar (QuasarT m) where
   askQuasar = ask
   localQuasar quasar = local (const quasar)
-  {-# SPECIALIZE instance MonadQuasar QuasarIO #-}
+  {-# SPECIALIZE instance MonadQuasar (QuasarT IO) #-}
 
 instance (MonadIO m, MonadMask m, MonadFix m) => MonadLog (QuasarT m) where
   logMessage msg = do
     logger <- askLogger
     liftIO $ logger msg
-  {-# SPECIALIZE instance MonadLog QuasarIO #-}
+  {-# SPECIALIZE instance MonadLog (QuasarT IO) #-}
 
 
 instance MonadQuasar QuasarSTM where
@@ -176,7 +203,7 @@ liftQuasarSTM fn = do
 {-# INLINABLE [1] liftQuasarSTM #-}
 
 runQuasarIO :: MonadIO m => Quasar -> QuasarIO a -> m a
-runQuasarIO quasar fn = liftIO $ runReaderT fn quasar
+runQuasarIO quasar (QuasarIO fn) = liftIO $ runReaderT fn quasar
 {-# SPECIALIZE runQuasarIO :: Quasar -> QuasarIO a -> IO a #-}
 {-# INLINABLE runQuasarIO #-}
 
