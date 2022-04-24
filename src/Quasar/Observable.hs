@@ -315,13 +315,18 @@ instance IsRetrievable a (BindObservable a) where
 
 instance IsObservable a (BindObservable a) where
   observe (BindObservable fx fn) callback = liftQuasarSTM do
+    -- TODO Dispose in STM to remove potential extraneous (/invalid?) updates while disposing
     callback ObservableLoading
     keyVar <- newTVar =<< newUniqueSTM
-    disposableVar <- liftSTM (newTVar trivialDisposer)
-    observe fx (leftCallback keyVar disposableVar)
+    rightDisposerVar <- newTVar trivialDisposer
+    leftDisposer <- observe fx (leftCallback keyVar rightDisposerVar)
+    registerDisposeAction do
+      dispose leftDisposer
+      -- Needs to be disposed in order since there is no way to unsubscribe atomically yet
+      dispose =<< readTVarIO rightDisposerVar
     where
-      leftCallback keyVar disposableVar lmsg = do
-        disposeEventually_ =<< readTVar disposableVar
+      leftCallback keyVar rightDisposerVar lmsg = do
+        disposeEventually_ =<< readTVar rightDisposerVar
         key <- newUniqueSTM
         -- Dispose is not instant, so a key is used to disarm the callback derived from the last (now outdated) value
         writeTVar keyVar key
@@ -330,7 +335,7 @@ instance IsObservable a (BindObservable a) where
             ObservableValue x -> observe (fn x) (rightCallback key)
             ObservableLoading -> trivialDisposer <$ callback ObservableLoading
             ObservableNotAvailable ex -> trivialDisposer <$ callback (ObservableNotAvailable ex)
-        writeTVar disposableVar disposer
+        writeTVar rightDisposerVar disposer
         where
           rightCallback :: Unique -> ObservableCallback a
           rightCallback callbackKey rmsg = do
@@ -353,11 +358,15 @@ instance IsObservable a (CatchObservable e a) where
   observe (CatchObservable fx fn) callback = liftQuasarSTM do
     callback ObservableLoading
     keyVar <- newTVar =<< newUniqueSTM
-    disposableVar <- liftSTM $ newTVar trivialDisposer
-    observe fx (leftCallback keyVar disposableVar)
+    rightDisposerVar <- liftSTM $ newTVar trivialDisposer
+    leftDisposer <- observe fx (leftCallback keyVar rightDisposerVar)
+    registerDisposeAction do
+      dispose leftDisposer
+      -- Needs to be disposed in order since there is no way to unsubscribe atomically yet
+      dispose =<< readTVarIO rightDisposerVar
     where
-      leftCallback keyVar disposableVar lmsg = do
-        disposeEventually_ =<< readTVar disposableVar
+      leftCallback keyVar rightDisposerVar lmsg = do
+        disposeEventually_ =<< readTVar rightDisposerVar
         key <- newUniqueSTM
         -- Dispose is not instant, so a key is used to disarm the callback derived from the last (now outdated) value
         writeTVar keyVar key
@@ -365,7 +374,7 @@ instance IsObservable a (CatchObservable e a) where
           case lmsg of
             ObservableNotAvailable (fromException -> Just ex) -> observe (fn ex) (rightCallback key)
             _ -> trivialDisposer <$ callback lmsg
-        writeTVar disposableVar disposer
+        writeTVar rightDisposerVar disposer
         where
           rightCallback :: Unique -> ObservableCallback a
           rightCallback callbackKey rmsg = do
