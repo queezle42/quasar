@@ -27,7 +27,7 @@ module Quasar.Prelude
     Data.Kind.Type,
     Data.Kind.Constraint,
     Data.Unique.Unique,
-    Data.Unique.newUnique,
+    newUnique,
     Data.Void.Void,
     Data.Hashable.Hashable,
     GHC.Generics.Generic,
@@ -162,3 +162,6 @@ traceShowIO = traceIO . show
 {-# WARNING traceShowIdIO "Trace." #-}
 traceShowIdIO :: (Control.Monad.IO.Class.MonadIO m, Show a) => a -> m a
 traceShowIdIO a = traceShowIO a >> pure a
+
+newUnique :: MonadIO m => m Data.Unique.Unique
+newUnique = liftIO Data.Unique.newUnique
