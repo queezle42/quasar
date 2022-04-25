@@ -119,7 +119,7 @@ class (MonadCatch m, MonadFix m) => MonadQuasar m where
 type QuasarT = ReaderT Quasar
 
 newtype QuasarIO a = QuasarIO (QuasarT IO a)
-  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadMask, MonadFail, MonadFix, Alternative, MonadPlus, MonadBase IO, MonadIO)
+  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadMask, MonadFail, MonadFix, Alternative, MonadPlus, MonadLog, MonadBase IO, MonadIO)
 
 instance Semigroup a => Semigroup (QuasarIO a) where
   fx <> fy = liftA2 (<>) fx fy
