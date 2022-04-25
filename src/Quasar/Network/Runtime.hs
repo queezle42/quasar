@@ -24,13 +24,13 @@ module Quasar.Network.Runtime (
   listenUnix,
   listenOnBoundSocket,
 
-  -- * Stream
-  Stream,
-  streamSend,
-  streamSendDeferred,
-  streamSetHandler,
-  streamQuasar,
-  unsafeQueueStreamMessage,
+  -- * Channel
+  Channel,
+  channelSend,
+  channelSendDeferred,
+  channelSetHandler,
+  channelQuasar,
+  unsafeQueueChannelMessage,
 
   -- * Test implementation
   withStandaloneClient,
@@ -47,7 +47,7 @@ module Quasar.Network.Runtime (
   clientSend,
   clientRequest,
   clientReportProtocolError,
-  newStream,
+  newChannel,
 ) where
 
 import Control.Monad.Catch
@@ -73,10 +73,10 @@ instance IsChannel RawChannel where
   castChannel :: RawChannel -> RawChannel
   castChannel = id
 
-instance IsChannel (Stream up down) where
-  type ReverseChannelType (Stream up down) = (Stream down up)
-  castChannel :: RawChannel -> Stream up down
-  castChannel = Stream
+instance IsChannel (Channel up down) where
+  type ReverseChannelType (Channel up down) = (Channel down up)
+  castChannel :: RawChannel -> Channel up down
+  castChannel = Channel
 
 
 -- | Describes how a typeclass is used to send- and receive `NetworkObject`s.
@@ -207,27 +207,27 @@ serverHandleChannelMessage protocolImpl channel resources req = liftIO $ serverH
         wrappedResponse = (resources.messageId, response)
 
 
-newtype Stream up down = Stream RawChannel
+newtype Channel up down = Channel RawChannel
   deriving newtype Resource
 
-newStream :: MonadIO m => RawChannel -> m (Stream up down)
-newStream = liftIO . pure . Stream
+newChannel :: MonadIO m => RawChannel -> m (Channel up down)
+newChannel = liftIO . pure . Channel
 
-streamSend :: (Binary up, MonadIO m) => Stream up down -> up -> m ()
-streamSend (Stream channel) value = liftIO $ sendSimpleRawChannelMessage channel (encode value)
+channelSend :: (Binary up, MonadIO m) => Channel up down -> up -> m ()
+channelSend (Channel channel) value = liftIO $ sendSimpleRawChannelMessage channel (encode value)
 
-streamSendDeferred :: (Binary up, MonadIO m) => Stream up down -> STM up -> m ()
-streamSendDeferred (Stream channel) value = liftIO $ sendSimpleRawChannelMessageDeferred channel (const (encode <$> value))
+channelSendDeferred :: (Binary up, MonadIO m) => Channel up down -> STM up -> m ()
+channelSendDeferred (Channel channel) value = liftIO $ sendSimpleRawChannelMessageDeferred channel (const (encode <$> value))
 
-unsafeQueueStreamMessage :: (Binary up, MonadSTM m) => Stream up down -> up -> m ()
-unsafeQueueStreamMessage (Stream channel) value = liftSTM do
+unsafeQueueChannelMessage :: (Binary up, MonadSTM m) => Channel up down -> up -> m ()
+unsafeQueueChannelMessage (Channel channel) value = liftSTM do
   unsafeQueueRawChannelMessageSimple channel (encode value)
 
-streamSetHandler :: (Binary down, MonadIO m) => Stream up down -> (down -> QuasarIO ()) -> m ()
-streamSetHandler (Stream channel) handler = liftIO $ rawChannelSetSimpleBinaryHandler channel handler
+channelSetHandler :: (Binary down, MonadIO m) => Channel up down -> (down -> QuasarIO ()) -> m ()
+channelSetHandler (Channel channel) handler = liftIO $ rawChannelSetSimpleBinaryHandler channel handler
 
-streamQuasar :: Stream up down -> Quasar
-streamQuasar (Stream s) = s.quasar
+channelQuasar :: Channel up down -> Quasar
+channelQuasar (Channel s) = s.quasar
 
 -- ** Running client and server
 

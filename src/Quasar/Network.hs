@@ -4,12 +4,12 @@ module Quasar.Network (
   RpcFunction,
   RpcArgument,
   RpcResult,
-  RpcStream,
+  RpcChannel,
   rpcApi,
   rpcFunction,
   addArgument,
   addResult,
-  addStream,
+  addChannel,
   setFixedHandler,
   rpcObservable,
 
@@ -33,10 +33,10 @@ module Quasar.Network (
   listenUnix,
   listenOnBoundSocket,
 
-  -- ** Stream
-  Stream,
-  streamSend,
-  streamSetHandler,
+  -- ** Channel
+  Channel,
+  channelSend,
+  channelSetHandler,
 ) where
 
 import Quasar.Network.TH

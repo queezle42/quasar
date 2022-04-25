@@ -3,12 +3,12 @@ module Quasar.Network.TH (
   RpcFunction,
   RpcArgument,
   RpcResult,
-  RpcStream,
+  RpcChannel,
   rpcApi,
   rpcFunction,
   addArgument,
   addResult,
-  addStream,
+  addChannel,
   setFixedHandler,
   rpcObservable,
   makeRpc,
@@ -38,7 +38,7 @@ data RpcFunction = RpcFunction {
   name :: String,
   arguments :: [RpcArgument],
   results :: [RpcResult],
-  streams :: [RpcStream],
+  channels :: [RpcChannel],
   fixedHandler :: Maybe (Q Exp)
 }
 
@@ -52,7 +52,7 @@ data RpcResult = RpcResult {
   ty :: Q Type
 }
 
-data RpcStream = RpcStream {
+data RpcChannel = RpcChannel {
   name :: String,
   tyUp :: Q Type,
   tyDown :: Q Type
@@ -77,7 +77,7 @@ rpcFunction methodName setup = State.modify (\api -> api{functions = api.functio
       name = methodName,
       arguments = [],
       results = [],
-      streams = [],
+      channels = [],
       fixedHandler = Nothing
     }
 
@@ -95,8 +95,8 @@ addArgument name t = State.modify (\fun -> fun{arguments = fun.arguments <> [Rpc
 addResult :: String -> Q Type -> State RpcFunction ()
 addResult name t = State.modify (\fun -> fun{results = fun.results <> [RpcResult name t]})
 
-addStream :: String -> Q Type -> Q Type -> State RpcFunction ()
-addStream name tUp tDown = State.modify (\fun -> fun{streams = fun.streams <> [RpcStream name tUp tDown]})
+addChannel :: String -> Q Type -> Q Type -> State RpcFunction ()
+addChannel name tUp tDown = State.modify (\fun -> fun{channels = fun.channels <> [RpcChannel name tUp tDown]})
 
 setFixedHandler :: Q Exp -> State RpcFunction ()
 setFixedHandler handler = State.modify (\fun -> fun{fixedHandler = Just handler})
@@ -194,7 +194,7 @@ clientRequestStub api req = do
 
               clause
                 (whenHasResult (varP resultAsyncName) <> [listP (varP <$> channelNames)])
-                (normalB (buildTupleM (sequence (whenHasResult [|pure $(varE resultAsyncName)|] <> ((\x -> [|newStream $(varE x)|]) <$> channelNames)))))
+                (normalB (buildTupleM (sequence (whenHasResult [|pure $(varE resultAsyncName)|] <> ((\x -> [|newChannel $(varE x)|]) <$> channelNames)))))
                 []
 
             invalidChannelCountClause :: Q Clause
@@ -333,7 +333,7 @@ data Request = Request {
   handlerE :: RequestHandlerContext -> Q Exp
 }
 
-data RequestCreateResource = RequestCreateChannel | RequestCreateStream (Q Type) (Q Type)
+data RequestCreateResource = RequestCreateRawChannel | RequestCreateChannel (Q Type) (Q Type)
 
 data Response = Response {
   name :: String,
@@ -368,9 +368,9 @@ data RequestHandlerContext = RequestHandlerContext {
 --    observeRequest = Request {
 --      name = observable.name <> "_observe",
 --      fields = [],
---      createdResources = [RequestCreateStream [t|Void|] [t|PackedObservableState $(observable.ty)|]],
+--      createdResources = [RequestCreateChannel [t|Void|] [t|PackedObservableState $(observable.ty)|]],
 --      mResponse = Nothing,
---      handlerE = \ctx -> [|observeToStream $(observableE ctx) $(ctx.resourceEs !! 0)|]
+--      handlerE = \ctx -> [|observeToChannel $(observableE ctx) $(ctx.resourceEs !! 0)|]
 --      }
 --    retrieveRequest :: Request
 --    retrieveRequest = Request {
@@ -422,7 +422,7 @@ generateFunction api fun = do
     request = Request {
       name = fun.name,
       fields = toField <$> fun.arguments,
-      createdResources = (\stream -> RequestCreateStream stream.tyUp stream.tyDown) <$> fun.streams,
+      createdResources = (\channel -> RequestCreateChannel channel.tyUp channel.tyDown) <$> fun.channels,
       mResponse = if hasResult fun then Just response else Nothing,
       handlerE = serverRequestHandlerE
     }
@@ -532,20 +532,20 @@ implResourceTypes :: Request -> Q [Type]
 implResourceTypes req = sequence $ implResourceType <$> req.createdResources
 
 stubResourceType :: RequestCreateResource -> Q Type
-stubResourceType RequestCreateChannel = [t|RawChannel|]
-stubResourceType (RequestCreateStream up down) = [t|Stream $up $down|]
+stubResourceType RequestCreateRawChannel = [t|RawChannel|]
+stubResourceType (RequestCreateChannel up down) = [t|Channel $up $down|]
 
 implResourceType :: RequestCreateResource -> Q Type
-implResourceType RequestCreateChannel = [t|RawChannel|]
-implResourceType (RequestCreateStream up down) = [t|Stream $down $up|]
+implResourceType RequestCreateRawChannel = [t|RawChannel|]
+implResourceType (RequestCreateChannel up down) = [t|Channel $down $up|]
 
 resourceNamePrefix :: RequestCreateResource -> String
-resourceNamePrefix RequestCreateChannel = "channel"
-resourceNamePrefix (RequestCreateStream _ _) = "stream"
+resourceNamePrefix RequestCreateRawChannel = "rawChannel"
+resourceNamePrefix (RequestCreateChannel _ _) = "stream"
 
 createResource :: RequestCreateResource -> Q Exp -> Q Exp
-createResource RequestCreateChannel channelE = [|pure $channelE|]
-createResource (RequestCreateStream _up _down) channelE = [|newStream $channelE|]
+createResource RequestCreateRawChannel channelE = [|pure $channelE|]
+createResource (RequestCreateChannel _up _down) channelE = [|newChannel $channelE|]
 
 implResultType :: Request -> Q Type
 implResultType req = [t|QuasarIO $(resultType)|]

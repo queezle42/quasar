@@ -61,13 +61,13 @@ $(makeRpc $ rpcApi "Example" $ do
     rpcFunction "noNothing" $ pure ()
   )
 
-$(makeRpc $ rpcApi "StreamExample" $ do
-    rpcFunction "createMultiplyStream" $ do
-      addStream "stream" [t|(Int, Int)|] [t|Int|]
+$(makeRpc $ rpcApi "ChannelExample" $ do
+    rpcFunction "exampleCreateMultiplyChannel" $ do
+      addChannel "channel" [t|(Int, Int)|] [t|Int|]
 
-    rpcFunction "createStreams" $ do
-      addStream "stream1" [t|Bool|] [t|Bool|]
-      addStream "stream2" [t|Int|] [t|Int|]
+    rpcFunction "exampleCreateChannels" $ do
+      addChannel "channel1" [t|Bool|] [t|Bool|]
+      addChannel "channel2" [t|Int|] [t|Int|]
   )
 
 -- $(makeRpc $ rpcApi "ObservableExample" $ do
@@ -82,18 +82,18 @@ exampleProtocolImpl = ExampleProtocolImpl {
   noNothingImpl = pure ()
 }
 
-streamExampleProtocolImpl :: StreamExampleProtocolImpl
-streamExampleProtocolImpl = StreamExampleProtocolImpl {
-  createMultiplyStreamImpl,
-  createStreamsImpl
+channelExampleProtocolImpl :: ChannelExampleProtocolImpl
+channelExampleProtocolImpl = ChannelExampleProtocolImpl {
+  exampleCreateMultiplyChannelImpl,
+  exampleCreateChannelsImpl
 }
   where
-    createMultiplyStreamImpl :: MonadIO m => Stream Int (Int, Int) -> m ()
-    createMultiplyStreamImpl stream = streamSetHandler stream $ \(x, y) -> streamSend stream (x * y)
-    createStreamsImpl :: MonadIO m => Stream Bool Bool -> Stream Int Int -> m ()
-    createStreamsImpl stream1 stream2 = do
-      streamSetHandler stream1 $ streamSend stream1
-      streamSetHandler stream2 $ streamSend stream2
+    exampleCreateMultiplyChannelImpl :: MonadIO m => Channel Int (Int, Int) -> m ()
+    exampleCreateMultiplyChannelImpl channel = channelSetHandler channel $ \(x, y) -> channelSend channel (x * y)
+    exampleCreateChannelsImpl :: MonadIO m => Channel Bool Bool -> Channel Int Int -> m ()
+    exampleCreateChannelsImpl channel1 channel2 = do
+      channelSetHandler channel1 $ channelSend channel1
+      channelSetHandler channel2 $ channelSend channel2
 
 
 spec :: Spec
@@ -109,24 +109,24 @@ spec = parallel $ do
         noResponse client 1337
         noNothing client
 
-  describe "StreamExample" $ do
-    it "can open and close a stream" $ rm do
-      withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
-        dispose =<< createMultiplyStream client
+  describe "ChannelExample" $ do
+    it "can open and close a channel" $ rm do
+      withStandaloneClient @ChannelExampleProtocol channelExampleProtocolImpl $ \client -> do
+        dispose =<< exampleCreateMultiplyChannel client
 
-    it "can open multiple streams in a single rpc call" $ rm do
-      withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
-        (stream1, stream2) <- createStreams client
-        dispose stream1
-        dispose stream2
+    it "can open multiple channels in a single rpc call" $ rm do
+      withStandaloneClient @ChannelExampleProtocol channelExampleProtocolImpl $ \client -> do
+        (channel1, channel2) <- exampleCreateChannels client
+        dispose channel1
+        dispose channel2
 
-    Hspec.aroundAll (\x -> rm $ withStandaloneClient @StreamExampleProtocol streamExampleProtocolImpl $ \client -> do
+    Hspec.aroundAll (\x -> rm $ withStandaloneClient @ChannelExampleProtocol channelExampleProtocolImpl $ \client -> do
         resultMVar <- liftIO newEmptyMVar
-        stream <- createMultiplyStream client
-        streamSetHandler stream $ liftIO . putMVar resultMVar
-        liftIO $ x (resultMVar, stream)
-      ) $ it "can send data over the stream" $ \(resultMVar, stream) -> property $ \(x, y) -> monadicIO $ do
-        liftIO $ streamSend stream (x, y)
+        channel <- exampleCreateMultiplyChannel client
+        channelSetHandler channel $ liftIO . putMVar resultMVar
+        liftIO $ x (resultMVar, channel)
+      ) $ it "can send data over the channel" $ \(resultMVar, channel) -> property $ \(x, y) -> monadicIO $ do
+        liftIO $ channelSend channel (x, y)
         liftIO $ takeMVar resultMVar `shouldReturn` x * y
 
 --  describe "ObservableExample" $ do
