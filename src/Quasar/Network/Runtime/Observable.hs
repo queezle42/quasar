@@ -1,4 +1,4 @@
--- Contains the network instances for `Observable` (from the same family of libraries)
+-- Contains instances for `Observable` (which is also part of the quasar framework)
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Quasar.Network.Runtime.Observable (
@@ -13,16 +13,24 @@ import Quasar.Network.Runtime
 import Quasar.Prelude
 
 
+data ObservableProxyException = ObservableProxyException SomeException
+  deriving stock (Show)
+  deriving anyclass (Exception)
+
+
 data ObservableRequest
   = Start
   | Stop
+  | Once
+  deriving stock (Eq, Show, Generic)
+  deriving anyclass Binary
 
 data ObservableResponse a
   = PackedObservableValue a
   | PackedObservableLoading
   | PackedObservableNotAvailable PackedException
   deriving stock (Eq, Show, Generic)
-  deriving anyclass (Binary)
+  deriving anyclass Binary
 
 packObservableState :: ObservableState r -> ObservableResponse r
 packObservableState (ObservableValue x) = PackedObservableValue x
@@ -36,7 +44,7 @@ unpackObservableState (PackedObservableNotAvailable ex) = ObservableNotAvailable
 
 
 instance NetworkObject a => NetworkReference (Observable a) where
-  type NetworkReferenceChannel (Observable a) = Stream (ObservableResponse a) ObservableRequest
+  type NetworkReferenceChannel (Observable a) = Channel (ObservableResponse a) ObservableRequest
   sendReference = sendObservableReference
   receiveReference = receiveObservableReference
 
@@ -48,132 +56,56 @@ data ProxyState
   = Stopped
   | Started
   | StartRequestedWaitingForChannel
+  deriving stock (Eq, Show)
 
 data ObservableProxy a =
   ObservableProxy {
-    channelFuture :: Future (Stream ObservableRequest (ObservableResponse a)),
+    channelFuture :: Future (Channel ObservableRequest (ObservableResponse a)),
     proxyState :: TVar ProxyState,
-    prim :: ObservablePrim a
+    observablePrim :: ObservablePrim a
   }
 
-sendObservableReference :: NetworkObject a => Observable a -> Stream (ObservableResponse a) ObservableRequest -> QuasarIO ()
+sendObservableReference :: NetworkObject a => Observable a -> Channel (ObservableResponse a) ObservableRequest -> QuasarIO ()
 sendObservableReference observable = undefined
 
-receiveObservableReference :: NetworkObject a => Future (Stream ObservableRequest (ObservableResponse a)) -> QuasarIO (Observable a)
-receiveObservableReference channelFuture = liftIO do
+receiveObservableReference :: NetworkObject a => Future (Channel ObservableRequest (ObservableResponse a)) -> QuasarIO (Observable a)
+receiveObservableReference channelFuture = do
   proxyState <- newTVarIO Stopped
-  prim <- newObservablePrimIO ObservableLoading
-  pure $ toObservable $
-    ObservableProxy {
+  observablePrim <- newObservablePrimIO ObservableLoading
+  let proxy = ObservableProxy {
       channelFuture,
       proxyState,
-      prim
+      observablePrim
     }
+  async_ $ manageObservableProxy proxy
+  pure $ toObservable proxy
 
 instance NetworkObject a => IsRetrievable a (ObservableProxy a) where
   retrieve proxy = undefined
 
 
 instance NetworkObject a => IsObservable a (ObservableProxy a) where
-  observe proxy = undefined
+  observe proxy callback = liftQuasarSTM do
+    state <- readTVar proxy.proxyState
+    when (state == Stopped) undefined
+    pure undefined
   pingObservable proxy = undefined
 
 
-
-
-
-
--- * Old code
-
-data ObservableClient a =
-  ObservableClient {
-    quasar :: Quasar,
-    beginRetrieve :: IO (Future a),
-    createObservableStream :: IO (Stream Void (ObservableResponse a)),
-    observablePrim :: ObservablePrim a,
-    activeStreamVar :: TVar (Maybe (Stream Void (ObservableResponse a)))
-  }
-
-instance IsRetrievable a (ObservableClient a) where
-  -- TODO use withResourceScope to abort on async exception (once aborting requests is supported by the code generator)
-  retrieve client = liftIO $ client.beginRetrieve >>= await
-
-instance IsObservable a (ObservableClient a) where
-  observe client callback = liftQuasarSTM do
-    sub <- observe client.observablePrim callback
-    -- Register to clients quasar as well to ensure observers are unsubscribed when the client thread is cancelled
-    runQuasarSTM client.quasar $ registerResource sub
-    pure sub
-  pingObservable = undefined
-
-
--- | Should be used in generated code (not implemented yet). Has to be run in context of the parent streams `Quasar`.
-newObservableClient
-  :: forall a. Binary a
-  => IO (Future a)
-  -> IO (Stream Void (ObservableResponse a))
-  -> QuasarIO (Observable a)
-newObservableClient beginRetrieve createObservableStream = do
-  quasar <- askQuasar
-  observablePrim <- newObservablePrimIO ObservableLoading
-  activeStreamVar <- newTVarIO Nothing
-  let client = ObservableClient {
-    quasar,
-    beginRetrieve,
-    createObservableStream,
-    observablePrim,
-    activeStreamVar
-  }
-  async_ $ manageObservableClient client
-  pure $ toObservable client
-
-manageObservableClient :: Binary a => ObservableClient a -> QuasarIO ()
-manageObservableClient ObservableClient{createObservableStream, observablePrim, activeStreamVar} = mask_ $ forever do
-  atomically $ check =<< observablePrimHasObservers observablePrim
-
-  stream <- liftIO createObservableStream
-  streamSetHandler stream handler
-  atomically $ writeTVar activeStreamVar (Just stream)
-
-  atomically $ check . not =<< observablePrimHasObservers observablePrim
-  mapM_ dispose =<< atomically (swapTVar activeStreamVar Nothing)
-  atomically $ setObservablePrim observablePrim ObservableLoading
+manageObservableProxy :: ObservableProxy a -> QuasarIO ()
+manageObservableProxy proxy =
+  (await proxy.channelFuture >>= loop)
+    `catch`
+      \ex -> atomically (setObservablePrim proxy.observablePrim (ObservableNotAvailable (toException (ObservableProxyException ex))))
   where
-    handler (unpackObservableState -> state) = atomically $ setObservablePrim observablePrim state
+    loop channel = forever do
+      atomically $ check =<< observablePrimHasObservers proxy.observablePrim
 
--- | Used in generated code to call `retrieve`.
-callRetrieve :: Observable a -> QuasarIO (Future a)
--- TODO LATER rewrite `retrieve` to keep backpressure across multiple hops
-callRetrieve x = toFuture <$> async (retrieve x)
+      channelSend channel Start
 
--- | Used in generated code to call `observe`.
-observeToStream :: forall a. Binary a => Observable a -> Stream (ObservableResponse a) Void -> QuasarIO ()
-observeToStream observable stream = do
-  runQuasarIO (streamQuasar stream) do
-    -- Initial state is defined as loading, no extra message has to be sent
-    isLoading <- newTVarIO True
-    outbox <- newTVarIO Nothing
-    async_ $ liftIO $ sendThread isLoading outbox
-    quasarAtomically $ observe_ observable (callback isLoading outbox)
+      atomically $ check . not =<< observablePrimHasObservers proxy.observablePrim
 
-  where
-    callback :: TVar Bool -> TVar (Maybe (ObservableState a)) -> ObservableCallback a
-    callback isLoading outbox state = liftSTM do
-      unlessM (readTVar isLoading) do
-        unsafeQueueStreamMessage stream PackedObservableLoading
-        writeTVar isLoading True
-      writeTVar outbox (Just state)
+      channelSend channel Stop
 
-    sendThread :: TVar Bool -> TVar (Maybe (ObservableState a)) -> IO ()
-    sendThread isLoading outbox = forever do
-      atomically $ check . isJust =<< readTVar outbox
-      catch
-        (streamSendDeferred stream payloadHook)
-        \ChannelNotConnected -> pure ()
-      where
-        payloadHook :: STM (ObservableResponse a)
-        payloadHook = do
-          writeTVar isLoading False
-          swapTVar outbox Nothing >>= \case
-            Just state -> pure $ packObservableState state
-            Nothing -> unreachableCodePathM
+      atomically $ setObservablePrim proxy.observablePrim ObservableLoading
+    --callback (unpackObservableState -> state) = atomically $ setObservablePrim proxy.observablePrim state
