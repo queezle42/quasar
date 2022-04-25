@@ -1,6 +1,6 @@
 module Quasar.Network.Multiplexer (
   -- * Channel type
-  Channel(quasar),
+  RawChannel(quasar),
 
   -- * Sending and receiving messages
   MessageId,
@@ -9,24 +9,22 @@ module Quasar.Network.Multiplexer (
   MessageConfiguration(..),
   SentMessageResources(..),
   defaultMessageConfiguration,
-  channelSend,
-  sendChannelMessage,
-  sendChannelMessageDeferred,
-  unsafeQueueChannelMessage,
-  unsafeQueueChannelMessageSimple,
-  channelSend_,
-  channelSendSimple,
-  channelSendSimpleDeferred,
+  sendRawChannelMessage,
+  sendRawChannelMessageDeferred,
+  unsafeQueueRawChannelMessage,
+  unsafeQueueRawChannelMessageSimple,
+  sendSimpleRawChannelMessage,
+  sendSimpleRawChannelMessageDeferred,
 
   -- ** Receiving messages
   ReceivedMessageResources(..),
   MessageLength,
-  channelSetHandler,
-  channelSetSimpleHandler,
-  channelSetBinaryHandler,
-  channelSetSimpleBinaryHandler,
+  rawChannelSetHandler,
+  rawChannelSetSimpleHandler,
+  rawChannelSetBinaryHandler,
+  rawChannelSetSimpleBinaryHandler,
   ImmediateChannelHandler,
-  channelSetImmediateHandler,
+  rawChannelSetImmediateHandler,
 
   -- ** Exception handling
   MultiplexerException(..),
@@ -104,7 +102,7 @@ data Multiplexer = Multiplexer {
   receivedHeader :: TVar Bool,
   outbox :: TVar [OutboxMessage],
   outboxGuard :: MVar (),
-  channelsVar :: TVar (HM.HashMap ChannelId Channel),
+  channelsVar :: TVar (HM.HashMap ChannelId RawChannel),
   nextReceiveChannelId :: TVar ChannelId,
   nextSendChannelId :: TVar ChannelId
 }
@@ -152,23 +150,23 @@ protocolException = throwM . ProtocolException
 
 -- ** Channel
 
-data Channel = Channel {
+data RawChannel = RawChannel {
   multiplexer :: Multiplexer,
   quasar :: Quasar,
   channelId :: ChannelId,
   channelHandler :: TVar (Maybe InternalHandler),
-  parent :: Maybe Channel,
-  children :: TVar (HM.HashMap ChannelId Channel),
+  parent :: Maybe RawChannel,
+  children :: TVar (HM.HashMap ChannelId RawChannel),
   nextSendMessageId :: TVar MessageId,
   nextReceiveMessageId :: TVar MessageId,
   receivedCloseMessage :: TVar Bool,
   sentCloseMessage :: TVar Bool
 }
 
-instance Resource Channel where
+instance Resource RawChannel where
   getDisposer channel = getDisposer channel.quasar
 
-newRootChannel :: Multiplexer -> QuasarIO Channel
+newRootChannel :: Multiplexer -> QuasarIO RawChannel
 newRootChannel multiplexer = do
   quasar <- askQuasar
   channel <- liftIO do
@@ -179,7 +177,7 @@ newRootChannel multiplexer = do
     receivedCloseMessage <- newTVarIO False
     sentCloseMessage <- newTVarIO False
 
-    pure Channel {
+    pure RawChannel {
       multiplexer,
       quasar,
       channelId = 0,
@@ -196,8 +194,8 @@ newRootChannel multiplexer = do
 
   pure channel
 
-newChannelSTM :: Channel -> ChannelId -> STM Channel
-newChannelSTM parent@Channel{multiplexer, quasar=parentQuasar} channelId = do
+newChannelSTM :: RawChannel -> ChannelId -> STM RawChannel
+newChannelSTM parent@RawChannel{multiplexer, quasar=parentQuasar} channelId = do
   -- Channels inherit their parents close state
   parentReceivedCloseMessage <- readTVar parent.receivedCloseMessage
   parentSentCloseMessage <- readTVar parent.sentCloseMessage
@@ -210,7 +208,7 @@ newChannelSTM parent@Channel{multiplexer, quasar=parentQuasar} channelId = do
   receivedCloseMessage <- newTVar parentReceivedCloseMessage
   sentCloseMessage <- newTVar parentSentCloseMessage
 
-  let channel = Channel {
+  let channel = RawChannel {
     multiplexer,
     quasar,
     channelId,
@@ -232,7 +230,7 @@ newChannelSTM parent@Channel{multiplexer, quasar=parentQuasar} channelId = do
 
   pure channel
 
-sendChannelCloseMessage :: Channel -> STM ()
+sendChannelCloseMessage :: RawChannel -> STM ()
 sendChannelCloseMessage channel = do
   alreadySent <- readTVar channel.sentCloseMessage
   unless alreadySent do
@@ -241,20 +239,20 @@ sendChannelCloseMessage channel = do
     markAsClosed channel
     cleanupChannel channel
   where
-    markAsClosed :: Channel -> STM ()
+    markAsClosed :: RawChannel -> STM ()
     markAsClosed markChannel = do
       writeTVar markChannel.sentCloseMessage True
       children <- readTVar markChannel.children
       mapM_ markAsClosed children
 
-setReceivedChannelCloseMessage :: Channel -> STM ()
+setReceivedChannelCloseMessage :: RawChannel -> STM ()
 setReceivedChannelCloseMessage channel = do
   writeTVar channel.receivedCloseMessage True
   children <- readTVar channel.children
   mapM_ setReceivedChannelCloseMessage children
   cleanupChannel channel
 
-cleanupChannel :: Channel -> STM ()
+cleanupChannel :: RawChannel -> STM ()
 cleanupChannel channel = do
   whenM (readTVar channel.sentCloseMessage) do
     whenM (readTVar channel.receivedCloseMessage) do
@@ -269,7 +267,7 @@ cleanupChannel channel = do
       -- Children are closed implicitly, so they have to be cleaned up as well
       mapM_ cleanupChannel =<< readTVar channel.children
 
-verifyChannelIsConnected :: Channel -> STM ()
+verifyChannelIsConnected :: RawChannel -> STM ()
 verifyChannelIsConnected channel = do
   whenM (readTVar channel.sentCloseMessage) $ throwM ChannelNotConnected
   whenM (readTVar channel.receivedCloseMessage) $ throwM ChannelNotConnected
@@ -298,13 +296,13 @@ defaultMessageConfiguration = MessageConfiguration {
 
 data SentMessageResources = SentMessageResources {
   messageId :: MessageId,
-  createdChannels :: [Channel]
+  createdChannels :: [RawChannel]
   --unixFds :: Undefined
 }
 data ReceivedMessageResources = ReceivedMessageResources {
   messageLength :: MessageLength,
   messageId :: MessageId,
-  createdChannels :: [Channel]
+  createdChannels :: [RawChannel]
   --unixFds :: Undefined
 }
 
@@ -313,7 +311,7 @@ data ReceivedMessageResources = ReceivedMessageResources {
 
 -- | Starts a new multiplexer on the provided connection and blocks until it is closed.
 -- The channel is provided to a setup action and can be closed by calling `dispose`; otherwise the multiplexer will run until the underlying connection is closed.
-runMultiplexer :: (MonadQuasar m, MonadIO m) => MultiplexerSide -> (Channel -> QuasarIO ()) -> Connection -> m ()
+runMultiplexer :: (MonadQuasar m, MonadIO m) => MultiplexerSide -> (RawChannel -> QuasarIO ()) -> Connection -> m ()
 runMultiplexer side channelSetupHook connection = liftQuasarIO $ mask_ do
   (rootChannel, result) <- newMultiplexerInternal side connection
   runQuasarIO rootChannel.quasar $ channelSetupHook rootChannel
@@ -321,7 +319,7 @@ runMultiplexer side channelSetupHook connection = liftQuasarIO $ mask_ do
   mapM_ throwM mException
 
 -- | Starts a new multiplexer on an existing connection (e.g. on a connected TCP socket).
-newMultiplexer :: (MonadQuasar m, MonadIO m) => MultiplexerSide -> Connection -> m Channel
+newMultiplexer :: (MonadQuasar m, MonadIO m) => MultiplexerSide -> Connection -> m RawChannel
 newMultiplexer side connection = liftQuasarIO $ mask_ do
   exceptionSink <- askExceptionSink
   (rootChannel, result) <- newMultiplexerInternal side connection
@@ -331,7 +329,7 @@ newMultiplexer side connection = liftQuasarIO $ mask_ do
     mapM_ (atomically . throwToExceptionSink exceptionSink) mException
   pure rootChannel
 
-newMultiplexerInternal :: MultiplexerSide -> Connection -> QuasarIO (Channel, Future (Maybe MultiplexerException))
+newMultiplexerInternal :: MultiplexerSide -> Connection -> QuasarIO (RawChannel, Future (Maybe MultiplexerException))
 newMultiplexerInternal side connection = disposeOnError do
   -- The multiplexer returned by `askResourceManager` is created by `disposeOnError`, so it can be used as a disposable
   -- without accidentally disposing external resources.
@@ -496,7 +494,7 @@ sendThread multiplexer sendFn = do
 
 
 -- | Internal state of the `receiveThread` function.
-type ReceiveThreadState = Maybe Channel
+type ReceiveThreadState = Maybe RawChannel
 
 receiveThread :: Multiplexer -> IO BS.ByteString -> IO ()
 receiveThread multiplexer readFn = do
@@ -530,7 +528,7 @@ receiveThread multiplexer readFn = do
       mNextState <- execReceivedMultiplexerMessage prevState msg
       mapM_ multiplexerLoop mNextState
 
-    lookupChannel :: ChannelId -> IO (Maybe Channel)
+    lookupChannel :: ChannelId -> IO (Maybe RawChannel)
     lookupChannel channelId = do
       HM.lookup channelId <$> readTVarIO multiplexer.channelsVar
 
@@ -596,7 +594,7 @@ receiveThread multiplexer readFn = do
     execReceivedMultiplexerMessage _ (InternalError msg) =
       throwM $ RemoteException msg
 
-    receiveChannelMessage :: Channel -> [Channel] -> MessageLength -> StateT BS.ByteString IO ()
+    receiveChannelMessage :: RawChannel -> [RawChannel] -> MessageLength -> StateT BS.ByteString IO ()
     receiveChannelMessage channel createdChannels messageLength = do
       modifyStateM \chunk -> liftIO do
         messageId <- atomically $ stateTVar channel.nextReceiveMessageId (\x -> (x, x + 1))
@@ -640,32 +638,28 @@ receiveThread multiplexer readFn = do
             chunkLength = fromIntegral $ BS.length chunk
 
 
-channelSend :: MonadIO m => Channel -> MessageConfiguration -> BSL.ByteString -> (MessageId -> STM ()) -> m SentMessageResources
-channelSend = sendChannelMessage
-{-# DEPRECATED channelSend "Use sendChannelMessage instead" #-}
-
-sendChannelMessage :: MonadIO m => Channel -> MessageConfiguration -> BSL.ByteString -> (MessageId -> STM ()) -> m SentMessageResources
-sendChannelMessage channel@Channel{multiplexer} messageConfiguration payload messageIdHook = liftIO do
+sendRawChannelMessage :: MonadIO m => RawChannel -> MessageConfiguration -> BSL.ByteString -> m SentMessageResources
+sendRawChannelMessage channel@RawChannel{multiplexer} messageConfiguration payload = liftIO do
   -- Locking the 'outboxGuard' guarantees fairness when sending messages concurrently (it also prevents unnecessary
   -- STM retries)
   withMVar multiplexer.outboxGuard \_ ->
-    atomically $ sendChannelMessageInternal BlockUntilReady channel messageConfiguration (pure payload) messageIdHook
+    atomically $ sendRawChannelMessageInternal BlockUntilReady channel messageConfiguration (const (pure payload))
 
-sendChannelMessageDeferred :: MonadIO m => Channel -> MessageConfiguration -> STM BSL.ByteString -> (MessageId -> STM ()) -> m SentMessageResources
-sendChannelMessageDeferred channel@Channel{multiplexer} messageConfiguration payloadHook messageIdHook = liftIO do
+sendRawChannelMessageDeferred :: MonadIO m => RawChannel -> MessageConfiguration -> (MessageId -> STM BSL.ByteString) -> m SentMessageResources
+sendRawChannelMessageDeferred channel@RawChannel{multiplexer} messageConfiguration payloadHook = liftIO do
   -- Locking the 'outboxGuard' guarantees fairness when sending messages concurrently (it also prevents unnecessary
   -- STM retries)
   withMVar multiplexer.outboxGuard \_ ->
-    atomically $ sendChannelMessageInternal BlockUntilReady channel messageConfiguration payloadHook messageIdHook
+    atomically $ sendRawChannelMessageInternal BlockUntilReady channel messageConfiguration payloadHook
 
 -- | Unsafely queue a network message to an unbounded send queue. This function does not block, even if `sendChannelMessage` would block. Queued messages will cause concurrent or following `sendChannelMessage`-calls to block until the queue is flushed.
-unsafeQueueChannelMessage :: Channel -> MessageConfiguration -> BSL.ByteString -> (MessageId -> STM ()) -> STM SentMessageResources
-unsafeQueueChannelMessage channel messageConfiguration payload =
-  sendChannelMessageInternal UnboundedQueue channel messageConfiguration (pure payload)
+unsafeQueueRawChannelMessage :: RawChannel -> MessageConfiguration -> (MessageId -> STM BSL.ByteString) -> STM SentMessageResources
+unsafeQueueRawChannelMessage channel messageConfiguration payloadHook =
+  sendRawChannelMessageInternal UnboundedQueue channel messageConfiguration payloadHook
 
-unsafeQueueChannelMessageSimple :: MonadSTM m => Channel -> BSL.ByteString -> m ()
-unsafeQueueChannelMessageSimple channel msg = liftSTM do
-  unsafeQueueChannelMessage channel defaultMessageConfiguration msg (const (pure ())) >>=
+unsafeQueueRawChannelMessageSimple :: MonadSTM m => RawChannel -> BSL.ByteString -> m ()
+unsafeQueueRawChannelMessageSimple channel msg = liftSTM do
+  unsafeQueueRawChannelMessage channel defaultMessageConfiguration (const (pure msg)) >>=
     \case
       -- Pattern match verifies no channels are created due to a bug
       SentMessageResources{createdChannels=[]} -> pure ()
@@ -674,8 +668,8 @@ unsafeQueueChannelMessageSimple channel msg = liftSTM do
 
 data QueueBehavior = BlockUntilReady | UnboundedQueue
 
-sendChannelMessageInternal :: QueueBehavior -> Channel -> MessageConfiguration -> STM BSL.ByteString -> (MessageId -> STM ()) -> STM SentMessageResources
-sendChannelMessageInternal queueBehavior channel@Channel{multiplexer} MessageConfiguration{closeChannel, createChannels} payloadHook messageIdHook = do
+sendRawChannelMessageInternal :: QueueBehavior -> RawChannel -> MessageConfiguration -> (MessageId -> STM BSL.ByteString) -> STM SentMessageResources
+sendRawChannelMessageInternal queueBehavior channel@RawChannel{multiplexer} MessageConfiguration{closeChannel, createChannels} payloadHook = do
   -- NOTE At most one message can be queued per STM transaction, so `sendChannelMessage` cannot be changed to STM
 
   -- Abort if the multiplexer is finished or currently cleaning up
@@ -692,14 +686,13 @@ sendChannelMessageInternal queueBehavior channel@Channel{multiplexer} MessageCon
       check $ null msgs
     UnboundedQueue -> pure ()
 
-  payload <- payloadHook
+  messageId <- stateTVar channel.nextSendMessageId (\x -> (x, x + 1))
+
+  payload <- payloadHook messageId
 
   -- Put the message into the outbox. It will be picked up by the send thread.
   let msg = OutboxSendMessage channel.channelId createChannels payload
   writeTVar multiplexer.outbox (msg:msgs)
-
-  messageId <- stateTVar channel.nextSendMessageId (\x -> (x, x + 1))
-  messageIdHook messageId
 
   when closeChannel do
     sendChannelCloseMessage channel
@@ -719,33 +712,30 @@ createChannelIds amount firstId = (channelIds, nextId)
     channelIds = take (fromIntegral amount) [firstId, firstId + 2..]
     nextId = firstId + fromIntegral amount * 2
 
-channelSend_ :: MonadIO m => Channel -> MessageConfiguration -> BSL.ByteString -> m SentMessageResources
-channelSend_ channel configuration msg = channelSend channel configuration msg (const (pure ()))
-
-channelSendSimple :: MonadIO m => Channel -> BSL.ByteString -> m ()
-channelSendSimple channel msg = liftIO do
+sendSimpleRawChannelMessage :: MonadIO m => RawChannel -> BSL.ByteString -> m ()
+sendSimpleRawChannelMessage channel msg = liftIO do
   -- Pattern match verifies no channels are created due to a bug
-  SentMessageResources{createdChannels=[]} <- channelSend channel defaultMessageConfiguration msg (const (pure ()))
+  SentMessageResources{createdChannels=[]} <- sendRawChannelMessage channel defaultMessageConfiguration msg
   pure ()
 
-channelSendSimpleDeferred :: MonadIO m => Channel -> STM BSL.ByteString -> m ()
-channelSendSimpleDeferred channel payloadHook = liftIO do
+sendSimpleRawChannelMessageDeferred :: MonadIO m => RawChannel -> (MessageId -> STM BSL.ByteString) -> m ()
+sendSimpleRawChannelMessageDeferred channel payloadHook = liftIO do
   -- Pattern match verifies no channels are created due to a bug
-  SentMessageResources{createdChannels=[]} <- sendChannelMessageDeferred channel defaultMessageConfiguration payloadHook (const (pure ()))
+  SentMessageResources{createdChannels=[]} <- sendRawChannelMessageDeferred channel defaultMessageConfiguration payloadHook
   pure ()
 
-channelReportProtocolError :: MonadIO m => Channel -> String -> m b
+channelReportProtocolError :: MonadIO m => RawChannel -> String -> m b
 channelReportProtocolError = undefined
 
-channelReportException :: MonadIO m => Channel -> SomeException -> m b
+channelReportException :: MonadIO m => RawChannel -> SomeException -> m b
 channelReportException = undefined
 
 
-channelSetInternalHandler :: MonadIO m => Channel -> InternalHandler -> m ()
-channelSetInternalHandler channel handler = liftIO $ atomically $ writeTVar channel.channelHandler (Just handler)
+rawChannelSetInternalHandler :: MonadIO m => RawChannel -> InternalHandler -> m ()
+rawChannelSetInternalHandler channel handler = liftIO $ atomically $ writeTVar channel.channelHandler (Just handler)
 
-channelSetHandler :: MonadIO m => Channel -> (ReceivedMessageResources -> BSL.ByteString -> QuasarIO ()) -> m ()
-channelSetHandler channel fn = channelSetInternalHandler channel bytestringHandler
+rawChannelSetHandler :: MonadIO m => RawChannel -> (ReceivedMessageResources -> BSL.ByteString -> QuasarIO ()) -> m ()
+rawChannelSetHandler channel fn = rawChannelSetInternalHandler channel bytestringHandler
   where
     bytestringHandler :: ReceivedMessageResources -> IO InternalMessageHandler
     bytestringHandler resources = pure $ InternalMessageHandler $ go []
@@ -757,18 +747,18 @@ channelSetHandler channel fn = channelSetInternalHandler channel bytestringHandl
             execForeignQuasarIO channel.quasar do
               fn resources $ BSL.fromChunks (reverse accum)
 
-channelSetSimpleHandler :: MonadIO m => Channel -> (BSL.ByteString -> QuasarIO ()) -> m ()
-channelSetSimpleHandler channel fn = channelSetHandler channel \case
+rawChannelSetSimpleHandler :: MonadIO m => RawChannel -> (BSL.ByteString -> QuasarIO ()) -> m ()
+rawChannelSetSimpleHandler channel fn = rawChannelSetHandler channel \case
   ReceivedMessageResources{createdChannels=[]} -> fn
   _ -> const $ throwM $ ChannelProtocolException channel.channelId "Unexpectedly received new channels"
 
 
-channelSetImmediateHandler :: MonadIO m => Channel -> ImmediateChannelHandler -> m ()
-channelSetImmediateHandler channel handler = undefined -- liftIO $ atomically $ writeTVar channel.channelHandler (Just handler)
+rawChannelSetImmediateHandler :: MonadIO m => RawChannel -> ImmediateChannelHandler -> m ()
+rawChannelSetImmediateHandler channel handler = undefined -- liftIO $ atomically $ writeTVar channel.channelHandler (Just handler)
 
 -- | Sets a simple channel message handler, which cannot handle sub-resurces (e.g. new channels). When a resource is received the channel will be terminated with a channel protocol error.
-channelSetBinaryHandler :: forall a m. (Binary a, MonadIO m) => Channel -> (ReceivedMessageResources -> a -> QuasarIO ()) -> m ()
-channelSetBinaryHandler channel fn = channelSetInternalHandler channel binaryHandler
+rawChannelSetBinaryHandler :: forall a m. (Binary a, MonadIO m) => RawChannel -> (ReceivedMessageResources -> a -> QuasarIO ()) -> m ()
+rawChannelSetBinaryHandler channel fn = rawChannelSetInternalHandler channel binaryHandler
   where
     binaryHandler :: ReceivedMessageResources -> IO InternalMessageHandler
     binaryHandler resources = pure $ InternalMessageHandler $ stepDecoder $ runGetIncremental Binary.get
@@ -785,8 +775,8 @@ channelSetBinaryHandler channel fn = channelSetInternalHandler channel binaryHan
         runHandler result = execForeignQuasarIO channel.quasar (fn resources result)
 
 -- | Sets a simple channel message handler, which cannot handle sub-resurces (e.g. new channels). When a resource is received the channel will be terminated with a channel protocol error.
-channelSetSimpleBinaryHandler :: forall a m. (Binary a, MonadIO m) => Channel -> (a -> QuasarIO ()) -> m ()
-channelSetSimpleBinaryHandler channel fn = channelSetBinaryHandler channel \case
+rawChannelSetSimpleBinaryHandler :: forall a m. (Binary a, MonadIO m) => RawChannel -> (a -> QuasarIO ()) -> m ()
+rawChannelSetSimpleBinaryHandler channel fn = rawChannelSetBinaryHandler channel \case
   ReceivedMessageResources{createdChannels=[]} -> fn
   _ -> const $ throwM $ ChannelProtocolException channel.channelId "Unexpectedly received new channels"
 

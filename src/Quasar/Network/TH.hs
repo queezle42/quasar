@@ -180,7 +180,7 @@ clientRequestStub api req = do
           Nothing -> normalB [|$(sendE requestDataE) >>= \resources -> $(varE clientStubPrimeName) resources.createdChannels|]
         clientStubPrimeDecs :: [Q Dec]
         clientStubPrimeDecs = [
-          sigD clientStubPrimeName (makeStubSig (liftA2 (<>) optionalResultType (sequence [[t|[Channel]|]]))),
+          sigD clientStubPrimeName (makeStubSig (liftA2 (<>) optionalResultType (sequence [[t|[RawChannel]|]]))),
           funD clientStubPrimeName clientStubPrimeClauses
           ]
         clientStubPrimeClauses :: [Q Clause]
@@ -532,11 +532,11 @@ implResourceTypes :: Request -> Q [Type]
 implResourceTypes req = sequence $ implResourceType <$> req.createdResources
 
 stubResourceType :: RequestCreateResource -> Q Type
-stubResourceType RequestCreateChannel = [t|Channel|]
+stubResourceType RequestCreateChannel = [t|RawChannel|]
 stubResourceType (RequestCreateStream up down) = [t|Stream $up $down|]
 
 implResourceType :: RequestCreateResource -> Q Type
-implResourceType RequestCreateChannel = [t|Channel|]
+implResourceType RequestCreateChannel = [t|RawChannel|]
 implResourceType (RequestCreateStream up down) = [t|Stream $down $up|]
 
 resourceNamePrefix :: RequestCreateResource -> String
@@ -608,13 +608,13 @@ varDefaultBangType name qType = varBangType name $ bangType (bang noSourceUnpack
 
 -- * Error reporting
 
-reportInvalidChannelCount :: MonadIO m => Int -> [Channel] -> Channel -> m a
+reportInvalidChannelCount :: MonadIO m => Int -> [RawChannel] -> RawChannel -> m a
 reportInvalidChannelCount expectedCount newChannels onChannel = channelReportProtocolError onChannel msg
   where
     msg = mconcat parts
     parts = ["Received ", show (length newChannels), " new channels, but expected ", show expectedCount]
 
-multiplexerInvalidChannelCount :: MonadIO m => Int -> [Channel] -> m a
+multiplexerInvalidChannelCount :: MonadIO m => Int -> [RawChannel] -> m a
 multiplexerInvalidChannelCount expectedCount newChannels = liftIO $ fail msg
   where
     msg = mconcat parts

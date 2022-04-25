@@ -66,16 +66,16 @@ import System.Posix.Files (getFileStatus, isSocket, fileExist, removeLink)
 
 class (IsChannel (ReverseChannelType a), a ~ ReverseChannelType (ReverseChannelType a)) => IsChannel a where
   type ReverseChannelType a
-  castChannel :: Channel -> a
+  castChannel :: RawChannel -> a
 
-instance IsChannel Channel where
-  type ReverseChannelType Channel = Channel
-  castChannel :: Channel -> Channel
+instance IsChannel RawChannel where
+  type ReverseChannelType RawChannel = RawChannel
+  castChannel :: RawChannel -> RawChannel
   castChannel = id
 
 instance IsChannel (Stream up down) where
   type ReverseChannelType (Stream up down) = (Stream down up)
-  castChannel :: Channel -> Stream up down
+  castChannel :: RawChannel -> Stream up down
   castChannel = Stream
 
 
@@ -83,8 +83,8 @@ instance IsChannel (Stream up down) where
 type IsNetworkStrategy :: (Type -> Constraint) -> Constraint
 class IsNetworkStrategy s where
   type ChannelIsRequired s :: Bool
-  sendObject :: forall a. (NetworkObject a, NetworkStrategy a ~ s) => a -> Either Put (Channel -> QuasarIO ())
-  receiveObject :: forall a. (NetworkObject a, NetworkStrategy a ~ s) => Either (Get a) (Future Channel -> QuasarIO a)
+  sendObject :: forall a. (NetworkObject a, NetworkStrategy a ~ s) => a -> Either Put (RawChannel -> QuasarIO ())
+  receiveObject :: forall a. (NetworkObject a, NetworkStrategy a ~ s) => Either (Get a) (Future RawChannel -> QuasarIO a)
 
 instance IsNetworkStrategy Binary where
   -- Copy by value by using `Binary`
@@ -96,10 +96,10 @@ instance IsNetworkStrategy NetworkReference where
   -- Send an object by reference with the `NetworkReference` class
   type ChannelIsRequired NetworkReference = 'True
 
-  sendObject :: forall a. (NetworkObject a, NetworkStrategy a ~ NetworkReference) => a -> Either Put (Channel -> QuasarIO ())
+  sendObject :: forall a. (NetworkObject a, NetworkStrategy a ~ NetworkReference) => a -> Either Put (RawChannel -> QuasarIO ())
   sendObject x = Right (\channel -> sendReference x (castChannel channel))
 
-  receiveObject :: forall a. (NetworkObject a, NetworkStrategy a ~ NetworkReference) => Either (Get a) (Future Channel -> QuasarIO a)
+  receiveObject :: forall a. (NetworkObject a, NetworkStrategy a ~ NetworkReference) => Either (Get a) (Future RawChannel -> QuasarIO a)
   receiveObject = Right (\channel -> receiveReference (castChannel <$> channel))
 
 class (IsNetworkStrategy (NetworkStrategy a), (NetworkStrategy a) a) => NetworkObject a where
@@ -141,11 +141,11 @@ type ProtocolResponseWrapper p = (MessageId, ProtocolResponse p)
 
 class RpcProtocol p => HasProtocolImpl p where
   type ProtocolImpl p
-  handleRequest :: ProtocolImpl p -> Channel -> ProtocolRequest p -> [Channel] -> QuasarIO (Maybe (Future (ProtocolResponse p)))
+  handleRequest :: ProtocolImpl p -> RawChannel -> ProtocolRequest p -> [RawChannel] -> QuasarIO (Maybe (Future (ProtocolResponse p)))
 
 
 data Client p = Client {
-  channel :: Channel,
+  channel :: RawChannel,
   callbacksVar :: TVar (HM.HashMap MessageId (ProtocolResponse p -> IO ()))
 }
 
@@ -153,13 +153,14 @@ instance Resource (Client p) where
   getDisposer client = getDisposer client.channel
 
 clientSend :: forall p m. (MonadIO m, RpcProtocol p) => Client p -> MessageConfiguration -> ProtocolRequest p -> m SentMessageResources
-clientSend client config req = liftIO $ channelSend_ client.channel config (encode req)
+clientSend client config req = liftIO $ sendRawChannelMessage client.channel config (encode req)
 
 clientRequest :: forall p m a. (MonadIO m, RpcProtocol p) => Client p -> (ProtocolResponse p -> Maybe a) -> MessageConfiguration -> ProtocolRequest p -> m (Future a, SentMessageResources)
 clientRequest client checkResponse config req = do
   resultPromise <- newPromise
-  sentMessageResources <- liftIO $ sendChannelMessage client.channel config (encode req) \msgId ->
+  sentMessageResources <- liftIO $ sendRawChannelMessageDeferred client.channel config \msgId -> do
     modifyTVar client.callbacksVar $ HM.insert msgId (requestCompletedCallback resultPromise msgId)
+    pure $ encode req
   pure (toFuture resultPromise, sentMessageResources)
   where
     requestCompletedCallback :: Promise a -> MessageId -> ProtocolResponse p -> IO ()
@@ -188,10 +189,10 @@ clientReportProtocolError :: Client p -> String -> IO a
 clientReportProtocolError client = channelReportProtocolError client.channel
 
 
-serverHandleChannelMessage :: forall p. (HasProtocolImpl p) => ProtocolImpl p -> Channel -> ReceivedMessageResources -> ProtocolRequest p -> QuasarIO ()
+serverHandleChannelMessage :: forall p. (HasProtocolImpl p) => ProtocolImpl p -> RawChannel -> ReceivedMessageResources -> ProtocolRequest p -> QuasarIO ()
 serverHandleChannelMessage protocolImpl channel resources req = liftIO $ serverHandleChannelRequest resources.createdChannels req
   where
-    serverHandleChannelRequest :: [Channel] -> ProtocolRequest p -> IO ()
+    serverHandleChannelRequest :: [RawChannel] -> ProtocolRequest p -> IO ()
     serverHandleChannelRequest channels req = do
       runQuasarIO channel.quasar do
         handleRequest @p protocolImpl channel req channels >>= \case
@@ -200,30 +201,30 @@ serverHandleChannelMessage protocolImpl channel resources req = liftIO $ serverH
             response <- await task
             liftIO $ serverSendResponse response
     serverSendResponse :: ProtocolResponse p -> IO ()
-    serverSendResponse response = channelSendSimple channel (encode wrappedResponse)
+    serverSendResponse response = sendSimpleRawChannelMessage channel (encode wrappedResponse)
       where
         wrappedResponse :: ProtocolResponseWrapper p
         wrappedResponse = (resources.messageId, response)
 
 
-newtype Stream up down = Stream Channel
+newtype Stream up down = Stream RawChannel
   deriving newtype Resource
 
-newStream :: MonadIO m => Channel -> m (Stream up down)
+newStream :: MonadIO m => RawChannel -> m (Stream up down)
 newStream = liftIO . pure . Stream
 
 streamSend :: (Binary up, MonadIO m) => Stream up down -> up -> m ()
-streamSend (Stream channel) value = liftIO $ channelSendSimple channel (encode value)
+streamSend (Stream channel) value = liftIO $ sendSimpleRawChannelMessage channel (encode value)
 
 streamSendDeferred :: (Binary up, MonadIO m) => Stream up down -> STM up -> m ()
-streamSendDeferred (Stream channel) value = liftIO $ channelSendSimpleDeferred channel (encode <$> value)
+streamSendDeferred (Stream channel) value = liftIO $ sendSimpleRawChannelMessageDeferred channel (const (encode <$> value))
 
 unsafeQueueStreamMessage :: (Binary up, MonadSTM m) => Stream up down -> up -> m ()
 unsafeQueueStreamMessage (Stream channel) value = liftSTM do
-  unsafeQueueChannelMessageSimple channel (encode value)
+  unsafeQueueRawChannelMessageSimple channel (encode value)
 
 streamSetHandler :: (Binary down, MonadIO m) => Stream up down -> (down -> QuasarIO ()) -> m ()
-streamSetHandler (Stream channel) handler = liftIO $ channelSetSimpleBinaryHandler channel handler
+streamSetHandler (Stream channel) handler = liftIO $ rawChannelSetSimpleBinaryHandler channel handler
 
 streamQuasar :: Stream up down -> Quasar
 streamQuasar (Stream s) = s.quasar
@@ -263,14 +264,14 @@ withClientBracket :: (MonadIO m, MonadMask m) => m (Client p) -> (Client p -> m 
 withClientBracket createClient = bracket createClient (liftIO . dispose)
 
 
-newChannelClient :: RpcProtocol p => Channel -> IO (Client p)
+newChannelClient :: RpcProtocol p => RawChannel -> IO (Client p)
 newChannelClient channel = do
   callbacksVar <- liftIO $ newTVarIO mempty
   let client = Client {
     channel,
     callbacksVar
   }
-  channelSetBinaryHandler channel (clientHandleChannelMessage client)
+  rawChannelSetBinaryHandler channel (clientHandleChannelMessage client)
   pure client
 
 data Listener =
@@ -385,9 +386,9 @@ connectToServer server connection =
         -- Capture inner quasar - used to terminate connection logger once everything is closed.
         isDisposed <$> askQuasar
   where
-    registerChannelServerHandler :: Channel -> QuasarIO ()
+    registerChannelServerHandler :: RawChannel -> QuasarIO ()
     registerChannelServerHandler channel = liftIO do
-      channelSetBinaryHandler channel (serverHandleChannelMessage @p server.protocolImpl channel)
+      rawChannelSetBinaryHandler channel (serverHandleChannelMessage @p server.protocolImpl channel)
 
     formatException :: SomeException -> String
     formatException (fromException -> Just (ConnectionLost (ReceiveFailed (fromException -> Just EOF)))) =
