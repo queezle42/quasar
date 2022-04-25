@@ -89,7 +89,6 @@ instance NetworkObject a => IsObservable a (ObservableProxy a) where
     state <- readTVar proxy.proxyState
     when (state == Stopped) undefined
     pure undefined
-  pingObservable proxy = undefined
 
 
 manageObservableProxy :: ObservableProxy a -> QuasarIO ()

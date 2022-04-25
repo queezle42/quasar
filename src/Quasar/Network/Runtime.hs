@@ -150,7 +150,7 @@ data Client p = Client {
 }
 
 instance Resource (Client p) where
-  getDisposer client = getDisposer client.channel
+  toDisposer client = toDisposer client.channel
 
 clientSend :: forall p m. (MonadIO m, RpcProtocol p) => Client p -> MessageConfiguration -> ProtocolRequest p -> m SentMessageResources
 clientSend client config req = liftIO $ sendRawChannelMessage client.channel config (encode req)
@@ -285,7 +285,7 @@ data Server p = Server {
 }
 
 instance Resource (Server p) where
-  getDisposer server = getDisposer server.quasar
+  toDisposer server = toDisposer server.quasar
 
 
 newServer :: forall p m. (HasProtocolImpl p, MonadQuasar m, MonadIO m) => ProtocolImpl p -> [Listener] -> m (Server p)
@@ -295,8 +295,8 @@ newServer protocolImpl listeners = do
   mapM_ (addListener_ server) listeners
   pure server
 
-addListener :: (HasProtocolImpl p, MonadIO m) => Server p -> Listener -> m [Disposer]
-addListener server listener = runQuasarIO server.quasar $ getDisposer <$> async (runListener listener)
+addListener :: (HasProtocolImpl p, MonadIO m) => Server p -> Listener -> m Disposer
+addListener server listener = runQuasarIO server.quasar $ toDisposer <$> async (runListener listener)
   where
     runListener :: Listener -> QuasarIO a
     runListener (TcpPort mhost port) = runTCPListener server mhost port

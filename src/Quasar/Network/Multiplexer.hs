@@ -94,7 +94,7 @@ data OutboxMessage
 
 data Multiplexer = Multiplexer {
   side :: MultiplexerSide,
-  disposer :: [Disposer],
+  disposer :: Disposer,
   multiplexerException :: Promise MultiplexerException,
   multiplexerResult :: Promise (Maybe MultiplexerException),
   receiveThreadCompleted :: Future (),
@@ -107,7 +107,7 @@ data Multiplexer = Multiplexer {
   nextSendChannelId :: TVar ChannelId
 }
 instance Resource Multiplexer where
-  getDisposer multiplexer = multiplexer.disposer
+  toDisposer multiplexer = multiplexer.disposer
 
 -- | 'MultiplexerSideA' describes the initiator of a connection, i.e. the client in most cases.
 --
@@ -164,7 +164,7 @@ data RawChannel = RawChannel {
 }
 
 instance Resource RawChannel where
-  getDisposer channel = getDisposer channel.quasar
+  toDisposer channel = toDisposer channel.quasar
 
 newRootChannel :: Multiplexer -> QuasarIO RawChannel
 newRootChannel multiplexer = do
@@ -384,7 +384,7 @@ newMultiplexerInternal side connection = disposeOnError do
 
       pure Multiplexer {
         side,
-        disposer = getDisposer resourceManager,
+        disposer = toDisposer resourceManager,
         multiplexerException,
         multiplexerResult,
         receiveThreadCompleted,
