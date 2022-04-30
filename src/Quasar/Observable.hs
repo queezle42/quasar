@@ -44,8 +44,6 @@ import Control.Monad.Trans.Maybe
 import Data.HashMap.Strict qualified as HM
 import Data.IORef
 import Data.Unique
-import Quasar.Async
-import Quasar.Future
 import Quasar.Prelude
 import Quasar.MonadQuasar
 import Quasar.MonadQuasar.Misc
@@ -79,7 +77,7 @@ instance Monad ObservableState where
 class IsRetrievable r a | a -> r where
   retrieve :: (MonadQuasar m, MonadIO m) => a -> m r
 
-class IsRetrievable r a => IsObservable r a | a -> r where
+class IsObservable r a | a -> r where
   -- | Register a callback to observe changes. The callback is called when the value changes, but depending on the
   -- delivery method (e.g. network) intermediate values may be skipped.
   --
@@ -132,8 +130,6 @@ type ObservableCallback a = ObservableState a -> QuasarSTM ()
 
 -- | Existential quantification wrapper for the IsObservable type class.
 data Observable r = forall a. IsObservable r a => Observable a
-instance IsRetrievable r (Observable r) where
-  retrieve (Observable o) = retrieve o
 instance IsObservable r (Observable r) where
   observe (Observable o) = observe o
   toObservable = id
@@ -256,8 +252,6 @@ instance IsObservable a (ThrowObservable a) where
 
 
 data MappedObservable a = forall b. MappedObservable (b -> a) (Observable b)
-instance IsRetrievable a (MappedObservable a) where
-  retrieve (MappedObservable f observable) = f <$> retrieve observable
 instance IsObservable a (MappedObservable a) where
   observe (MappedObservable fn observable) callback = observe observable (callback . fmap fn)
   mapObservable f1 (MappedObservable f2 upstream) = toObservable $ MappedObservable (f1 . f2) upstream
@@ -268,12 +262,6 @@ instance IsObservable a (MappedObservable a) where
 --
 -- There is no caching involed, every subscriber effectively subscribes to both input observables.
 data LiftA2Observable r = forall a b. LiftA2Observable (a -> b -> r) (Observable a) (Observable b)
-
-instance IsRetrievable a (LiftA2Observable a) where
-  retrieve (LiftA2Observable fn fx fy) = liftQuasarIO do
-    -- TODO LATER: keep backpressure for parallel network requests
-    future <- async $ retrieve fy
-    liftA2 fn (retrieve fx) (await future)
 
 instance IsObservable a (LiftA2Observable a) where
   observe (LiftA2Observable fn fx fy) callback = liftQuasarSTM do
@@ -291,11 +279,6 @@ instance IsObservable a (LiftA2Observable a) where
 
 
 data BindObservable a = forall b. BindObservable (Observable b) (b -> Observable a)
-
-instance IsRetrievable a (BindObservable a) where
-  retrieve (BindObservable fx fn) = do
-    x <- retrieve fx
-    retrieve $ fn x
 
 instance IsObservable a (BindObservable a) where
   observe (BindObservable fx fn) callback = liftQuasarSTM do
@@ -330,9 +313,6 @@ instance IsObservable a (BindObservable a) where
 
 
 data CatchObservable e a = Exception e => CatchObservable (Observable a) (e -> Observable a)
-
-instance IsRetrievable a (CatchObservable e a) where
-  retrieve (CatchObservable fx fn) = retrieve fx `catch` \ex -> retrieve (fn ex)
 
 instance IsObservable a (CatchObservable e a) where
   observe (CatchObservable fx fn) callback = liftQuasarSTM do
