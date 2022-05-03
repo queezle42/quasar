@@ -30,7 +30,6 @@ import Quasar.Exceptions
 import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Resources
-import Control.Monad.Reader
 import Control.Exception (throwTo)
 
 
