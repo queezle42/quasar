@@ -30,6 +30,8 @@ module Quasar.Resources (
   -- * Types to implement resources
   -- ** Disposer
   Disposer,
+  TDisposer,
+  disposeTDisposer,
   newUnmanagedIODisposer,
   newUnmanagedSTMDisposer,
   trivialDisposer,
@@ -79,7 +81,7 @@ registerDisposeActionIO fn = quasarAtomically $ registerDisposeAction fn
 registerDisposeActionIO_ :: (MonadQuasar m, MonadIO m) => IO () -> m ()
 registerDisposeActionIO_ fn = quasarAtomically $ void $ registerDisposeAction fn
 
-registerDisposeTransaction :: (MonadQuasar m, MonadSTM m) => STM () -> m Disposer
+registerDisposeTransaction :: (MonadQuasar m, MonadSTM m) => STM () -> m TDisposer
 registerDisposeTransaction fn = do
   worker <- askIOWorker
   exChan <- askExceptionSink
@@ -88,12 +90,12 @@ registerDisposeTransaction fn = do
     disposer <- newUnmanagedSTMDisposer fn worker exChan
     attachResource rm disposer
     pure disposer
-{-# SPECIALIZE registerDisposeTransaction :: STM () -> QuasarSTM Disposer #-}
+{-# SPECIALIZE registerDisposeTransaction :: STM () -> QuasarSTM TDisposer #-}
 
 registerDisposeTransaction_ :: (MonadQuasar m, MonadSTM m) => STM () -> m ()
 registerDisposeTransaction_ fn = liftQuasarSTM $ void $ registerDisposeTransaction fn
 
-registerDisposeTransactionIO :: (MonadQuasar m, MonadIO m) => STM () -> m Disposer
+registerDisposeTransactionIO :: (MonadQuasar m, MonadIO m) => STM () -> m TDisposer
 registerDisposeTransactionIO fn = quasarAtomically $ registerDisposeTransaction fn
 
 registerDisposeTransactionIO_ :: (MonadQuasar m, MonadIO m) => STM () -> m ()

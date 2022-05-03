@@ -179,7 +179,7 @@ newUnmanagedTimer scheduler time = liftIO do
   key <- newUnique
   completed <- newPromise
   atomically do
-    disposer <- newUnmanagedSTMDisposer (disposeFn completed) (ioWorker scheduler) (exceptionSink scheduler)
+    disposer <- toDisposer <$> newUnmanagedSTMDisposer (disposeFn completed) (ioWorker scheduler) (exceptionSink scheduler)
     let timer = Timer { key, time, completed, disposer, scheduler }
     tryTakeTMVar (heap scheduler) >>= \case
       Just timers -> putTMVar (heap scheduler) (insert timer timers)
