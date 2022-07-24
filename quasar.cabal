@@ -74,8 +74,6 @@ library
   import: shared-properties
   build-depends:
     base >=4.7 && <5,
-    binary,
-    containers,
     exceptions,
     ghc-prim,
     hashable,
@@ -126,7 +124,6 @@ test-suite quasar-test
     hspec,
     quasar,
     stm,
-    unordered-containers,
   main-is: Spec.hs
   other-modules:
     Quasar.AsyncSpec
