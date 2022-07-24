@@ -108,6 +108,7 @@ library
     Quasar.Timer.TimerFd
     Quasar.Utils.Exceptions
     Quasar.Utils.ExtraT
+    Quasar.Utils.ReaderLock
     Quasar.Utils.TOnce
   other-modules:
     Quasar.Resources.Disposer
