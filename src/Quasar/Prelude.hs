@@ -31,8 +31,8 @@ module Quasar.Prelude
     Data.Void.Void,
     Data.Hashable.Hashable,
     GHC.Generics.Generic,
-    MonadIO,
-    liftIO,
+    Control.Monad.IO.Class.MonadIO,
+    Control.Monad.IO.Class.liftIO,
     Data.Maybe.catMaybes,
     Data.Maybe.fromMaybe,
     Data.Maybe.isJust,
@@ -49,15 +49,12 @@ module Quasar.Prelude
     Data.Word.Word64,
     error,
     errorWithoutStackTrace,
-    head,
-    last,
-    read,
-    trace,
-    traceId,
-    traceShow,
-    traceShowId,
-    traceM,
-    traceShowM,
+    Debug.Trace.trace,
+    Debug.Trace.traceId,
+    Debug.Trace.traceShow,
+    Debug.Trace.traceShowId,
+    Debug.Trace.traceM,
+    Debug.Trace.traceShowM,
     traceIO,
     traceShowIO,
     traceShowIdIO,
@@ -86,7 +83,7 @@ import Control.Exception qualified
 import Control.Monad ((>=>), (<=<))
 import Control.Monad qualified
 import Control.Monad.Fix qualified
-import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.IO.Class qualified
 import Data.Foldable qualified
 import Data.Functor.Identity qualified
 import Data.Hashable qualified
@@ -96,24 +93,12 @@ import Data.Maybe qualified
 import Data.Unique qualified
 import Data.Void qualified
 import Data.Word qualified
-import Debug.Trace qualified as Trace
+import Debug.Trace qualified
 import GHC.Generics qualified
 import GHC.Stack.Types qualified
 import GHC.Types qualified
 import Quasar.PreludeExtras
 import Quasar.PreludeSTM
-
-{-# WARNING head "Partial Function." #-}
-head :: [a] -> a
-head = P.head
-
-{-# WARNING last "Partial Function." #-}
-last :: [a] -> a
-last = P.last
-
-{-# WARNING read "Partial Function." #-}
-read :: Read a => String -> a
-read = P.read
 
 {-# WARNING error "Undefined." #-}
 error :: forall (r :: GHC.Types.RuntimeRep). forall (a :: GHC.Types.TYPE r). GHC.Stack.Types.HasCallStack => String -> a
@@ -127,41 +112,14 @@ errorWithoutStackTrace = P.errorWithoutStackTrace
 undefined :: forall (r :: GHC.Types.RuntimeRep). forall (a :: GHC.Types.TYPE r). GHC.Stack.Types.HasCallStack  => a
 undefined = P.undefined
 
-{-# WARNING trace "Trace." #-}
-trace :: String -> a -> a
-trace = Trace.trace
-
-{-# WARNING traceId "Trace." #-}
-traceId :: String -> String
-traceId = Trace.traceId
-
-{-# WARNING traceShow "Trace." #-}
-traceShow :: Show a => a -> b -> b
-traceShow = Trace.traceShow
-
-{-# WARNING traceShowId "Trace." #-}
-traceShowId :: Show a => a -> a
-traceShowId = Trace.traceShowId
-
-{-# WARNING traceM "Trace." #-}
-traceM :: Applicative m => String -> m ()
-traceM = Trace.traceM
-
-{-# WARNING traceShowM "Trace." #-}
-traceShowM :: (Show a, Applicative m) => a -> m ()
-traceShowM = Trace.traceShowM
-
-{-# WARNING traceIO "Trace." #-}
 traceIO :: Control.Monad.IO.Class.MonadIO m => String -> m ()
-traceIO = Control.Monad.IO.Class.liftIO . Trace.traceIO
+traceIO = Control.Monad.IO.Class.liftIO . Debug.Trace.traceIO
 
-{-# WARNING traceShowIO "Trace." #-}
 traceShowIO :: (Control.Monad.IO.Class.MonadIO m, Show a) => a -> m ()
 traceShowIO = traceIO . show
 
-{-# WARNING traceShowIdIO "Trace." #-}
 traceShowIdIO :: (Control.Monad.IO.Class.MonadIO m, Show a) => a -> m a
 traceShowIdIO a = traceShowIO a >> pure a
 
-newUnique :: MonadIO m => m Data.Unique.Unique
-newUnique = liftIO Data.Unique.newUnique
+newUnique :: Control.Monad.IO.Class.MonadIO m => m Data.Unique.Unique
+newUnique = Control.Monad.IO.Class.liftIO Data.Unique.newUnique

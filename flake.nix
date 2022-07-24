@@ -40,6 +40,7 @@
           pkgs.entr
           pkgs.ghcid
           pkgs.haskell-language-server
+          pkgs.hlint
         ];
       }
     );
