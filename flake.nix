@@ -21,10 +21,7 @@
     overlay = final: prev: {
       haskell = prev.haskell // {
         packageOverrides = hfinal: hprev: prev.haskell.packageOverrides hfinal hprev // {
-          quasar = import ./. {
-            pkgs = final;
-            haskellPackages = hfinal;
-          };
+          quasar = hfinal.callCabal2nix "quasar" ./. {};
         };
       };
     };
