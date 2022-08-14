@@ -133,5 +133,6 @@ test-suite quasar-test
     Quasar.Observable.ObservableHashMapSpec
     Quasar.Observable.ObservablePrioritySpec
     Quasar.ResourcesSpec
+    Quasar.Utils.ReaderLockSpec
   hs-source-dirs:
     test

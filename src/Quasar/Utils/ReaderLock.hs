@@ -4,12 +4,21 @@ module Quasar.Utils.ReaderLock (
   newRecursiveReaderLock,
   withReaderLock,
   tryDestroyReaderLock,
+  ReaderLockDestroyed,
+  isReaderLockDestroyed,
 ) where
 
 import Control.Monad.Catch
 import Quasar.Prelude
 
 data ReaderLockDestroyed = ReaderLockDestroyed
+  deriving stock Show
+  deriving anyclass Exception
+
+isReaderLockDestroyed :: ReaderLockDestroyed -> Bool
+isReaderLockDestroyed ReaderLockDestroyed = True
+
+data ReaderLockInvalidOperation = ReaderLockInvalidOperation
   deriving stock Show
   deriving anyclass Exception
 
@@ -40,9 +49,10 @@ unsafeLockReaderLock (ReaderLock var) = do
 unsafeUnlockReaderLock :: ReaderLock -> STM ()
 unsafeUnlockReaderLock (ReaderLock var) = do
   readTVar var >>= \case
-    Valid 1 _lock unlock -> do
+    Valid 0 _ _ -> throwM ReaderLockInvalidOperation
+    Valid 1 lock unlock -> do
       unlock
-      writeTVar var Destroyed
+      writeTVar var $ Valid 0 lock unlock
     Valid counter lock unlock ->
       writeTVar var $ Valid (counter - 1) lock unlock
     Destroyed -> throwM ReaderLockDestroyed
