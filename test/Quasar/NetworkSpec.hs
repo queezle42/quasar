@@ -89,11 +89,12 @@ channelExampleProtocolImpl = ChannelExampleProtocolImpl {
 }
   where
     exampleCreateMultiplyChannelImpl :: MonadIO m => Channel Int (Int, Int) -> m ()
-    exampleCreateMultiplyChannelImpl channel = channelSetHandler channel $ \(x, y) -> channelSend channel (x * y)
+    exampleCreateMultiplyChannelImpl channel =
+      channelSetSimpleHandler channel $ \(x, y) -> channelSend channel (x * y)
     exampleCreateChannelsImpl :: MonadIO m => Channel Bool Bool -> Channel Int Int -> m ()
     exampleCreateChannelsImpl channel1 channel2 = do
-      channelSetHandler channel1 $ channelSend channel1
-      channelSetHandler channel2 $ channelSend channel2
+      channelSetSimpleHandler channel1 $ channelSend channel1
+      channelSetSimpleHandler channel2 $ channelSend channel2
 
 
 spec :: Spec
@@ -123,7 +124,7 @@ spec = parallel $ do
     Hspec.aroundAll (\x -> rm $ withStandaloneClient @ChannelExampleProtocol channelExampleProtocolImpl $ \client -> do
         resultMVar <- liftIO newEmptyMVar
         channel <- exampleCreateMultiplyChannel client
-        channelSetHandler channel $ liftIO . putMVar resultMVar
+        channelSetSimpleHandler channel $ liftIO . putMVar resultMVar
         liftIO $ x (resultMVar, channel)
       ) $ it "can send data over the channel" $ \(resultMVar, channel) -> property $ \(x, y) -> monadicIO $ do
         liftIO $ channelSend channel (x, y)

@@ -210,12 +210,12 @@ clientRequestStub api req = do
         whenHasResult x = [x | hasResponse]
         requestDataE :: Q Exp
         requestDataE = applyVars (conE (requestConName api req))
-        messageConfigurationE :: Q Exp
-        messageConfigurationE = [|MessageConfiguration False $(litE $ integerL $ toInteger $ numPipelinedChannels req)|]
+        channelMessageE :: Q Exp -> Q Exp
+        channelMessageE payloadE = [|ChannelMessage $payloadE False $(litE $ integerL $ toInteger $ numPipelinedChannels req)|]
         sendE :: Q Exp -> Q Exp
-        sendE msgExp = [|$typedSend $clientE $messageConfigurationE $msgExp|]
+        sendE msgExp = [|$typedSend $clientE $(channelMessageE msgExp)|]
         requestE :: Response -> Q Exp -> Q Exp
-        requestE resp msgExp = [|$typedRequest $clientE $checkResult $messageConfigurationE $msgExp|]
+        requestE resp msgExp = [|$typedRequest $clientE $checkResult $(channelMessageE msgExp)|]
           where
             checkResult :: Q Exp
             checkResult = lamCaseE [valid, invalid]

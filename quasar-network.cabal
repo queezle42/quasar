@@ -62,12 +62,12 @@ library
     Quasar.Network.Exception
     Quasar.Network.Multiplexer
     Quasar.Network.Runtime
+    Quasar.Network.Runtime.Observable
     Quasar.Network.SocketLocation
     Quasar.Network.TH
     Quasar.Network.TH.Generator
     Quasar.Network.TH.Spec
   other-modules:
-    Quasar.Network.Runtime.Observable
   build-depends:
     base >=4.7 && <5,
     async,
@@ -104,6 +104,8 @@ test-suite quasar-network-test
   main-is: Spec.hs
   other-modules:
     Quasar.NetworkSpec
+    Quasar.Network.InterfaceSpec
     Quasar.Network.MultiplexerSpec
+    Quasar.Network.ObservableSpec
   hs-source-dirs:
     test

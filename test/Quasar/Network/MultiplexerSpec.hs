@@ -64,9 +64,9 @@ spec = parallel $ describe "runMultiplexer" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
       rawChannelSetHandler channel ((\_ -> liftIO . putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> QuasarIO ())
-      SentMessageResources{createdChannels=[_]} <- sendRawChannelMessage channel defaultMessageConfiguration{createChannels=1} "create a channel"
+      SentMessageResources{createdChannels=[_]} <- sendRawChannelMessage channel (channelMessage "create a channel"){createChannels=1}
       liftIO $ takeMVar recvMVar `shouldReturn` "create a channel"
-      SentMessageResources{createdChannels=[_, _, _]} <- sendRawChannelMessage channel defaultMessageConfiguration{createChannels=3} "create more channels"
+      SentMessageResources{createdChannels=[_, _, _]} <- sendRawChannelMessage channel (channelMessage "create more channels"){createChannels=3}
       liftIO $ takeMVar recvMVar `shouldReturn` "create more channels"
     tryReadMVar recvMVar `shouldReturn` Nothing
 
@@ -80,7 +80,7 @@ spec = parallel $ describe "runMultiplexer" $ do
       sendSimpleRawChannelMessage channel "foobar"
       liftIO $ takeMVar recvMVar `shouldReturn` "foobar"
 
-      SentMessageResources{createdChannels=[c1, c2]} <- sendRawChannelMessage channel defaultMessageConfiguration{createChannels=2}  "create channels"
+      SentMessageResources{createdChannels=[c1, c2]} <- sendRawChannelMessage channel (channelMessage "create channels"){createChannels=2}
       liftIO $ takeMVar recvMVar `shouldReturn` "create channels"
       rawChannelSetSimpleHandler c1 (liftIO . putMVar c1RecvMVar :: BSL.ByteString -> QuasarIO ())
       rawChannelSetSimpleHandler c2 (liftIO . putMVar c2RecvMVar :: BSL.ByteString -> QuasarIO ())
@@ -94,7 +94,7 @@ spec = parallel $ describe "runMultiplexer" $ do
       sendSimpleRawChannelMessage c1 "test4"
       liftIO $ takeMVar c1RecvMVar `shouldReturn` "test4"
 
-      SentMessageResources{createdChannels=[c3]} <- sendRawChannelMessage channel defaultMessageConfiguration{createChannels=1} "create another channel"
+      SentMessageResources{createdChannels=[c3]} <- sendRawChannelMessage channel (channelMessage "create another channel"){createChannels=1}
       liftIO $ takeMVar recvMVar `shouldReturn` "create another channel"
       rawChannelSetSimpleHandler c3 (liftIO . putMVar c3RecvMVar :: BSL.ByteString -> QuasarIO ())
 

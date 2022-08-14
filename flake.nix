@@ -19,7 +19,7 @@
       ]; };
       in rec {
         default = quasar-network;
-        quasar-network = pkgs.haskell.packages.ghc922.quasar-network;
+        quasar-network = pkgs.haskell.packages.ghc924.quasar-network;
       }
     );
 

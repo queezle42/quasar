@@ -37,6 +37,7 @@ module Quasar.Network (
   Channel,
   channelSend,
   channelSetHandler,
+  channelSetSimpleHandler,
 ) where
 
 import Quasar.Network.TH
