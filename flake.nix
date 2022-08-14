@@ -12,9 +12,10 @@
     packages = forAllSystems (system:
       let pkgs = import nixpkgs { inherit system; overlays = [ self.overlay ]; };
       in rec {
-        default = ghc923.quasar;
+        default = ghc924.quasar;
         quasar = pkgs.haskellPackages.quasar;
-        ghc923.quasar = pkgs.haskell.packages.ghc923.quasar;
+        ghc924.quasar = pkgs.haskell.packages.ghc924.quasar;
+        ghc941.quasar = pkgs.haskell.packages.ghc941.quasar;
       }
     );
 
