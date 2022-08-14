@@ -10,12 +10,20 @@
     forAllSystems = genAttrs systems;
   in {
     packages = forAllSystems (system:
-      let pkgs = import nixpkgs { inherit system; overlays = [ self.overlay ]; };
+      let
+        pkgs = import nixpkgs { inherit system; overlays = [ self.overlay ]; };
+        getHaskellPackages = pattern: pipe pkgs.haskell.packages [
+          attrNames
+          (filter (x: !isNull (strings.match pattern x)))
+          (sort (x: y: x>y))
+          (map (x: pkgs.haskell.packages.${x}))
+          head
+        ];
       in rec {
-        default = ghc924.quasar;
+        default = quasar_ghc92;
         quasar = pkgs.haskellPackages.quasar;
-        ghc924.quasar = pkgs.haskell.packages.ghc924.quasar;
-        ghc941.quasar = pkgs.haskell.packages.ghc941.quasar;
+        quasar_ghc92 = (getHaskellPackages "ghc92.").quasar;
+        quasar_ghc94 = (getHaskellPackages "ghc94.").quasar;
       }
     );
 
