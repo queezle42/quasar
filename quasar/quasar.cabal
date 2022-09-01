@@ -44,7 +44,6 @@ common shared-properties
     RankNTypes
     ScopedTypeVariables
     StandaloneDeriving
-    TemplateHaskell
     TupleSections
     TypeApplications
     TypeFamilies

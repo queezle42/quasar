@@ -30,7 +30,7 @@
     overlay = final: prev: {
       haskell = prev.haskell // {
         packageOverrides = hfinal: hprev: prev.haskell.packageOverrides hfinal hprev // {
-          quasar = hfinal.callCabal2nix "quasar" ./. {};
+          quasar = hfinal.callCabal2nix "quasar" ./quasar {};
         };
       };
     };
@@ -39,7 +39,9 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
       in pkgs.mkShell {
-        inputsFrom = [ self.packages.${system}.default.env ];
+        inputsFrom = [
+          self.packages.${system}.quasar.env
+        ];
         packages = [
           pkgs.cabal-install
           pkgs.zsh
