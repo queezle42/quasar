@@ -1,15 +1,13 @@
 cabal-version: 3.0
 
-name:           quasar
+name:           stm-ltd
 version:        0.1.0.0
 license:        BSD-2-Clause
 build-type:     Simple
-extra-source-files:
-    README.md
 
 --source-repository head
 --  type: git
---  location: https://git.c3pb.de/jens/quasar.git
+--  location: https://github.com/?/stm-ltd.git
 
 common shared-properties
   default-extensions:
@@ -72,67 +70,27 @@ common shared-executable-properties
 library
   import: shared-properties
   build-depends:
-    base >=4.7 && <5,
+    base,
     exceptions,
-    ghc-prim,
-    hashable,
-    heaps,
-    mtl,
     stm,
-    stm-ltd,
-    time,
     transformers,
-    transformers-base,
-    unordered-containers,
   exposed-modules:
-    Quasar
-    Quasar.Async
-    Quasar.Async.Fork
-    Quasar.Async.STMHelper
-    Quasar.Exceptions
-    Quasar.Exceptions.ExceptionSink
-    Quasar.Future
-    Quasar.Logger
-    Quasar.MonadQuasar
-    Quasar.MonadQuasar.Misc
-    Quasar.Observable
-    Quasar.Observable.Delta
-    Quasar.Observable.ObservableHashMap
-    Quasar.Observable.ObservablePriority
-    Quasar.Prelude
-    Quasar.PreludeExtras
-    Quasar.PreludeSTM
-    Quasar.Resources
-    Quasar.Timer
-    Quasar.Timer.PosixTimer
-    Quasar.Timer.TimerFd
-    Quasar.Utils.Exceptions
-    Quasar.Utils.ExtraT
-    Quasar.Utils.ReaderLock
-    Quasar.Utils.TOnce
+    Control.Concurrent.STM.Class
+    -- Control.Concurrent.STM.Class.Unsafe
   other-modules:
-    Quasar.Resources.Disposer
-    Quasar.Utils.ShortIO
+    -- Control.Concurrent.STM.Class.Internal
   hs-source-dirs:
     src
 
-test-suite quasar-test
-  import: shared-executable-properties
-  type: exitcode-stdio-1.0
-  build-depends:
-    base >=4.7 && <5,
-    exceptions,
-    hspec,
-    quasar,
-    stm,
-  main-is: Spec.hs
-  other-modules:
-    Quasar.AsyncSpec
-    Quasar.AwaitableSpec
-    Quasar.ObservableSpec
-    Quasar.Observable.ObservableHashMapSpec
-    Quasar.Observable.ObservablePrioritySpec
-    Quasar.ResourcesSpec
-    Quasar.Utils.ReaderLockSpec
-  hs-source-dirs:
-    test
+--test-suite stm-ltd-test
+--  import: shared-executable-properties
+--  type: exitcode-stdio-1.0
+--  build-depends:
+--    base,
+--    hspec,
+--    stm-ltd
+--  main-is: Spec.hs
+--  other-modules:
+--    Control.Concurrent.STM.ClassSpec
+--  hs-source-dirs:
+--    test
