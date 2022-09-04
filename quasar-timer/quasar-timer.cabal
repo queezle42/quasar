@@ -1,15 +1,9 @@
 cabal-version: 3.0
 
-name:           quasar
+name:           quasar-timer
 version:        0.1.0.0
 license:        BSD-2-Clause
 build-type:     Simple
-extra-source-files:
-    README.md
-
---source-repository head
---  type: git
---  location: https://git.c3pb.de/jens/quasar.git
 
 common shared-properties
   default-extensions:
@@ -74,60 +68,23 @@ library
   build-depends:
     base >=4.7 && <5,
     exceptions,
-    ghc-prim,
-    hashable,
-    mtl,
-    stm,
-    stm-ltd,
-    transformers,
-    transformers-base,
-    unordered-containers,
+    heaps,
+    quasar,
+    time,
   exposed-modules:
-    Quasar
-    Quasar.Async
-    Quasar.Async.Fork
-    Quasar.Async.STMHelper
-    Quasar.Exceptions
-    Quasar.Exceptions.ExceptionSink
-    Quasar.Future
-    Quasar.Logger
-    Quasar.MonadQuasar
-    Quasar.MonadQuasar.Misc
-    Quasar.Observable
-    Quasar.Observable.Delta
-    Quasar.Observable.ObservableHashMap
-    Quasar.Observable.ObservablePriority
-    Quasar.Prelude
-    Quasar.PreludeExtras
-    Quasar.PreludeSTM
-    Quasar.Resources
-    Quasar.Utils.Exceptions
-    Quasar.Utils.ExtraT
-    Quasar.Utils.ReaderLock
-    Quasar.Utils.TOnce
-  other-modules:
-    Quasar.Resources.Disposer
-    Quasar.Utils.ShortIO
+    Quasar.Timer
+    Quasar.Timer.PosixTimer
+    Quasar.Timer.TimerFd
   hs-source-dirs:
     src
 
-test-suite quasar-test
+test-suite quasar-timer-test
   import: shared-executable-properties
   type: exitcode-stdio-1.0
   build-depends:
     base >=4.7 && <5,
-    exceptions,
     hspec,
-    quasar,
-    stm,
   main-is: Spec.hs
   other-modules:
-    Quasar.AsyncSpec
-    Quasar.AwaitableSpec
-    Quasar.ObservableSpec
-    Quasar.Observable.ObservableHashMapSpec
-    Quasar.Observable.ObservablePrioritySpec
-    Quasar.ResourcesSpec
-    Quasar.Utils.ReaderLockSpec
   hs-source-dirs:
     test

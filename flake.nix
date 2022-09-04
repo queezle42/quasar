@@ -24,6 +24,7 @@
         quasar = pkgs.haskellPackages.quasar;
         quasar_ghc92 = (getHaskellPackages "ghc92.").quasar;
         quasar_ghc94 = (getHaskellPackages "ghc94.").quasar;
+        quasar-timer = pkgs.haskellPackages.quasar-timer;
         stm-ltd = pkgs.haskellPackages.stm-ltd;
       }
     );
@@ -31,8 +32,9 @@
     overlay = final: prev: {
       haskell = prev.haskell // {
         packageOverrides = hfinal: hprev: prev.haskell.packageOverrides hfinal hprev // {
-          stm-ltd = hfinal.callCabal2nix "stm-ltd" ./stm-ltd {};
           quasar = hfinal.callCabal2nix "quasar" ./quasar {};
+          quasar-timer = hfinal.callCabal2nix "quasar-timer" ./quasar-timer {};
+          stm-ltd = hfinal.callCabal2nix "stm-ltd" ./stm-ltd {};
         };
       };
     };
@@ -43,6 +45,7 @@
       in pkgs.mkShell {
         inputsFrom = [
           self.packages.${system}.quasar.env
+          self.packages.${system}.quasar-timer.env
           self.packages.${system}.stm-ltd.env
         ];
         packages = [
