@@ -109,7 +109,7 @@ errorWithoutStackTrace :: String -> a
 errorWithoutStackTrace = P.errorWithoutStackTrace
 
 {-# WARNING undefined "Undefined." #-}
-undefined :: forall (r :: GHC.Types.RuntimeRep). forall (a :: GHC.Types.TYPE r). GHC.Stack.Types.HasCallStack  => a
+undefined :: forall (r :: GHC.Types.RuntimeRep). forall (a :: GHC.Types.TYPE r). GHC.Stack.Types.HasCallStack => a
 undefined = P.undefined
 
 traceIO :: Control.Monad.IO.Class.MonadIO m => String -> m ()
