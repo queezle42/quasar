@@ -11,7 +11,7 @@
   in {
     packages = forAllSystems (system:
       let
-        pkgs = import nixpkgs { inherit system; overlays = [ self.overlay ]; };
+        pkgs = import nixpkgs { inherit system; overlays = [ self.overlays.default ]; };
         getHaskellPackages = pattern: pipe pkgs.haskell.packages [
           attrNames
           (filter (x: !isNull (strings.match pattern x)))
@@ -29,7 +29,7 @@
       }
     );
 
-    overlay = final: prev: {
+    overlays.default = final: prev: {
       haskell = prev.haskell // {
         packageOverrides = hfinal: hprev: prev.haskell.packageOverrides hfinal hprev // {
           quasar = hfinal.callCabal2nix "quasar" ./quasar {};
@@ -39,23 +39,24 @@
       };
     };
 
-    devShell = forAllSystems (system:
+    devShells = forAllSystems (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-      in pkgs.mkShell {
-        inputsFrom = [
-          self.packages.${system}.quasar.env
-          self.packages.${system}.quasar-timer.env
-          self.packages.${system}.stm-ltd.env
-        ];
-        packages = [
-          pkgs.cabal-install
-          pkgs.zsh
-          pkgs.entr
-          pkgs.ghcid
-          pkgs.haskell-language-server
-          pkgs.hlint
-        ];
+        mkShellFor = pkg: pkgs.mkShell {
+          inputsFrom = [ pkg ];
+          packages = [
+            pkgs.cabal-install
+            pkgs.zsh
+            pkgs.entr
+            pkgs.ghcid
+            pkgs.haskell-language-server
+            pkgs.hlint
+          ];
+        };
+      in rec {
+        # Using quasar-timer because it encompasses all dependencies.
+        # A better solution could be built using `shellFor`
+        default = mkShellFor self.packages.${system}.quasar-timer.env;
       }
     );
   };
