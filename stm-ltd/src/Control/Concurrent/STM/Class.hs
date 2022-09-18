@@ -1,131 +1,263 @@
-{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Control.Concurrent.STM.Class (
+  -- * Monad
+  STM,
+  atomically,
   MonadSTM,
   liftSTM,
-  MonadSTM'(..),
-  CanBlock,
-  CanThrow,
+
   STM',
+  RetryMode(..),
+  CanRetry,
+  NoRetry,
+  ThrowMode(..),
+  CanThrow,
+  NoThrow,
+  MonadSTM'(..),
   runSTM',
   unsafeLimitSTM,
+
+  retry,
+  orElse,
+  orElse',
+  check,
+  throwSTM,
+  catchSTM,
+  catchSTM',
+
+  -- * Unique
+
+  newUniqueSTM,
+
+  -- * TVar
+  STM.TVar,
+  newTVar,
+  newTVarIO,
+  readTVar,
+  readTVarIO,
+  writeTVar,
+  modifyTVar,
+  modifyTVar',
+  stateTVar,
+  swapTVar,
+  registerDelay,
+  mkWeakTVar,
+
+  -- * TMVar
+  STM.TMVar,
+  newTMVar,
+  newEmptyTMVar,
+  newTMVarIO,
+  newEmptyTMVarIO,
+  takeTMVar,
+  putTMVar,
+  readTMVar,
+#if MIN_VERSION_stm(2, 5, 1)
+  writeTMVar,
+#endif
+  tryReadTMVar,
+  swapTMVar,
+  tryTakeTMVar,
+  tryPutTMVar,
+  isEmptyTMVar,
+  mkWeakTMVar,
+
+  -- * TChan
+
+  -- * TQueue
+
+  -- * TBQueue
+
+  -- * TArray
 ) where
 
 import Control.Applicative
-import Control.Concurrent.STM (STM, TVar)
+import Control.Concurrent.STM (STM)
 import Control.Concurrent.STM qualified as STM
+import Control.Concurrent.STM.Class.TH
 import Control.Monad.Catch
-import Control.Monad.Trans.Reader
-import Control.Monad.Trans.Writer
+import Control.Monad.Fix (MonadFix)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.RWS (RWST)
+import Control.Monad.Trans.Reader (ReaderT)
+import Control.Monad.Trans.State (StateT)
+import Control.Monad.Trans.Writer (WriterT, execWriterT)
 import Data.Kind (Type, Constraint)
+import Data.Unique (Unique, newUnique)
+import GHC.Conc (unsafeIOToSTM)
+import Language.Haskell.TH hiding (Type)
 import Prelude
 
-data BlockMode = CanBlock
-data ThrowMode = CanThrow
 
-type CanBlock :: BlockMode
-type CanBlock = 'CanBlock
+data RetryMode = CanRetry | NoRetry
+data ThrowMode = CanThrow | NoThrow
+
+type CanRetry :: RetryMode
+type CanRetry = 'CanRetry
+
+type NoRetry :: RetryMode
+type NoRetry = 'NoRetry
 
 type CanThrow :: ThrowMode
 type CanThrow = 'CanThrow
 
-type STM' :: BlockMode -> ThrowMode -> Type -> Type
-newtype STM' b t a = STM' (STM a)
-  deriving newtype (Functor, Applicative, Monad)
+type NoThrow :: ThrowMode
+type NoThrow = 'NoThrow
 
-instance MonadThrow (STM' b CanThrow) where
+type STM' :: RetryMode -> ThrowMode -> Type -> Type
+newtype STM' r t a = STM' (STM a)
+  deriving newtype (Functor, Applicative, Monad, MonadFix)
+
+instance MonadThrow (STM' r CanThrow) where
   throwM ex = STM' (throwM ex)
 
-instance MonadCatch (STM' b CanThrow) where
-  catch = catchSTM
+instance MonadCatch (STM' r CanThrow) where
+  catch = catchSTM'
 
-instance Semigroup a => Semigroup (STM' b t a) where
+instance Semigroup a => Semigroup (STM' r t a) where
   (<>) = liftA2 (<>)
 
-instance Monoid a => Monoid (STM' b t a) where
+instance Monoid a => Monoid (STM' r t a) where
   mempty = pure mempty
 
 
-type MonadSTM' :: BlockMode -> ThrowMode -> (Type -> Type) -> Constraint
-class MonadSTM' b t m | m -> b, m -> t where
-  liftSTM' :: STM' b t a -> m a
+type MonadSTM' :: RetryMode -> ThrowMode -> (Type -> Type) -> Constraint
+class Monad m => MonadSTM' (r :: RetryMode) (t :: ThrowMode) m | m -> r, m -> t where
+  liftSTM' :: STM' r t a -> m a
 
 
-type MonadSTM = MonadSTM' CanBlock CanThrow
+type MonadSTM = MonadSTM' CanRetry CanThrow
 
 liftSTM :: MonadSTM m => STM a -> m a
 liftSTM fn = liftSTM' (unsafeLimitSTM fn)
 
 
-instance MonadSTM' CanBlock CanThrow STM where
+instance MonadSTM' CanRetry CanThrow STM where
   liftSTM' = runSTM'
 
-instance MonadSTM' b t (STM' b t) where
+instance MonadSTM' r t (STM' r t) where
   liftSTM' = id
 
-instance MonadSTM' b t m => MonadSTM' b t (ReaderT r m) where
-  liftSTM' = undefined
+instance MonadSTM' r t m => MonadSTM' r t (ReaderT rd m) where
+  liftSTM' = lift . liftSTM'
 
-instance MonadSTM' b t m => MonadSTM' b t (WriterT w m) where
-  liftSTM' = undefined
+instance (MonadSTM' r t m, Monoid w) => MonadSTM' r t (WriterT w m) where
+  liftSTM' = lift . liftSTM'
+
+instance MonadSTM' r t m => MonadSTM' r t (StateT w m) where
+  liftSTM' = lift . liftSTM'
+
+instance (MonadSTM' r t m, Monoid w) => MonadSTM' r t (RWST rd w s m) where
+  liftSTM' = lift . liftSTM'
 
 
---class MonadRetry m where
---  retry :: m a
---
---instance MonadSTM' CanBlock t m => MonadRetry m where
---  retry = unsafeLimitSTM STM.retry
-
-
-runSTM' :: STM' b t a -> STM a
+runSTM' :: STM' r t a -> STM a
 runSTM' (STM' fn) = fn
 
 
-
-unsafeLimitSTM :: (MonadSTM' b t m) => STM a -> m a
+unsafeLimitSTM :: (MonadSTM' r t m) => STM a -> m a
 unsafeLimitSTM fn = liftSTM' (STM' fn)
 
 
-readTVar :: MonadSTM' b t m => TVar a -> m a
-readTVar var = unsafeLimitSTM (STM.readTVar var)
-
-retry :: MonadSTM' CanBlock t m => m a
+retry :: MonadSTM' CanRetry t m => m a
 retry = unsafeLimitSTM STM.retry
 
-throwSTM :: (MonadSTM' b CanThrow m, Exception e) => e -> m a
+orElse :: MonadSTM m => STM a -> STM a -> m a
+orElse fx fy = liftSTM (STM.orElse fx fy)
+
+orElse' :: MonadSTM' r t m => STM' CanRetry t a -> STM' r t a -> m a
+orElse' fx fy = unsafeLimitSTM $ STM.orElse (runSTM' fx) (runSTM' fy)
+
+check :: MonadSTM' CanRetry t m => Bool -> m ()
+check = unsafeLimitSTM . STM.check
+
+throwSTM :: (MonadSTM' r CanThrow m, Exception e) => e -> m a
 throwSTM = unsafeLimitSTM . STM.throwSTM
 
-catchSTM :: (MonadSTM' b t m, Exception e) => STM' b CanThrow a -> (e -> STM' b t a) -> m a
-catchSTM (STM' fx) fn = unsafeLimitSTM $ catch (unsafeLimitSTM fx) (\ex -> runSTM' (fn ex))
+catchSTM :: (MonadSTM m, Exception e) => STM a -> (e -> STM a) -> m a
+catchSTM fx fn = liftSTM (STM.catchSTM fx fn)
+
+catchSTM' :: (MonadSTM' r t m, Exception e) => STM' r CanThrow a -> (e -> STM' r t a) -> m a
+catchSTM' fx fn = unsafeLimitSTM $ STM.catchSTM (runSTM' fx) \ex -> runSTM' (fn ex)
 
 
---foobar :: STM' CanBlock t ()
---foobar = do
---  var <- unsafeLimitSTM $ STM.newTVar True
---  _x <- readTVar var
---  retry
---
---foobar' :: STM' CanBlock CanThrow ()
---foobar' = do
---  catchSTM (throwM (userError "foobar")) (\(_ :: SomeException) -> traceM "caught")
---  retry
---
---catchphrase :: STM' CanBlock t ()
---catchphrase = catchSTM (throwM (userError "foobar")) (\(_ :: SomeException) -> traceM "caught")
---
---rethrow :: STM' b CanThrow ()
---rethrow = catchSTM (throwM (userError "foobar")) (\(ex :: SomeException) -> throwM ex)
---
---foobar_' :: ReaderT Int (STM' CanBlock CanThrow) ()
---foobar_' = do
---  retry
---
---foobar'' :: STM ()
---foobar'' = do
---  runSTM' retry
---
---foobar''' :: ReaderT Int STM ()
---foobar''' = do
---  _var <- liftSTM (STM.newTVar False)
---  retry
+newUniqueSTM :: MonadSTM' r t m => m Unique
+newUniqueSTM = unsafeLimitSTM (unsafeIOToSTM newUnique)
+
+
+$(mconcat <$> (execWriterT do
+  r <- lift $ varT <$> newName "r"
+  t <- lift $ varT <$> newName "t"
+
+  -- TODO these should have hand-written documentation
+  tellQs $ mapM mkPragma [
+    'liftSTM,
+    'liftSTM',
+    'runSTM',
+    'unsafeLimitSTM,
+    'orElse',
+    'catchSTM',
+    'newUniqueSTM
+    ]
+
+  tellQs $ mapM (uncurry mkPragmaAndCopyDoc) [
+    ('retry, 'STM.retry),
+    ('orElse, 'STM.orElse),
+    ('throwSTM, 'STM.throwSTM),
+    ('catchSTM, 'STM.catchSTM),
+    ('check, 'STM.check)
+    ]
+
+  tellQs $ mapM mkMonadIOWrapper [
+    'STM.atomically
+    ]
+
+  -- TVar
+
+  tellQs $ mapM (mkMonadClassWrapper [t|MonadSTM' $r $t|] [|unsafeLimitSTM|]) [
+    'STM.newTVar,
+    'STM.readTVar,
+    'STM.writeTVar,
+    'STM.modifyTVar,
+    'STM.modifyTVar',
+    'STM.stateTVar,
+    'STM.swapTVar
+    ]
+
+  tellQs $ mapM mkMonadIOWrapper [
+    'STM.newTVarIO,
+    'STM.readTVarIO,
+    'STM.registerDelay,
+    'STM.mkWeakTVar
+    ]
+
+  -- TVar
+
+  tellQs $ mapM (mkMonadClassWrapper [t|MonadSTM' $r $t|] [|unsafeLimitSTM|]) [
+    'STM.newTMVar,
+    'STM.newEmptyTMVar,
+#if MIN_VERSION_stm(2, 5, 1)
+    'STM.writeTMVar,
+#endif
+    'STM.tryReadTMVar,
+    'STM.tryTakeTMVar,
+    'STM.tryPutTMVar,
+    'STM.isEmptyTMVar
+    ]
+
+  tellQs $ mapM (mkMonadClassWrapper [t|MonadSTM' CanRetry $t|] [|unsafeLimitSTM|]) [
+    'STM.takeTMVar,
+    'STM.putTMVar,
+    'STM.readTMVar,
+    'STM.swapTMVar
+    ]
+
+  tellQs $ mapM mkMonadIOWrapper [
+    'STM.newTMVarIO,
+    'STM.newEmptyTMVarIO,
+    'STM.mkWeakTMVar
+    ]
+  ))

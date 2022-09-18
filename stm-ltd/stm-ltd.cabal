@@ -42,6 +42,7 @@ common shared-properties
     RankNTypes
     ScopedTypeVariables
     StandaloneDeriving
+    StandaloneKindSignatures
     TupleSections
     TypeApplications
     TypeFamilies
@@ -73,24 +74,11 @@ library
     base,
     exceptions,
     stm,
+    template-haskell,
     transformers,
   exposed-modules:
     Control.Concurrent.STM.Class
-    -- Control.Concurrent.STM.Class.Unsafe
+    Control.Concurrent.STM.Class.TH
   other-modules:
-    -- Control.Concurrent.STM.Class.Internal
   hs-source-dirs:
     src
-
---test-suite stm-ltd-test
---  import: shared-executable-properties
---  type: exitcode-stdio-1.0
---  build-depends:
---    base,
---    hspec,
---    stm-ltd
---  main-is: Spec.hs
---  other-modules:
---    Control.Concurrent.STM.ClassSpec
---  hs-source-dirs:
---    test

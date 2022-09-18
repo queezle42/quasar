@@ -25,7 +25,8 @@
         quasar_ghc92 = (getHaskellPackages "ghc92.").quasar;
         quasar_ghc94 = (getHaskellPackages "ghc94.").quasar;
         quasar-timer = pkgs.haskellPackages.quasar-timer;
-        stm-ltd = pkgs.haskellPackages.stm-ltd;
+        quasar-timer_ghc92 = (getHaskellPackages "ghc92.").quasar-timer;
+        stm-ltd = (getHaskellPackages "ghc92.").stm-ltd;
       }
     );
 
@@ -56,7 +57,7 @@
       in rec {
         # Using quasar-timer because it encompasses all dependencies.
         # A better solution could be built using `shellFor`
-        default = mkShellFor self.packages.${system}.quasar-timer.env;
+        default = mkShellFor self.packages.${system}.quasar-timer_ghc92.env;
       }
     );
   };
