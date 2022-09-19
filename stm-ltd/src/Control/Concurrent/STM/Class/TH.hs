@@ -57,7 +57,7 @@ mkLiftImpl liftE fqn = do
   let argPats = varP <$> argNames
   let bodyE = [|$liftE $(foldl appE (varE fqn) (varE <$> argNames))|]
   let clauses = [clause argPats (normalB bodyE) []]
-#if __GLASGOW_HASKELL__ >= 902
+#if MIN_VERSION_GLASGOW_HASKELL(9,2,0,0)
   doc <- getDoc (DeclDoc fqn)
   funD_doc name clauses doc [Nothing]
 #else
@@ -81,7 +81,7 @@ inlinablePragma :: Name -> Dec
 inlinablePragma name = PragmaD (InlineP name Inlinable FunLike AllPhases)
 
 copyDoc :: Name -> Name -> Q ()
-#if __GLASGOW_HASKELL__ >= 902
+#if MIN_VERSION_GLASGOW_HASKELL(9,2,0,0)
 copyDoc target source = do
   doc <- getDoc (DeclDoc source)
   mapM_ (putDoc (DeclDoc target)) doc
