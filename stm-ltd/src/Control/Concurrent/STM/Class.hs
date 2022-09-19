@@ -162,20 +162,11 @@ unsafeLimitSTM :: (MonadSTM' r t m) => STM a -> m a
 unsafeLimitSTM fn = liftSTM' (STM' fn)
 
 
-retry :: MonadSTM' CanRetry t m => m a
-retry = unsafeLimitSTM STM.retry
-
 orElse :: MonadSTM m => STM a -> STM a -> m a
 orElse fx fy = liftSTM (STM.orElse fx fy)
 
 orElse' :: MonadSTM' r t m => STM' CanRetry t a -> STM' r t a -> m a
 orElse' fx fy = unsafeLimitSTM $ STM.orElse (runSTM' fx) (runSTM' fy)
-
-check :: MonadSTM' CanRetry t m => Bool -> m ()
-check = unsafeLimitSTM . STM.check
-
-throwSTM :: (MonadSTM' r CanThrow m, Exception e) => e -> m a
-throwSTM = unsafeLimitSTM . STM.throwSTM
 
 catchSTM :: (MonadSTM m, Exception e) => STM a -> (e -> STM a) -> m a
 catchSTM fx fn = liftSTM (STM.catchSTM fx fn)
@@ -192,7 +183,7 @@ $(mconcat <$> (execWriterT do
   r <- lift $ varT <$> newName "r"
   t <- lift $ varT <$> newName "t"
 
-  -- TODO these should have hand-written documentation
+  -- Declarations that are introduced in this module should have documentation
   tellQs $ mapM mkPragma [
     'liftSTM,
     'liftSTM',
@@ -203,12 +194,19 @@ $(mconcat <$> (execWriterT do
     'newUniqueSTM
     ]
 
+  -- Manually implemented wrappers
   tellQs $ mapM (uncurry mkPragmaAndCopyDoc) [
-    ('retry, 'STM.retry),
     ('orElse, 'STM.orElse),
-    ('throwSTM, 'STM.throwSTM),
-    ('catchSTM, 'STM.catchSTM),
-    ('check, 'STM.check)
+    ('catchSTM, 'STM.catchSTM)
+    ]
+
+  tellQs $ mapM (mkMonadClassWrapper [t|MonadSTM' CanRetry $t|] [|unsafeLimitSTM|]) [
+    'STM.retry,
+    'STM.check
+    ]
+
+  tellQs $ mapM (mkMonadClassWrapper [t|MonadSTM' $r CanThrow|] [|unsafeLimitSTM|]) [
+    'STM.throwSTM
     ]
 
   tellQs $ mapM mkMonadIOWrapper [
