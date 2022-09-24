@@ -183,12 +183,12 @@ class Monad m => MonadSTM' (r :: RetryMode) (t :: ThrowMode) m | m -> r, m -> t 
 type MonadSTM = MonadSTM' CanRetry CanThrow
 
 liftSTM :: MonadSTM m => STM a -> m a
-liftSTM fn = liftSTM' (unsafeLimitSTM fn)
+liftSTM fn = liftSTM' (STM' fn)
 {-# INLINABLE liftSTM #-}
 
 
 instance MonadSTM' CanRetry CanThrow STM where
-  liftSTM' = runSTM'
+  liftSTM' (STM' f) = f
   {-# INLINE CONLIKE liftSTM' #-}
 
 instance MonadSTM' r t (STM' r t) where
@@ -212,17 +212,17 @@ instance (MonadSTM' r t m, Monoid w) => MonadSTM' r t (RWST rd w s m) where
   {-# INLINABLE liftSTM' #-}
 
 
-runSTM' :: STM' r t a -> STM a
-runSTM' (STM' fn) = fn
-{-# INLINE CONLIKE runSTM' #-}
+runSTM' :: MonadSTM m => STM' r t a -> m a
+runSTM' (STM' f) = liftSTM f
+{-# INLINABLE runSTM' #-}
 
-noRetry :: STM' NoRetry t a -> STM' r t a
-noRetry (STM' f) = (STM' f)
-{-# INLINE CONLIKE noRetry #-}
+noRetry :: MonadSTM' r t m => STM' NoRetry t a -> m a
+noRetry = unsafeLimitSTM . runSTM'
+{-# INLINABLE noRetry #-}
 
-noThrow :: STM' r NoThrow a -> STM' r t a
-noThrow (STM' f) = (STM' f)
-{-# INLINE CONLIKE noThrow #-}
+noThrow :: MonadSTM' r t m => STM' r NoThrow a -> m a
+noThrow = unsafeLimitSTM . runSTM'
+{-# INLINABLE noThrow #-}
 
 
 unsafeLimitSTM :: (MonadSTM' r t m) => STM a -> m a
