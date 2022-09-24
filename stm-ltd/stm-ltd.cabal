@@ -17,7 +17,6 @@ common shared-properties
     ConstraintKinds
     DataKinds
     DefaultSignatures
-    DeriveAnyClass
     DeriveGeneric
     DerivingStrategies
     DisambiguateRecordFields
@@ -71,6 +70,7 @@ common shared-executable-properties
 library
   import: shared-properties
   build-depends:
+    array,
     base,
     exceptions,
     stm,

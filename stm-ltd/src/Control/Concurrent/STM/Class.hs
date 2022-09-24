@@ -68,12 +68,51 @@ module Control.Concurrent.STM.Class (
   mkWeakTMVar,
 
   -- * TChan
+  STM.TChan,
+  newTChan,
+  newTChanIO,
+  newBroadcastTChan,
+  newBroadcastTChanIO,
+  dupTChan,
+  cloneTChan,
+  readTChan,
+  tryReadTChan,
+  peekTChan,
+  tryPeekTChan,
+  writeTChan,
+  unGetTChan,
+  isEmptyTChan,
 
   -- * TQueue
+  STM.TQueue,
+  newTQueue,
+  newTQueueIO,
+  readTQueue,
+  tryReadTQueue,
+  flushTQueue,
+  peekTQueue,
+  tryPeekTQueue,
+  writeTQueue,
+  unGetTQueue,
+  isEmptyTQueue,
 
   -- * TBQueue
+  STM.TBQueue,
+  newTBQueue,
+  newTBQueueIO,
+  readTBQueue,
+  tryReadTBQueue,
+  flushTBQueue,
+  peekTBQueue,
+  tryPeekTBQueue,
+  writeTBQueue,
+  unGetTBQueue,
+  lengthTBQueue,
+  isEmptyTBQueue,
+  isFullTBQueue,
 
   -- * TArray
+  STM.TArray,
 ) where
 
 import Control.Applicative
@@ -87,6 +126,7 @@ import Control.Monad.Trans.RWS (RWST)
 import Control.Monad.Trans.Reader (ReaderT)
 import Control.Monad.Trans.State (StateT)
 import Control.Monad.Trans.Writer (WriterT, execWriterT)
+import Data.Array.MArray qualified as MArray
 import Data.Kind (Type, Constraint)
 import Data.Unique (Unique, newUnique)
 import GHC.Conc (unsafeIOToSTM)
@@ -112,6 +152,11 @@ type NoThrow = 'NoThrow
 type STM' :: RetryMode -> ThrowMode -> Type -> Type
 newtype STM' r t a = STM' (STM a)
   deriving newtype (Functor, Applicative, Monad, MonadFix)
+
+-- | While the MArray-instance does not require a `CanThrow`-modifier, please
+-- please note that `MArray.readArray` and `MArray.writeArray` (the primary
+-- interface for MArray) are partial.
+deriving newtype instance MArray.MArray STM.TArray e (STM' r t)
 
 instance MonadThrow (STM' r CanThrow) where
   throwM ex = STM' (throwM ex)
@@ -276,5 +321,73 @@ $(mconcat <$> (execWriterT do
     'STM.newTMVarIO,
     'STM.newEmptyTMVarIO,
     'STM.mkWeakTMVar
+    ]
+
+  -- TChan
+
+  tellQs $ mapM (mkMonadClassWrapper [t|MonadSTM' $r $t|] [|unsafeLimitSTM|]) [
+    'STM.newTChan,
+    'STM.newBroadcastTChan,
+    'STM.dupTChan,
+    'STM.cloneTChan,
+    'STM.tryReadTChan,
+    'STM.tryPeekTChan,
+    'STM.writeTChan,
+    'STM.unGetTChan,
+    'STM.isEmptyTChan
+    ]
+
+  tellQs $ mapM (mkMonadClassWrapper [t|MonadSTM' CanRetry $t|] [|unsafeLimitSTM|]) [
+    'STM.readTChan,
+    'STM.peekTChan
+    ]
+
+  tellQs $ mapM mkMonadIOWrapper [
+    'STM.newTChanIO,
+    'STM.newBroadcastTChanIO
+    ]
+
+  -- TQueue
+
+  tellQs $ mapM (mkMonadClassWrapper [t|MonadSTM' $r $t|] [|unsafeLimitSTM|]) [
+    'STM.newTQueue,
+    'STM.tryReadTQueue,
+    'STM.flushTQueue,
+    'STM.tryPeekTQueue,
+    'STM.writeTQueue,
+    'STM.unGetTQueue,
+    'STM.isEmptyTQueue
+    ]
+
+  tellQs $ mapM (mkMonadClassWrapper [t|MonadSTM' CanRetry $t|] [|unsafeLimitSTM|]) [
+    'STM.readTQueue,
+    'STM.peekTQueue
+    ]
+
+  tellQs $ mapM mkMonadIOWrapper [
+    'STM.newTQueueIO
+    ]
+
+  -- TBQueue
+
+  tellQs $ mapM (mkMonadClassWrapper [t|MonadSTM' $r $t|] [|unsafeLimitSTM|]) [
+    'STM.newTBQueue,
+    'STM.tryReadTBQueue,
+    'STM.flushTBQueue,
+    'STM.tryPeekTBQueue,
+    'STM.lengthTBQueue,
+    'STM.isEmptyTBQueue,
+    'STM.isFullTBQueue
+    ]
+
+  tellQs $ mapM (mkMonadClassWrapper [t|MonadSTM' CanRetry $t|] [|unsafeLimitSTM|]) [
+    'STM.readTBQueue,
+    'STM.peekTBQueue,
+    'STM.writeTBQueue,
+    'STM.unGetTBQueue
+    ]
+
+  tellQs $ mapM mkMonadIOWrapper [
+    'STM.newTBQueueIO
     ]
   ))
