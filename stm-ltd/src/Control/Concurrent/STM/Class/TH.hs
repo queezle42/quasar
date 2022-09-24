@@ -10,12 +10,14 @@ module Control.Concurrent.STM.Class.TH (
   tellQs,
 ) where
 
-import Control.Monad.IO.Class
-import Control.Monad.Trans.Writer
-import Prelude
-import Language.Haskell.TH
 import Control.Monad ((<=<))
+import Control.Monad.IO.Class
 import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Writer
+import Language.Haskell.TH
+import Prelude
+
+import Debug.Trace (traceShowM)
 
 mkMonadIOWrapper :: Name -> Q [Dec]
 mkMonadIOWrapper fqn = mkMonadClassWrapper [t|MonadIO|] [|liftIO|] fqn
@@ -58,7 +60,7 @@ mkLiftImpl liftE fqn = do
     bodyE = [|$liftE $(foldl appE (varE fqn) (varE <$> argNames))|]
     clauses = [clause argPats (normalB bodyE) []]
 #if MIN_VERSION_GLASGOW_HASKELL(9,2,0,0)
-  doc <- getDoc (DeclDoc fqn)
+  doc <- fmap rewriteDoc <$> getDoc (DeclDoc fqn)
   funD_doc name clauses doc [Nothing]
 #else
   funD name clauses
@@ -75,11 +77,19 @@ inlinablePragma name = PragmaD (InlineP name Inlinable FunLike AllPhases)
 copyDoc :: Name -> Name -> Q ()
 #if MIN_VERSION_GLASGOW_HASKELL(9,2,0,0)
 copyDoc target source = do
-  doc <- getDoc (DeclDoc source)
+  doc <- fmap rewriteDoc <$> getDoc (DeclDoc source)
+  traceShowM doc
   mapM_ (putDoc (DeclDoc target)) doc
 #else
 copyDoc _ _ = pure ()
 #endif
+
+rewriteDoc :: String -> String
+rewriteDoc = unlines . fmap rewriteSince . lines
+  where
+    rewriteSince ('@':'s':'i':'n':'c':'e':' ':xs) = "/Since: stm-" <> xs <> "/"
+    rewriteSince (x:xs) = x : rewriteSince xs
+    rewriteSince [] = []
 
 -- * Utils
 

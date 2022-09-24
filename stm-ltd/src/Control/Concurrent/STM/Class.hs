@@ -4,34 +4,45 @@
 
 module Control.Concurrent.STM.Class (
   -- * Monad
+  -- ** STM
   STM,
   atomically,
+
+  -- ** MonadSTM
   MonadSTM,
   liftSTM,
 
+  -- ** STM'
   STM',
+  runSTM',
+  -- *** Capabilities
   RetryMode(..),
   CanRetry,
   NoRetry,
   ThrowMode(..),
   CanThrow,
   NoThrow,
+
+  -- ** MonadSTM'
   MonadSTM'(..),
-  runSTM',
   noRetry,
   noThrow,
   unsafeLimitSTM,
 
+  -- ** Retry
   retry,
   orElse,
   orElse',
   check,
+
+  -- ** Throw
   throwSTM,
   catchSTM,
   catchSTM',
 
   -- * Unique
 
+  Unique,
   newUniqueSTM,
 
   -- * TVar
@@ -150,7 +161,9 @@ type NoThrow :: ThrowMode
 type NoThrow = 'NoThrow
 
 type STM' :: RetryMode -> ThrowMode -> Type -> Type
-newtype STM' r t a = STM' (STM a)
+-- | A monad supporting atomic memory transactions. The type variables @r@ and
+-- @t@ denote the capabilities to retry and throw respectively.
+newtype STM' (r :: RetryMode) (t :: ThrowMode) a = STM' (STM a)
   deriving newtype (Functor, Applicative, Monad, MonadFix)
 
 -- | While the MArray-instance does not require a `CanThrow`-modifier, please
@@ -176,12 +189,17 @@ instance Monoid a => Monoid (STM' r t a) where
 
 
 type MonadSTM' :: RetryMode -> ThrowMode -> (Type -> Type) -> Constraint
+-- | Monad in which 'STM'' computations can be embedded. The type variables @r@
+-- and @t@ denote the capabilities to retry and throw respectively.
 class Monad m => MonadSTM' (r :: RetryMode) (t :: ThrowMode) m | m -> r, m -> t where
+  -- | Lift a computation from the 'STM'' monad.
   liftSTM' :: STM' r t a -> m a
 
 
+-- | Monad in which 'STM' and 'STM'' computations can be embedded.
 type MonadSTM = MonadSTM' CanRetry CanThrow
 
+-- | Lift a computation from the 'STM' monad.
 liftSTM :: MonadSTM m => STM a -> m a
 liftSTM fn = liftSTM' (STM' fn)
 {-# INLINABLE liftSTM #-}
@@ -248,7 +266,10 @@ catchSTM' :: (MonadSTM' r t m, Exception e) => STM' r CanThrow a -> (e -> STM' r
 catchSTM' fx fn = unsafeLimitSTM $ STM.catchSTM (runSTM' fx) \ex -> runSTM' (fn ex)
 {-# INLINABLE catchSTM' #-}
 
-
+-- | Creates a new object of type `Unique`. The value returned will not compare
+-- equal to any other value of type 'Unique' returned by previous calls to
+-- `newUnique` and `newUniqueSTM`. There is no limit on the number of times
+-- `newUniqueSTM` may be called.
 newUniqueSTM :: MonadSTM' r t m => m Unique
 newUniqueSTM = unsafeLimitSTM (unsafeIOToSTM newUnique)
 {-# INLINABLE newUniqueSTM #-}

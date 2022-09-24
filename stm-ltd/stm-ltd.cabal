@@ -5,6 +5,9 @@ version:        0.1.0.0
 license:        BSD-2-Clause
 build-type:     Simple
 
+synopsis:
+  stm drop-in replacement with MonadSTM and optional tagged capabilities
+
 --source-repository head
 --  type: git
 --  location: https://github.com/?/stm-ltd.git
@@ -50,6 +53,7 @@ library
     transformers,
   exposed-modules:
     Control.Concurrent.STM.Class
+  other-modules:
     Control.Concurrent.STM.Class.TH
   hs-source-dirs:
     src
