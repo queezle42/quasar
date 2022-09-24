@@ -39,13 +39,6 @@ common shared-properties
     -Werror=missing-home-modules
     -Werror=missing-methods
 
-common shared-executable-properties
-  import: shared-properties
-  ghc-options:
-    -threaded
-    -rtsopts
-    "-with-rtsopts=-N -I0"
-
 library
   import: shared-properties
   build-depends:
@@ -58,6 +51,5 @@ library
   exposed-modules:
     Control.Concurrent.STM.Class
     Control.Concurrent.STM.Class.TH
-  other-modules:
   hs-source-dirs:
     src
