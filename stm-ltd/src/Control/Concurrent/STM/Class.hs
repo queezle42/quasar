@@ -18,6 +18,8 @@ module Control.Concurrent.STM.Class (
   NoThrow,
   MonadSTM'(..),
   runSTM',
+  noRetry,
+  noThrow,
   unsafeLimitSTM,
 
   retry,
@@ -156,6 +158,12 @@ instance (MonadSTM' r t m, Monoid w) => MonadSTM' r t (RWST rd w s m) where
 
 runSTM' :: STM' r t a -> STM a
 runSTM' (STM' fn) = fn
+
+noRetry :: STM' NoRetry t a -> STM' r t a
+noRetry (STM' f) = (STM' f)
+
+noThrow :: STM' r NoThrow a -> STM' r t a
+noThrow (STM' f) = (STM' f)
 
 
 unsafeLimitSTM :: (MonadSTM' r t m) => STM a -> m a
