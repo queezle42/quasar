@@ -11,42 +11,21 @@ build-type:     Simple
 
 common shared-properties
   default-extensions:
-    AllowAmbiguousTypes
-    BangPatterns
     BlockArguments
     ConstraintKinds
     DataKinds
-    DefaultSignatures
-    DeriveGeneric
     DerivingStrategies
-    DisambiguateRecordFields
-    DuplicateRecordFields
-    ExistentialQuantification
     FlexibleContexts
     FlexibleInstances
     FunctionalDependencies
-    GADTs
     GeneralizedNewtypeDeriving
     ImportQualifiedPost
-    InstanceSigs
-    LambdaCase
-    -- Enable once 9.0.1 is required
-    --LexicalNegation
-    MultiParamTypeClasses
-    NamedFieldPuns
+    MonoLocalBinds
     NoImplicitPrelude
-    NumericUnderscores
-    OverloadedStrings
-    PolyKinds
-    RankNTypes
-    ScopedTypeVariables
+    NoStarIsType
     StandaloneDeriving
     StandaloneKindSignatures
-    TupleSections
-    TypeApplications
-    TypeFamilies
-    TypeOperators
-    ViewPatterns
+    KindSignatures
   default-language: Haskell2010
   ghc-options:
     -Weverything

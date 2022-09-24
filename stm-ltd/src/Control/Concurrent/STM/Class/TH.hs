@@ -53,9 +53,10 @@ mkLiftImpl liftE fqn = do
   ty <- reifyType fqn
   let name = mkName $ nameBase fqn
   argNames <- mapM (\_ -> newName "x") [1..(argumentCount ty)]
-  let argPats = varP <$> argNames
-  let bodyE = [|$liftE $(foldl appE (varE fqn) (varE <$> argNames))|]
-  let clauses = [clause argPats (normalB bodyE) []]
+  let
+    argPats = varP <$> argNames
+    bodyE = [|$liftE $(foldl appE (varE fqn) (varE <$> argNames))|]
+    clauses = [clause argPats (normalB bodyE) []]
 #if MIN_VERSION_GLASGOW_HASKELL(9,2,0,0)
   doc <- getDoc (DeclDoc fqn)
   funD_doc name clauses doc [Nothing]
