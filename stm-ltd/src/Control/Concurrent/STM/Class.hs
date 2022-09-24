@@ -115,15 +115,19 @@ newtype STM' r t a = STM' (STM a)
 
 instance MonadThrow (STM' r CanThrow) where
   throwM ex = STM' (throwM ex)
+  {-# INLINABLE throwM #-}
 
 instance MonadCatch (STM' r CanThrow) where
   catch = catchSTM'
+  {-# INLINABLE catch #-}
 
 instance Semigroup a => Semigroup (STM' r t a) where
   (<>) = liftA2 (<>)
+  {-# INLINABLE (<>) #-}
 
 instance Monoid a => Monoid (STM' r t a) where
   mempty = pure mempty
+  {-# INLINABLE mempty #-}
 
 
 type MonadSTM' :: RetryMode -> ThrowMode -> (Type -> Type) -> Constraint
@@ -135,75 +139,82 @@ type MonadSTM = MonadSTM' CanRetry CanThrow
 
 liftSTM :: MonadSTM m => STM a -> m a
 liftSTM fn = liftSTM' (unsafeLimitSTM fn)
+{-# INLINABLE liftSTM #-}
 
 
 instance MonadSTM' CanRetry CanThrow STM where
   liftSTM' = runSTM'
+  {-# INLINE CONLIKE liftSTM' #-}
 
 instance MonadSTM' r t (STM' r t) where
   liftSTM' = id
+  {-# INLINE CONLIKE liftSTM' #-}
 
 instance MonadSTM' r t m => MonadSTM' r t (ReaderT rd m) where
   liftSTM' = lift . liftSTM'
+  {-# INLINABLE liftSTM' #-}
 
 instance (MonadSTM' r t m, Monoid w) => MonadSTM' r t (WriterT w m) where
   liftSTM' = lift . liftSTM'
+  {-# INLINABLE liftSTM' #-}
 
 instance MonadSTM' r t m => MonadSTM' r t (StateT w m) where
   liftSTM' = lift . liftSTM'
+  {-# INLINABLE liftSTM' #-}
 
 instance (MonadSTM' r t m, Monoid w) => MonadSTM' r t (RWST rd w s m) where
   liftSTM' = lift . liftSTM'
+  {-# INLINABLE liftSTM' #-}
 
 
 runSTM' :: STM' r t a -> STM a
 runSTM' (STM' fn) = fn
+{-# INLINE CONLIKE runSTM' #-}
 
 noRetry :: STM' NoRetry t a -> STM' r t a
 noRetry (STM' f) = (STM' f)
+{-# INLINE CONLIKE noRetry #-}
 
 noThrow :: STM' r NoThrow a -> STM' r t a
 noThrow (STM' f) = (STM' f)
+{-# INLINE CONLIKE noThrow #-}
 
 
 unsafeLimitSTM :: (MonadSTM' r t m) => STM a -> m a
 unsafeLimitSTM fn = liftSTM' (STM' fn)
+{-# INLINABLE unsafeLimitSTM #-}
 
 
+-- Documentation is copied via template-haskell
 orElse :: MonadSTM m => STM a -> STM a -> m a
 orElse fx fy = liftSTM (STM.orElse fx fy)
+{-# INLINABLE orElse #-}
 
 orElse' :: MonadSTM' r t m => STM' CanRetry t a -> STM' r t a -> m a
 orElse' fx fy = unsafeLimitSTM $ STM.orElse (runSTM' fx) (runSTM' fy)
+{-# INLINABLE orElse' #-}
 
+-- Documentation is copied via template-haskell
 catchSTM :: (MonadSTM m, Exception e) => STM a -> (e -> STM a) -> m a
 catchSTM fx fn = liftSTM (STM.catchSTM fx fn)
+{-# INLINABLE catchSTM #-}
 
 catchSTM' :: (MonadSTM' r t m, Exception e) => STM' r CanThrow a -> (e -> STM' r t a) -> m a
 catchSTM' fx fn = unsafeLimitSTM $ STM.catchSTM (runSTM' fx) \ex -> runSTM' (fn ex)
+{-# INLINABLE catchSTM' #-}
 
 
 newUniqueSTM :: MonadSTM' r t m => m Unique
 newUniqueSTM = unsafeLimitSTM (unsafeIOToSTM newUnique)
+{-# INLINABLE newUniqueSTM #-}
 
 
 $(mconcat <$> (execWriterT do
   r <- lift $ varT <$> newName "r"
   t <- lift $ varT <$> newName "t"
 
-  -- Declarations that are introduced in this module should have documentation
-  tellQs $ mapM mkPragma [
-    'liftSTM,
-    'liftSTM',
-    'runSTM',
-    'unsafeLimitSTM,
-    'orElse',
-    'catchSTM',
-    'newUniqueSTM
-    ]
-
   -- Manually implemented wrappers
-  tellQs $ mapM (uncurry mkPragmaAndCopyDoc) [
+  lift $ mapM_ (uncurry copyDoc) [
     ('orElse, 'STM.orElse),
     ('catchSTM, 'STM.catchSTM)
     ]

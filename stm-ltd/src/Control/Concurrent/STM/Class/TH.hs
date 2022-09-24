@@ -4,8 +4,7 @@
 module Control.Concurrent.STM.Class.TH (
   mkMonadClassWrapper,
   mkMonadIOWrapper,
-  mkPragma,
-  mkPragmaAndCopyDoc,
+  copyDoc,
 
   -- ** Utils
   tellQs,
@@ -68,14 +67,6 @@ argumentCount :: Type -> Int
 argumentCount (ForallT _ _ ty) = argumentCount ty
 argumentCount (AppT (AppT ArrowT _) rhs) = argumentCount rhs + 1
 argumentCount _ = 0
-
-mkPragma :: Name -> Q [Dec]
-mkPragma target = pure [inlinablePragma target]
-
-mkPragmaAndCopyDoc :: Name -> Name -> Q [Dec]
-mkPragmaAndCopyDoc target source = do
-  copyDoc source target
-  pure [inlinablePragma target]
 
 inlinablePragma :: Name -> Dec
 inlinablePragma name = PragmaD (InlineP name Inlinable FunLike AllPhases)
