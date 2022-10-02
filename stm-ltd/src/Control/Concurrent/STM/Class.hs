@@ -25,10 +25,12 @@ module Control.Concurrent.STM.Class (
   CanThrow,
   NoThrow,
 
-  -- ** MonadSTM'
-  MonadSTM'(..),
+  -- *** Limiting capabilities
   noRetry,
   noThrow,
+
+  -- ** MonadSTM'
+  MonadSTM'(..),
   unsafeLimitSTM,
 
   -- ** Retry
@@ -148,7 +150,7 @@ import GHC.Conc (unsafeIOToSTM)
 import Language.Haskell.TH hiding (Type)
 import Prelude
 
-
+-- Use TypeData when ghc-9.6.1 is released
 data RetryMode = CanRetry | NoRetry
 data ThrowMode = CanThrow | NoThrow
 
