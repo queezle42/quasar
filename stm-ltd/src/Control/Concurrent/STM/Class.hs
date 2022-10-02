@@ -15,6 +15,8 @@ module Control.Concurrent.STM.Class (
   -- ** STM'
   STM',
   runSTM',
+  atomically',
+
   -- *** Capabilities
   RetryMode(..),
   CanRetry,
@@ -132,6 +134,7 @@ import Control.Concurrent.STM (STM)
 import Control.Concurrent.STM qualified as STM
 import Control.Concurrent.STM.Class.TH
 import Control.Monad.Catch
+import Control.Monad.IO.Class
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.RWS (RWST)
@@ -234,6 +237,11 @@ instance (MonadSTM' r t m, Monoid w) => MonadSTM' r t (RWST rd w s m) where
 runSTM' :: MonadSTM m => STM' r t a -> m a
 runSTM' (STM' f) = liftSTM f
 {-# INLINABLE runSTM' #-}
+
+atomically' :: MonadIO m => STM' CanRetry CanThrow a -> m a
+atomically' = liftIO . STM.atomically . runSTM'
+{-# INLINABLE atomically' #-}
+
 
 noRetry :: MonadSTM' r t m => STM' NoRetry t a -> m a
 noRetry = unsafeLimitSTM . runSTM'
