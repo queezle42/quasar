@@ -99,7 +99,6 @@ library
     Quasar.Observable.ObservablePriority
     Quasar.Prelude
     Quasar.PreludeExtras
-    Quasar.PreludeSTM
     Quasar.Resources
     Quasar.Utils.Exceptions
     Quasar.Utils.ExtraT

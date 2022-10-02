@@ -1,7 +1,7 @@
 module Quasar.Prelude
   ( module Prelude,
     module Quasar.PreludeExtras,
-    module Quasar.PreludeSTM,
+    module Control.Concurrent.STM.Class,
     (>=>),
     (<=<),
     (<|>),
@@ -26,7 +26,6 @@ module Quasar.Prelude
     Control.Monad.Fix.MonadFix(..),
     Data.Kind.Type,
     Data.Kind.Constraint,
-    Data.Unique.Unique,
     newUnique,
     Data.Void.Void,
     Data.Hashable.Hashable,
@@ -79,6 +78,7 @@ import Prelude qualified as P
 import Control.Applicative ((<|>))
 import Control.Applicative qualified
 import Control.Concurrent.MVar
+import Control.Concurrent.STM.Class hiding (registerDelay)
 import Control.Exception qualified
 import Control.Monad ((>=>), (<=<))
 import Control.Monad qualified
@@ -98,7 +98,6 @@ import GHC.Generics qualified
 import GHC.Stack.Types qualified
 import GHC.Types qualified
 import Quasar.PreludeExtras
-import Quasar.PreludeSTM
 
 {-# WARNING error "Undefined." #-}
 error :: forall (r :: GHC.Types.RuntimeRep). forall (a :: GHC.Types.TYPE r). GHC.Stack.Types.HasCallStack => String -> a
