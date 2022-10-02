@@ -82,8 +82,10 @@ instance MonadAwait IO where
 
 -- | `awaitSTM` exists as an explicit alternative to a `Future STM`-instance, to prevent code which creates- and
 -- then awaits resources without knowing it's running in STM (which would block indefinitely when run in STM).
-awaitSTM :: IsFuture r a => a -> STM r
-awaitSTM (toFuture -> Future x) =
+awaitSTM :: MonadSTM m => IsFuture r a => a -> m r
+awaitSTM (toFuture -> Future x) = liftSTM do
+  -- NOTE BlockedIndefinitelyOnSTM might be thrown outside of STM?
+  -- TODO Check behavior and remove comment or the `catch` if it pointless.
   x `catch` \BlockedIndefinitelyOnSTM -> throwM BlockedIndefinitelyOnAwait
 
 instance MonadAwait m => MonadAwait (ReaderT a m) where
@@ -103,23 +105,19 @@ instance MonadAwait m => MonadAwait (MaybeT m) where
 
 
 
--- | Returns the result (in a `Just`) when the awaitable is completed, throws an `Exception` when the awaitable is
+-- | Returns the result (in a `Just`) when the future is completed, throws an `Exception` when the future is
 -- failed and returns `Nothing` otherwise.
 peekFuture :: MonadIO m => Future r -> m (Maybe r)
-peekFuture awaitable = liftIO $ atomically $ (Just <$> awaitSTM awaitable) `orElse` pure Nothing
+peekFuture future = liftIO $ atomically $ (Just <$> awaitSTM future) `orElse` pure Nothing
 
--- | Returns the result (in a `Just`) when the awaitable is completed, throws an `Exception` when the awaitable is
+-- | Returns the result (in a `Just`) when the future is completed, throws an `Exception` when the future is
 -- failed and returns `Nothing` otherwise.
-peekFutureSTM :: Future r -> STM (Maybe r)
-peekFutureSTM awaitable = (Just <$> awaitSTM awaitable) `orElse` pure Nothing
-
+peekFutureSTM :: MonadSTM' r CanThrow m => Future a -> m (Maybe a)
+peekFutureSTM future = (Just <$> awaitSTM future) `orElse'` pure Nothing
 
 
 class IsFuture r a | a -> r where
   toFuture :: a -> Future r
-
-
-
 
 
 unsafeSTMToFuture :: STM a -> Future a
@@ -181,53 +179,52 @@ instance IsFuture r (Promise r) where
   toFuture (Promise var) = unsafeSTMToFuture $ either throwM pure =<< readTMVar var
 
 
-newPromiseSTM :: STM (Promise r)
+newPromiseSTM :: MonadSTM' r t m => m (Promise a)
 newPromiseSTM = Promise <$> newEmptyTMVar
 
 newPromise :: MonadIO m => m (Promise r)
 newPromise = liftIO $ Promise <$> newEmptyTMVarIO
 
 
-completePromiseSTM :: Promise a -> Either SomeException a -> STM ()
+completePromiseSTM :: MonadSTM' r CanThrow m => Promise a -> Either SomeException a -> m ()
 completePromiseSTM var result = do
   success <- tryCompletePromiseSTM var result
-  unless success $ throwM PromiseAlreadyCompleted
+  unless success $ throwSTM PromiseAlreadyCompleted
 
-tryCompletePromiseSTM :: Promise a -> Either SomeException a -> STM Bool
+tryCompletePromiseSTM :: MonadSTM' r t m => Promise a -> Either SomeException a -> m Bool
 tryCompletePromiseSTM (Promise var) = tryPutTMVar var
 
 
-peekPromiseSTM :: forall a. Promise a -> STM (Maybe a)
-peekPromiseSTM (Promise var) = mapM (either throwM pure) =<< tryReadTMVar var
+peekPromiseSTM :: MonadSTM' r CanThrow m => Promise a -> m (Maybe a)
+peekPromiseSTM (Promise var) = mapM (either throwSTM pure) =<< tryReadTMVar var
 
 
 fulfillPromise :: MonadIO m => Promise a -> a -> m ()
 fulfillPromise var result = liftIO $ atomically $ fulfillPromiseSTM var result
 
-fulfillPromiseSTM :: Promise a -> a -> STM ()
+fulfillPromiseSTM :: MonadSTM' r CanThrow m => Promise a -> a -> m ()
 fulfillPromiseSTM var result = completePromiseSTM var (Right result)
 
 breakPromise :: (Exception e, MonadIO m) => Promise a -> e -> m ()
 breakPromise var result = liftIO $ atomically $ breakPromiseSTM var result
 
-breakPromiseSTM :: Exception e => Promise a -> e -> STM ()
+breakPromiseSTM :: (Exception e, MonadSTM' r CanThrow m) => Promise a -> e -> m ()
 breakPromiseSTM var result = completePromiseSTM var (Left (toException result))
 
 completePromise :: MonadIO m => Promise a -> Either SomeException a -> m ()
 completePromise var result = liftIO $ atomically $ completePromiseSTM var result
 
 
-
 tryFulfillPromise :: MonadIO m => Promise a -> a -> m Bool
 tryFulfillPromise var result = liftIO $ atomically $ tryFulfillPromiseSTM var result
 
-tryFulfillPromiseSTM :: Promise a -> a -> STM Bool
+tryFulfillPromiseSTM :: MonadSTM' r t m => Promise a -> a -> m Bool
 tryFulfillPromiseSTM var result = tryCompletePromiseSTM var (Right result)
 
 tryBreakPromise :: (Exception e, MonadIO m) => Promise a -> e -> m Bool
 tryBreakPromise var result = liftIO $ atomically $ tryBreakPromiseSTM var result
 
-tryBreakPromiseSTM :: Exception e => Promise a -> e -> STM Bool
+tryBreakPromiseSTM :: MonadSTM' r t m => Exception e => Promise a -> e -> m Bool
 tryBreakPromiseSTM var result = tryCompletePromiseSTM var (Left (toException result))
 
 tryCompletePromise :: MonadIO m => Promise a -> Either SomeException a -> m Bool
