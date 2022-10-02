@@ -20,14 +20,14 @@ newtype TOnce a b = TOnce (TVar (Either a b))
 instance IsFuture b (TOnce a b) where
   toFuture = unsafeAwaitSTM . readTOnceResult
 
-newTOnce :: a -> STM (TOnce a b)
+newTOnce :: MonadSTM' r t m => a -> m (TOnce a b)
 newTOnce initial = TOnce <$> newTVar (Left initial)
 
-newTOnceIO :: a -> IO (TOnce a b)
+newTOnceIO :: MonadIO m => a -> m (TOnce a b)
 newTOnceIO initial = TOnce <$> newTVarIO (Left initial)
 
 
-mapFinalizeTOnce :: TOnce a b -> (a -> STM b) -> STM b
+mapFinalizeTOnce :: MonadSTM' r t m => TOnce a b -> (a -> m b) -> m b
 mapFinalizeTOnce (TOnce var) fn =
   readTVar var >>= \case
     Left initial -> do
@@ -36,17 +36,17 @@ mapFinalizeTOnce (TOnce var) fn =
       pure final
     Right final -> pure final
 
-finalizeTOnce :: TOnce a b -> b -> STM ()
+finalizeTOnce :: MonadSTM' r CanThrow m => TOnce a b -> b -> m ()
 finalizeTOnce (TOnce var) value =
   readTVar var >>= \case
     Left _ -> writeTVar var (Right value)
     Right _ -> throwSTM TOnceAlreadyFinalized
 
 
-readTOnceState :: TOnce a b -> STM (Either a b)
+readTOnceState :: MonadSTM' r t m => TOnce a b -> m (Either a b)
 readTOnceState (TOnce var) = readTVar var
 
-readTOnceResult :: TOnce a b -> STM b
+readTOnceResult :: MonadSTM' CanRetry t m => TOnce a b -> m b
 readTOnceResult switch =
   readTOnceState switch >>= \case
     Right final -> pure final
