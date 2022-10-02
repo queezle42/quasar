@@ -34,7 +34,10 @@ throwToExceptionSinkIO :: (Exception e, MonadIO m) => ExceptionSink -> e -> m ()
 throwToExceptionSinkIO sink ex = atomically $ throwToExceptionSink sink ex
 
 catchSink :: forall e. Exception e => (e -> STM ()) -> ExceptionSink -> ExceptionSink
-catchSink handler parentSink = ExceptionSink $ mapM_ wrappedHandler . fromException
+catchSink handler parentSink = ExceptionSink \ex ->
+  case fromException ex of
+    Just matchedException -> wrappedHandler matchedException
+    Nothing -> throwToExceptionSink parentSink ex
   where
     wrappedHandler :: e -> STM ()
     wrappedHandler ex = catchAll (handler ex) (throwToExceptionSink parentSink)
