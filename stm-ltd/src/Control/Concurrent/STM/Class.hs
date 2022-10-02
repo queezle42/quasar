@@ -39,6 +39,7 @@ module Control.Concurrent.STM.Class (
   throwSTM,
   catchSTM,
   catchSTM',
+  catchAllSTM',
 
   -- * Unique
 
@@ -262,9 +263,13 @@ catchSTM :: (MonadSTM m, Exception e) => STM a -> (e -> STM a) -> m a
 catchSTM fx fn = liftSTM (STM.catchSTM fx fn)
 {-# INLINABLE catchSTM #-}
 
-catchSTM' :: (MonadSTM' r t m, Exception e) => STM' r CanThrow a -> (e -> STM' r t a) -> m a
+catchSTM' :: (MonadSTM' r CanThrow m, Exception e) => STM' r CanThrow a -> (e -> STM' r CanThrow a) -> m a
 catchSTM' fx fn = unsafeLimitSTM $ STM.catchSTM (runSTM' fx) \ex -> runSTM' (fn ex)
 {-# INLINABLE catchSTM' #-}
+
+catchAllSTM' :: (MonadSTM' r t m) => STM' r CanThrow a -> (SomeException -> STM' r t a) -> m a
+catchAllSTM' fx fn = unsafeLimitSTM $ STM.catchSTM (runSTM' fx) \ex -> runSTM' (fn ex)
+{-# INLINABLE catchAllSTM' #-}
 
 -- | Creates a new object of type `Unique`. The value returned will not compare
 -- equal to any other value of type 'Unique' returned by previous calls to
