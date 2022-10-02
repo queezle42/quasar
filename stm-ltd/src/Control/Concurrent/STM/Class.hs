@@ -249,19 +249,9 @@ unsafeLimitSTM fn = liftSTM' (STM' fn)
 {-# INLINABLE unsafeLimitSTM #-}
 
 
--- Documentation is copied via template-haskell
-orElse :: MonadSTM m => STM a -> STM a -> m a
-orElse fx fy = liftSTM (STM.orElse fx fy)
-{-# INLINABLE orElse #-}
-
 orElse' :: MonadSTM' r t m => STM' CanRetry t a -> STM' r t a -> m a
 orElse' fx fy = unsafeLimitSTM $ STM.orElse (runSTM' fx) (runSTM' fy)
 {-# INLINABLE orElse' #-}
-
--- Documentation is copied via template-haskell
-catchSTM :: (MonadSTM m, Exception e) => STM a -> (e -> STM a) -> m a
-catchSTM fx fn = liftSTM (STM.catchSTM fx fn)
-{-# INLINABLE catchSTM #-}
 
 catchSTM' :: (MonadSTM' r CanThrow m, Exception e) => STM' r CanThrow a -> (e -> STM' r CanThrow a) -> m a
 catchSTM' fx fn = unsafeLimitSTM $ STM.catchSTM (runSTM' fx) \ex -> runSTM' (fn ex)
@@ -284,12 +274,6 @@ $(mconcat <$> (execWriterT do
   r <- lift $ varT <$> newName "r"
   t <- lift $ varT <$> newName "t"
 
-  -- Manually implemented wrappers
-  lift $ mapM_ (uncurry copyDoc) [
-    ('orElse, 'STM.orElse),
-    ('catchSTM, 'STM.catchSTM)
-    ]
-
   tellQs $ mapM (mkMonadClassWrapper [t|MonadSTM' CanRetry $t|] [|unsafeLimitSTM|]) [
     'STM.retry,
     'STM.check
@@ -297,6 +281,11 @@ $(mconcat <$> (execWriterT do
 
   tellQs $ mapM (mkMonadClassWrapper [t|MonadSTM' $r CanThrow|] [|unsafeLimitSTM|]) [
     'STM.throwSTM
+    ]
+
+  tellQs $ mapM (mkMonadClassWrapper [t|MonadSTM|] [|liftSTM|]) [
+    'STM.orElse,
+    'STM.catchSTM
     ]
 
   tellQs $ mapM mkMonadIOWrapper [
