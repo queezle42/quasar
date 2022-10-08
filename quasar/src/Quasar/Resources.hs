@@ -51,22 +51,22 @@ import Quasar.Prelude
 import Quasar.Resources.Disposer
 
 
-registerResource :: (Resource a, MonadQuasar m, MonadSTM m) => a -> m ()
+registerResource :: (Resource a, MonadQuasar m, MonadSTM' r CanThrow m) => a -> m ()
 registerResource resource = do
   rm <- askResourceManager
-  liftSTM $ attachResource rm resource
+  liftSTM' $ attachResource rm resource
 {-# SPECIALIZE registerResource :: Resource a => a -> QuasarSTM () #-}
 
 registerResourceIO :: (Resource a, MonadQuasar m, MonadIO m) => a -> m ()
 registerResourceIO res = quasarAtomically $ registerResource res
 {-# SPECIALIZE registerResourceIO :: Resource a => a -> QuasarIO () #-}
 
-registerDisposeAction :: (MonadQuasar m, MonadSTM m) => IO () -> m Disposer
+registerDisposeAction :: (MonadQuasar m, MonadSTM' r CanThrow m) => IO () -> m Disposer
 registerDisposeAction fn = do
   worker <- askIOWorker
   exChan <- askExceptionSink
   rm <- askResourceManager
-  liftSTM do
+  liftSTM' do
     disposer <- newUnmanagedIODisposer fn worker exChan
     attachResource rm disposer
     pure disposer

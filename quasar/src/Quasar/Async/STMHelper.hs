@@ -18,8 +18,8 @@ import Quasar.Utils.ShortIO
 newtype TIOWorker = TIOWorker (TQueue (IO ()))
 
 
-startShortIOSTM :: forall a. ShortIO a -> TIOWorker -> ExceptionSink -> STM (Future a)
-startShortIOSTM fn (TIOWorker jobQueue) exChan = do
+startShortIOSTM :: forall a m r t. MonadSTM' r t m => ShortIO a -> TIOWorker -> ExceptionSink -> m (Future a)
+startShortIOSTM fn (TIOWorker jobQueue) exChan = liftSTM' do
   resultVar <- newPromiseSTM
   writeTQueue jobQueue $ job resultVar
   pure $ toFuture resultVar
@@ -32,7 +32,7 @@ startShortIOSTM fn (TIOWorker jobQueue) exChan = do
           breakPromise resultVar $ toException $ AsyncException ex
         Right result -> fulfillPromise resultVar result
 
-startShortIOSTM_ :: ShortIO () -> TIOWorker -> ExceptionSink -> STM ()
+startShortIOSTM_ :: MonadSTM' r t m => ShortIO () -> TIOWorker -> ExceptionSink -> m ()
 startShortIOSTM_ x y z = void $ startShortIOSTM x y z
 
 
