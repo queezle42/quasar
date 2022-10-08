@@ -149,6 +149,7 @@ import Data.Unique (Unique, newUnique)
 import GHC.Conc (unsafeIOToSTM)
 import Language.Haskell.TH hiding (Type)
 import Prelude
+import Control.Monad (MonadPlus)
 
 -- Use TypeData when ghc-9.6.1 is released
 data RetryMode = CanRetry | NoRetry
@@ -176,6 +177,10 @@ newtype STM' (r :: RetryMode) (t :: ThrowMode) a = STM' (STM a)
 -- please note that `MArray.readArray` and `MArray.writeArray` (the primary
 -- interface for MArray) are partial.
 deriving newtype instance MArray.MArray STM.TArray e (STM' r t)
+
+deriving newtype instance Alternative (STM' CanRetry t)
+
+deriving newtype instance MonadPlus (STM' CanRetry t)
 
 instance MonadThrow (STM' r CanThrow) where
   throwM ex = STM' (throwM ex)
