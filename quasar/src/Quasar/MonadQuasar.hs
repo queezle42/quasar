@@ -14,12 +14,16 @@ module Quasar.MonadQuasar (
   QuasarT,
   QuasarIO,
   QuasarSTM,
+  QuasarSTM',
 
   runQuasarIO,
   runQuasarSTM,
+  runQuasarSTM',
   liftQuasarIO,
   liftQuasarSTM,
+  liftQuasarSTM',
   quasarAtomically,
+  quasarAtomically',
 
   -- ** Utils
   redirectExceptionToSink,
@@ -140,8 +144,28 @@ instance Semigroup a => Semigroup (QuasarSTM a) where
 instance Monoid a => Monoid (QuasarSTM a) where
   mempty = pure mempty
 
+instance MonadFail (QuasarSTM' r CanThrow) where
+  fail msg = throwM (userError msg)
+
+
+newtype QuasarSTM' r t a = QuasarSTM' (QuasarT (STM' r t) a)
+  deriving newtype (Functor, Applicative, Monad, MonadFix, MonadSTM' r t)
+
+deriving newtype instance MonadThrow (QuasarSTM' r CanThrow)
+deriving newtype instance MonadCatch (QuasarSTM' r CanThrow)
+
+deriving newtype instance Alternative (QuasarSTM' CanRetry t)
+deriving newtype instance MonadPlus (QuasarSTM' CanRetry t)
+
+instance Semigroup a => Semigroup (QuasarSTM' r t a) where
+  (<>) = liftA2 (<>)
+
+instance Monoid a => Monoid (QuasarSTM' r t a) where
+  mempty = pure mempty
+
 instance MonadFail QuasarSTM where
   fail msg = throwM (userError msg)
+
 
 
 instance MonadQuasar QuasarIO where
@@ -163,6 +187,10 @@ instance (MonadIO m, MonadMask m, MonadFix m) => MonadLog (QuasarT m) where
 instance MonadQuasar QuasarSTM where
   askQuasar = QuasarSTM ask
   localQuasar quasar (QuasarSTM fn) = QuasarSTM (local (const quasar) fn)
+
+instance MonadQuasar (QuasarSTM' r CanThrow) where
+  askQuasar = QuasarSTM' ask
+  localQuasar quasar (QuasarSTM' fn) = QuasarSTM' (local (const quasar) fn)
 
 
 -- Overlappable so a QuasarT has priority over the base monad.
@@ -202,6 +230,13 @@ liftQuasarSTM fn = do
 {-# RULES "liftQuasarSTM/id" liftQuasarSTM = id #-}
 {-# INLINABLE [1] liftQuasarSTM #-}
 
+liftQuasarSTM' :: (MonadSTM' r t m, MonadQuasar m) => QuasarSTM' r t a -> m a
+liftQuasarSTM' fn = do
+  quasar <- askQuasar
+  liftSTM' $ runQuasarSTM' quasar fn
+{-# RULES "liftQuasarSTM'/id" liftQuasarSTM' = id #-}
+{-# INLINABLE [1] liftQuasarSTM' #-}
+
 runQuasarIO :: MonadIO m => Quasar -> QuasarIO a -> m a
 runQuasarIO quasar (QuasarIO fn) = liftIO $ runReaderT fn quasar
 {-# SPECIALIZE runQuasarIO :: Quasar -> QuasarIO a -> IO a #-}
@@ -212,12 +247,24 @@ runQuasarSTM quasar (QuasarSTM fn) = liftSTM $ runReaderT fn quasar
 {-# SPECIALIZE runQuasarSTM :: Quasar -> QuasarSTM a -> STM a #-}
 {-# INLINABLE runQuasarSTM #-}
 
+runQuasarSTM' :: MonadSTM' r t m => Quasar -> QuasarSTM' r t a -> m a
+runQuasarSTM' quasar (QuasarSTM' fn) = liftSTM' $ runReaderT fn quasar
+{-# SPECIALIZE runQuasarSTM' :: Quasar -> QuasarSTM' r t a -> STM' r t a #-}
+{-# INLINABLE runQuasarSTM' #-}
+
 quasarAtomically :: (MonadQuasar m, MonadIO m) => QuasarSTM a -> m a
 quasarAtomically (QuasarSTM fn) = do
   quasar <- askQuasar
   atomically $ runReaderT fn quasar
 {-# SPECIALIZE quasarAtomically :: QuasarSTM a -> QuasarIO a #-}
 {-# INLINABLE quasarAtomically #-}
+
+quasarAtomically' :: (MonadQuasar m, MonadIO m) => QuasarSTM' CanRetry CanThrow a -> m a
+quasarAtomically' (QuasarSTM' fn) = do
+  quasar <- askQuasar
+  atomically' $ runReaderT fn quasar
+{-# SPECIALIZE quasarAtomically' :: QuasarSTM' CanRetry CanThrow a -> QuasarIO a #-}
+{-# INLINABLE quasarAtomically' #-}
 
 
 redirectExceptionToSink :: (MonadQuasar m, MonadSTM m) => m a -> m (Maybe a)
