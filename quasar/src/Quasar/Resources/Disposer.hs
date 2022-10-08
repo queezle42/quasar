@@ -4,8 +4,8 @@ module Quasar.Resources.Disposer (
   Resource(..),
   Disposer,
   dispose,
-  disposeEventuallySTM,
-  disposeEventuallySTM_,
+  disposeEventually,
+  disposeEventually_,
   newUnmanagedPrimitiveDisposer,
   newUnmanagedIODisposer,
   newUnmanagedSTMDisposer,
@@ -165,10 +165,10 @@ newUnmanagedIODisposer fn worker exChan = newUnmanagedPrimitiveDisposer (unsafeS
 
 
 dispose :: (MonadIO m, Resource r) => r -> m ()
-dispose resource = liftIO $ await =<< atomically (disposeEventuallySTM resource)
+dispose resource = liftIO $ await =<< atomically (disposeEventually resource)
 
-disposeEventuallySTM :: MonadSTM' r t m => Resource a => a -> m (Future ())
-disposeEventuallySTM (toDisposer -> Disposer ds) = liftSTM' do
+disposeEventually :: (Resource a, MonadSTM' r t m) => a -> m (Future ())
+disposeEventually (toDisposer -> Disposer ds) = liftSTM' do
   mconcat <$> mapM f ds
   where
     f :: DisposerElement -> STM' r t (Future ())
@@ -178,8 +178,8 @@ disposeEventuallySTM (toDisposer -> Disposer ds) = liftSTM' do
     f (ResourceManagerDisposer resourceManager) =
       beginDisposeResourceManager resourceManager
 
-disposeEventuallySTM_ :: MonadSTM' r t m => Resource a => a -> m ()
-disposeEventuallySTM_ resource = void $ disposeEventuallySTM resource
+disposeEventually_ :: (Resource a, MonadSTM' r t m) => a -> m ()
+disposeEventually_ resource = void $ disposeEventually resource
 
 
 
@@ -245,7 +245,7 @@ instance Resource ResourceManager where
   isDisposing = resourceManagerIsDisposing
 
 
-newUnmanagedResourceManagerSTM :: TIOWorker -> ExceptionSink -> STM ResourceManager
+newUnmanagedResourceManagerSTM :: MonadSTM' r t m => TIOWorker -> ExceptionSink -> m ResourceManager
 newUnmanagedResourceManagerSTM worker exChan = do
   resourceManagerKey <- newUniqueSTM
   attachedResources <- newTVar mempty

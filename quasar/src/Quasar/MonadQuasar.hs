@@ -82,7 +82,7 @@ quasarExceptionSink (Quasar _ _ exChan _) = exChan
 quasarResourceManager :: Quasar -> ResourceManager
 quasarResourceManager (Quasar _ _ _ rm) = rm
 
-newResourceScopeSTM :: Quasar -> STM Quasar
+newResourceScopeSTM :: MonadSTM' r CanThrow m => Quasar -> m Quasar
 newResourceScopeSTM parent = do
   rm <- newUnmanagedResourceManagerSTM worker parentExceptionSink
   attachResource (quasarResourceManager parent) rm
@@ -99,11 +99,11 @@ newQuasar logger worker parentExceptionSink resourceManager = do
   where
     disposeOnException :: ResourceManager -> SomeException -> STM ()
     disposeOnException rm ex = do
-      disposeEventuallySTM_ rm
+      disposeEventually_ rm
       throwToExceptionSink parentExceptionSink ex
 
-newResourceScope :: (MonadQuasar m, MonadSTM m) => m Quasar
-newResourceScope = liftSTM . newResourceScopeSTM =<< askQuasar
+newResourceScope :: (MonadQuasar m, MonadSTM' r CanThrow m) => m Quasar
+newResourceScope = liftSTM' . newResourceScopeSTM =<< askQuasar
 {-# SPECIALIZE newResourceScope :: QuasarSTM Quasar #-}
 
 newResourceScopeIO :: (MonadQuasar m, MonadIO m) => m Quasar
