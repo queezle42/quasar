@@ -97,7 +97,7 @@ newQuasar :: Logger -> TIOWorker -> ExceptionSink -> ResourceManager -> Quasar
 newQuasar logger worker parentExceptionSink resourceManager = do
   Quasar logger worker (ExceptionSink (disposeOnException resourceManager)) resourceManager
   where
-    disposeOnException :: ResourceManager -> SomeException -> STM ()
+    disposeOnException :: ResourceManager -> SomeException -> STM' r t ()
     disposeOnException rm ex = do
       disposeEventually_ rm
       throwToExceptionSink parentExceptionSink ex
@@ -290,7 +290,7 @@ redirectExceptionToSinkIO_ fn = void $ redirectExceptionToSinkIO fn
 {-# SPECIALIZE redirectExceptionToSinkIO_ :: QuasarIO a -> QuasarIO () #-}
 
 
-catchQuasar :: MonadQuasar m => forall e. Exception e => (e -> STM ()) -> m a -> m a
+catchQuasar :: MonadQuasar m => forall e. Exception e => (e -> STM' NoRetry CanThrow ()) -> m a -> m a
 catchQuasar handler fn = do
   exSink <- catchSink handler <$> askExceptionSink
   replaceExceptionSink exSink fn

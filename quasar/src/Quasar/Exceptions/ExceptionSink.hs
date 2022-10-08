@@ -39,21 +39,21 @@ loggingExceptionSink worker =
     logFn :: SomeException -> ShortIO ()
     logFn ex = unsafeShortIO $ Trace.traceIO $ displayException ex
 
-newExceptionWitnessSink :: ExceptionSink -> STM (ExceptionSink, STM Bool)
-newExceptionWitnessSink exChan = do
+newExceptionWitnessSink :: MonadSTM' r t m => ExceptionSink -> m (ExceptionSink, STM' r2 t2 Bool)
+newExceptionWitnessSink exChan = liftSTM' do
   var <- newTVar False
   let chan = ExceptionSink \ex -> lock var >> throwToExceptionSink exChan ex
   pure (chan, readTVar var)
   where
-    lock :: TVar Bool -> STM ()
+    lock :: TVar Bool -> STM' r t ()
     lock var = unlessM (readTVar var) (writeTVar var True)
 
-newExceptionRedirector :: ExceptionSink -> STM (ExceptionSink, ExceptionSink -> STM ())
+newExceptionRedirector :: MonadSTM' r t m => ExceptionSink -> m (ExceptionSink, ExceptionSink -> STM' r2 t2 ())
 newExceptionRedirector initialExceptionSink = do
   channelVar <- newTVar initialExceptionSink
   pure (ExceptionSink (channelFn channelVar), writeTVar channelVar)
   where
-    channelFn :: TVar ExceptionSink -> SomeException -> STM ()
+    channelFn :: TVar ExceptionSink -> SomeException -> STM' r t ()
     channelFn channelVar ex = do
       channel <- readTVar channelVar
       throwToExceptionSink channel ex
@@ -61,17 +61,17 @@ newExceptionRedirector initialExceptionSink = do
 -- | Collects exceptions. After they have been collected (by using the resulting
 -- transaction), further exceptions are forwarded to the backup exception sink.
 -- The collection transaction may only be used once.
-newExceptionCollector :: ExceptionSink -> STM (ExceptionSink, STM [SomeException])
+newExceptionCollector :: MonadSTM' r t m => ExceptionSink -> m (ExceptionSink, STM' r2 CanThrow [SomeException])
 newExceptionCollector backupExceptionSink = do
   exceptionsVar <- newTVar (Just [])
   pure (ExceptionSink (channelFn exceptionsVar), gatherResult exceptionsVar)
   where
-    channelFn :: TVar (Maybe [SomeException]) -> SomeException -> STM ()
+    channelFn :: TVar (Maybe [SomeException]) -> SomeException -> STM' r t ()
     channelFn exceptionsVar ex = do
       readTVar exceptionsVar >>= \case
         Just exceptions -> writeTVar exceptionsVar (Just (ex : exceptions))
         Nothing -> throwToExceptionSink backupExceptionSink ex
-    gatherResult :: TVar (Maybe [SomeException]) -> STM [SomeException]
+    gatherResult :: TVar (Maybe [SomeException]) -> STM' r CanThrow [SomeException]
     gatherResult exceptionsVar =
       swapTVar exceptionsVar Nothing >>= \case
         Just exceptions -> pure exceptions

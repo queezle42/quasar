@@ -24,26 +24,26 @@ import Control.Monad.Catch
 import Quasar.Prelude
 
 
-newtype ExceptionSink = ExceptionSink (SomeException -> STM ())
+newtype ExceptionSink = ExceptionSink (SomeException -> STM' NoRetry NoThrow ())
 
 
-throwToExceptionSink :: (Exception e, MonadSTM m) => ExceptionSink -> e -> m ()
-throwToExceptionSink (ExceptionSink channelFn) ex = liftSTM $ channelFn (toException ex)
+throwToExceptionSink :: (Exception e, MonadSTM' r t m) => ExceptionSink -> e -> m ()
+throwToExceptionSink (ExceptionSink channelFn) ex = noRetry $ noThrow $ channelFn (toException ex)
 
 throwToExceptionSinkIO :: (Exception e, MonadIO m) => ExceptionSink -> e -> m ()
 throwToExceptionSinkIO sink ex = atomically $ throwToExceptionSink sink ex
 
-catchSink :: forall e. Exception e => (e -> STM ()) -> ExceptionSink -> ExceptionSink
+catchSink :: forall e. Exception e => (e -> STM' NoRetry CanThrow ()) -> ExceptionSink -> ExceptionSink
 catchSink handler parentSink = ExceptionSink \ex ->
   case fromException ex of
     Just matchedException -> wrappedHandler matchedException
     Nothing -> throwToExceptionSink parentSink ex
   where
-    wrappedHandler :: e -> STM ()
-    wrappedHandler ex = catchAll (handler ex) (throwToExceptionSink parentSink)
+    wrappedHandler :: e -> STM' NoRetry NoThrow ()
+    wrappedHandler ex = catchAllSTM' (handler ex) (throwToExceptionSink parentSink)
 
 
-catchAllSink :: (SomeException -> STM ()) -> ExceptionSink -> ExceptionSink
+catchAllSink :: (SomeException -> STM' NoRetry CanThrow ()) -> ExceptionSink -> ExceptionSink
 catchAllSink = catchSink
 
 
