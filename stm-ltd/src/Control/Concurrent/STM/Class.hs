@@ -133,9 +133,10 @@ import Control.Applicative
 import Control.Concurrent.STM (STM)
 import Control.Concurrent.STM qualified as STM
 import Control.Concurrent.STM.Class.TH
+import Control.Monad (MonadPlus)
 import Control.Monad.Catch
-import Control.Monad.IO.Class
 import Control.Monad.Fix (MonadFix)
+import Control.Monad.IO.Class
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.RWS (RWST)
 import Control.Monad.Trans.Reader (ReaderT)
@@ -147,7 +148,6 @@ import Data.Unique (Unique, newUnique)
 import GHC.Conc (unsafeIOToSTM)
 import Language.Haskell.TH hiding (Type)
 import Prelude
-import Control.Monad (MonadPlus)
 
 -- Use TypeData when ghc-9.6.1 is released
 data RetryMode = CanRetry | NoRetry
