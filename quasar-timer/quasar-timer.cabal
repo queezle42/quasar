@@ -5,6 +5,10 @@ version:        0.1.0.0
 license:        BSD-2-Clause
 build-type:     Simple
 
+source-repository head
+ type: git
+ location: https://github.com/queezle42/quasar
+
 common shared-properties
   default-extensions:
     AllowAmbiguousTypes

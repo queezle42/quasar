@@ -8,9 +8,9 @@ build-type:     Simple
 synopsis:
   stm drop-in replacement with MonadSTM and optional tagged capabilities
 
---source-repository head
---  type: git
---  location: https://github.com/?/stm-ltd.git
+source-repository head
+ type: git
+ location: https://github.com/queezle42/quasar
 
 common shared-properties
   default-extensions:
