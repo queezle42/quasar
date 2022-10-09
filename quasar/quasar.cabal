@@ -77,7 +77,6 @@ library
     ghc-prim,
     hashable,
     mtl,
-    stm,
     stm-ltd,
     transformers,
     transformers-base,
