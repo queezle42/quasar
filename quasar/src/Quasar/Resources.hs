@@ -14,6 +14,10 @@ module Quasar.Resources (
   registerDisposeTransaction_,
   registerDisposeTransactionIO,
   registerDisposeTransactionIO_,
+  registerSimpleDisposeTransaction,
+  registerSimpleDisposeTransaction_,
+  registerSimpleDisposeTransactionIO,
+  registerSimpleDisposeTransactionIO_,
   disposeEventually,
   disposeEventually_,
   disposeEventuallyIO,
@@ -31,15 +35,19 @@ module Quasar.Resources (
   -- ** Disposer
   Disposer,
   TDisposer,
+  TSimpleDisposer,
   disposeTDisposer,
+  disposeTSimpleDisposer,
   newUnmanagedIODisposer,
   newUnmanagedSTMDisposer,
+  newUnmanagedTSimpleDisposer,
   trivialDisposer,
 
   -- ** Resource manager
   ResourceManager,
   newUnmanagedResourceManagerSTM,
   attachResource,
+  tryAttachResource,
 ) where
 
 
@@ -100,6 +108,24 @@ registerDisposeTransactionIO fn = quasarAtomically $ registerDisposeTransaction 
 
 registerDisposeTransactionIO_ :: (MonadQuasar m, MonadIO m) => STM () -> m ()
 registerDisposeTransactionIO_ fn = quasarAtomically $ void $ registerDisposeTransaction fn
+
+registerSimpleDisposeTransaction :: (MonadQuasar m, MonadSTM' r CanThrow m) => STM' NoRetry NoThrow () -> m TSimpleDisposer
+registerSimpleDisposeTransaction fn = do
+  rm <- askResourceManager
+  liftSTM' do
+    disposer <- newUnmanagedTSimpleDisposer fn
+    attachResource rm disposer
+    pure disposer
+{-# SPECIALIZE registerSimpleDisposeTransaction :: STM' NoRetry NoThrow () -> QuasarSTM TSimpleDisposer #-}
+
+registerSimpleDisposeTransaction_ :: (MonadQuasar m, MonadSTM' r CanThrow m) => STM' NoRetry NoThrow () -> m ()
+registerSimpleDisposeTransaction_ fn = liftQuasarSTM' $ void $ registerSimpleDisposeTransaction fn
+
+registerSimpleDisposeTransactionIO :: (MonadQuasar m, MonadIO m) => STM' NoRetry NoThrow () -> m TSimpleDisposer
+registerSimpleDisposeTransactionIO fn = quasarAtomically $ registerSimpleDisposeTransaction fn
+
+registerSimpleDisposeTransactionIO_ :: (MonadQuasar m, MonadIO m) => STM' NoRetry NoThrow () -> m ()
+registerSimpleDisposeTransactionIO_ fn = quasarAtomically $ void $ registerSimpleDisposeTransaction fn
 
 registerNewResource :: forall a m. (Resource a, MonadQuasar m, MonadIO m, MonadMask m) => m a -> m a
 registerNewResource fn = do

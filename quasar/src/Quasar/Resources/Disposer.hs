@@ -14,10 +14,15 @@ module Quasar.Resources.Disposer (
   TDisposer,
   disposeTDisposer,
 
+  TSimpleDisposer,
+  newUnmanagedTSimpleDisposer,
+  disposeTSimpleDisposer,
+
   -- * Resource manager
   ResourceManager,
   newUnmanagedResourceManagerSTM,
   attachResource,
+  tryAttachResource,
 ) where
 
 
@@ -67,6 +72,7 @@ type DisposerState = TOnce DisposeFn (Future ())
 data DisposerElement
   = IODisposer Unique TIOWorker ExceptionSink DisposerState Finalizers
   | STMDisposer TDisposerElement
+  | STMSimpleDisposer TSimpleDisposerElement
   | ResourceManagerDisposer ResourceManager
 
 instance Resource DisposerElement where
@@ -74,10 +80,12 @@ instance Resource DisposerElement where
 
   isDisposed (IODisposer _ _ _ state _) = join (toFuture state)
   isDisposed (STMDisposer tdisposer) = isDisposed tdisposer
+  isDisposed (STMSimpleDisposer tdisposer) = isDisposed tdisposer
   isDisposed (ResourceManagerDisposer resourceManager) = resourceManagerIsDisposed resourceManager
 
   isDisposing (IODisposer _ _ _ state _) = void (toFuture state)
   isDisposing (STMDisposer tdisposer) = isDisposing tdisposer
+  isDisposing (STMSimpleDisposer tdisposer) = isDisposing tdisposer
   isDisposing (ResourceManagerDisposer resourceManager) = resourceManagerIsDisposing resourceManager
 
 
@@ -88,12 +96,6 @@ type STMDisposerState = TOnce (STM ()) (Future ())
 
 data TDisposerElement = TDisposerElement Unique TIOWorker ExceptionSink STMDisposerState Finalizers
 
-newUnmanagedSTMDisposer :: MonadSTM' r t m => STM () -> TIOWorker -> ExceptionSink -> m TDisposer
-newUnmanagedSTMDisposer fn worker sink = do
-  key <- newUniqueSTM
-  element <-  TDisposerElement key worker sink <$> newTOnce fn <*> newFinalizers
-  pure $ TDisposer [element]
-
 instance Resource TDisposerElement where
   toDisposer disposer = Disposer [STMDisposer disposer]
   isDisposed (TDisposerElement _ _ _ state _) = join (toFuture state)
@@ -103,6 +105,12 @@ instance Resource [TDisposerElement] where
   toDisposer tds = Disposer (STMDisposer <$> tds)
   isDisposed tds = isDisposed (toDisposer tds)
   isDisposing tds = isDisposing (toDisposer tds)
+
+newUnmanagedSTMDisposer :: MonadSTM' r t m => STM () -> TIOWorker -> ExceptionSink -> m TDisposer
+newUnmanagedSTMDisposer fn worker sink = do
+  key <- newUniqueSTM
+  element <-  TDisposerElement key worker sink <$> newTOnce fn <*> newFinalizers
+  pure $ TDisposer [element]
 
 disposeTDisposer :: MonadSTM m => TDisposer -> m ()
 disposeTDisposer (TDisposer elements) = liftSTM $ mapM_ go elements
@@ -116,7 +124,7 @@ disposeTDisposer (TDisposer elements) = liftSTM $ mapM_ go elements
         startDisposeFn :: STM () -> STM (Future ())
         startDisposeFn disposeFn = do
           disposeFn `catchAll` throwToExceptionSink sink
-          runFinalizers finalizers
+          liftSTM' $ runFinalizers finalizers
           pure $ pure ()
 
 beginDisposeSTMDisposer :: MonadSTM' r t m => TDisposerElement -> m (Future ())
@@ -149,6 +157,46 @@ beginDisposeSTMDisposer (TDisposerElement _ worker sink state finalizers) = lift
 
 
 
+type STMSimpleDisposerState = TOnce (STM' NoRetry NoThrow ()) ()
+
+data TSimpleDisposerElement = TSimpleDisposerElement Unique STMSimpleDisposerState Finalizers
+
+newtype TSimpleDisposer = TSimpleDisposer [TSimpleDisposerElement]
+  deriving newtype (Semigroup, Monoid)
+
+instance Resource TSimpleDisposer where
+  toDisposer (TSimpleDisposer ds) = toDisposer ds
+
+instance Resource TSimpleDisposerElement where
+  toDisposer disposer = Disposer [STMSimpleDisposer disposer]
+  isDisposed (TSimpleDisposerElement _ state _) = toFuture state
+  isDisposing = isDisposed
+
+instance Resource [TSimpleDisposerElement] where
+  toDisposer tds = Disposer (STMSimpleDisposer <$> tds)
+  isDisposed tds = isDisposed (toDisposer tds)
+  isDisposing tds = isDisposing (toDisposer tds)
+
+newUnmanagedTSimpleDisposer :: MonadSTM' r t m => STM' NoRetry NoThrow () -> m TSimpleDisposer
+newUnmanagedTSimpleDisposer fn = do
+  key <- newUniqueSTM
+  element <-  TSimpleDisposerElement key <$> newTOnce fn <*> newFinalizers
+  pure $ TSimpleDisposer [element]
+
+disposeTSimpleDisposer :: MonadSTM' r t m => TSimpleDisposer -> m ()
+disposeTSimpleDisposer (TSimpleDisposer elements) = liftSTM' do
+  mapM_ disposeTSimpleDisposerElement elements
+
+disposeTSimpleDisposerElement :: TSimpleDisposerElement -> STM' r t ()
+disposeTSimpleDisposerElement (TSimpleDisposerElement _ state finalizers) =
+  mapFinalizeTOnce state startDisposeFn
+  where
+    startDisposeFn :: STM' NoRetry NoThrow () -> STM' r t ()
+    startDisposeFn disposeFn = do
+      noRetry $ noThrow disposeFn
+      runFinalizers finalizers
+
+
 -- | A trivial disposer that does not perform any action when disposed.
 trivialDisposer :: Disposer
 trivialDisposer = mempty
@@ -175,6 +223,7 @@ disposeEventually (toDisposer -> Disposer ds) = liftSTM' do
     f (IODisposer _ worker exChan state finalizers) =
       beginDisposeFnDisposer worker exChan state finalizers
     f (STMDisposer disposer) = beginDisposeSTMDisposer disposer
+    f (STMSimpleDisposer disposer) = pure () <$ disposeTSimpleDisposerElement disposer
     f (ResourceManagerDisposer resourceManager) =
       beginDisposeResourceManager resourceManager
 
@@ -210,12 +259,14 @@ beginDisposeFnDisposer worker exChan disposeState finalizers = liftSTM' do
 disposerKey :: DisposerElement -> Unique
 disposerKey (IODisposer key _ _ _ _) = key
 disposerKey (STMDisposer (TDisposerElement key _ _ _ _)) = key
+disposerKey (STMSimpleDisposer (TSimpleDisposerElement key _ _)) = key
 disposerKey (ResourceManagerDisposer resourceManager) = resourceManagerKey resourceManager
 
 
 disposerFinalizers :: DisposerElement -> Finalizers
 disposerFinalizers (IODisposer _ _ _ _ finalizers) = finalizers
 disposerFinalizers (STMDisposer (TDisposerElement _ _ _ _ finalizers)) = finalizers
+disposerFinalizers (STMSimpleDisposer (TSimpleDisposerElement _ _ finalizers)) = finalizers
 disposerFinalizers (ResourceManagerDisposer rm) = resourceManagerFinalizers rm
 
 
@@ -259,11 +310,15 @@ newUnmanagedResourceManagerSTM worker exChan = do
 
 
 attachResource :: (MonadSTM' r CanThrow m, Resource a) => ResourceManager -> a -> m ()
-attachResource resourceManager (toDisposer -> Disposer ds) = liftSTM' do
-  mapM_ (attachDisposer resourceManager) ds
+attachResource resourceManager disposer = liftSTM' do
+  either throwM pure =<< tryAttachResource resourceManager disposer
 
-attachDisposer :: ResourceManager -> DisposerElement -> STM' r CanThrow ()
-attachDisposer resourceManager disposer = do
+tryAttachResource :: (MonadSTM' r t m, Resource a) => ResourceManager -> a -> m (Either FailedToAttachResource ())
+tryAttachResource resourceManager (toDisposer -> Disposer ds) = liftSTM' do
+  sequence_ <$> mapM (tryAttachDisposer resourceManager) ds
+
+tryAttachDisposer :: ResourceManager -> DisposerElement -> STM' r t (Either FailedToAttachResource ())
+tryAttachDisposer resourceManager disposer = do
   readTVar (resourceManagerState resourceManager) >>= \case
     ResourceManagerNormal attachedResources _ _ -> do
       alreadyAttached <- isJust . HM.lookup key <$> readTVar attachedResources
@@ -271,7 +326,8 @@ attachDisposer resourceManager disposer = do
         -- Returns false if the disposer is already finalized
         attachedFinalizer <- registerFinalizer (disposerFinalizers disposer) finalizer
         when attachedFinalizer $ modifyTVar attachedResources (HM.insert key disposer)
-    _ -> throwM $ userError "failed to attach resource" -- TODO throw proper exception
+      pure $ Right ()
+    _ -> pure $ Left FailedToAttachResource
   where
     key :: Unique
     key = disposerKey disposer
@@ -311,7 +367,7 @@ beginDisposeResourceManagerInternal rm = do
       -- Await indirect dependencies
       awaitDisposeDependencies $ DisposeDependencies rmKey (pure dependencies)
       -- Set state to disposed and run finalizers
-      atomically do
+      atomically' do
         writeTVar (resourceManagerState rm) ResourceManagerDisposed
         runFinalizers (resourceManagerFinalizers rm)
 
@@ -323,6 +379,8 @@ beginDisposeResourceManagerInternal rm = do
       DisposeResultAwait <$> beginDisposeFnDisposer worker exChan state finalizers
     resourceManagerBeginDispose (STMDisposer disposer) =
       DisposeResultAwait <$> beginDisposeSTMDisposer disposer
+    resourceManagerBeginDispose (STMSimpleDisposer disposer) =
+      DisposeResultAwait (pure ()) <$ disposeTSimpleDisposerElement disposer
     resourceManagerBeginDispose (ResourceManagerDisposer resourceManager) =
       DisposeResultDependencies <$> beginDisposeResourceManagerInternal resourceManager
 
@@ -371,16 +429,16 @@ registerFinalizer (Finalizers finalizerVar) finalizer =
       pure True
     Nothing -> pure False
 
-runFinalizers :: Finalizers -> STM ()
+runFinalizers :: Finalizers -> STM' r t ()
 runFinalizers (Finalizers finalizerVar) = do
   readTVar finalizerVar >>= \case
     Just finalizers -> do
       noRetry $ noThrow $ sequence_ finalizers
       writeTVar finalizerVar Nothing
-    Nothing -> throwM $ userError "runFinalizers was called multiple times (it must only be run once)"
+    Nothing -> traceM "runFinalizers was called multiple times (it must only be run once)"
 
 runFinalizersShortIO :: Finalizers -> ShortIO ()
-runFinalizersShortIO finalizers = unsafeShortIO $ atomically $ runFinalizers finalizers
+runFinalizersShortIO finalizers = unsafeShortIO $ atomically' $ runFinalizers finalizers
 
 runFinalizersAfter :: Finalizers -> Future () -> ShortIO ()
 runFinalizersAfter finalizers awaitable = do
@@ -392,4 +450,4 @@ runFinalizersAfter finalizers awaitable = do
     else
       void $ forkIOShortIO do
         await awaitable
-        atomically $ runFinalizers finalizers
+        atomically' $ runFinalizers finalizers
