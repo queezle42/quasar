@@ -73,9 +73,7 @@ module Control.Concurrent.STM.Class (
   takeTMVar,
   putTMVar,
   readTMVar,
-#if MIN_VERSION_stm(2, 5, 1)
   writeTMVar,
-#endif
   tryReadTMVar,
   swapTMVar,
   tryTakeTMVar,
@@ -421,3 +419,12 @@ $(mconcat <$> (execWriterT do
     'STM.newTBQueueIO
     ]
   ))
+
+#if !MIN_VERSION_stm(2, 5, 1)
+
+-- | Non-blocking write of a new value to a 'TMVar'
+-- Puts if empty. Replaces if populated.
+writeTMVar :: MonadSTM' r t m => STM.TMVar a -> a -> m ()
+writeTMVar t new = unsafeLimitSTM $ tryTakeTMVar t >> putTMVar t new
+
+#endif
