@@ -58,6 +58,7 @@
         # Using quasar-timer because it encompasses all dependencies.
         # A better solution could be built using `shellFor`
         default = mkShellFor self.packages.${system}.quasar-timer_ghc92.env;
+        stm-ltd = mkShellFor self.packages.${system}.stm-ltd.env;
       }
     );
   };
