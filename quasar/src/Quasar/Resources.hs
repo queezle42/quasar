@@ -29,6 +29,7 @@ module Quasar.Resources (
 
   -- * IO
   registerNewResource,
+  registerNewResource_,
   disposeOnError,
 
   -- * Types to implement resources
@@ -144,6 +145,9 @@ registerNewResource fn = do
         _ -> throwM ex
     pure resource
 {-# SPECIALIZE registerNewResource :: Resource a => QuasarIO a -> QuasarIO a #-}
+
+registerNewResource_ :: forall a m. (Resource a, MonadQuasar m, MonadIO m, MonadMask m) => m a -> m ()
+registerNewResource_ = void . registerNewResource
 
 
 disposeEventuallyIO :: (Resource r, MonadIO m) => r -> m (Future ())
