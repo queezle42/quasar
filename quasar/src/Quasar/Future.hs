@@ -1,13 +1,16 @@
 module Quasar.Future (
   -- * MonadAwait
-  MonadAwait(..),
+  MonadAwait,
+  MonadAwait'(..),
   peekFuture,
   peekFutureSTM,
   awaitSTM,
 
   -- * Future
-  IsFuture(toFuture),
+  IsFuture,
+  IsFuture'(toFuture),
   Future,
+  Future',
   successfulFuture,
   failedFuture,
   completedFuture,
@@ -63,9 +66,11 @@ import Quasar.Prelude
 import Quasar.Exceptions
 
 
-class (MonadCatch m, MonadPlus m, MonadFix m) => MonadAwait m where
+class MonadFix m => MonadAwait' t m where
   -- | Wait until an awaitable is completed and then return it's value (or throw an exception).
-  await :: IsFuture r a => a -> m r
+  await :: IsFuture' t r a => a -> m r
+
+type MonadAwait = MonadAwait' CanThrow
 
 data BlockedIndefinitelyOnAwait = BlockedIndefinitelyOnAwait
   deriving stock Show
@@ -74,33 +79,30 @@ instance Exception BlockedIndefinitelyOnAwait where
   displayException BlockedIndefinitelyOnAwait = "Thread blocked indefinitely in an 'await' operation"
 
 
-instance MonadAwait IO where
+instance MonadAwait' CanThrow IO where
   await (toFuture -> Future x) =
-    atomically x
+    atomically' x
       `catch`
         \BlockedIndefinitelyOnSTM -> throwM BlockedIndefinitelyOnAwait
 
 -- | `awaitSTM` exists as an explicit alternative to a `Future STM`-instance, to prevent code which creates- and
 -- then awaits resources without knowing it's running in STM (which would block indefinitely when run in STM).
-awaitSTM :: MonadSTM m => IsFuture r a => a -> m r
-awaitSTM (toFuture -> Future x) = liftSTM do
-  -- NOTE BlockedIndefinitelyOnSTM might be thrown outside of STM?
-  -- TODO Check behavior and remove comment or the `catch` if it pointless.
-  x `catch` \BlockedIndefinitelyOnSTM -> throwM BlockedIndefinitelyOnAwait
+awaitSTM :: MonadSTM' CanRetry t m => IsFuture' t r a => a -> m r
+awaitSTM (toFuture -> Future x) = liftSTM' x
 
-instance MonadAwait m => MonadAwait (ReaderT a m) where
+instance MonadAwait' t m => MonadAwait' t (ReaderT a m) where
   await = lift . await
 
-instance (MonadAwait m, Monoid a) => MonadAwait (WriterT a m) where
+instance (MonadAwait' t m, Monoid a) => MonadAwait' t (WriterT a m) where
   await = lift . await
 
-instance MonadAwait m => MonadAwait (StateT a m) where
+instance MonadAwait' t m => MonadAwait' t (StateT a m) where
   await = lift . await
 
-instance (MonadAwait m, Monoid w) => MonadAwait (RWST r w s m) where
+instance (MonadAwait' t m, Monoid w) => MonadAwait' t (RWST r w s m) where
   await = lift . await
 
-instance MonadAwait m => MonadAwait (MaybeT m) where
+instance MonadAwait' t m => MonadAwait' t (MaybeT m) where
   await = lift . await
 
 
@@ -108,7 +110,7 @@ instance MonadAwait m => MonadAwait (MaybeT m) where
 -- | Returns the result (in a `Just`) when the future is completed, throws an `Exception` when the future is
 -- failed and returns `Nothing` otherwise.
 peekFuture :: MonadIO m => Future r -> m (Maybe r)
-peekFuture future = liftIO $ atomically $ (Just <$> awaitSTM future) `orElse` pure Nothing
+peekFuture future = atomically $ peekFutureSTM future
 
 -- | Returns the result (in a `Just`) when the future is completed, throws an `Exception` when the future is
 -- failed and returns `Nothing` otherwise.
@@ -116,34 +118,46 @@ peekFutureSTM :: MonadSTM' r CanThrow m => Future a -> m (Maybe a)
 peekFutureSTM future = (Just <$> awaitSTM future) `orElse'` pure Nothing
 
 
-class IsFuture r a | a -> r where
-  toFuture :: a -> Future r
+class IsFuture' (t :: ThrowMode) r a | a -> r, a -> t where
+  toFuture :: a -> Future' t r
+
+type IsFuture = IsFuture' CanThrow
 
 
 unsafeSTMToFuture :: STM a -> Future a
-unsafeSTMToFuture = Future
+unsafeSTMToFuture f = Future (liftSTM f)
+
+unsafeSTM'ToFuture :: STM' CanRetry t a -> Future' t a
+unsafeSTM'ToFuture = Future
 
 unsafeAwaitSTM :: MonadAwait m => STM a -> m a
 unsafeAwaitSTM = await . unsafeSTMToFuture
 
+-- TODO relax CanThrow constraint by reworking MonadAwait
+unsafeAwaitSTM' :: MonadAwait m => STM' CanRetry CanThrow a -> m a
+unsafeAwaitSTM' = await . unsafeSTM'ToFuture
 
-newtype Future r = Future (STM r)
+
+newtype Future' t a = Future (STM' CanRetry t a)
   deriving newtype (
     Functor,
     Applicative,
     Monad,
-    MonadThrow,
-    MonadCatch,
     MonadFix,
     Alternative,
     MonadPlus
     )
 
+type Future = Future' CanThrow
 
-instance IsFuture r (Future r) where
+deriving newtype instance MonadThrow Future
+deriving newtype instance MonadCatch Future
+
+
+instance IsFuture' t a (Future' t a) where
   toFuture = id
 
-instance MonadAwait Future where
+instance MonadAwait' t (Future' t) where
   await = toFuture
 
 instance Semigroup r => Semigroup (Future r) where
@@ -152,7 +166,7 @@ instance Semigroup r => Semigroup (Future r) where
 instance Monoid r => Monoid (Future r) where
   mempty = pure mempty
 
-instance MonadFail Future where
+instance MonadFail (Future' CanThrow) where
   fail = throwM . userError
 
 
@@ -173,17 +187,27 @@ failedFuture = throwM
 -- ** Promise
 
 -- | The default implementation for an `Future` that can be fulfilled later.
-newtype Promise r = Promise (TMVar (Either SomeException r))
+newtype BasicPromise r = BasicPromise (TMVar r)
+newtype Promise r = Promise (BasicPromise (Either SomeException r))
 
-instance IsFuture r (Promise r) where
-  toFuture (Promise var) = unsafeSTMToFuture $ either throwM pure =<< readTMVar var
+--instance IsFuture' t r (Promise t r) where
+--  toFuture (Promise var) = unsafeSTMToFuture $ either throwM pure =<< readTMVar var
+
+instance IsFuture' CanThrow r (Promise r) where
+  toFuture (Promise promise) = either failedFuture pure =<< awaitBasicPromise promise
+
+instance IsFuture' NoThrow r (BasicPromise r) where
+  toFuture (BasicPromise var) = unsafeSTM'ToFuture $ readTMVar var
+
+awaitBasicPromise :: MonadAwait m => BasicPromise a -> m a
+awaitBasicPromise (BasicPromise var) = unsafeAwaitSTM' (readTMVar var)
 
 
 newPromiseSTM :: MonadSTM' r t m => m (Promise a)
-newPromiseSTM = Promise <$> newEmptyTMVar
+newPromiseSTM = Promise . BasicPromise <$> newEmptyTMVar
 
 newPromise :: MonadIO m => m (Promise r)
-newPromise = liftIO $ Promise <$> newEmptyTMVarIO
+newPromise = liftIO $ Promise . BasicPromise <$> newEmptyTMVarIO
 
 
 completePromiseSTM :: MonadSTM' r CanThrow m => Promise a -> Either SomeException a -> m ()
@@ -192,43 +216,43 @@ completePromiseSTM var result = do
   unless success $ throwSTM PromiseAlreadyCompleted
 
 tryCompletePromiseSTM :: MonadSTM' r t m => Promise a -> Either SomeException a -> m Bool
-tryCompletePromiseSTM (Promise var) = tryPutTMVar var
+tryCompletePromiseSTM (Promise (BasicPromise var)) = tryPutTMVar var
 
 
 peekPromiseSTM :: MonadSTM' r CanThrow m => Promise a -> m (Maybe a)
-peekPromiseSTM (Promise var) = mapM (either throwSTM pure) =<< tryReadTMVar var
+peekPromiseSTM (Promise (BasicPromise var)) = mapM (either throwSTM pure) =<< tryReadTMVar var
 
 
 fulfillPromise :: MonadIO m => Promise a -> a -> m ()
-fulfillPromise var result = liftIO $ atomically $ fulfillPromiseSTM var result
+fulfillPromise var result = atomically $ fulfillPromiseSTM var result
 
 fulfillPromiseSTM :: MonadSTM' r CanThrow m => Promise a -> a -> m ()
 fulfillPromiseSTM var result = completePromiseSTM var (Right result)
 
 breakPromise :: (Exception e, MonadIO m) => Promise a -> e -> m ()
-breakPromise var result = liftIO $ atomically $ breakPromiseSTM var result
+breakPromise var result = atomically $ breakPromiseSTM var result
 
 breakPromiseSTM :: (Exception e, MonadSTM' r CanThrow m) => Promise a -> e -> m ()
 breakPromiseSTM var result = completePromiseSTM var (Left (toException result))
 
 completePromise :: MonadIO m => Promise a -> Either SomeException a -> m ()
-completePromise var result = liftIO $ atomically $ completePromiseSTM var result
+completePromise var result = atomically $ completePromiseSTM var result
 
 
 tryFulfillPromise :: MonadIO m => Promise a -> a -> m Bool
-tryFulfillPromise var result = liftIO $ atomically $ tryFulfillPromiseSTM var result
+tryFulfillPromise var result = atomically $ tryFulfillPromiseSTM var result
 
 tryFulfillPromiseSTM :: MonadSTM' r t m => Promise a -> a -> m Bool
 tryFulfillPromiseSTM var result = tryCompletePromiseSTM var (Right result)
 
 tryBreakPromise :: (Exception e, MonadIO m) => Promise a -> e -> m Bool
-tryBreakPromise var result = liftIO $ atomically $ tryBreakPromiseSTM var result
+tryBreakPromise var result = atomically $ tryBreakPromiseSTM var result
 
 tryBreakPromiseSTM :: MonadSTM' r t m => Exception e => Promise a -> e -> m Bool
 tryBreakPromiseSTM var result = tryCompletePromiseSTM var (Left (toException result))
 
 tryCompletePromise :: MonadIO m => Promise a -> Either SomeException a -> m Bool
-tryCompletePromise var result = liftIO $ atomically $ tryCompletePromiseSTM var result
+tryCompletePromise var result = atomically $ tryCompletePromiseSTM var result
 
 
 
@@ -274,11 +298,11 @@ afixExtra action = do
 
 -- | Completes as soon as either awaitable completes.
 awaitEither :: MonadAwait m => Future ra -> Future rb -> m (Either ra rb)
-awaitEither (Future x) (Future y) = unsafeAwaitSTM (eitherSTM x y)
+awaitEither (Future x) (Future y) = unsafeAwaitSTM $ liftSTM' (eitherSTM x y)
 
 -- | Helper for `awaitEither`
-eitherSTM :: STM a -> STM b -> STM (Either a b)
-eitherSTM x y = fmap Left x `orElse` fmap Right y
+eitherSTM :: STM' CanRetry t a -> STM' CanRetry t b -> STM' CanRetry t (Either a b)
+eitherSTM x y = fmap Left x `orElse'` fmap Right y
 
 
 -- Completes as soon as any awaitable in the list is completed and then returns the left-most completed result

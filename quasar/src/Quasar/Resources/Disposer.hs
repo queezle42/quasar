@@ -6,7 +6,6 @@ module Quasar.Resources.Disposer (
   dispose,
   disposeEventually,
   disposeEventually_,
-  newUnmanagedPrimitiveDisposer,
   newUnmanagedIODisposer,
   newUnmanagedSTMDisposer,
   trivialDisposer,
@@ -67,7 +66,7 @@ instance Resource TDisposer where
   toDisposer (TDisposer ds) = toDisposer ds
 
 
-type DisposerState = TOnce DisposeFn (Future ())
+type DisposerState = TOnce DisposeFnIO (Future ())
 
 data DisposerElement
   = IODisposer Unique TIOWorker ExceptionSink DisposerState Finalizers
@@ -90,6 +89,7 @@ instance Resource DisposerElement where
 
 
 type DisposeFn = ShortIO (Future ())
+type DisposeFnIO = IO ()
 
 
 type STMDisposerState = TOnce (STM ()) (Future ())
@@ -146,7 +146,7 @@ beginDisposeSTMDisposer (TDisposerElement _ worker sink state finalizers) = lift
     runDisposeFn awaitableVar disposeFn = mask_ $ handleAll exceptionHandler do
       awaitable <- disposeFn
       fulfillPromiseShortIO awaitableVar awaitable
-      runFinalizersAfter finalizers awaitable
+      runFinalizersAfterShortIO finalizers awaitable
       where
         -- In case of an exception mark disposable as completed to prevent resource managers from being stuck indefinitely
         exceptionHandler :: SomeException -> ShortIO ()
@@ -201,15 +201,13 @@ disposeTSimpleDisposerElement (TSimpleDisposerElement _ state finalizers) =
 trivialDisposer :: Disposer
 trivialDisposer = mempty
 
-newUnmanagedPrimitiveDisposer :: MonadSTM' r t m => ShortIO (Future ()) -> TIOWorker -> ExceptionSink -> m Disposer
-newUnmanagedPrimitiveDisposer fn worker exChan = toDisposer <$> do
-  key <- newUniqueSTM
-  IODisposer key worker exChan <$> newTOnce fn <*> newFinalizers
-
 newUnmanagedIODisposer :: MonadSTM' r t m => IO () -> TIOWorker -> ExceptionSink -> m Disposer
--- TODO change TIOWorker behavior for spawning threads, so no `unsafeShortIO` is necessary
-newUnmanagedIODisposer fn worker exChan = newUnmanagedPrimitiveDisposer (unsafeShortIO $ forkFuture fn exChan) worker exChan
-
+newUnmanagedIODisposer fn worker exChan = toDisposer <$> do
+  key <- newUniqueSTM
+  -- TODO change TIOWorker behavior for spawning threads, so no `unsafeShortIO` is necessary
+  state <- newTOnce fn
+  finalizers <- newFinalizers
+  pure $ IODisposer key worker exChan state finalizers
 
 
 dispose :: (MonadIO m, Resource r) => r -> m ()
@@ -237,17 +235,17 @@ beginDisposeFnDisposer :: MonadSTM' r t m => TIOWorker -> ExceptionSink -> Dispo
 beginDisposeFnDisposer worker exChan disposeState finalizers = liftSTM' do
   mapFinalizeTOnce disposeState startDisposeFn
   where
-    startDisposeFn :: DisposeFn -> STM' r t (Future ())
+    startDisposeFn :: DisposeFnIO -> STM' r t (Future ())
     startDisposeFn disposeFn = do
       awaitableVar <- newPromiseSTM
       startShortIOSTM_ (runDisposeFn awaitableVar disposeFn) worker exChan
       pure $ join (toFuture awaitableVar)
 
-    runDisposeFn :: Promise (Future ()) -> DisposeFn -> ShortIO ()
+    runDisposeFn :: Promise (Future ()) -> DisposeFnIO -> ShortIO ()
     runDisposeFn awaitableVar disposeFn = mask_ $ handleAll exceptionHandler do
-      awaitable <- disposeFn
+      awaitable <- unsafeShortIO $ forkFuture disposeFn exChan
       fulfillPromiseShortIO awaitableVar awaitable
-      runFinalizersAfter finalizers awaitable
+      runFinalizersAfterShortIO finalizers awaitable
       where
         -- In case of an exception mark disposable as completed to prevent resource managers from being stuck indefinitely
         exceptionHandler :: SomeException -> ShortIO ()
@@ -440,8 +438,8 @@ runFinalizers (Finalizers finalizerVar) = do
 runFinalizersShortIO :: Finalizers -> ShortIO ()
 runFinalizersShortIO finalizers = unsafeShortIO $ atomically' $ runFinalizers finalizers
 
-runFinalizersAfter :: Finalizers -> Future () -> ShortIO ()
-runFinalizersAfter finalizers awaitable = do
+runFinalizersAfterShortIO :: Finalizers -> Future () -> ShortIO ()
+runFinalizersAfterShortIO finalizers awaitable = do
   -- Peek awaitable to ensure trivial disposers always run without forking
   isCompleted <- isJust <$> peekFutureShortIO awaitable
   if isCompleted
@@ -449,5 +447,18 @@ runFinalizersAfter finalizers awaitable = do
       runFinalizersShortIO finalizers
     else
       void $ forkIOShortIO do
+        await awaitable
+        atomically' $ runFinalizers finalizers
+
+
+runFinalizersAfter :: TIOWorker -> Finalizers -> Future () -> STM' r t ()
+runFinalizersAfter worker finalizers awaitable = do
+  -- Peek awaitable to ensure trivial disposers always run without forking
+  isCompleted <- isJust <$> undefined -- peekFutureSTM awaitable
+  if isCompleted
+    then
+      runFinalizers finalizers
+    else
+      enqueueForkIO worker do
         await awaitable
         atomically' $ runFinalizers finalizers

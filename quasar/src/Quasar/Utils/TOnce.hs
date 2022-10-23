@@ -17,7 +17,7 @@ data TOnceAlreadyFinalized = TOnceAlreadyFinalized
 
 newtype TOnce a b = TOnce (TVar (Either a b))
 
-instance IsFuture b (TOnce a b) where
+instance IsFuture' CanThrow b (TOnce a b) where
   toFuture = unsafeAwaitSTM . readTOnceResult
 
 newTOnce :: MonadSTM' r t m => a -> m (TOnce a b)

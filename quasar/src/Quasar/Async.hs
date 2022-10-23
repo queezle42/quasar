@@ -38,7 +38,7 @@ data Async a = Async (Future a) Disposer
 instance Resource (Async a) where
   toDisposer (Async _ disposer) = disposer
 
-instance IsFuture a (Async a) where
+instance IsFuture' CanThrow a (Async a) where
   toFuture (Async awaitable _) = awaitable
 
 

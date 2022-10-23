@@ -2,12 +2,13 @@ module Quasar.Async.STMHelper (
   -- * Helper to fork from STM
   TIOWorker,
   newTIOWorker,
+  enqueueForkIO,
   startShortIOSTM,
   startShortIOSTM_,
 ) where
 
 import Control.Concurrent (forkIO)
-import Control.Exception (BlockedIndefinitelyOnSTM)
+import Control.Exception (BlockedIndefinitelyOnSTM, interruptible)
 import Control.Monad.Catch
 import Quasar.Future
 import Quasar.Exceptions
@@ -16,7 +17,6 @@ import Quasar.Utils.ShortIO
 
 
 newtype TIOWorker = TIOWorker (TQueue (IO ()))
-
 
 startShortIOSTM :: forall a m r t. MonadSTM' r t m => ShortIO a -> TIOWorker -> ExceptionSink -> m (Future a)
 startShortIOSTM fn (TIOWorker jobQueue) exChan = liftSTM' do
@@ -40,9 +40,14 @@ newTIOWorker :: IO TIOWorker
 newTIOWorker = do
   jobQueue <- newTQueueIO
   void $ forkIO $
-    catch
+    -- interruptible sets a defined masking state for new threads
+    interruptible $ catch
       (forever $ join $ atomically $ readTQueue jobQueue)
       -- Relies on garbage collection to remove the thread when it is no longer needed
       (\(_ :: BlockedIndefinitelyOnSTM) -> pure ())
 
   pure $ TIOWorker jobQueue
+
+
+enqueueForkIO :: MonadSTM' r t m => TIOWorker -> IO () -> m ()
+enqueueForkIO (TIOWorker jobQueue) fn = writeTQueue jobQueue (void (forkIO fn))

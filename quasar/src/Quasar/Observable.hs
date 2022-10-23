@@ -90,7 +90,7 @@ class IsObservable r a | a -> r where
   -- The callback should return without blocking, otherwise other callbacks will be delayed. If the value can't be
   -- processed immediately, use `observeBlocking` instead or manually pass the value to a thread that processes the
   -- data.
-  attachObserver :: a -> ObserverCallback r -> ObserverContext -> STM' NoRetry NoThrow (Either FailedToAttachResource TSimpleDisposer)
+  attachObserver :: a -> ObserverCallback r -> ObserverContext -> STM' NoRetry NoThrow TSimpleDisposer
   attachObserver observable = attachObserver (toObservable observable)
 
   toObservable :: a -> Observable r
@@ -110,15 +110,13 @@ observe
 observe observable callbackFn = do
   -- Each observer needs a dedicated scope to guarantee, that the whole observer is detached when the provided callback (or the observable implementation) fails.
   scope <- newResourceScope
-  liftSTM' do
-    let
-      sink = quasarExceptionSink scope
-      ctx = ObserverContext sink (quasarResourceManager scope)
-    attachResult <- noRetry $ noThrow $ attachObserver observable (\x -> callbackFn x `catchAllSTM'` throwToExceptionSink sink) ctx
-    case attachResult of
-      Left ex@FailedToAttachResource -> throwM ex
-      Right disposer -> attachResource (quasarResourceManager scope) disposer
-    pure $ toDisposer (quasarResourceManager scope)
+  let
+    sink = quasarExceptionSink scope
+    ctx = ObserverContext sink (quasarResourceManager scope)
+    wrappedCallback state = callbackFn state `catchAllSTM'` throwToExceptionSink sink
+  disposer <- liftSTM' $ noRetry $ noThrow $ attachObserver observable wrappedCallback ctx
+  registerResource disposer
+  pure $ toDisposer (quasarResourceManager scope)
 
 observe_
     :: (MonadQuasar m, MonadSTM m)
@@ -237,7 +235,7 @@ newtype ConstObservable a = ConstObservable (ObservableState a)
 instance IsObservable a (ConstObservable a) where
   attachObserver (ConstObservable state) callback _ = do
     callback state
-    pure $ pure mempty
+    pure mempty
 
 
 data MappedObservable a = forall b. MappedObservable (b -> a) (Observable b)
@@ -274,16 +272,13 @@ instance IsObservable a (ObservableStep a) where
   attachObserver (ObservableStep fx fn) callback ctx = do
     -- Callback isn't called immediately, since subscribing to fx and fn also guarantees a callback.
     rightDisposerVar <- newTVar mempty
-    attachObserver fx (leftCallback rightDisposerVar) ctx >>= \case
-      Left ex -> pure $ Left ex
-      Right leftDisposer ->
-        Right <$> newUnmanagedTSimpleDisposer (disposeFn leftDisposer rightDisposerVar)
+    leftDisposer <- attachObserver fx (leftCallback rightDisposerVar) ctx
+    newUnmanagedTSimpleDisposer (disposeFn leftDisposer rightDisposerVar)
     where
       leftCallback rightDisposerVar lmsg = do
         disposeTSimpleDisposer =<< readTVar rightDisposerVar
-        attachObserver (fn lmsg) callback ctx >>= \case
-          Left FailedToAttachResource -> undefined ctx
-          Right disposer -> writeTVar rightDisposerVar disposer
+        rightDisposer <- attachObserver (fn lmsg) callback ctx
+        writeTVar rightDisposerVar rightDisposer
 
       disposeFn :: TSimpleDisposer -> TVar TSimpleDisposer -> STM' r t ()
       disposeFn leftDisposer rightDisposerVar = do
@@ -312,17 +307,19 @@ newObserverRegistry = ObserverRegistry <$> newTVar mempty
 newObserverRegistryIO :: MonadIO m => m (ObserverRegistry a)
 newObserverRegistryIO = liftIO $ ObserverRegistry <$> newTVarIO mempty
 
-registerObserver :: ObserverRegistry a -> ObserverCallback a -> ObserverContext -> ObservableState a -> STM' r t (Either FailedToAttachResource TSimpleDisposer)
+registerObserver :: ObserverRegistry a -> ObserverCallback a -> ObserverContext -> ObservableState a -> STM' r t TSimpleDisposer
 registerObserver (ObserverRegistry var) callback (ObserverContext _ rm) currentState = do
   key <- newUniqueSTM
   modifyTVar var (HM.insert key callback)
   disposer <- newUnmanagedTSimpleDisposer (modifyTVar var (HM.delete key))
-  -- TODO why do we attach the resource to the rm, instead of only returning it (like everywhere else, e.g. the bind?)
+
+  -- TODO remove once disposers have GC-based finalizers
   tryAttachResource rm disposer >>= \case
-    Right () -> do
-      noRetry $ noThrow $ callback currentState
-      pure $ Right disposer
-    Left ex -> pure $ Left ex
+    Right () -> pure ()
+    Left ex -> undefined -- NOTE should be irrelevant once disposers have GC-based finalizers
+
+  noRetry $ noThrow $ callback currentState
+  pure disposer
 
 updateObservers :: ObserverRegistry a -> ObservableState a -> STM' r t ()
 updateObservers (ObserverRegistry var) newState = noRetry $ noThrow do

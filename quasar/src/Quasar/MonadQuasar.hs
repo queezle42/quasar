@@ -131,7 +131,7 @@ instance Semigroup a => Semigroup (QuasarIO a) where
 instance Monoid a => Monoid (QuasarIO a) where
   mempty = pure mempty
 
-instance MonadAwait QuasarIO where
+instance MonadAwait' CanThrow QuasarIO where
   await awaitable = liftIO (await awaitable)
 
 
