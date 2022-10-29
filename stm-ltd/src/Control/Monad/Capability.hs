@@ -7,6 +7,7 @@ module Control.Monad.Capability (
   (:<),
   (:<<),
   (:++),
+  (:-),
   Throw(..),
   ThrowAny,
   throwAny,
@@ -31,6 +32,7 @@ type family ApplyConstraints a m :: Constraint where
 type (:<) :: k -> [k] -> Constraint
 type family a :< b where
   c :< (c ': _) = ()
+  Throw _ :< (ThrowAny ': _) = ()
   c :< (_ ': cs) = c :< cs
 
 type (:<<) :: [k] -> [k] -> Constraint
@@ -38,10 +40,19 @@ type family a :<< b where
   '[] :<< _ = ()
   (n ': ns) :<< as = (n :< as, ns :<< as)
 
+-- | Concatenate two type-level lists.
 type (:++) :: [k] -> [k] -> [k]
 type family a :++ b where
   '[] :++ rs = rs
   (l ': ls) :++ rs = l ': (ls :++ rs)
+
+-- | Remove an element from a type-level list.
+type (:-) :: [k] -> k -> [k]
+type family a :- b where
+  '[] :- _ = '[]
+  (Throw _ ': xs) :- ThrowAny = xs :- ThrowAny
+  (r ': xs) :- r = xs :- r
+  (x ': xs) :- r = x ': (xs :- r)
 
 
 

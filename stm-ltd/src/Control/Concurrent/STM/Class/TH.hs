@@ -20,12 +20,12 @@ import Prelude
 import Debug.Trace (traceShowM)
 
 mkMonadIOWrapper :: Name -> Q [Dec]
-mkMonadIOWrapper fqn = mkMonadClassWrapper [t|MonadIO|] [|liftIO|] fqn
+mkMonadIOWrapper fqn = mkMonadClassWrapper (\m -> [t|MonadIO $m|]) [|liftIO|] fqn
 
-mkMonadClassWrapper :: Q Type -> Q Exp -> Name -> Q [Dec]
+mkMonadClassWrapper :: (Q Type -> Q Type) -> Q Exp -> Name -> Q [Dec]
 mkMonadClassWrapper monadClassT liftE fqn = do
   m <- newName "m"
-  constraint <- appT monadClassT (varT m)
+  constraint <- monadClassT (varT m)
   monadT <- varT m
   ty <- reifyType fqn
   let name = mkName $ nameBase fqn
