@@ -42,10 +42,25 @@
 
     devShells = forAllSystems (system:
       let
-        pkgs = nixpkgs.legacyPackages.${system};
-        mkShellFor = pkg: pkgs.mkShell {
-          inputsFrom = [ pkg ];
-          packages = [
+        pkgs = import nixpkgs { inherit system; overlays = [ self.overlays.default ]; };
+        getHaskellPackages = pattern: pipe pkgs.haskell.packages [
+          attrNames
+          (filter (x: !isNull (strings.match pattern x)))
+          (sort (x: y: x>y))
+          (map (x: pkgs.haskell.packages.${x}))
+          head
+        ];
+        haskellPackages = getHaskellPackages "ghc92.";
+      in rec {
+        # Using quasar-timer because it encompasses all dependencies.
+        # A better solution could be built using `shellFor`
+        default = haskellPackages.shellFor {
+          packages = hpkgs: [
+            hpkgs.quasar
+            hpkgs.quasar-timer
+            hpkgs.stm-ltd
+          ];
+          nativeBuildInputs = [
             pkgs.cabal-install
             pkgs.zsh
             pkgs.entr
@@ -54,11 +69,6 @@
             pkgs.hlint
           ];
         };
-      in rec {
-        # Using quasar-timer because it encompasses all dependencies.
-        # A better solution could be built using `shellFor`
-        default = mkShellFor self.packages.${system}.quasar-timer_ghc92.env;
-        stm-ltd = mkShellFor self.packages.${system}.stm-ltd.env;
       }
     );
   };
