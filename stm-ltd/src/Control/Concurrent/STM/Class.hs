@@ -145,9 +145,25 @@ import Language.Haskell.TH hiding (Type)
 import Prelude
 
 
+-- TODO fix orphan instance
+instance CapabilityMonad STM where
+  type Caps STM = '[Retry, ThrowAny]
+  type BaseMonad STM = STMc (Caps STM)
+  liftBaseC (STMc f) = f
+
+instance IsCapability (Throw e) STM
+
+instance Throw e :< caps => IsCapability (Throw e) (STMc caps)
+
+
 type STMc :: [Capability] -> Type -> Type
 newtype STMc caps a = STMc (STM a)
   deriving newtype (Functor, Applicative, Monad, MonadFix)
+
+instance RequireCapabilities caps (STMc caps) => CapabilityMonad (STMc caps) where
+  type Caps (STMc caps) = caps
+  type BaseMonad (STMc caps) = STMc caps
+  liftBaseC = id
 
 instance Throw e :< caps => Throw e (STMc caps) where
   throwC = unsafeJailbreakSTMc . throwC
@@ -155,7 +171,7 @@ instance Throw e :< caps => Throw e (STMc caps) where
 instance ThrowAny :< caps => MonadThrow (STMc caps) where
   throwM = throwAny
 
-instance (ThrowAny :< caps, ApplyConstraints caps (STMc caps)) => MonadCatch (STMc caps) where
+instance (ThrowAny :< caps, CapabilityMonad (STMc caps)) => MonadCatch (STMc caps) where
   catch ft fc = unsafeJailbreakSTMc (STM.catchSTM (runSTMc ft) (runSTMc . fc))
 
 instance Semigroup a => Semigroup (STMc caps a) where
@@ -177,15 +193,19 @@ deriving newtype instance Retry :< caps => MonadPlus (STMc caps)
 
 
 type MonadSTMc :: [Capability] -> (Type -> Type) -> Constraint
-class (ApplyConstraints caps m, ApplyConstraints caps (STMc caps), Monad m) => MonadSTMc caps m | m -> caps where
-  liftSTMc :: STMc caps a -> m a
+type MonadSTMc caps m = (caps :<< Caps m, LiftSTMc m)
 
-limitSTMc :: (MonadSTMc caps m, requiredCaps :<< caps, ApplyConstraints requiredCaps (STMc requiredCaps)) => STMc requiredCaps a -> m a
+type LiftSTMc m = (CapabilityMonad m, BaseMonad m ~ STMc (Caps m))
+
+liftSTMc :: LiftSTMc m => STMc (Caps m) a -> m a
+liftSTMc = liftBaseC
+
+limitSTMc :: forall caps m a. (MonadSTMc caps m, CapabilityMonad (STMc caps)) => STMc caps a -> m a
 limitSTMc f = unsafeLiftSTM (runSTMc f)
 
 
 -- TODO find consistent names for `unsafeLiftSTM` and `unsafeJailbreakSTMc?
-unsafeLiftSTM :: MonadSTMc caps m => STM a -> m a
+unsafeLiftSTM :: LiftSTMc m => STM a -> m a
 unsafeLiftSTM f = liftSTMc (STMc f)
 
 unsafeJailbreakSTMc :: STM a -> STMc caps a
@@ -200,26 +220,30 @@ liftSTM f = liftSTMc (STMc f)
 {-# INLINABLE liftSTM #-}
 
 
-runSTMc :: ApplyConstraints caps (STMc caps) => STMc caps a -> STM a
+runSTMc :: CapabilityMonad (STMc caps) => STMc caps a -> STM a
 runSTMc (STMc f) = f
 
-instance ApplyConstraints caps (STMc caps) => MonadSTMc caps (STMc caps) where
-  liftSTMc = id
-  {-# INLINE CONLIKE liftSTMc #-}
 
-instance MonadSTMc '[Retry, ThrowAny] STM where
-  liftSTMc (STMc f) = f
-  {-# INLINE CONLIKE liftSTMc #-}
+catchSTMc ::
+  forall capsThrow capsCatch e m a.
+  (
+    Exception e,
+    MonadSTMc ((capsThrow :- Throw e) :++ capsCatch) m,
+    RequireCapabilities capsThrow (STMc capsThrow),
+    RequireCapabilities capsCatch (STMc capsCatch)
+  ) =>
+  STMc capsThrow a -> (e -> STMc capsCatch a) -> m a
 
-instance (ApplyConstraints caps (t m), MonadTrans t, Monad (t m), MonadSTMc caps m) => MonadSTMc caps (t m) where
-  liftSTMc = lift . liftSTMc
-  {-# INLINABLE liftSTMc #-}
-
-
-catchSTMc :: forall capsThrow capsCatch caps e m a. (Exception e, MonadSTMc caps m, (capsThrow :- Throw e) :<< caps, capsCatch :<< caps, ApplyConstraints capsThrow (STMc capsThrow), ApplyConstraints capsCatch (STMc capsCatch)) => STMc capsThrow a -> (e -> STMc capsCatch a) -> m a
 catchSTMc ft fc = unsafeLiftSTM (STM.catchSTM (runSTMc ft) (runSTMc . fc))
 
-catchAllSTMc :: forall capsThrow capsCatch caps m a. (MonadSTMc caps m, (capsThrow :- ThrowAny) :<< caps, capsCatch :<< caps, ApplyConstraints capsThrow (STMc capsThrow), ApplyConstraints capsCatch (STMc capsCatch)) => STMc capsThrow a -> (SomeException -> STMc capsCatch a) -> m a
+catchAllSTMc ::
+  forall capsThrow capsCatch m a. (
+    MonadSTMc ((capsThrow :- ThrowAny) :++ capsCatch) m,
+    RequireCapabilities capsThrow (STMc capsThrow),
+    RequireCapabilities capsCatch (STMc capsCatch)
+  ) =>
+  STMc capsThrow a -> (SomeException -> STMc capsCatch a) -> m a
+
 catchAllSTMc = catchSTMc
 
 
@@ -229,14 +253,24 @@ class Monad m => Retry m where
 instance Retry STM where
   retry = STM.retry
 
+instance IsCapability Retry STM
+
 instance Retry :< caps => Retry (STMc caps) where
   retry = unsafeJailbreakSTMc retry
+
+instance Retry :< caps => IsCapability Retry (STMc caps)
 
 instance (Retry m, MonadTrans t, Monad (t m)) => Retry (t m) where
   retry = lift retry
 
 
-orElseC :: (MonadSTMc caps m, ((retryCaps :- Retry) :++ elseCaps) :<< caps, ApplyConstraints retryCaps (STMc retryCaps), ApplyConstraints elseCaps (STMc elseCaps)) => STMc retryCaps a -> STMc elseCaps a -> m a
+orElseC ::
+  forall retryCaps elseCaps m a. (
+    MonadSTMc ((retryCaps :- Retry) :++ elseCaps) m,
+    RequireCapabilities retryCaps (STMc retryCaps),
+    RequireCapabilities elseCaps (STMc elseCaps)
+  ) =>
+  STMc retryCaps a -> STMc elseCaps a -> m a
 orElseC fx fy = unsafeLiftSTM (STM.orElse (runSTMc fx) (runSTMc fy))
 {-# INLINABLE orElseC #-}
 
@@ -252,19 +286,14 @@ atomicallyC = liftIO . STM.atomically . liftSTMc
 -- equal to any other value of type 'Unique' returned by previous calls to
 -- `newUnique` and `newUniqueSTM`. There is no limit on the number of times
 -- `newUniqueSTM` may be called.
-newUniqueSTM :: MonadSTMc caps m => m Unique
+newUniqueSTM :: MonadSTMc '[] m => m Unique
 newUniqueSTM = liftSTMc $ unsafeLiftSTM (unsafeIOToSTM newUnique)
 {-# INLINABLE newUniqueSTM #-}
 
 
 $(mconcat <$> (execWriterT do
   let
-    capsTyVar :: TypeQ
-    capsTyVar = varT (mkName "caps")
-
-    mkMonadSTMcConstraint [] mT = [t|MonadSTMc $capsTyVar $mT|]
-    mkMonadSTMcConstraint [capT] mT = [t|(MonadSTMc $capsTyVar $mT, $capT :< $capsTyVar)|]
-    mkMonadSTMcConstraint capTs mT = [t|(MonadSTMc $capsTyVar $mT, $(promotedList capTs) :<< $capsTyVar)|]
+    mkMonadSTMcConstraint capTs mT = [t|MonadSTMc $(promotedList capTs) $mT|]
 
     mkMonadSTMcWrapper capTs = mkMonadClassWrapper (mkMonadSTMcConstraint capTs) [|unsafeLiftSTM|]
     mkMonadSTMWrapper = mkMonadClassWrapper (\mT -> [t|MonadSTM $mT|]) [|liftSTM|]
@@ -411,7 +440,7 @@ $(mconcat <$> (execWriterT do
 
 -- | Non-blocking write of a new value to a 'TMVar'
 -- Puts if empty. Replaces if populated.
-writeTMVar :: MonadSTMc caps m => STM.TMVar a -> a -> m ()
+writeTMVar :: MonadSTMc '[] m => STM.TMVar a -> a -> m ()
 writeTMVar t new = unsafeLiftSTM $ tryTakeTMVar t >> putTMVar t new
 
 #endif

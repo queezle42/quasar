@@ -1,9 +1,9 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
 
 module Control.Monad.Capability (
   Capability,
-  ApplyConstraints,
   (:<),
   (:<<),
   (:++),
@@ -11,6 +11,9 @@ module Control.Monad.Capability (
   Throw(..),
   ThrowAny,
   throwAny,
+  CapabilityMonad(..),
+  IsCapability,
+  RequireCapabilities,
 ) where
 
 import Control.Monad.Catch
@@ -21,13 +24,6 @@ import Prelude
 import Data.Kind
 
 type Capability = (Type -> Type) -> Constraint
-
-
-type ApplyConstraints :: [Capability] -> (Type -> Type) -> Constraint
-type family ApplyConstraints a m :: Constraint where
-  ApplyConstraints '[] _ = ()
-  ApplyConstraints (cap ': caps) m = (cap m, ApplyConstraints caps m)
-
 
 type (:<) :: k -> [k] -> Constraint
 type family a :< b where
@@ -69,3 +65,23 @@ type ThrowAny = Throw SomeException
 
 throwAny :: (Exception e, ThrowAny m) => e -> m a
 throwAny = throwC . toException
+
+
+type IsCapability :: Capability -> (Type -> Type) -> Constraint
+class (c m, forall t. (MonadTrans t, Monad (t m)) => (c (t m))) => IsCapability c m
+
+type RequireCapabilities :: [Capability] -> (Type -> Type) -> Constraint
+type family RequireCapabilities caps m where
+  RequireCapabilities '[] _ = ()
+  RequireCapabilities (c ': cs) m = (IsCapability c m, RequireCapabilities cs m)
+
+type CapabilityMonad :: (Type -> Type) -> Constraint
+class (Monad m, RequireCapabilities (Caps m) (BaseMonad m)) => CapabilityMonad m where
+  type Caps m :: [Capability]
+  type BaseMonad m :: (Type -> Type)
+  liftBaseC :: BaseMonad m a -> m a
+
+instance (MonadTrans t, CapabilityMonad m, Monad (t m)) => CapabilityMonad (t m) where
+  type Caps (t m) = Caps m
+  type BaseMonad (t m) = BaseMonad m
+  liftBaseC = lift . liftBaseC

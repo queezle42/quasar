@@ -31,6 +31,7 @@ common shared-properties
     NoImplicitPrelude
     NoStarIsType
     PolyKinds
+    QuantifiedConstraints
     RankNTypes
     ScopedTypeVariables
     StandaloneDeriving
