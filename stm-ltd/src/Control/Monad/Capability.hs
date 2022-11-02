@@ -11,7 +11,7 @@ module Control.Monad.Capability (
   Throw(..),
   ThrowAny,
   throwAny,
-  CapabilityMonad(..),
+  LiftCapabilities(..),
   IsCapability,
   RequireCapabilities,
 ) where
@@ -68,20 +68,20 @@ throwAny = throwC . toException
 
 
 type IsCapability :: Capability -> (Type -> Type) -> Constraint
-class (c m, forall t. (MonadTrans t, Monad (t m)) => (c (t m))) => IsCapability c m
+class (c m, forall t. (MonadTrans t, Monad (t m)) => c (t m)) => IsCapability c m
 
 type RequireCapabilities :: [Capability] -> (Type -> Type) -> Constraint
 type family RequireCapabilities caps m where
   RequireCapabilities '[] _ = ()
   RequireCapabilities (c ': cs) m = (IsCapability c m, RequireCapabilities cs m)
 
-type CapabilityMonad :: (Type -> Type) -> Constraint
-class (Monad m, RequireCapabilities (Caps m) (BaseMonad m)) => CapabilityMonad m where
+type LiftCapabilities :: (Type -> Type) -> Constraint
+class (Monad m, RequireCapabilities (Caps m) (CapabilityBaseMonad m)) => LiftCapabilities m where
   type Caps m :: [Capability]
-  type BaseMonad m :: (Type -> Type)
-  liftBaseC :: BaseMonad m a -> m a
+  type CapabilityBaseMonad m :: (Type -> Type)
+  liftBaseC :: CapabilityBaseMonad m a -> m a
 
-instance (MonadTrans t, CapabilityMonad m, Monad (t m)) => CapabilityMonad (t m) where
+instance (MonadTrans t, LiftCapabilities m, Monad (t m)) => LiftCapabilities (t m) where
   type Caps (t m) = Caps m
-  type BaseMonad (t m) = BaseMonad m
+  type CapabilityBaseMonad (t m) = CapabilityBaseMonad m
   liftBaseC = lift . liftBaseC

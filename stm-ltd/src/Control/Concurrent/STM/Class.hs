@@ -146,9 +146,9 @@ import Prelude
 
 
 -- TODO fix orphan instance
-instance CapabilityMonad STM where
+instance LiftCapabilities STM where
   type Caps STM = '[Retry, ThrowAny]
-  type BaseMonad STM = STMc (Caps STM)
+  type CapabilityBaseMonad STM = STMc (Caps STM)
   liftBaseC (STMc f) = f
 
 instance IsCapability (Throw e) STM
@@ -160,9 +160,9 @@ type STMc :: [Capability] -> Type -> Type
 newtype STMc caps a = STMc (STM a)
   deriving newtype (Functor, Applicative, Monad, MonadFix)
 
-instance RequireCapabilities caps (STMc caps) => CapabilityMonad (STMc caps) where
+instance RequireCapabilities caps (STMc caps) => LiftCapabilities (STMc caps) where
   type Caps (STMc caps) = caps
-  type BaseMonad (STMc caps) = STMc caps
+  type CapabilityBaseMonad (STMc caps) = STMc caps
   liftBaseC = id
 
 instance Throw e :< caps => Throw e (STMc caps) where
@@ -171,7 +171,7 @@ instance Throw e :< caps => Throw e (STMc caps) where
 instance ThrowAny :< caps => MonadThrow (STMc caps) where
   throwM = throwAny
 
-instance (ThrowAny :< caps, CapabilityMonad (STMc caps)) => MonadCatch (STMc caps) where
+instance (ThrowAny :< caps, LiftCapabilities (STMc caps)) => MonadCatch (STMc caps) where
   catch ft fc = unsafeJailbreakSTMc (STM.catchSTM (runSTMc ft) (runSTMc . fc))
 
 instance Semigroup a => Semigroup (STMc caps a) where
@@ -195,12 +195,12 @@ deriving newtype instance Retry :< caps => MonadPlus (STMc caps)
 type MonadSTMc :: [Capability] -> (Type -> Type) -> Constraint
 type MonadSTMc caps m = (caps :<< Caps m, LiftSTMc m)
 
-type LiftSTMc m = (CapabilityMonad m, BaseMonad m ~ STMc (Caps m))
+type LiftSTMc m = (LiftCapabilities m, CapabilityBaseMonad m ~ STMc (Caps m))
 
 liftSTMc :: LiftSTMc m => STMc (Caps m) a -> m a
 liftSTMc = liftBaseC
 
-limitSTMc :: forall caps m a. (MonadSTMc caps m, CapabilityMonad (STMc caps)) => STMc caps a -> m a
+limitSTMc :: forall caps m a. (MonadSTMc caps m, LiftCapabilities (STMc caps)) => STMc caps a -> m a
 limitSTMc f = unsafeLiftSTM (runSTMc f)
 
 
@@ -212,7 +212,7 @@ unsafeJailbreakSTMc :: STM a -> STMc caps a
 unsafeJailbreakSTMc = STMc
 
 -- | Monad in which 'STM' and 'STMc' computations can be embedded.
-type MonadSTM m = MonadSTMc '[Retry, ThrowAny] m
+type MonadSTM m = MonadSTMc (Caps STM) m
 
 -- | Lift a computation from the 'STM' monad.
 liftSTM :: MonadSTM m => STM a -> m a
@@ -220,17 +220,19 @@ liftSTM f = liftSTMc (STMc f)
 {-# INLINABLE liftSTM #-}
 
 
-runSTMc :: CapabilityMonad (STMc caps) => STMc caps a -> STM a
+runSTMc :: LiftCapabilities (STMc caps) => STMc caps a -> STM a
 runSTMc (STMc f) = f
 
+
+type STMcCapabilities caps = RequireCapabilities caps (STMc caps)
 
 catchSTMc ::
   forall capsThrow capsCatch e m a.
   (
     Exception e,
     MonadSTMc ((capsThrow :- Throw e) :++ capsCatch) m,
-    RequireCapabilities capsThrow (STMc capsThrow),
-    RequireCapabilities capsCatch (STMc capsCatch)
+    STMcCapabilities capsThrow,
+    STMcCapabilities capsCatch
   ) =>
   STMc capsThrow a -> (e -> STMc capsCatch a) -> m a
 
@@ -239,8 +241,8 @@ catchSTMc ft fc = unsafeLiftSTM (STM.catchSTM (runSTMc ft) (runSTMc . fc))
 catchAllSTMc ::
   forall capsThrow capsCatch m a. (
     MonadSTMc ((capsThrow :- ThrowAny) :++ capsCatch) m,
-    RequireCapabilities capsThrow (STMc capsThrow),
-    RequireCapabilities capsCatch (STMc capsCatch)
+    STMcCapabilities capsThrow,
+    STMcCapabilities capsCatch
   ) =>
   STMc capsThrow a -> (SomeException -> STMc capsCatch a) -> m a
 
