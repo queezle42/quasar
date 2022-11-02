@@ -220,7 +220,7 @@ liftSTM f = liftSTMc (STMc f)
 {-# INLINABLE liftSTM #-}
 
 
-runSTMc :: LiftCapabilities (STMc caps) => STMc caps a -> STM a
+runSTMc :: STMcCapabilities caps => STMc caps a -> STM a
 runSTMc (STMc f) = f
 
 
