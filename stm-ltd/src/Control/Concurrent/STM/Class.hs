@@ -193,7 +193,7 @@ deriving newtype instance Retry :< caps => MonadPlus (STMc caps)
 
 
 type MonadSTMc :: [Capability] -> (Type -> Type) -> Constraint
-type MonadSTMc caps m = (caps :<< Caps m, LiftSTMc m)
+type MonadSTMc caps m = (caps :<< Caps m, RequireCapabilities caps m, LiftSTMc m)
 
 type LiftSTMc m = (LiftCapabilities m, CapabilityBaseMonad m ~ STMc (Caps m))
 
