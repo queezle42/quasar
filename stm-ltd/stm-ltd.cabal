@@ -69,3 +69,21 @@ library
     Control.Concurrent.STM.Class.TH
   hs-source-dirs:
     src
+
+test-suite stm-ltd-test
+  import: shared-properties
+  type: exitcode-stdio-1.0
+  ghc-options:
+    -threaded
+    -rtsopts
+    "-with-rtsopts=-N"
+  build-depends:
+    base,
+    hspec,
+    transformers,
+    stm-ltd,
+  main-is: Spec.hs
+  other-modules:
+    Control.Concurrent.STM.ClassSpec
+  hs-source-dirs:
+    test
