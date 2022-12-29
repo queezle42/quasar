@@ -106,7 +106,7 @@ instance Resource [TDisposerElement] where
   isDisposed tds = isDisposed (toDisposer tds)
   isDisposing tds = isDisposing (toDisposer tds)
 
-newUnmanagedSTMDisposer :: MonadSTM' r t m => STM () -> TIOWorker -> ExceptionSink -> m TDisposer
+newUnmanagedSTMDisposer :: MonadSTMc '[] m => STM () -> TIOWorker -> ExceptionSink -> m TDisposer
 newUnmanagedSTMDisposer fn worker sink = do
   key <- newUniqueSTM
   element <-  TDisposerElement key worker sink <$> newTOnce fn <*> newFinalizers
@@ -124,40 +124,39 @@ disposeTDisposer (TDisposer elements) = liftSTM $ mapM_ go elements
         startDisposeFn :: STM () -> STM (Future ())
         startDisposeFn disposeFn = do
           disposeFn `catchAll` throwToExceptionSink sink
-          liftSTM' $ runFinalizers finalizers
+          liftSTMc $ runFinalizers finalizers
           pure $ pure ()
 
-beginDisposeSTMDisposer :: MonadSTM' r t m => TDisposerElement -> m (Future ())
-beginDisposeSTMDisposer (TDisposerElement _ worker sink state finalizers) = liftSTM' do
+beginDisposeSTMDisposer :: forall m. MonadSTMc '[] m => TDisposerElement -> m (Future ())
+beginDisposeSTMDisposer (TDisposerElement _ worker sink state finalizers) = liftSTMc do
   mapFinalizeTOnce state startDisposeFn
   where
-    startDisposeFn :: STM () -> STM' r t (Future ())
+    startDisposeFn :: STM () -> STMc '[] (Future ())
     startDisposeFn fn = do
-      awaitableVar <- newPromiseSTM
-      startShortIOSTM_ (runDisposeFn awaitableVar disposeFn) worker sink
-      pure $ join (toFuture awaitableVar)
+      promise <- newPromiseSTM
+      startShortIOSTM_ (runDisposeFn promise disposeFn) worker sink
+      pure $ join (toFuture promise)
       where
         disposeFn :: ShortIO (Future ())
         disposeFn = unsafeShortIO $ atomically $
           -- Spawn a thread only if the transaction retries
-          (pure <$> fn) `orElse` forkAsyncSTM (atomically fn) worker sink
+          (pure <$> fn) `orElse` (void . toFuture <$> forkAsyncSTM (atomically fn) worker sink)
 
     runDisposeFn :: Promise (Future ()) -> DisposeFn -> ShortIO ()
-    runDisposeFn awaitableVar disposeFn = mask_ $ handleAll exceptionHandler do
-      awaitable <- disposeFn
-      fulfillPromiseShortIO awaitableVar awaitable
-      runFinalizersAfterShortIO finalizers awaitable
+    runDisposeFn promise disposeFn = mask_ $ handleAll exceptionHandler do
+      future <- disposeFn
+      fulfillPromiseShortIO promise future
+      runFinalizersAfterShortIO finalizers future
       where
         -- In case of an exception mark disposable as completed to prevent resource managers from being stuck indefinitely
         exceptionHandler :: SomeException -> ShortIO ()
         exceptionHandler ex = do
-          fulfillPromiseShortIO awaitableVar (pure ())
+          fulfillPromiseShortIO promise (pure ())
           runFinalizersShortIO finalizers
           throwM $ DisposeException ex
 
 
-
-type STMSimpleDisposerState = TOnce (STM' NoRetry NoThrow ()) ()
+type STMSimpleDisposerState = TOnce (STMc '[] ()) ()
 
 data TSimpleDisposerElement = TSimpleDisposerElement Unique STMSimpleDisposerState Finalizers
 
@@ -177,23 +176,23 @@ instance Resource [TSimpleDisposerElement] where
   isDisposed tds = isDisposed (toDisposer tds)
   isDisposing tds = isDisposing (toDisposer tds)
 
-newUnmanagedTSimpleDisposer :: MonadSTM' r t m => STM' NoRetry NoThrow () -> m TSimpleDisposer
+newUnmanagedTSimpleDisposer :: MonadSTMc '[] m => STMc '[] () -> m TSimpleDisposer
 newUnmanagedTSimpleDisposer fn = do
   key <- newUniqueSTM
   element <-  TSimpleDisposerElement key <$> newTOnce fn <*> newFinalizers
   pure $ TSimpleDisposer [element]
 
-disposeTSimpleDisposer :: MonadSTM' r t m => TSimpleDisposer -> m ()
-disposeTSimpleDisposer (TSimpleDisposer elements) = liftSTM' do
+disposeTSimpleDisposer :: MonadSTMc '[] m => TSimpleDisposer -> m ()
+disposeTSimpleDisposer (TSimpleDisposer elements) = liftSTMc do
   mapM_ disposeTSimpleDisposerElement elements
 
-disposeTSimpleDisposerElement :: TSimpleDisposerElement -> STM' r t ()
+disposeTSimpleDisposerElement :: TSimpleDisposerElement -> STMc '[] ()
 disposeTSimpleDisposerElement (TSimpleDisposerElement _ state finalizers) =
-  mapFinalizeTOnce state startDisposeFn
+  mapFinalizeTOnce state runDisposeFn
   where
-    startDisposeFn :: STM' NoRetry NoThrow () -> STM' r t ()
-    startDisposeFn disposeFn = do
-      noRetry $ noThrow disposeFn
+    runDisposeFn :: STMc '[] () -> STMc '[] ()
+    runDisposeFn disposeFn = do
+      disposeFn
       runFinalizers finalizers
 
 
@@ -201,10 +200,9 @@ disposeTSimpleDisposerElement (TSimpleDisposerElement _ state finalizers) =
 trivialDisposer :: Disposer
 trivialDisposer = mempty
 
-newUnmanagedIODisposer :: MonadSTM' r t m => IO () -> TIOWorker -> ExceptionSink -> m Disposer
+newUnmanagedIODisposer :: MonadSTMc '[] m => IO () -> TIOWorker -> ExceptionSink -> m Disposer
 newUnmanagedIODisposer fn worker exChan = toDisposer <$> do
   key <- newUniqueSTM
-  -- TODO change TIOWorker behavior for spawning threads, so no `unsafeShortIO` is necessary
   state <- newTOnce fn
   finalizers <- newFinalizers
   pure $ IODisposer key worker exChan state finalizers
@@ -213,44 +211,48 @@ newUnmanagedIODisposer fn worker exChan = toDisposer <$> do
 dispose :: (MonadIO m, Resource r) => r -> m ()
 dispose resource = liftIO $ await =<< atomically (disposeEventually resource)
 
-disposeEventually :: (Resource a, MonadSTM' r t m) => a -> m (Future ())
-disposeEventually (toDisposer -> Disposer ds) = liftSTM' do
+disposeEventually :: (Resource a, MonadSTMc '[] m) => a -> m (Future ())
+disposeEventually (toDisposer -> Disposer ds) = liftSTMc do
   mconcat <$> mapM f ds
   where
-    f :: DisposerElement -> STM' r t (Future ())
+    f :: DisposerElement -> STMc '[] (Future ())
     f (IODisposer _ worker exChan state finalizers) =
-      beginDisposeFnDisposer worker exChan state finalizers
-    f (STMDisposer disposer) = beginDisposeSTMDisposer disposer
-    f (STMSimpleDisposer disposer) = pure () <$ disposeTSimpleDisposerElement disposer
+      beginDisposeIODisposer worker exChan state finalizers
+    f (STMDisposer disposer) =
+      beginDisposeSTMDisposer disposer
+    f (STMSimpleDisposer disposer) =
+      pure () <$ disposeTSimpleDisposerElement disposer
     f (ResourceManagerDisposer resourceManager) =
       beginDisposeResourceManager resourceManager
 
-disposeEventually_ :: (Resource a, MonadSTM' r t m) => a -> m ()
+disposeEventually_ :: (Resource a, MonadSTMc '[] m) => a -> m ()
 disposeEventually_ resource = void $ disposeEventually resource
 
 
 
 
-beginDisposeFnDisposer :: MonadSTM' r t m => TIOWorker -> ExceptionSink -> DisposerState -> Finalizers -> m (Future ())
-beginDisposeFnDisposer worker exChan disposeState finalizers = liftSTM' do
+beginDisposeIODisposer :: MonadSTMc '[] m => TIOWorker -> ExceptionSink -> DisposerState -> Finalizers -> m (Future ())
+beginDisposeIODisposer worker exChan disposeState finalizers = liftSTMc do
   mapFinalizeTOnce disposeState startDisposeFn
   where
-    startDisposeFn :: DisposeFnIO -> STM' r t (Future ())
+    startDisposeFn :: DisposeFnIO -> STMc '[] (Future ())
     startDisposeFn disposeFn = do
-      awaitableVar <- newPromiseSTM
-      startShortIOSTM_ (runDisposeFn awaitableVar disposeFn) worker exChan
-      pure $ join (toFuture awaitableVar)
+      promise <- newPromiseSTM
+      startShortIOSTM_ (runDisposeFn promise disposeFn) worker exChan
+      pure $ join (toFuture promise)
 
     runDisposeFn :: Promise (Future ()) -> DisposeFnIO -> ShortIO ()
-    runDisposeFn awaitableVar disposeFn = mask_ $ handleAll exceptionHandler do
-      awaitable <- unsafeShortIO $ forkFuture disposeFn exChan
-      fulfillPromiseShortIO awaitableVar awaitable
-      runFinalizersAfterShortIO finalizers awaitable
+    runDisposeFn promise disposeFn = mask_ $ handleAll exceptionHandler do
+      futureE <- unsafeShortIO $ forkFuture disposeFn exChan
+      -- Error is redirected to `exceptionHandler`, so the result can be safely ignored
+      let future = void (toFuture futureE)
+      fulfillPromiseShortIO promise future
+      runFinalizersAfterShortIO finalizers future
       where
         -- In case of an exception mark disposable as completed to prevent resource managers from being stuck indefinitely
         exceptionHandler :: SomeException -> ShortIO ()
         exceptionHandler ex = do
-          fulfillPromiseShortIO awaitableVar (pure ())
+          fulfillPromiseShortIO promise (pure ())
           runFinalizersShortIO finalizers
           throwM $ DisposeException ex
 
@@ -294,7 +296,7 @@ instance Resource ResourceManager where
   isDisposing = resourceManagerIsDisposing
 
 
-newUnmanagedResourceManagerSTM :: MonadSTM' r t m => TIOWorker -> ExceptionSink -> m ResourceManager
+newUnmanagedResourceManagerSTM :: MonadSTMc '[] m => TIOWorker -> ExceptionSink -> m ResourceManager
 newUnmanagedResourceManagerSTM worker exChan = do
   resourceManagerKey <- newUniqueSTM
   attachedResources <- newTVar mempty
@@ -307,15 +309,15 @@ newUnmanagedResourceManagerSTM worker exChan = do
   }
 
 
-attachResource :: (MonadSTM' r CanThrow m, Resource a) => ResourceManager -> a -> m ()
-attachResource resourceManager disposer = liftSTM' do
-  either throwM pure =<< tryAttachResource resourceManager disposer
+attachResource :: (MonadSTMc '[Throw FailedToAttachResource] m, Resource a) => ResourceManager -> a -> m ()
+attachResource resourceManager disposer = liftSTMc @'[Throw FailedToAttachResource] do
+  either throwC pure =<< tryAttachResource resourceManager disposer
 
-tryAttachResource :: (MonadSTM' r t m, Resource a) => ResourceManager -> a -> m (Either FailedToAttachResource ())
-tryAttachResource resourceManager (toDisposer -> Disposer ds) = liftSTM' do
+tryAttachResource :: (MonadSTMc '[] m, Resource a) => ResourceManager -> a -> m (Either FailedToAttachResource ())
+tryAttachResource resourceManager (toDisposer -> Disposer ds) = liftSTMc do
   sequence_ <$> mapM (tryAttachDisposer resourceManager) ds
 
-tryAttachDisposer :: ResourceManager -> DisposerElement -> STM' r t (Either FailedToAttachResource ())
+tryAttachDisposer :: ResourceManager -> DisposerElement -> STMc '[] (Either FailedToAttachResource ())
 tryAttachDisposer resourceManager disposer = do
   readTVar (resourceManagerState resourceManager) >>= \case
     ResourceManagerNormal attachedResources _ _ -> do
@@ -329,7 +331,7 @@ tryAttachDisposer resourceManager disposer = do
   where
     key :: Unique
     key = disposerKey disposer
-    finalizer :: STM' NoRetry NoThrow ()
+    finalizer :: STMc '[] ()
     finalizer = readTVar (resourceManagerState resourceManager) >>= \case
       ResourceManagerNormal attachedResources _ _ -> modifyTVar attachedResources (HM.delete key)
       -- No finalization required in other states, since all resources are disposed soon
@@ -337,12 +339,12 @@ tryAttachDisposer resourceManager disposer = do
       _ -> pure ()
 
 
-beginDisposeResourceManager :: ResourceManager -> STM' r t (Future ())
+beginDisposeResourceManager :: ResourceManager -> STMc '[] (Future ())
 beginDisposeResourceManager rm = do
   void $ beginDisposeResourceManagerInternal rm
   pure $ resourceManagerIsDisposed rm
 
-beginDisposeResourceManagerInternal :: ResourceManager -> STM' r t DisposeDependencies
+beginDisposeResourceManagerInternal :: ResourceManager -> STMc '[] DisposeDependencies
 beginDisposeResourceManagerInternal rm = do
   readTVar (resourceManagerState rm) >>= \case
     ResourceManagerNormal attachedResources worker exChan -> do
@@ -357,7 +359,7 @@ beginDisposeResourceManagerInternal rm = do
     disposeThread :: Promise [DisposeDependencies] -> [DisposerElement] -> IO ()
     disposeThread dependenciesVar attachedDisposers = do
       -- Begin to dispose all attached resources
-      results <- mapM (atomically' . resourceManagerBeginDispose) attachedDisposers
+      results <- mapM (atomicallyC . liftSTMc . resourceManagerBeginDispose) attachedDisposers
       -- Await direct resource awaitables and collect indirect dependencies
       dependencies <- await (collectDependencies results)
       -- Publish "direct dependencies complete"-status
@@ -365,16 +367,16 @@ beginDisposeResourceManagerInternal rm = do
       -- Await indirect dependencies
       awaitDisposeDependencies $ DisposeDependencies rmKey (pure dependencies)
       -- Set state to disposed and run finalizers
-      atomically' do
+      atomicallyC $ liftSTMc do
         writeTVar (resourceManagerState rm) ResourceManagerDisposed
         runFinalizers (resourceManagerFinalizers rm)
 
     rmKey :: Unique
     rmKey = resourceManagerKey rm
 
-    resourceManagerBeginDispose :: DisposerElement -> STM' r t DisposeResult
+    resourceManagerBeginDispose :: DisposerElement -> STMc '[] DisposeResult
     resourceManagerBeginDispose (IODisposer _ worker exChan state finalizers) =
-      DisposeResultAwait <$> beginDisposeFnDisposer worker exChan state finalizers
+      DisposeResultAwait <$> beginDisposeIODisposer worker exChan state finalizers
     resourceManagerBeginDispose (STMDisposer disposer) =
       DisposeResultAwait <$> beginDisposeSTMDisposer disposer
     resourceManagerBeginDispose (STMSimpleDisposer disposer) =
@@ -383,7 +385,7 @@ beginDisposeResourceManagerInternal rm = do
       DisposeResultDependencies <$> beginDisposeResourceManagerInternal resourceManager
 
     collectDependencies :: [DisposeResult] -> Future [DisposeDependencies]
-    collectDependencies (DisposeResultAwait awaitable : xs) = awaitable >> collectDependencies xs
+    collectDependencies (DisposeResultAwait future : xs) = future >> collectDependencies xs
     collectDependencies (DisposeResultDependencies deps : xs) = (deps : ) <$> collectDependencies xs
     collectDependencies [] = pure []
 
@@ -399,27 +401,26 @@ beginDisposeResourceManagerInternal rm = do
 
 
 resourceManagerIsDisposed :: ResourceManager -> Future ()
-resourceManagerIsDisposed rm = unsafeAwaitSTM $
+resourceManagerIsDisposed rm = unsafeAwaitSTMc $
   readTVar (resourceManagerState rm) >>= \case
     ResourceManagerDisposed -> pure ()
     _ -> retry
 
 resourceManagerIsDisposing :: ResourceManager -> Future ()
-resourceManagerIsDisposing rm = unsafeAwaitSTM $
+resourceManagerIsDisposing rm = unsafeAwaitSTMc $
   readTVar (resourceManagerState rm) >>= \case
     ResourceManagerNormal {} -> retry
     _ -> pure ()
 
 
-
 -- * Implementation internals
 
-newtype Finalizers = Finalizers (TVar (Maybe [STM' NoRetry NoThrow ()]))
+newtype Finalizers = Finalizers (TVar (Maybe [STMc '[] ()]))
 
-newFinalizers :: MonadSTM' r t m => m Finalizers
+newFinalizers :: MonadSTMc '[] m => m Finalizers
 newFinalizers = Finalizers <$> newTVar (Just [])
 
-registerFinalizer :: MonadSTM' r t m => Finalizers -> STM' NoRetry NoThrow () -> m Bool
+registerFinalizer :: MonadSTMc '[] m => Finalizers -> STMc '[] () -> m Bool
 registerFinalizer (Finalizers finalizerVar) finalizer =
   readTVar finalizerVar >>= \case
     Just finalizers -> do
@@ -427,38 +428,38 @@ registerFinalizer (Finalizers finalizerVar) finalizer =
       pure True
     Nothing -> pure False
 
-runFinalizers :: Finalizers -> STM' r t ()
+runFinalizers :: Finalizers -> STMc '[] ()
 runFinalizers (Finalizers finalizerVar) = do
   readTVar finalizerVar >>= \case
     Just finalizers -> do
-      noRetry $ noThrow $ sequence_ finalizers
+      liftSTMc $ sequence_ finalizers
       writeTVar finalizerVar Nothing
     Nothing -> traceM "runFinalizers was called multiple times (it must only be run once)"
 
 runFinalizersShortIO :: Finalizers -> ShortIO ()
-runFinalizersShortIO finalizers = unsafeShortIO $ atomically' $ runFinalizers finalizers
+runFinalizersShortIO finalizers = unsafeShortIO $ atomicallyC $ liftSTMc $ runFinalizers finalizers
 
 runFinalizersAfterShortIO :: Finalizers -> Future () -> ShortIO ()
-runFinalizersAfterShortIO finalizers awaitable = do
-  -- Peek awaitable to ensure trivial disposers always run without forking
-  isCompleted <- isJust <$> peekFutureShortIO awaitable
+runFinalizersAfterShortIO finalizers future = do
+  -- Peek future to ensure trivial disposers always run without forking
+  isCompleted <- isJust <$> peekFutureShortIO future
   if isCompleted
     then
       runFinalizersShortIO finalizers
     else
       void $ forkIOShortIO do
-        await awaitable
-        atomically' $ runFinalizers finalizers
+        await future
+        atomicallyC $ liftSTMc $ runFinalizers finalizers
 
 
-runFinalizersAfter :: TIOWorker -> Finalizers -> Future () -> STM' r t ()
-runFinalizersAfter worker finalizers awaitable = do
-  -- Peek awaitable to ensure trivial disposers always run without forking
-  isCompleted <- isJust <$> undefined -- peekFutureSTM awaitable
+runFinalizersAfter :: TIOWorker -> Finalizers -> Future () -> STMc '[] ()
+runFinalizersAfter worker finalizers future = do
+  -- Peek future to ensure trivial disposers always run without forking
+  isCompleted <- isJust <$> peekFutureSTM future
   if isCompleted
     then
       runFinalizers finalizers
     else
       enqueueForkIO worker do
-        await awaitable
-        atomically' $ runFinalizers finalizers
+        await future
+        atomicallyC $ liftSTMc $ runFinalizers finalizers

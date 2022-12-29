@@ -33,13 +33,13 @@ import Quasar.Resources
 import Control.Exception (throwTo)
 
 
-data Async a = Async (Future a) Disposer
+data Async a = Async (FutureE a) Disposer
 
 instance Resource (Async a) where
   toDisposer (Async _ disposer) = disposer
 
-instance IsFuture' CanThrow a (Async a) where
-  toFuture (Async awaitable _) = awaitable
+instance IsFuture (Either SomeException a) (Async a) where
+  toFuture (Async futureE _) = toFuture futureE
 
 
 async :: (MonadQuasar m, MonadIO m) => QuasarIO a -> m (Async a)
@@ -93,27 +93,27 @@ spawnAsync registerDisposerFn worker exSink fn = do
 
     threadId <- liftIO $ forkWithUnmask (runAndPut exSink key resultVar disposer) exSink
 
-    pure (Async (toFuture resultVar) disposer, threadId)
+    pure (Async (toFutureE resultVar) disposer, threadId)
   where
-    runAndPut :: ExceptionSink -> Unique -> Promise a -> Disposer -> (forall b. IO b -> IO b) -> IO ()
+    runAndPut :: ExceptionSink -> Unique -> PromiseE a -> Disposer -> (forall b. IO b -> IO b) -> IO ()
     runAndPut exChan key resultVar disposer unmask = do
       -- Called in masked state by `forkWithUnmask`
       result <- try $ fn unmask
       case result of
         Left (fromException -> Just (CancelAsync ((== key) -> True))) ->
-          breakPromise resultVar AsyncDisposed
+          fulfillPromise resultVar (Left (toException AsyncDisposed))
         Left ex -> do
           atomically (throwToExceptionSink exChan ex)
             `finally` do
-              breakPromise resultVar (AsyncException ex)
+              fulfillPromise resultVar (Left (toException (AsyncException ex)))
               disposeEventuallyIO_ disposer
         Right retVal -> do
-          fulfillPromise resultVar retVal
+          fulfillPromise resultVar (Right retVal)
           disposeEventuallyIO_ disposer
-    disposeFn :: Unique -> Promise a -> Future ThreadId -> IO ()
+    disposeFn :: Unique -> PromiseE a -> FutureE ThreadId -> IO ()
     disposeFn key resultVar threadIdFuture = do
       -- ThreadId future will be filled by afix
-      threadId <- await threadIdFuture
+      threadId <- either throwM pure =<< await threadIdFuture
       throwTo threadId (CancelAsync key)
       -- Disposing is considered complete once a result (i.e. success or failure) has been stored
-      awaitSuccessOrFailure resultVar
+      void $ await resultVar

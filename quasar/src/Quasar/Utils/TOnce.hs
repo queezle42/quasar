@@ -6,6 +6,9 @@ module Quasar.Utils.TOnce (
   finalizeTOnce,
   readTOnceState,
   readTOnceResult,
+
+  -- * Exceptions
+  TOnceAlreadyFinalized,
 ) where
 
 import Quasar.Future
@@ -17,17 +20,18 @@ data TOnceAlreadyFinalized = TOnceAlreadyFinalized
 
 newtype TOnce a b = TOnce (TVar (Either a b))
 
-instance IsFuture' CanThrow b (TOnce a b) where
-  toFuture = unsafeAwaitSTM . readTOnceResult
+instance IsFuture b (TOnce a b) where
+  toFuture = unsafeAwaitSTMc . readTOnceResult
 
-newTOnce :: MonadSTM' r t m => a -> m (TOnce a b)
+newTOnce :: MonadSTMc '[] m => a -> m (TOnce a b)
 newTOnce initial = TOnce <$> newTVar (Left initial)
 
 newTOnceIO :: MonadIO m => a -> m (TOnce a b)
 newTOnceIO initial = TOnce <$> newTVarIO (Left initial)
 
 
-mapFinalizeTOnce :: MonadSTM' r t m => TOnce a b -> (a -> m b) -> m b
+-- TODO guard against reentry
+mapFinalizeTOnce :: MonadSTMc '[] m => TOnce a b -> (a -> m b) -> m b
 mapFinalizeTOnce (TOnce var) fn =
   readTVar var >>= \case
     Left initial -> do
@@ -36,17 +40,17 @@ mapFinalizeTOnce (TOnce var) fn =
       pure final
     Right final -> pure final
 
-finalizeTOnce :: MonadSTM' r CanThrow m => TOnce a b -> b -> m ()
+finalizeTOnce :: MonadSTMc '[Throw TOnceAlreadyFinalized] m => TOnce a b -> b -> m ()
 finalizeTOnce (TOnce var) value =
   readTVar var >>= \case
     Left _ -> writeTVar var (Right value)
-    Right _ -> throwSTM TOnceAlreadyFinalized
+    Right _ -> throwC TOnceAlreadyFinalized
 
 
-readTOnceState :: MonadSTM' r t m => TOnce a b -> m (Either a b)
+readTOnceState :: MonadSTMc '[] m => TOnce a b -> m (Either a b)
 readTOnceState (TOnce var) = readTVar var
 
-readTOnceResult :: MonadSTM' CanRetry t m => TOnce a b -> m b
+readTOnceResult :: MonadSTMc '[Retry] m => TOnce a b -> m b
 readTOnceResult switch =
   readTOnceState switch >>= \case
     Right final -> pure final

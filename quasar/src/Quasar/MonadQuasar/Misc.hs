@@ -31,7 +31,7 @@ execForeignQuasarIO quasar fn = runQuasarIO quasar $
   bracket
     (async fn)
     dispose
-    awaitSuccessOrFailure
+    (void . await)
 {-# SPECIALIZE execForeignQuasarIO :: Quasar -> QuasarIO () -> IO () #-}
 
 execForeignQuasarSTM :: MonadSTM m => Quasar -> QuasarSTM () -> m ()
@@ -55,7 +55,7 @@ runQuasarAndExitWith exitCodeFn logger fn = mask \unmask -> do
   worker <- newTIOWorker
   (exChan, exceptionWitness) <- atomically $ newExceptionWitnessSink (loggingExceptionSink worker)
   mResult <- unmask $ withQuasar logger worker exChan (redirectExceptionToSinkIO fn)
-  failure <- atomically' exceptionWitness
+  failure <- atomicallyC $ liftSTMc exceptionWitness
   exitState <- case (mResult, failure) of
     (Just result, False) -> pure $ QuasarExitSuccess result
     (Just result, True) -> pure $ QuasarExitAsyncException result
@@ -71,7 +71,7 @@ runQuasarCollectExceptions logger fn = do
   (exChan, collectExceptions) <- atomically $ newExceptionCollector panicSink
   worker <- newTIOWorker
   result <- try $ withQuasar logger worker exChan fn
-  exceptions <- atomically' collectExceptions
+  exceptions <- atomicallyC $ liftSTMc collectExceptions
   pure (result, exceptions)
 
 runQuasarCombineExceptions :: Logger -> QuasarIO a -> IO a

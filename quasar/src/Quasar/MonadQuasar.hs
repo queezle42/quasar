@@ -1,3 +1,5 @@
+{-# LANGUAGE UndecidableInstances #-}
+
 module Quasar.MonadQuasar (
   -- * Quasar
   Quasar,
@@ -7,23 +9,23 @@ module Quasar.MonadQuasar (
   newResourceScopeIO,
   newResourceScopeSTM,
   withResourceScope,
-  catchQuasar,
+  --catchQuasar,
 
   MonadQuasar(..),
 
   QuasarT,
   QuasarIO,
   QuasarSTM,
-  QuasarSTM',
+  QuasarSTMc,
 
   runQuasarIO,
   runQuasarSTM,
-  runQuasarSTM',
+  runQuasarSTMc,
   liftQuasarIO,
   liftQuasarSTM,
-  liftQuasarSTM',
+  liftQuasarSTMc,
   quasarAtomically,
-  quasarAtomically',
+  quasarAtomicallyC,
 
   -- ** Utils
   redirectExceptionToSink,
@@ -50,6 +52,7 @@ import Quasar.Logger
 import Quasar.Prelude
 import Quasar.Resources.Disposer
 import Control.Monad.Base (MonadBase)
+import Control.Monad.Capability
 
 
 -- Invariant: the resource manager is disposed as soon as an exception is thrown to the channel
@@ -82,7 +85,7 @@ quasarExceptionSink (Quasar _ _ exChan _) = exChan
 quasarResourceManager :: Quasar -> ResourceManager
 quasarResourceManager (Quasar _ _ _ rm) = rm
 
-newResourceScopeSTM :: MonadSTM' r CanThrow m => Quasar -> m Quasar
+newResourceScopeSTM :: MonadSTMc '[ThrowAny] m => Quasar -> m Quasar
 newResourceScopeSTM parent = do
   rm <- newUnmanagedResourceManagerSTM worker parentExceptionSink
   attachResource (quasarResourceManager parent) rm
@@ -97,13 +100,13 @@ newQuasar :: Logger -> TIOWorker -> ExceptionSink -> ResourceManager -> Quasar
 newQuasar logger worker parentExceptionSink resourceManager = do
   Quasar logger worker (ExceptionSink (disposeOnException resourceManager)) resourceManager
   where
-    disposeOnException :: ResourceManager -> SomeException -> STM' r t ()
+    disposeOnException :: ResourceManager -> SomeException -> STMc '[] ()
     disposeOnException rm ex = do
       disposeEventually_ rm
       throwToExceptionSink parentExceptionSink ex
 
-newResourceScope :: (MonadQuasar m, MonadSTM' r CanThrow m) => m Quasar
-newResourceScope = liftSTM' . newResourceScopeSTM =<< askQuasar
+newResourceScope :: (MonadQuasar m, MonadSTMc '[ThrowAny] m) => m Quasar
+newResourceScope = liftSTMc @'[ThrowAny] . newResourceScopeSTM =<< askQuasar
 {-# SPECIALIZE newResourceScope :: QuasarSTM Quasar #-}
 
 newResourceScopeIO :: (MonadQuasar m, MonadIO m) => m Quasar
@@ -131,12 +134,15 @@ instance Semigroup a => Semigroup (QuasarIO a) where
 instance Monoid a => Monoid (QuasarIO a) where
   mempty = pure mempty
 
-instance MonadAwait' CanThrow QuasarIO where
+instance MonadAwait QuasarIO where
   await awaitable = liftIO (await awaitable)
 
 
 newtype QuasarSTM a = QuasarSTM (QuasarT STM a)
-  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadFix, Alternative, MonadPlus, MonadSTM)
+  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadFix, Alternative, MonadPlus, Retry, UnsafeLiftBase)
+
+instance HasCapability Retry QuasarSTM
+instance HasCapability ThrowAny QuasarSTM
 
 instance Semigroup a => Semigroup (QuasarSTM a) where
   fx <> fy = liftA2 (<>) fx fy
@@ -144,23 +150,34 @@ instance Semigroup a => Semigroup (QuasarSTM a) where
 instance Monoid a => Monoid (QuasarSTM a) where
   mempty = pure mempty
 
-instance MonadFail (QuasarSTM' r CanThrow) where
-  fail msg = throwM (userError msg)
 
+newtype QuasarSTMc caps a = QuasarSTMc (QuasarT (STMc caps) a)
+  deriving newtype (Functor, Applicative, Monad, MonadFix)
 
-newtype QuasarSTM' r t a = QuasarSTM' (QuasarT (STM' r t) a)
-  deriving newtype (Functor, Applicative, Monad, MonadFix, MonadSTM' r t)
+instance (c :< caps, STMcCapabilities caps) => HasCapability c (QuasarSTMc caps)
 
-deriving newtype instance MonadThrow (QuasarSTM' r CanThrow)
-deriving newtype instance MonadCatch (QuasarSTM' r CanThrow)
+instance STMcCapabilities caps => UnsafeLiftBase (QuasarSTMc caps) where
+  type UnsafeBaseMonad (QuasarSTMc caps) = STM
+  unsafeLiftBase = QuasarSTMc . unsafeLiftBase
 
-deriving newtype instance Alternative (QuasarSTM' CanRetry t)
-deriving newtype instance MonadPlus (QuasarSTM' CanRetry t)
+deriving newtype instance Retry :< caps => Retry (QuasarSTMc caps)
 
-instance Semigroup a => Semigroup (QuasarSTM' r t a) where
+deriving newtype instance Retry :< caps => Alternative (QuasarSTMc caps)
+deriving newtype instance Retry :< caps => MonadPlus (QuasarSTMc caps)
+
+--deriving newtype instance (ThrowAny :< caps, STMcCapabilities caps) => ThrowAny (QuasarSTMc caps)
+--deriving newtype instance (Throw e :< caps, STMcCapabilities caps) => Throw e (QuasarSTMc caps)
+
+deriving newtype instance (ThrowAny :< caps, STMcCapabilities caps) => MonadThrow (QuasarSTMc caps)
+deriving newtype instance (ThrowAny :< caps, STMcCapabilities caps) => MonadCatch (QuasarSTMc caps)
+
+instance (Throw IOError :< caps, STMcCapabilities caps) => MonadFail (QuasarSTMc caps) where
+  fail msg = throwC (userError msg)
+
+instance Semigroup a => Semigroup (QuasarSTMc caps a) where
   (<>) = liftA2 (<>)
 
-instance Monoid a => Monoid (QuasarSTM' r t a) where
+instance Monoid a => Monoid (QuasarSTMc caps a) where
   mempty = pure mempty
 
 instance MonadFail QuasarSTM where
@@ -188,9 +205,9 @@ instance MonadQuasar QuasarSTM where
   askQuasar = QuasarSTM ask
   localQuasar quasar (QuasarSTM fn) = QuasarSTM (local (const quasar) fn)
 
-instance MonadQuasar (QuasarSTM' r CanThrow) where
-  askQuasar = QuasarSTM' ask
-  localQuasar quasar (QuasarSTM' fn) = QuasarSTM' (local (const quasar) fn)
+instance (STMcCapabilities caps, ThrowAny :< caps) => MonadQuasar (QuasarSTMc caps) where
+  askQuasar = QuasarSTMc ask
+  localQuasar quasar (QuasarSTMc fn) = QuasarSTMc (local (const quasar) fn)
 
 
 -- Overlappable so a QuasarT has priority over the base monad.
@@ -230,12 +247,12 @@ liftQuasarSTM fn = do
 {-# RULES "liftQuasarSTM/id" liftQuasarSTM = id #-}
 {-# INLINABLE [1] liftQuasarSTM #-}
 
-liftQuasarSTM' :: (MonadSTM' r t m, MonadQuasar m) => QuasarSTM' r t a -> m a
-liftQuasarSTM' fn = do
+liftQuasarSTMc :: forall caps m a. (MonadSTMc caps m, MonadQuasar m) => QuasarSTMc caps a -> m a
+liftQuasarSTMc fn = do
   quasar <- askQuasar
-  liftSTM' $ runQuasarSTM' quasar fn
-{-# RULES "liftQuasarSTM'/id" liftQuasarSTM' = id #-}
-{-# INLINABLE [1] liftQuasarSTM' #-}
+  runQuasarSTMc @caps quasar fn
+{-# RULES "liftQuasarSTMc/id" liftQuasarSTMc = id #-}
+{-# INLINABLE [1] liftQuasarSTMc #-}
 
 runQuasarIO :: MonadIO m => Quasar -> QuasarIO a -> m a
 runQuasarIO quasar (QuasarIO fn) = liftIO $ runReaderT fn quasar
@@ -247,10 +264,10 @@ runQuasarSTM quasar (QuasarSTM fn) = liftSTM $ runReaderT fn quasar
 {-# SPECIALIZE runQuasarSTM :: Quasar -> QuasarSTM a -> STM a #-}
 {-# INLINABLE runQuasarSTM #-}
 
-runQuasarSTM' :: MonadSTM' r t m => Quasar -> QuasarSTM' r t a -> m a
-runQuasarSTM' quasar (QuasarSTM' fn) = liftSTM' $ runReaderT fn quasar
-{-# SPECIALIZE runQuasarSTM' :: Quasar -> QuasarSTM' r t a -> STM' r t a #-}
-{-# INLINABLE runQuasarSTM' #-}
+runQuasarSTMc :: forall caps m a. MonadSTMc caps m => Quasar -> QuasarSTMc caps a -> m a
+runQuasarSTMc quasar (QuasarSTMc fn) = liftSTMc $ runReaderT fn quasar
+{-# SPECIALIZE runQuasarSTMc :: STMcCapabilities caps => Quasar -> QuasarSTMc caps a -> STMc caps a #-}
+{-# INLINABLE runQuasarSTMc #-}
 
 quasarAtomically :: (MonadQuasar m, MonadIO m) => QuasarSTM a -> m a
 quasarAtomically (QuasarSTM fn) = do
@@ -259,12 +276,12 @@ quasarAtomically (QuasarSTM fn) = do
 {-# SPECIALIZE quasarAtomically :: QuasarSTM a -> QuasarIO a #-}
 {-# INLINABLE quasarAtomically #-}
 
-quasarAtomically' :: (MonadQuasar m, MonadIO m) => QuasarSTM' CanRetry CanThrow a -> m a
-quasarAtomically' (QuasarSTM' fn) = do
+quasarAtomicallyC :: forall caps m a. (MonadQuasar m, MonadIO m) => QuasarSTMc STMBaseCapabilities a -> m a
+quasarAtomicallyC (QuasarSTMc fn) = do
   quasar <- askQuasar
-  atomically' $ runReaderT fn quasar
-{-# SPECIALIZE quasarAtomically' :: QuasarSTM' CanRetry CanThrow a -> QuasarIO a #-}
-{-# INLINABLE quasarAtomically' #-}
+  atomicallyC $ runReaderT fn quasar
+{-# SPECIALIZE quasarAtomicallyC :: QuasarSTMc STMBaseCapabilities a -> QuasarIO a #-}
+{-# INLINABLE quasarAtomicallyC #-}
 
 
 redirectExceptionToSink :: (MonadQuasar m, MonadSTM m) => m a -> m (Maybe a)
@@ -290,10 +307,10 @@ redirectExceptionToSinkIO_ fn = void $ redirectExceptionToSinkIO fn
 {-# SPECIALIZE redirectExceptionToSinkIO_ :: QuasarIO a -> QuasarIO () #-}
 
 
-catchQuasar :: MonadQuasar m => forall e. Exception e => (e -> STM' NoRetry CanThrow ()) -> m a -> m a
-catchQuasar handler fn = do
-  exSink <- catchSink handler <$> askExceptionSink
-  replaceExceptionSink exSink fn
+--catchQuasar :: forall e m a. (MonadQuasar m, Exception e) => (e -> STM' NoRetry CanThrow ()) -> m a -> m a
+--catchQuasar handler fn = do
+--  exSink <- catchSink handler <$> askExceptionSink
+--  replaceExceptionSink exSink fn
 
 replaceExceptionSink :: MonadQuasar m => ExceptionSink -> m a -> m a
 replaceExceptionSink exSink fn = do

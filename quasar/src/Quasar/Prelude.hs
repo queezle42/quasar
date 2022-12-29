@@ -12,6 +12,7 @@ module Quasar.Prelude
     Data.Functor.Identity.Identity,
     module Control.Concurrent.MVar,
     Control.Exception.Exception,
+    Control.Exception.IOException,
     Control.Exception.SomeException,
     Control.Exception.throwIO,
     Control.Monad.forM,

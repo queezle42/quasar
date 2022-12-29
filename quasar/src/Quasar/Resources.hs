@@ -53,6 +53,7 @@ module Quasar.Resources (
 
 
 import Control.Monad.Catch
+import Control.Monad.Capability
 import Quasar.Future
 import Quasar.Exceptions
 import Quasar.MonadQuasar
@@ -60,29 +61,29 @@ import Quasar.Prelude
 import Quasar.Resources.Disposer
 
 
-registerResource :: (Resource a, MonadQuasar m, MonadSTM' r CanThrow m) => a -> m ()
+registerResource :: (Resource a, MonadQuasar m, MonadSTMc '[ThrowAny] m) => a -> m ()
 registerResource resource = do
   rm <- askResourceManager
-  liftSTM' $ attachResource rm resource
+  attachResource rm resource
 {-# SPECIALIZE registerResource :: Resource a => a -> QuasarSTM () #-}
 
 registerResourceIO :: (Resource a, MonadQuasar m, MonadIO m) => a -> m ()
 registerResourceIO res = quasarAtomically $ registerResource res
 {-# SPECIALIZE registerResourceIO :: Resource a => a -> QuasarIO () #-}
 
-registerDisposeAction :: (MonadQuasar m, MonadSTM' r CanThrow m) => IO () -> m Disposer
+registerDisposeAction :: (MonadQuasar m, MonadSTMc '[ThrowAny] m) => IO () -> m Disposer
 registerDisposeAction fn = do
   worker <- askIOWorker
   exChan <- askExceptionSink
   rm <- askResourceManager
-  liftSTM' do
+  liftSTMc @'[ThrowAny] do
     disposer <- newUnmanagedIODisposer fn worker exChan
     attachResource rm disposer
     pure disposer
 {-# SPECIALIZE registerDisposeAction :: IO () -> QuasarSTM Disposer #-}
 
-registerDisposeAction_ :: (MonadQuasar m, MonadSTM' r CanThrow m) => IO () -> m ()
-registerDisposeAction_ fn = liftQuasarSTM' $ void $ registerDisposeAction fn
+registerDisposeAction_ :: (MonadQuasar m, MonadSTMc '[ThrowAny] m) => IO () -> m ()
+registerDisposeAction_ fn = void $ registerDisposeAction fn
 
 registerDisposeActionIO :: (MonadQuasar m, MonadIO m) => IO () -> m Disposer
 registerDisposeActionIO fn = quasarAtomically $ registerDisposeAction fn
@@ -90,19 +91,19 @@ registerDisposeActionIO fn = quasarAtomically $ registerDisposeAction fn
 registerDisposeActionIO_ :: (MonadQuasar m, MonadIO m) => IO () -> m ()
 registerDisposeActionIO_ fn = quasarAtomically $ void $ registerDisposeAction fn
 
-registerDisposeTransaction :: (MonadQuasar m, MonadSTM' r CanThrow m) => STM () -> m TDisposer
+registerDisposeTransaction :: (MonadQuasar m, MonadSTMc '[ThrowAny] m) => STM () -> m TDisposer
 registerDisposeTransaction fn = do
   worker <- askIOWorker
   exChan <- askExceptionSink
   rm <- askResourceManager
-  liftSTM' do
+  liftSTMc @'[ThrowAny] do
     disposer <- newUnmanagedSTMDisposer fn worker exChan
     attachResource rm disposer
     pure disposer
 {-# SPECIALIZE registerDisposeTransaction :: STM () -> QuasarSTM TDisposer #-}
 
-registerDisposeTransaction_ :: (MonadQuasar m, MonadSTM' r CanThrow m) => STM () -> m ()
-registerDisposeTransaction_ fn = liftQuasarSTM' $ void $ registerDisposeTransaction fn
+registerDisposeTransaction_ :: (MonadQuasar m, MonadSTMc '[ThrowAny] m) => STM () -> m ()
+registerDisposeTransaction_ fn = void $ registerDisposeTransaction fn
 
 registerDisposeTransactionIO :: (MonadQuasar m, MonadIO m) => STM () -> m TDisposer
 registerDisposeTransactionIO fn = quasarAtomically $ registerDisposeTransaction fn
@@ -110,22 +111,22 @@ registerDisposeTransactionIO fn = quasarAtomically $ registerDisposeTransaction 
 registerDisposeTransactionIO_ :: (MonadQuasar m, MonadIO m) => STM () -> m ()
 registerDisposeTransactionIO_ fn = quasarAtomically $ void $ registerDisposeTransaction fn
 
-registerSimpleDisposeTransaction :: (MonadQuasar m, MonadSTM' r CanThrow m) => STM' NoRetry NoThrow () -> m TSimpleDisposer
+registerSimpleDisposeTransaction :: (MonadQuasar m, MonadSTMc '[ThrowAny] m) => STMc '[] () -> m TSimpleDisposer
 registerSimpleDisposeTransaction fn = do
   rm <- askResourceManager
-  liftSTM' do
+  liftSTMc @'[ThrowAny] do
     disposer <- newUnmanagedTSimpleDisposer fn
     attachResource rm disposer
     pure disposer
-{-# SPECIALIZE registerSimpleDisposeTransaction :: STM' NoRetry NoThrow () -> QuasarSTM TSimpleDisposer #-}
+{-# SPECIALIZE registerSimpleDisposeTransaction :: STMc '[] () -> QuasarSTM TSimpleDisposer #-}
 
-registerSimpleDisposeTransaction_ :: (MonadQuasar m, MonadSTM' r CanThrow m) => STM' NoRetry NoThrow () -> m ()
-registerSimpleDisposeTransaction_ fn = liftQuasarSTM' $ void $ registerSimpleDisposeTransaction fn
+registerSimpleDisposeTransaction_ :: (MonadQuasar m, MonadSTMc '[ThrowAny] m) => STMc '[] () -> m ()
+registerSimpleDisposeTransaction_ fn = void $ registerSimpleDisposeTransaction fn
 
-registerSimpleDisposeTransactionIO :: (MonadQuasar m, MonadIO m) => STM' NoRetry NoThrow () -> m TSimpleDisposer
+registerSimpleDisposeTransactionIO :: (MonadQuasar m, MonadIO m) => STMc '[] () -> m TSimpleDisposer
 registerSimpleDisposeTransactionIO fn = quasarAtomically $ registerSimpleDisposeTransaction fn
 
-registerSimpleDisposeTransactionIO_ :: (MonadQuasar m, MonadIO m) => STM' NoRetry NoThrow () -> m ()
+registerSimpleDisposeTransactionIO_ :: (MonadQuasar m, MonadIO m) => STMc '[] () -> m ()
 registerSimpleDisposeTransactionIO_ fn = quasarAtomically $ void $ registerSimpleDisposeTransaction fn
 
 registerNewResource :: forall a m. (Resource a, MonadQuasar m, MonadIO m, MonadMask m) => m a -> m a
@@ -157,14 +158,14 @@ disposeEventuallyIO_ :: (Resource r, MonadIO m) => r -> m ()
 disposeEventuallyIO_ res = atomically $ void $ disposeEventually res
 
 
-captureResources :: (MonadQuasar m, MonadSTM' r CanThrow m) => m a -> m (a, Disposer)
+captureResources :: (MonadQuasar m, MonadSTMc '[ThrowAny] m) => m a -> m (a, Disposer)
 captureResources fn = do
   quasar <- newResourceScope
   localQuasar quasar do
     result <- fn
     pure (result, toDisposer (quasarResourceManager quasar))
 
-captureResources_ :: (MonadQuasar m, MonadSTM' r CanThrow m) => m () -> m Disposer
+captureResources_ :: (MonadQuasar m, MonadSTMc '[ThrowAny] m) => m () -> m Disposer
 captureResources_ fn = snd <$> captureResources fn
 
 captureResourcesIO :: (MonadQuasar m, MonadIO m) => m a -> m (a, Disposer)

@@ -38,7 +38,7 @@ instance Exception TimerCancelled
 data Timer = Timer {
   key :: Unique,
   time :: UTCTime,
-  completed :: Promise (),
+  completed :: Promise (Either SomeException ()),
   disposer :: Disposer,
   scheduler :: TimerScheduler
 }
@@ -52,7 +52,7 @@ instance Ord Timer where
 instance Resource Timer where
   toDisposer Timer{disposer} = disposer
 
-instance IsFuture () Timer where
+instance IsFuture (Either SomeException ()) Timer where
   toFuture Timer{completed} = toFuture completed
 
 
@@ -121,11 +121,11 @@ startSchedulerThread scheduler = async (schedulerThread `finally` liftIO cancelA
     wait :: Timer -> Int -> QuasarIO ()
     wait nextTimer microseconds = do
       delay <- newDelay microseconds
-      awaitAny2 (await delay) nextTimerChanged
+      awaitAny2 (void $ await delay) nextTimerChanged
       dispose delay
       where
         nextTimerChanged :: Future ()
-        nextTimerChanged = unsafeAwaitSTM do
+        nextTimerChanged = unsafeAwaitSTMc do
           minTimer <- Data.Heap.minimum <$> readTMVar heap'
           unless (minTimer /= nextTimer) retry
 
@@ -148,7 +148,7 @@ startSchedulerThread scheduler = async (schedulerThread `finally` liftIO cancelA
 
     fireTimer :: Timer -> STM ()
     fireTimer Timer{completed, disposer} = do
-      result <- tryFulfillPromiseSTM completed ()
+      result <- tryFulfillPromiseSTM completed (Right ())
       modifyTVar (if result then activeCount' else cancelledCount') (+ (-1))
       disposeEventually_ disposer
 
@@ -187,16 +187,18 @@ newUnmanagedTimer scheduler time = liftIO do
     modifyTVar (activeCount scheduler) (+ 1)
     pure timer
   where
-    disposeFn :: Promise () -> STM ()
+    disposeFn :: PromiseE () -> STM ()
     disposeFn completed = do
-      cancelled <- tryBreakPromiseSTM completed TimerCancelled
+      cancelled <- tryFulfillPromiseSTM completed (Left (toException TimerCancelled))
       when cancelled do
         modifyTVar (activeCount scheduler) (+ (-1))
         modifyTVar (cancelledCount scheduler) (+ 1)
 
 
 sleepUntil :: MonadIO m => TimerScheduler -> UTCTime -> m ()
-sleepUntil scheduler time = liftIO $ bracketOnError (newUnmanagedTimer scheduler time) dispose await
+sleepUntil scheduler time = liftIO do
+  result <- bracketOnError (newUnmanagedTimer scheduler time) dispose await
+  either throwM pure result
 
 
 -- | Provides an `IsFuture` instance that can be awaited successfully after a given number of microseconds.
@@ -205,8 +207,8 @@ sleepUntil scheduler time = liftIO $ bracketOnError (newUnmanagedTimer scheduler
 newtype Delay = Delay (Async ())
   deriving newtype Resource
 
-instance IsFuture () Delay where
-  toFuture (Delay task) = toFuture task `catch` \AsyncDisposed -> throwM TimerCancelled
+instance IsFuture (Either SomeException ()) Delay where
+  toFuture (Delay task) = toFuture (toFutureE task `catch` \AsyncDisposed -> throwM TimerCancelled)
 
 newDelay :: (MonadQuasar m, MonadIO m) => Int -> m Delay
 newDelay microseconds = Delay <$> async (liftIO (threadDelay microseconds))
