@@ -1,6 +1,4 @@
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
-{-# LANGUAGE TypeFamilyDependencies #-}
 
 module Control.Monad.Capability (
   Capability,
@@ -8,16 +6,15 @@ module Control.Monad.Capability (
   (:<<),
   (:++),
   (:-),
-  Throw(..),
-  ThrowAny,
-  throwAny,
-  LiftCapabilities(..),
-  IsCapability,
+  UnsafeLiftBase(..),
+  HasCapability,
   RequireCapabilities,
+
+  Throw(..),
+  ThrowAny(..),
 ) where
 
 import Control.Monad.Catch
-import Control.Concurrent.STM qualified as STM
 import Control.Concurrent.STM (STM)
 import Control.Monad.Trans.Class
 import Prelude
@@ -25,12 +22,16 @@ import Data.Kind
 
 type Capability = (Type -> Type) -> Constraint
 
-type (:<) :: k -> [k] -> Constraint
-type family a :< b where
-  c :< (c ': _) = ()
-  Throw _ :< (ThrowAny ': _) = ()
-  c :< (_ ': cs) = c :< cs
+-- | Constraint to assert the existence of a capability in a capability list.
+type (:<) :: Capability -> [Capability] -> Constraint
+class a :< b
 
+instance c :< (c ': _cs)
+instance Throw e :< (ThrowAny ': _cs)
+instance {-# OVERLAPPABLE #-} c :< cs => c :< (_x ': cs)
+
+
+-- | Constraint to assert the existence of a list of capabilities in a capability list.
 type (:<<) :: [k] -> [k] -> Constraint
 type family a :<< b where
   '[] :<< _ = ()
@@ -40,9 +41,10 @@ type family a :<< b where
 type (:++) :: [k] -> [k] -> [k]
 type family a :++ b where
   '[] :++ rs = rs
+  ls :++ '[] = ls
   (l ': ls) :++ rs = l ': (ls :++ rs)
 
--- | Remove an element from a type-level list.
+-- | Remove an element from a type-level list. Has special handling for `ThrowAny`, which als removes any `Throw e`.
 type (:-) :: [k] -> k -> [k]
 type family a :- b where
   '[] :- _ = '[]
@@ -51,37 +53,65 @@ type family a :- b where
   (x ': xs) :- r = x ': (xs :- r)
 
 
+type HasCapability :: Capability -> (Type -> Type) -> Constraint
+class UnsafeLiftBase m => HasCapability c m
 
-class Monad m => Throw e m where
+instance (HasCapability c m, MonadTrans t, Monad (t m)) => HasCapability c (t m)
+
+
+-- * ThrowAny
+
+type ThrowAny :: Capability
+class UnsafeLiftBase m => ThrowAny m where
+  throwAny :: Exception e => e -> m a
+
+instance (HasCapability ThrowAny m, MonadThrow (UnsafeBaseMonad m), UnsafeLiftBase m) => ThrowAny m where
+  throwAny = unsafeLiftBase . throwM
+
+instance HasCapability ThrowAny IO
+instance HasCapability ThrowAny STM
+
+
+-- * Throw e
+
+type Throw :: Type -> Capability
+class UnsafeLiftBase m => Throw e m where
   throwC :: Exception e => e -> m a
 
-instance Throw e STM where
-  throwC = STM.throwSTM
+instance (HasCapability (Throw e) m, ThrowAny (UnsafeBaseMonad m), UnsafeLiftBase m) => Throw e m where
+  throwC = unsafeLiftBase . throwAny
 
-instance (Throw e m, MonadTrans t, Monad (t m)) => Throw e (t m) where
-  throwC = lift . throwC
-
-type ThrowAny = Throw SomeException
-
-throwAny :: (Exception e, ThrowAny m) => e -> m a
-throwAny = throwC . toException
+instance {-# INCOHERENT #-} HasCapability ThrowAny m => HasCapability (Throw e) m
 
 
-type IsCapability :: Capability -> (Type -> Type) -> Constraint
-class (c m, forall t. (MonadTrans t, Monad (t m)) => c (t m)) => IsCapability c m
+-- * RequireCapabilities
 
 type RequireCapabilities :: [Capability] -> (Type -> Type) -> Constraint
 type family RequireCapabilities caps m where
   RequireCapabilities '[] _ = ()
-  RequireCapabilities (c ': cs) m = (IsCapability c m, RequireCapabilities cs m)
+  RequireCapabilities (c ': cs) m =
+    (
+      HasCapability c m,
+      c m,
+      RequireCapabilities cs m
+    )
 
-type LiftCapabilities :: (Type -> Type) -> Constraint
-class (Monad m, RequireCapabilities (Caps m) (CapabilityBaseMonad m)) => LiftCapabilities m where
-  type Caps m :: [Capability]
-  type CapabilityBaseMonad m :: (Type -> Type)
-  liftBaseC :: CapabilityBaseMonad m a -> m a
 
-instance (MonadTrans t, LiftCapabilities m, Monad (t m)) => LiftCapabilities (t m) where
-  type Caps (t m) = Caps m
-  type CapabilityBaseMonad (t m) = CapabilityBaseMonad m
-  liftBaseC = lift . liftBaseC
+-- * UnsafeLiftBase
+
+type UnsafeLiftBase :: (Type -> Type) -> Constraint
+class Monad m => UnsafeLiftBase m where
+  type UnsafeBaseMonad m :: (Type -> Type)
+  unsafeLiftBase :: UnsafeBaseMonad m a -> m a
+
+instance (MonadTrans t, UnsafeLiftBase m, Monad (t m)) => UnsafeLiftBase (t m) where
+  type UnsafeBaseMonad (t m) = UnsafeBaseMonad m
+  unsafeLiftBase = lift . unsafeLiftBase
+
+instance UnsafeLiftBase IO where
+  type UnsafeBaseMonad IO = IO
+  unsafeLiftBase = id
+
+instance UnsafeLiftBase STM where
+  type UnsafeBaseMonad STM = STM
+  unsafeLiftBase = id

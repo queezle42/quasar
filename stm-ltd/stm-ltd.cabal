@@ -27,6 +27,7 @@ common shared-properties
     ImportQualifiedPost
     InstanceSigs
     KindSignatures
+    LambdaCase
     MonoLocalBinds
     NoImplicitPrelude
     NoStarIsType

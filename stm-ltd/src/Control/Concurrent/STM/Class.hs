@@ -1,12 +1,12 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
 
 module Control.Concurrent.STM.Class (
   -- * Monad
   -- ** STM
   STM,
+  STMBaseCapabilities,
   atomically,
 
   -- ** MonadSTM
@@ -15,7 +15,7 @@ module Control.Concurrent.STM.Class (
 
   -- ** STMc
   STMc,
-  limitSTMc,
+  STMcCapabilities,
   atomicallyC,
 
   -- *** Limiting capabilities
@@ -41,6 +41,11 @@ module Control.Concurrent.STM.Class (
   catchSTM,
   catchSTMc,
   catchAllSTMc,
+  trySTMc,
+  tryAllSTMc,
+
+  -- * Control.Monad.Capability reexports
+  UnsafeLiftBase,
 
   -- * Unique
 
@@ -145,34 +150,25 @@ import Language.Haskell.TH hiding (Type)
 import Prelude
 
 
--- TODO fix orphan instance
-instance LiftCapabilities STM where
-  type Caps STM = '[Retry, ThrowAny]
-  type CapabilityBaseMonad STM = STMc (Caps STM)
-  liftBaseC (STMc f) = f
-
-instance IsCapability (Throw e) STM
-
-instance Throw e :< caps => IsCapability (Throw e) (STMc caps)
+type STMBaseCapabilities = '[Retry, ThrowAny]
 
 
 type STMc :: [Capability] -> Type -> Type
 newtype STMc caps a = STMc (STM a)
   deriving newtype (Functor, Applicative, Monad, MonadFix)
 
-instance RequireCapabilities caps (STMc caps) => LiftCapabilities (STMc caps) where
-  type Caps (STMc caps) = caps
-  type CapabilityBaseMonad (STMc caps) = STMc caps
-  liftBaseC = id
+instance (c :< caps, STMcCapabilities caps) => HasCapability c (STMc caps)
 
-instance Throw e :< caps => Throw e (STMc caps) where
-  throwC = unsafeJailbreakSTMc . throwC
+instance STMcCapabilities caps => UnsafeLiftBase (STMc caps) where
+  type UnsafeBaseMonad (STMc caps) = STM
+  unsafeLiftBase = STMc
 
-instance ThrowAny :< caps => MonadThrow (STMc caps) where
+
+instance (ThrowAny (STMc caps), STMcCapabilities caps) => MonadThrow (STMc caps) where
   throwM = throwAny
 
-instance (ThrowAny :< caps, LiftCapabilities (STMc caps)) => MonadCatch (STMc caps) where
-  catch ft fc = unsafeJailbreakSTMc (STM.catchSTM (runSTMc ft) (runSTMc . fc))
+instance (ThrowAny (STMc caps), STMcCapabilities caps) => MonadCatch (STMc caps) where
+  catch ft fc = STMc (STM.catchSTM (runSTMc ft) (runSTMc . fc))
 
 instance Semigroup a => Semigroup (STMc caps a) where
   (<>) = liftA2 (<>)
@@ -187,36 +183,33 @@ instance Monoid a => Monoid (STMc caps a) where
 -- interface for MArray) are partial.
 deriving newtype instance MArray.MArray STM.TArray e (STMc caps)
 
-deriving newtype instance Retry :< caps => Alternative (STMc caps)
+deriving newtype instance Retry (STMc caps) => Alternative (STMc caps)
 
-deriving newtype instance Retry :< caps => MonadPlus (STMc caps)
+deriving newtype instance Retry (STMc caps) => MonadPlus (STMc caps)
 
 
 type MonadSTMc :: [Capability] -> (Type -> Type) -> Constraint
-type MonadSTMc caps m = (caps :<< Caps m, RequireCapabilities caps m, LiftSTMc m)
-
-type LiftSTMc m = (LiftCapabilities m, CapabilityBaseMonad m ~ STMc (Caps m))
-
-liftSTMc :: LiftSTMc m => STMc (Caps m) a -> m a
-liftSTMc = liftBaseC
-
-limitSTMc :: forall caps m a. (MonadSTMc caps m, LiftCapabilities (STMc caps)) => STMc caps a -> m a
-limitSTMc f = unsafeLiftSTM (runSTMc f)
+type MonadSTMc caps m =
+  (
+    RequireCapabilities caps m,
+    STMcCapabilities caps,
+    UnsafeLiftBase m,
+    UnsafeBaseMonad m ~ STM
+  )
 
 
--- TODO find consistent names for `unsafeLiftSTM` and `unsafeJailbreakSTMc?
-unsafeLiftSTM :: LiftSTMc m => STM a -> m a
-unsafeLiftSTM f = liftSTMc (STMc f)
+liftSTMc :: MonadSTMc caps m => STMc caps a -> m a
+liftSTMc f = unsafeLiftSTM (runSTMc f)
 
-unsafeJailbreakSTMc :: STM a -> STMc caps a
-unsafeJailbreakSTMc = STMc
+unsafeLiftSTM :: (UnsafeLiftBase m, UnsafeBaseMonad m ~ STM) => STM a -> m a
+unsafeLiftSTM = unsafeLiftBase
 
 -- | Monad in which 'STM' and 'STMc' computations can be embedded.
-type MonadSTM m = MonadSTMc (Caps STM) m
+type MonadSTM m = MonadSTMc STMBaseCapabilities m
 
 -- | Lift a computation from the 'STM' monad.
 liftSTM :: MonadSTM m => STM a -> m a
-liftSTM f = liftSTMc (STMc f)
+liftSTM = unsafeLiftSTM
 {-# INLINABLE liftSTM #-}
 
 
@@ -226,27 +219,47 @@ runSTMc (STMc f) = f
 
 type STMcCapabilities caps = RequireCapabilities caps (STMc caps)
 
-catchSTMc ::
-  forall capsThrow capsCatch e m a.
-  (
-    Exception e,
-    MonadSTMc ((capsThrow :- Throw e) :++ capsCatch) m,
-    STMcCapabilities capsThrow,
-    STMcCapabilities capsCatch
-  ) =>
-  STMc capsThrow a -> (e -> STMc capsCatch a) -> m a
 
-catchSTMc ft fc = unsafeLiftSTM (STM.catchSTM (runSTMc ft) (runSTMc . fc))
+catchSTMc ::
+  forall caps e m a. (
+    Exception e,
+    MonadSTMc (caps :- Throw e) m,
+    STMcCapabilities caps
+  ) =>
+  STMc caps a -> (e -> m a) -> m a
+
+catchSTMc ft fc = trySTMc ft >>= either fc pure
+{-# INLINABLE catchSTMc #-}
 
 catchAllSTMc ::
-  forall capsThrow capsCatch m a. (
-    MonadSTMc ((capsThrow :- ThrowAny) :++ capsCatch) m,
-    STMcCapabilities capsThrow,
-    STMcCapabilities capsCatch
+  forall caps m a. (
+    MonadSTMc (caps :- ThrowAny) m,
+    STMcCapabilities caps
   ) =>
-  STMc capsThrow a -> (SomeException -> STMc capsCatch a) -> m a
+  STMc caps a -> (SomeException -> m a) -> m a
 
-catchAllSTMc = catchSTMc
+catchAllSTMc ft fc = tryAllSTMc ft >>= either fc pure
+{-# INLINABLE catchAllSTMc #-}
+
+
+trySTMc ::
+  forall caps e m a. (
+    Exception e,
+    MonadSTMc (caps :- Throw e) m,
+    STMcCapabilities caps
+  ) =>
+  STMc caps a -> m (Either e a)
+trySTMc f = unsafeLiftSTM (try (runSTMc f))
+{-# INLINABLE trySTMc #-}
+
+tryAllSTMc ::
+  forall caps m a. (
+    MonadSTMc (caps :- ThrowAny) m,
+    STMcCapabilities caps
+  ) =>
+  STMc caps a -> m (Either SomeException a)
+tryAllSTMc f = unsafeLiftSTM (try (runSTMc f))
+{-# INLINABLE tryAllSTMc #-}
 
 
 class Monad m => Retry m where
@@ -255,31 +268,31 @@ class Monad m => Retry m where
 instance Retry STM where
   retry = STM.retry
 
-instance IsCapability Retry STM
+instance HasCapability Retry STM
 
 instance Retry :< caps => Retry (STMc caps) where
-  retry = unsafeJailbreakSTMc retry
-
-instance Retry :< caps => IsCapability Retry (STMc caps)
+  retry = STMc retry
 
 instance (Retry m, MonadTrans t, Monad (t m)) => Retry (t m) where
   retry = lift retry
 
 
 orElseC ::
-  forall retryCaps elseCaps m a. (
-    MonadSTMc ((retryCaps :- Retry) :++ elseCaps) m,
-    RequireCapabilities retryCaps (STMc retryCaps),
-    RequireCapabilities elseCaps (STMc elseCaps)
+  forall caps m a. (
+    MonadSTMc (caps :- Retry) m,
+    STMcCapabilities caps
   ) =>
-  STMc retryCaps a -> STMc elseCaps a -> m a
-orElseC fx fy = unsafeLiftSTM (STM.orElse (runSTMc fx) (runSTMc fy))
+  STMc caps a -> m a -> m a
+orElseC fx fy =
+  unsafeLiftSTM (STM.orElse (Just <$> runSTMc fx) (pure Nothing)) >>= \case
+    Just r -> pure r
+    Nothing -> fy
 {-# INLINABLE orElseC #-}
 
 
 
-atomicallyC :: MonadIO m => STMc '[Retry, ThrowAny] a -> m a
-atomicallyC = liftIO . STM.atomically . liftSTMc
+atomicallyC :: MonadIO m => STMc STMBaseCapabilities a -> m a
+atomicallyC = liftIO . STM.atomically . runSTMc
 {-# INLINABLE atomicallyC #-}
 
 
@@ -289,7 +302,7 @@ atomicallyC = liftIO . STM.atomically . liftSTMc
 -- `newUnique` and `newUniqueSTM`. There is no limit on the number of times
 -- `newUniqueSTM` may be called.
 newUniqueSTM :: MonadSTMc '[] m => m Unique
-newUniqueSTM = liftSTMc $ unsafeLiftSTM (unsafeIOToSTM newUnique)
+newUniqueSTM = liftSTMc @'[] $ unsafeLiftSTM (unsafeIOToSTM newUnique)
 {-# INLINABLE newUniqueSTM #-}
 
 
@@ -437,6 +450,7 @@ $(mconcat <$> (execWriterT do
     'STM.newTBQueueIO
     ]
   ))
+
 
 #if !MIN_VERSION_stm(2, 5, 1)
 
