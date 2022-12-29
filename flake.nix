@@ -8,25 +8,25 @@
   let
     systems = platforms.unix;
     forAllSystems = genAttrs systems;
+    getHaskellPackages = pkgs: pattern: pipe pkgs.haskell.packages [
+      attrNames
+      (filter (x: !isNull (strings.match pattern x)))
+      (sort (x: y: x>y))
+      (map (x: pkgs.haskell.packages.${x}))
+      head
+    ];
   in {
     packages = forAllSystems (system:
       let
         pkgs = import nixpkgs { inherit system; overlays = [ self.overlays.default ]; };
-        getHaskellPackages = pattern: pipe pkgs.haskell.packages [
-          attrNames
-          (filter (x: !isNull (strings.match pattern x)))
-          (sort (x: y: x>y))
-          (map (x: pkgs.haskell.packages.${x}))
-          head
-        ];
       in rec {
         default = quasar_ghc92;
         quasar = pkgs.haskellPackages.quasar;
-        quasar_ghc92 = (getHaskellPackages "ghc92.").quasar;
-        quasar_ghc94 = (getHaskellPackages "ghc94.").quasar;
+        quasar_ghc92 = (getHaskellPackages pkgs "ghc92.").quasar;
+        quasar_ghc94 = (getHaskellPackages pkgs "ghc94.").quasar;
         quasar-timer = pkgs.haskellPackages.quasar-timer;
-        quasar-timer_ghc92 = (getHaskellPackages "ghc92.").quasar-timer;
-        stm-ltd = (getHaskellPackages "ghc92.").stm-ltd;
+        quasar-timer_ghc92 = (getHaskellPackages pkgs "ghc92.").quasar-timer;
+        stm-ltd = (getHaskellPackages pkgs "ghc94.").stm-ltd;
       }
     );
 
@@ -36,6 +36,8 @@
           quasar = hfinal.callCabal2nix "quasar" ./quasar {};
           quasar-timer = hfinal.callCabal2nix "quasar-timer" ./quasar-timer {};
           stm-ltd = hfinal.callCabal2nix "stm-ltd" ./stm-ltd {};
+          # Due to a ghc bug in 9.4.3 and 9.2.5
+          ListLike = final.haskell.lib.dontCheck hprev.ListLike;
         };
       };
     };
@@ -43,17 +45,8 @@
     devShells = forAllSystems (system:
       let
         pkgs = import nixpkgs { inherit system; overlays = [ self.overlays.default ]; };
-        getHaskellPackages = pattern: pipe pkgs.haskell.packages [
-          attrNames
-          (filter (x: !isNull (strings.match pattern x)))
-          (sort (x: y: x>y))
-          (map (x: pkgs.haskell.packages.${x}))
-          head
-        ];
-        haskellPackages = getHaskellPackages "ghc92.";
+        haskellPackages = getHaskellPackages pkgs "ghc92.";
       in rec {
-        # Using quasar-timer because it encompasses all dependencies.
-        # A better solution could be built using `shellFor`
         default = haskellPackages.shellFor {
           packages = hpkgs: [
             hpkgs.quasar
@@ -65,7 +58,7 @@
             pkgs.zsh
             pkgs.entr
             pkgs.ghcid
-            pkgs.haskell-language-server
+            haskellPackages.haskell-language-server
             pkgs.hlint
           ];
         };
