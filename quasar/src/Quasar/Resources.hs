@@ -7,8 +7,6 @@ module Quasar.Resources (
   ResourceCollector(..),
 
   -- * Resource management in the `Quasar` monad
-  registerResource,
-  registerResourceIO,
   registerDisposeAction,
   registerDisposeAction_,
   registerDisposeActionIO,
@@ -63,12 +61,6 @@ import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Resources.Disposer
 
-
-registerResource :: (Resource a, ResourceCollector m) => a -> m ()
-registerResource = collectResource
-
-registerResourceIO :: (Resource a, ResourceCollector m) => a -> m ()
-registerResourceIO = collectResource
 
 registerDisposeAction :: (MonadQuasar m, MonadSTMc '[Throw FailedToAttachResource] m) => IO () -> m Disposer
 registerDisposeAction fn = do

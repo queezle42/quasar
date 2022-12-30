@@ -48,7 +48,7 @@ import Quasar.Async
 import Quasar.Exceptions
 import Quasar.Prelude
 import Quasar.MonadQuasar
-import Quasar.Resources
+import Quasar.Resources.Disposer
 
 data ObservableState a
   = ObservableValue a
@@ -113,7 +113,7 @@ observe observable callbackFn = do
     sink = quasarExceptionSink scope
     wrappedCallback state = callbackFn state `catchAllSTMc` throwToExceptionSink sink
   disposer <- liftSTMc $ attachObserver observable wrappedCallback
-  registerResource disposer
+  collectResource disposer
   pure $ toDisposer (quasarResourceManager scope)
 
 observe_

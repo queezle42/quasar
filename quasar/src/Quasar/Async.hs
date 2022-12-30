@@ -69,7 +69,7 @@ asyncWithUnmask' :: forall a m. (MonadQuasar m, MonadIO m) => ((forall b. IO b -
 asyncWithUnmask' fn = liftQuasarIO do
   worker <- askIOWorker
   exSink <- askExceptionSink
-  spawnAsync registerResourceIO worker exSink fn
+  spawnAsync collectResource worker exSink fn
 
 
 unmanagedAsync :: forall a m. MonadIO m => TIOWorker -> ExceptionSink -> IO a -> m (Async a)
