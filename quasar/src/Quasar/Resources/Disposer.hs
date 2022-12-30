@@ -22,6 +22,9 @@ module Quasar.Resources.Disposer (
   newUnmanagedResourceManagerSTM,
   attachResource,
   tryAttachResource,
+
+  -- * ResourceCollector
+  ResourceCollector(..),
 ) where
 
 
@@ -463,3 +466,9 @@ runFinalizersAfter worker finalizers future = do
       enqueueForkIO worker do
         await future
         atomicallyC $ liftSTMc $ runFinalizers finalizers
+
+
+-- * ResourceCollector
+
+class Monad m => ResourceCollector m where
+  collectResource :: Resource a => a -> m ()

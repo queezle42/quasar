@@ -119,14 +119,14 @@ withResourceScope fn = bracket newResourceScopeIO dispose (`localQuasar` fn)
 {-# SPECIALIZE withResourceScope :: QuasarIO a -> QuasarIO a #-}
 
 
-class (MonadCatch m, MonadFix m) => MonadQuasar m where
+class (MonadCatch m, MonadFix m, ResourceCollector m) => MonadQuasar m where
   askQuasar :: m Quasar
   localQuasar :: Quasar -> m a -> m a
 
 type QuasarT = ReaderT Quasar
 
 newtype QuasarIO a = QuasarIO (QuasarT IO a)
-  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadMask, MonadFail, MonadFix, Alternative, MonadPlus, MonadLog, MonadBase IO, MonadIO)
+  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadMask, MonadFail, MonadFix, Alternative, MonadPlus, MonadBase IO, MonadIO)
 
 instance Semigroup a => Semigroup (QuasarIO a) where
   fx <> fy = liftA2 (<>) fx fy
@@ -134,8 +134,18 @@ instance Semigroup a => Semigroup (QuasarIO a) where
 instance Monoid a => Monoid (QuasarIO a) where
   mempty = pure mempty
 
+instance MonadLog QuasarIO where
+  logMessage message = do
+    logger <- askLogger
+    liftIO $ logger message
+
 instance MonadAwait QuasarIO where
   await awaitable = liftIO (await awaitable)
+
+instance ResourceCollector QuasarIO where
+  collectResource resource = do
+    rm <- askResourceManager
+    atomically $ attachResource rm resource
 
 
 newtype QuasarSTM a = QuasarSTM (QuasarT STM a)
@@ -150,13 +160,20 @@ instance Semigroup a => Semigroup (QuasarSTM a) where
 instance Monoid a => Monoid (QuasarSTM a) where
   mempty = pure mempty
 
+instance ResourceCollector QuasarSTM where
+  collectResource resource = do
+    rm <- askResourceManager
+    attachResource rm resource
+
+
+type QuasarSTMcCapabilities caps = (RequireCapabilities caps (QuasarSTMc caps), STMcCapabilities caps)
 
 newtype QuasarSTMc caps a = QuasarSTMc (QuasarT (STMc caps) a)
   deriving newtype (Functor, Applicative, Monad, MonadFix)
 
-instance (c :< caps, STMcCapabilities caps) => HasCapability c (QuasarSTMc caps)
+instance (c :< caps, QuasarSTMcCapabilities caps) => HasCapability c (QuasarSTMc caps)
 
-instance STMcCapabilities caps => UnsafeLiftBase (QuasarSTMc caps) where
+instance QuasarSTMcCapabilities caps => UnsafeLiftBase (QuasarSTMc caps) where
   type UnsafeBaseMonad (QuasarSTMc caps) = STM
   unsafeLiftBase = QuasarSTMc . unsafeLiftBase
 
@@ -168,10 +185,10 @@ deriving newtype instance Retry :< caps => MonadPlus (QuasarSTMc caps)
 --deriving newtype instance (ThrowAny :< caps, STMcCapabilities caps) => ThrowAny (QuasarSTMc caps)
 --deriving newtype instance (Throw e :< caps, STMcCapabilities caps) => Throw e (QuasarSTMc caps)
 
-deriving newtype instance (ThrowAny :< caps, STMcCapabilities caps) => MonadThrow (QuasarSTMc caps)
-deriving newtype instance (ThrowAny :< caps, STMcCapabilities caps) => MonadCatch (QuasarSTMc caps)
+deriving newtype instance (ThrowAny :< caps, QuasarSTMcCapabilities caps) => MonadThrow (QuasarSTMc caps)
+deriving newtype instance (ThrowAny :< caps, QuasarSTMcCapabilities caps) => MonadCatch (QuasarSTMc caps)
 
-instance (Throw IOError :< caps, STMcCapabilities caps) => MonadFail (QuasarSTMc caps) where
+instance (Throw IOError :< caps, QuasarSTMcCapabilities caps) => MonadFail (QuasarSTMc caps) where
   fail msg = throwC (userError msg)
 
 instance Semigroup a => Semigroup (QuasarSTMc caps a) where
@@ -189,33 +206,32 @@ instance MonadQuasar QuasarIO where
   askQuasar = QuasarIO ask
   localQuasar quasar (QuasarIO fn) = QuasarIO (local (const quasar) fn)
 
-instance (MonadIO m, MonadMask m, MonadFix m) => MonadQuasar (QuasarT m) where
-  askQuasar = ask
-  localQuasar quasar = local (const quasar)
-  {-# SPECIALIZE instance MonadQuasar (QuasarT IO) #-}
-
-instance (MonadIO m, MonadMask m, MonadFix m) => MonadLog (QuasarT m) where
-  logMessage msg = do
-    logger <- askLogger
-    liftIO $ logger msg
-  {-# SPECIALIZE instance MonadLog (QuasarT IO) #-}
-
-
 instance MonadQuasar QuasarSTM where
   askQuasar = QuasarSTM ask
   localQuasar quasar (QuasarSTM fn) = QuasarSTM (local (const quasar) fn)
 
-instance (STMcCapabilities caps, ThrowAny :< caps) => MonadQuasar (QuasarSTMc caps) where
+-- TODO Throw FailedToAttachResource instead of ThrowAny
+instance (ThrowAny :< caps, ResourceCollector (QuasarSTMc caps), QuasarSTMcCapabilities caps) => MonadQuasar (QuasarSTMc caps) where
   askQuasar = QuasarSTMc ask
   localQuasar quasar (QuasarSTMc fn) = QuasarSTMc (local (const quasar) fn)
 
+-- TODO Should not need ThrowAny
+instance ('[ThrowAny, Throw FailedToAttachResource] :<< caps, QuasarSTMcCapabilities caps) => ResourceCollector (QuasarSTMc caps) where
+  collectResource resource = do
+    rm <- askResourceManager
+    attachResource rm resource
 
--- Overlappable so a QuasarT has priority over the base monad.
-instance {-# OVERLAPPABLE #-} MonadQuasar m => MonadQuasar (ReaderT r m) where
+
+
+
+instance MonadQuasar m => MonadQuasar (ReaderT r m) where
   askQuasar = lift askQuasar
   localQuasar quasar fn = do
     x <- ask
     lift (localQuasar quasar (runReaderT fn x))
+
+instance ResourceCollector m => ResourceCollector (ReaderT r m) where
+  collectResource = lift . collectResource
 
 -- TODO MonadQuasar instances for StateT, WriterT, RWST, MaybeT, ...
 
@@ -256,31 +272,26 @@ liftQuasarSTMc fn = do
 
 runQuasarIO :: MonadIO m => Quasar -> QuasarIO a -> m a
 runQuasarIO quasar (QuasarIO fn) = liftIO $ runReaderT fn quasar
-{-# SPECIALIZE runQuasarIO :: Quasar -> QuasarIO a -> IO a #-}
 {-# INLINABLE runQuasarIO #-}
 
 runQuasarSTM :: MonadSTM m => Quasar -> QuasarSTM a -> m a
 runQuasarSTM quasar (QuasarSTM fn) = liftSTM $ runReaderT fn quasar
-{-# SPECIALIZE runQuasarSTM :: Quasar -> QuasarSTM a -> STM a #-}
 {-# INLINABLE runQuasarSTM #-}
 
 runQuasarSTMc :: forall caps m a. MonadSTMc caps m => Quasar -> QuasarSTMc caps a -> m a
 runQuasarSTMc quasar (QuasarSTMc fn) = liftSTMc $ runReaderT fn quasar
-{-# SPECIALIZE runQuasarSTMc :: STMcCapabilities caps => Quasar -> QuasarSTMc caps a -> STMc caps a #-}
 {-# INLINABLE runQuasarSTMc #-}
 
 quasarAtomically :: (MonadQuasar m, MonadIO m) => QuasarSTM a -> m a
 quasarAtomically (QuasarSTM fn) = do
   quasar <- askQuasar
   atomically $ runReaderT fn quasar
-{-# SPECIALIZE quasarAtomically :: QuasarSTM a -> QuasarIO a #-}
 {-# INLINABLE quasarAtomically #-}
 
 quasarAtomicallyC :: forall caps m a. (MonadQuasar m, MonadIO m) => QuasarSTMc STMBaseCapabilities a -> m a
 quasarAtomicallyC (QuasarSTMc fn) = do
   quasar <- askQuasar
   atomicallyC $ runReaderT fn quasar
-{-# SPECIALIZE quasarAtomicallyC :: QuasarSTMc STMBaseCapabilities a -> QuasarIO a #-}
 {-# INLINABLE quasarAtomicallyC #-}
 
 
@@ -289,7 +300,6 @@ redirectExceptionToSink fn = do
   exChan <- askExceptionSink
   (Just <$> fn) `catchAll`
     \ex -> liftSTM (Nothing <$ throwToExceptionSink exChan ex)
-{-# SPECIALIZE redirectExceptionToSink :: QuasarSTM a -> QuasarSTM (Maybe a) #-}
 
 redirectExceptionToSinkIO :: (MonadQuasar m, MonadIO m) => m a -> m (Maybe a)
 redirectExceptionToSinkIO fn = do
@@ -300,7 +310,6 @@ redirectExceptionToSinkIO fn = do
 
 redirectExceptionToSink_ :: (MonadQuasar m, MonadSTM m) => m a -> m ()
 redirectExceptionToSink_ fn = void $ redirectExceptionToSink fn
-{-# SPECIALIZE redirectExceptionToSink_ :: QuasarSTM a -> QuasarSTM () #-}
 
 redirectExceptionToSinkIO_ :: (MonadQuasar m, MonadIO m) => m a -> m ()
 redirectExceptionToSinkIO_ fn = void $ redirectExceptionToSinkIO fn

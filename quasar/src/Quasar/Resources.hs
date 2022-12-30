@@ -3,6 +3,9 @@ module Quasar.Resources (
   Resource(..),
   dispose,
 
+  -- * ResourceCollector
+  ResourceCollector(..),
+
   -- * Resource management in the `Quasar` monad
   registerResource,
   registerResourceIO,
@@ -61,14 +64,11 @@ import Quasar.Prelude
 import Quasar.Resources.Disposer
 
 
-registerResource :: (Resource a, MonadQuasar m, MonadSTMc '[Throw FailedToAttachResource] m) => a -> m ()
-registerResource resource = do
-  rm <- askResourceManager
-  attachResource rm resource
+registerResource :: (Resource a, ResourceCollector m) => a -> m ()
+registerResource = collectResource
 
-registerResourceIO :: (Resource a, MonadQuasar m, MonadIO m) => a -> m ()
-registerResourceIO res = quasarAtomically $ registerResource res
-{-# SPECIALIZE registerResourceIO :: Resource a => a -> QuasarIO () #-}
+registerResourceIO :: (Resource a, ResourceCollector m) => a -> m ()
+registerResourceIO = collectResource
 
 registerDisposeAction :: (MonadQuasar m, MonadSTMc '[Throw FailedToAttachResource] m) => IO () -> m Disposer
 registerDisposeAction fn = do
@@ -137,7 +137,7 @@ registerNewResource fn = do
 
   mask_ do
     resource <- fn
-    registerResourceIO resource `catchAll` \ex -> do
+    collectResource resource `catchAll` \ex -> do
       -- When the resource cannot be registered (because resource manager is now disposing), destroy it to prevent leaks
       atomically $ disposeEventually_ resource
       case ex of
