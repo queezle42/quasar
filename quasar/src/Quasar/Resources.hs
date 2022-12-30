@@ -61,28 +61,27 @@ import Quasar.Prelude
 import Quasar.Resources.Disposer
 
 
-registerResource :: (Resource a, MonadQuasar m, MonadSTMc '[ThrowAny] m) => a -> m ()
+registerResource :: (Resource a, MonadQuasar m, MonadSTMc '[Throw FailedToAttachResource] m) => a -> m ()
 registerResource resource = do
   rm <- askResourceManager
   attachResource rm resource
-{-# SPECIALIZE registerResource :: Resource a => a -> QuasarSTM () #-}
 
 registerResourceIO :: (Resource a, MonadQuasar m, MonadIO m) => a -> m ()
 registerResourceIO res = quasarAtomically $ registerResource res
 {-# SPECIALIZE registerResourceIO :: Resource a => a -> QuasarIO () #-}
 
-registerDisposeAction :: (MonadQuasar m, MonadSTMc '[ThrowAny] m) => IO () -> m Disposer
+registerDisposeAction :: (MonadQuasar m, MonadSTMc '[Throw FailedToAttachResource] m) => IO () -> m Disposer
 registerDisposeAction fn = do
   worker <- askIOWorker
   exChan <- askExceptionSink
   rm <- askResourceManager
-  liftSTMc @'[ThrowAny] do
+  liftSTMc @'[Throw FailedToAttachResource] do
     disposer <- newUnmanagedIODisposer fn worker exChan
     attachResource rm disposer
     pure disposer
 {-# SPECIALIZE registerDisposeAction :: IO () -> QuasarSTM Disposer #-}
 
-registerDisposeAction_ :: (MonadQuasar m, MonadSTMc '[ThrowAny] m) => IO () -> m ()
+registerDisposeAction_ :: (MonadQuasar m, MonadSTMc '[Throw FailedToAttachResource] m) => IO () -> m ()
 registerDisposeAction_ fn = void $ registerDisposeAction fn
 
 registerDisposeActionIO :: (MonadQuasar m, MonadIO m) => IO () -> m Disposer
