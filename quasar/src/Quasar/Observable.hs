@@ -5,9 +5,11 @@ module Quasar.Observable (
   IsRetrievable(..),
   IsObservable(..),
   observe,
-  observe_,
-  observeIO,
-  observeIO_,
+
+  observeQ,
+  observeQ_,
+  observeQIO,
+  observeQIO_,
 
   -- ** Control flow utilities
   observeWith,
@@ -102,11 +104,20 @@ class IsObservable r a | a -> r where
 
 
 observe
+  :: (ResourceCollector m, MonadSTMc '[] m)
+  => Observable a
+  -> (ObservableState a -> STMc '[] ()) -- ^ callback
+  -> m ()
+observe observable callback = do
+  disposer <- liftSTMc $ attachObserver observable callback
+  collectResource disposer
+
+observeQ
   :: (MonadQuasar m, MonadSTMc '[ThrowAny] m)
   => Observable a
   -> (ObservableState a -> STMc '[ThrowAny] ()) -- ^ callback
   -> m Disposer
-observe observable callbackFn = do
+observeQ observable callbackFn = do
   -- Each observer needs a dedicated scope to guarantee, that the whole observer is detached when the provided callback (or the observable implementation) fails.
   scope <- newResourceScope
   let
@@ -116,26 +127,26 @@ observe observable callbackFn = do
   collectResource disposer
   pure $ toDisposer (quasarResourceManager scope)
 
-observe_
+observeQ_
     :: (MonadQuasar m, MonadSTM m)
     => Observable a
     -> (ObservableState a -> STMc '[ThrowAny] ()) -- ^ callback
     -> m ()
-observe_ observable callback = liftQuasarSTM $ void $ observe observable callback
+observeQ_ observable callback = liftQuasarSTM $ void $ observeQ observable callback
 
-observeIO
+observeQIO
   :: (MonadQuasar m, MonadIO m)
   => Observable a
   -> (ObservableState a -> STMc '[ThrowAny] ()) -- ^ callback
   -> m Disposer
-observeIO observable callback = quasarAtomically $ observe observable callback
+observeQIO observable callback = quasarAtomically $ observeQ observable callback
 
-observeIO_
+observeQIO_
   :: (MonadQuasar m, MonadIO m)
   => Observable a
   -> (ObservableState a -> STMc '[ThrowAny] ()) -- ^ callback
   -> m ()
-observeIO_ observable callback = quasarAtomically $ observe_ observable callback
+observeQIO_ observable callback = quasarAtomically $ observeQ_ observable callback
 
 
 type ObserverCallback a = ObservableState a -> STMc '[] ()
@@ -217,7 +228,7 @@ observeWith observable fn = do
   bracket (aquire var) dispose
     \_ -> fn (takeTMVar var)
   where
-    aquire var = observeIO observable \msg -> do
+    aquire var = observeQIO observable \msg -> do
       writeTMVar var msg
 
 
