@@ -74,5 +74,6 @@ test-suite exceptions-united-test
     hspec,
   main-is: Spec.hs
   other-modules:
+    Control.Exception.ExceptionOfSpec
   hs-source-dirs:
     test
