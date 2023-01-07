@@ -78,7 +78,7 @@ library
     ghc-prim,
     hashable,
     mtl,
-    stm-ltd,
+    precise-side-effects,
     transformers,
     transformers-base,
     unordered-containers,

@@ -1,6 +1,6 @@
 cabal-version: 3.0
 
-name:           stm-ltd
+name:           precise-side-effects
 version:        0.1.0.0
 license:        BSD-2-Clause
 build-type:     Simple
@@ -64,13 +64,14 @@ library
     transformers,
   exposed-modules:
     Control.Concurrent.STM.Class
+    Control.Exception.Ex
     Control.Monad.Capability
   other-modules:
     Control.Concurrent.STM.Class.TH
   hs-source-dirs:
     src
 
-test-suite stm-ltd-test
+test-suite precise-side-effects-test
   import: shared-properties
   type: exitcode-stdio-1.0
   ghc-options:
@@ -80,10 +81,11 @@ test-suite stm-ltd-test
   build-depends:
     base,
     hspec,
+    precise-side-effects,
     transformers,
-    stm-ltd,
   main-is: Spec.hs
   other-modules:
     Control.Concurrent.STM.ClassSpec
+    Control.Exception.ExSpec
   hs-source-dirs:
     test
