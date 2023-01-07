@@ -17,7 +17,7 @@ fi
 print -P %F{yellow}Cleaning repository%f
 cabal clean
 
-(git ls-files 'examples/*' '*/test' '*/*.cabal' 'flake.*'; echo "ghcid") | \
+(git ls-files '*/*.cabal' 'flake.*' '*/test') | \
   entr -r \
     nix develop -L -c \
       ghcid \
