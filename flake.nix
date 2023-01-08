@@ -20,18 +20,13 @@
       let
         pkgs = import nixpkgs { inherit system; overlays = [ self.overlays.default ]; };
         haskellPackages = getHaskellPackages pkgs "ghc92.";
-      in rec {
-        default = pkgs.symlinkJoin {
-          name = "quasar-all";
-          paths = [
-            precise-side-effects
-            quasar
-            quasar-timer
-          ];
+        results = {
+          precise-side-effects = haskellPackages.precise-side-effects;
+          quasar = haskellPackages.quasar;
+          quasar-timer = haskellPackages.quasar-timer;
         };
-        precise-side-effects = haskellPackages.precise-side-effects;
-        quasar = haskellPackages.quasar;
-        quasar-timer = haskellPackages.quasar-timer;
+      in results // {
+        default = pkgs.linkFarm "quasar-all" (results // mapAttrs' (k: v: nameValuePair "${k}-doc" v.doc) results);
       }
     );
 
