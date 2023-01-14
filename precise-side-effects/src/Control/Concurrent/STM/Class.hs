@@ -6,7 +6,6 @@ module Control.Concurrent.STM.Class (
   -- * Monad
   -- ** STM
   STM,
-  STMBaseCapabilities,
   atomically,
 
   -- ** MonadSTM
@@ -15,7 +14,6 @@ module Control.Concurrent.STM.Class (
 
   -- ** STMc
   STMc,
-  STMcCapabilities,
   atomicallyC,
 
   -- *** Limiting capabilities
@@ -26,29 +24,27 @@ module Control.Concurrent.STM.Class (
   liftSTMc,
   (:<),
   (:<<),
+  (:-),
+  (:--),
 
   -- ** Retry
-  Retry(..),
+  CanRetry,
+  Retry,
+  NoRetry,
+  retry,
   orElse,
   orElseC,
   check,
 
   -- ** Throw
   throwSTM,
-  Throw(..),
-  ThrowAny,
-  throwAny,
   catchSTM,
   catchSTMc,
   catchAllSTMc,
   trySTMc,
   tryAllSTMc,
 
-  -- * Control.Monad.Capability reexports
-  UnsafeLiftBase,
-
   -- * Unique
-
   Unique,
   newUniqueSTM,
 
@@ -135,8 +131,8 @@ import Control.Applicative
 import Control.Concurrent.STM (STM)
 import Control.Concurrent.STM qualified as STM
 import Control.Concurrent.STM.Class.TH
+import Control.Exception.Ex
 import Control.Monad (MonadPlus)
-import Control.Monad.Capability
 import Control.Monad.Catch
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class
@@ -150,62 +146,72 @@ import Language.Haskell.TH hiding (Type)
 import Prelude
 
 
-type STMBaseCapabilities = '[Retry, ThrowAny]
+-- TODO use TypeData in a future GHC (currently planned for GHC 9.6.1)
+data CanRetry = Retry | NoRetry
+type Retry = 'Retry
+type NoRetry = 'NoRetry
 
-
-type STMc :: [Capability] -> Type -> Type
-newtype STMc caps a = STMc (STM a)
+type role STMc phantom phantom _
+type STMc :: CanRetry -> [Type] -> Type -> Type
+newtype STMc canRetry exceptions a = STMc (STM a)
   deriving newtype (Functor, Applicative, Monad, MonadFix)
 
-instance (c :< caps, STMcCapabilities caps) => HasCapability c (STMc caps)
+instance SomeException :< exceptions => MonadThrow (STMc canRetry exceptions) where
+  throwM = STMc . STM.throwSTM
 
-instance STMcCapabilities caps => UnsafeLiftBase (STMc caps) where
-  type UnsafeBaseMonad (STMc caps) = STM
-  unsafeLiftBase = STMc
-
-
-instance (ThrowAny (STMc caps), STMcCapabilities caps) => MonadThrow (STMc caps) where
-  throwM = throwAny
-
-instance (ThrowAny (STMc caps), STMcCapabilities caps) => MonadCatch (STMc caps) where
+instance SomeException :< exceptions => MonadCatch (STMc canRetry exceptions) where
   catch ft fc = STMc (STM.catchSTM (runSTMc ft) (runSTMc . fc))
 
-instance Semigroup a => Semigroup (STMc caps a) where
+instance Semigroup a => Semigroup (STMc canRetry exceptions a) where
   (<>) = liftA2 (<>)
   {-# INLINABLE (<>) #-}
 
-instance Monoid a => Monoid (STMc caps a) where
+instance Monoid a => Monoid (STMc canRetry exceptions a) where
   mempty = pure mempty
   {-# INLINABLE mempty #-}
 
 -- | While the MArray-instance does not require a `CanThrow`-modifier, please
 -- please note that `MArray.readArray` and `MArray.writeArray` (the primary
 -- interface for MArray) are partial.
-deriving newtype instance MArray.MArray STM.TArray e (STMc caps)
+deriving newtype instance MArray.MArray STM.TArray e (STMc canRetry exceptions)
 
-deriving newtype instance Retry (STMc caps) => Alternative (STMc caps)
+deriving newtype instance Alternative (STMc Retry exceptions)
 
-deriving newtype instance Retry (STMc caps) => MonadPlus (STMc caps)
+deriving newtype instance MonadPlus (STMc Retry exceptions)
 
+instance (Exception e, e :< exceptions) => Throw e (STMc canRetry exceptions) where
+  throwC = STMc . STM.throwSTM
 
-type MonadSTMc :: [Capability] -> (Type -> Type) -> Constraint
-type MonadSTMc caps m =
-  (
-    RequireCapabilities caps m,
-    STMcCapabilities caps,
-    UnsafeLiftBase m,
-    UnsafeBaseMonad m ~ STM
-  )
+instance ThrowEx (STMc canRetry exceptions) where
+  unsafeThrowEx = STMc . throwM
 
 
-liftSTMc :: MonadSTMc caps m => STMc caps a -> m a
+type MonadSTMcBase :: (Type -> Type) -> Constraint
+class ThrowEx m => MonadSTMcBase m where
+  unsafeLiftSTM :: STM a -> m a
+
+instance MonadSTMcBase STM where
+  unsafeLiftSTM = id
+
+instance MonadSTMcBase (STMc canRetry exceptions) where
+  unsafeLiftSTM = STMc
+
+instance (Monad (t m), MonadTrans t, MonadSTMcBase m) => MonadSTMcBase (t m) where
+  unsafeLiftSTM = lift . unsafeLiftSTM
+
+
+type MonadSTMc :: CanRetry -> [Type] -> (Type -> Type) -> Constraint
+type MonadSTMc canRetry exceptions m = (MonadSTMcBase m, ThrowForAll exceptions m)
+
+
+liftSTMc ::
+  forall canRetry exceptions m a.
+  MonadSTMc canRetry exceptions m =>
+  STMc canRetry exceptions a -> m a
 liftSTMc f = unsafeLiftSTM (runSTMc f)
 
-unsafeLiftSTM :: (UnsafeLiftBase m, UnsafeBaseMonad m ~ STM) => STM a -> m a
-unsafeLiftSTM = unsafeLiftBase
-
 -- | Monad in which 'STM' and 'STMc' computations can be embedded.
-type MonadSTM m = MonadSTMc STMBaseCapabilities m
+type MonadSTM m = MonadSTMc Retry '[SomeException] m
 
 -- | Lift a computation from the 'STM' monad.
 liftSTM :: MonadSTM m => STM a -> m a
@@ -213,76 +219,56 @@ liftSTM = unsafeLiftSTM
 {-# INLINABLE liftSTM #-}
 
 
-runSTMc :: STMcCapabilities caps => STMc caps a -> STM a
+runSTMc :: STMc canRetry exceptions a -> STM a
 runSTMc (STMc f) = f
 
 
-type STMcCapabilities caps = RequireCapabilities caps (STMc caps)
+retry :: forall m a. MonadSTMc Retry '[] m => m a
+retry = unsafeLiftSTM retry
 
+throwSTM :: forall e m a. (Exception e, MonadSTMc NoRetry '[e] m) => e -> m a
+throwSTM = unsafeLiftSTM . STM.throwSTM
 
 catchSTMc ::
-  forall caps e m a. (
+  forall canRetry exceptions e m a. (
     Exception e,
-    MonadSTMc (caps :- Throw e) m,
-    STMcCapabilities caps
+    MonadSTMc canRetry (exceptions :- e) m
   ) =>
-  STMc caps a -> (e -> m a) -> m a
+  STMc canRetry exceptions a -> (e -> m a) -> m a
 
 catchSTMc ft fc = trySTMc ft >>= either fc pure
 {-# INLINABLE catchSTMc #-}
 
 catchAllSTMc ::
-  forall caps m a. (
-    MonadSTMc (caps :- ThrowAny) m,
-    STMcCapabilities caps
+  forall canRetry exceptions m a. (
+    MonadSTMc canRetry '[] m
   ) =>
-  STMc caps a -> (SomeException -> m a) -> m a
+  STMc canRetry exceptions a -> (SomeException -> m a) -> m a
 
 catchAllSTMc ft fc = tryAllSTMc ft >>= either fc pure
 {-# INLINABLE catchAllSTMc #-}
 
 
 trySTMc ::
-  forall caps e m a. (
+  forall canRetry exceptions e m a. (
     Exception e,
-    MonadSTMc (caps :- Throw e) m,
-    STMcCapabilities caps
+    MonadSTMc canRetry (exceptions :- e) m
   ) =>
-  STMc caps a -> m (Either e a)
+  STMc canRetry exceptions a -> m (Either e a)
 trySTMc f = unsafeLiftSTM (try (runSTMc f))
 {-# INLINABLE trySTMc #-}
 
 tryAllSTMc ::
-  forall caps m a. (
-    MonadSTMc (caps :- ThrowAny) m,
-    STMcCapabilities caps
+  forall canRetry exceptions m a. (
+    MonadSTMc canRetry '[] m
   ) =>
-  STMc caps a -> m (Either SomeException a)
+  STMc canRetry exceptions a -> m (Either SomeException a)
 tryAllSTMc f = unsafeLiftSTM (try (runSTMc f))
 {-# INLINABLE tryAllSTMc #-}
 
-
-class Monad m => Retry m where
-  retry :: m a
-
-instance Retry STM where
-  retry = STM.retry
-
-instance HasCapability Retry STM
-
-instance Retry :< caps => Retry (STMc caps) where
-  retry = STMc retry
-
-instance (Retry m, MonadTrans t, Monad (t m)) => Retry (t m) where
-  retry = lift retry
-
-
 orElseC ::
-  forall caps m a. (
-    MonadSTMc (caps :- Retry) m,
-    STMcCapabilities caps
-  ) =>
-  STMc caps a -> m a -> m a
+  forall canRetry exceptions m a. (MonadSTMc NoRetry exceptions m) =>
+  STMc canRetry exceptions a -> m a -> m a
 orElseC fx fy =
   unsafeLiftSTM (STM.orElse (Just <$> runSTMc fx) (pure Nothing)) >>= \case
     Just r -> pure r
@@ -291,7 +277,7 @@ orElseC fx fy =
 
 
 
-atomicallyC :: MonadIO m => STMc STMBaseCapabilities a -> m a
+atomicallyC :: MonadIO m => STMc Retry '[SomeException] a -> m a
 atomicallyC = liftIO . STM.atomically . runSTMc
 {-# INLINABLE atomicallyC #-}
 
@@ -301,30 +287,35 @@ atomicallyC = liftIO . STM.atomically . runSTMc
 -- equal to any other value of type 'Unique' returned by previous calls to
 -- `newUnique` and `newUniqueSTM`. There is no limit on the number of times
 -- `newUniqueSTM` may be called.
-newUniqueSTM :: MonadSTMc '[] m => m Unique
-newUniqueSTM = liftSTMc @'[] $ unsafeLiftSTM (unsafeIOToSTM newUnique)
+newUniqueSTM :: MonadSTMc NoRetry '[] m => m Unique
+newUniqueSTM = unsafeLiftSTM (unsafeIOToSTM newUnique)
 {-# INLINABLE newUniqueSTM #-}
 
 
-$(mconcat <$> (execWriterT do
+$(mconcat <$> execWriterT do
   let
-    mkMonadSTMcConstraint capTs mT = [t|MonadSTMc $(promotedList capTs) $mT|]
+    mkMonadSTMcConstraint canRetry exceptionTs mT =
+      [t|MonadSTMc $canRetry $(promotedList exceptionTs) $mT|]
 
-    mkMonadSTMcWrapper capTs = mkMonadClassWrapper (mkMonadSTMcConstraint capTs) [|unsafeLiftSTM|]
-    mkMonadSTMWrapper = mkMonadClassWrapper (\mT -> [t|MonadSTM $mT|]) [|liftSTM|]
+    mkMonadSTMcWrapper canRetry exceptionTs =
+      mkMonadClassWrapper
+        (mkMonadSTMcConstraint canRetry exceptionTs)
+        [|unsafeLiftSTM|]
+
+    mkMonadSTMWrapper =
+      mkMonadClassWrapper (\mT -> [t|MonadSTM $mT|]) [|liftSTM|]
 
     promotedList :: [TypeQ] -> TypeQ
     promotedList [] = promotedNilT
     promotedList (x:xs) = [t|$promotedConsT $x $(promotedList xs)|]
 
-  tellQs $ mapM (mkMonadSTMcWrapper [[t|Retry|]]) [
+  tellQs $ mapM (mkMonadSTMcWrapper [t|Retry|] []) [
     --'STM.retry,
     'STM.check
     ]
 
-  --tellQs $ mapM (mkMonadClassWrapper (\m -> [t|MonadSTMc '[ThrowAny] $m|]) [|unsafeLiftSTM|]) [
-  tellQs $ mapM (mkMonadSTMcWrapper [[t|ThrowAny|]]) [
-    'STM.throwSTM
+  tellQs $ mapM (mkMonadSTMcWrapper [t|NoRetry|] [[t|SomeException|]]) [
+    --'STM.throwSTM
     ]
 
   tellQs $ mapM mkMonadSTMWrapper [
@@ -338,7 +329,7 @@ $(mconcat <$> (execWriterT do
 
   -- TVar
 
-  tellQs $ mapM (mkMonadSTMcWrapper []) [
+  tellQs $ mapM (mkMonadSTMcWrapper [t|NoRetry|] []) [
     'STM.newTVar,
     'STM.readTVar,
     'STM.writeTVar,
@@ -357,7 +348,7 @@ $(mconcat <$> (execWriterT do
 
   -- TVar
 
-  tellQs $ mapM (mkMonadSTMcWrapper []) [
+  tellQs $ mapM (mkMonadSTMcWrapper [t|NoRetry|] []) [
     'STM.newTMVar,
     'STM.newEmptyTMVar,
 #if MIN_VERSION_stm(2, 5, 1)
@@ -369,7 +360,7 @@ $(mconcat <$> (execWriterT do
     'STM.isEmptyTMVar
     ]
 
-  tellQs $ mapM (mkMonadSTMcWrapper [[t|Retry|]]) [
+  tellQs $ mapM (mkMonadSTMcWrapper [t|Retry|] []) [
     'STM.takeTMVar,
     'STM.putTMVar,
     'STM.readTMVar,
@@ -384,7 +375,7 @@ $(mconcat <$> (execWriterT do
 
   -- TChan
 
-  tellQs $ mapM (mkMonadSTMcWrapper []) [
+  tellQs $ mapM (mkMonadSTMcWrapper [t|NoRetry|] []) [
     'STM.newTChan,
     'STM.newBroadcastTChan,
     'STM.dupTChan,
@@ -396,7 +387,7 @@ $(mconcat <$> (execWriterT do
     'STM.isEmptyTChan
     ]
 
-  tellQs $ mapM (mkMonadSTMcWrapper [[t|Retry|]]) [
+  tellQs $ mapM (mkMonadSTMcWrapper [t|Retry|] []) [
     'STM.readTChan,
     'STM.peekTChan
     ]
@@ -408,7 +399,7 @@ $(mconcat <$> (execWriterT do
 
   -- TQueue
 
-  tellQs $ mapM (mkMonadSTMcWrapper []) [
+  tellQs $ mapM (mkMonadSTMcWrapper [t|NoRetry|] []) [
     'STM.newTQueue,
     'STM.tryReadTQueue,
     'STM.flushTQueue,
@@ -418,7 +409,7 @@ $(mconcat <$> (execWriterT do
     'STM.isEmptyTQueue
     ]
 
-  tellQs $ mapM (mkMonadSTMcWrapper [[t|Retry|]]) [
+  tellQs $ mapM (mkMonadSTMcWrapper [t|Retry|] []) [
     'STM.readTQueue,
     'STM.peekTQueue
     ]
@@ -429,7 +420,7 @@ $(mconcat <$> (execWriterT do
 
   -- TBQueue
 
-  tellQs $ mapM (mkMonadSTMcWrapper []) [
+  tellQs $ mapM (mkMonadSTMcWrapper [t|NoRetry|] []) [
     'STM.newTBQueue,
     'STM.tryReadTBQueue,
     'STM.flushTBQueue,
@@ -439,7 +430,7 @@ $(mconcat <$> (execWriterT do
     'STM.isFullTBQueue
     ]
 
-  tellQs $ mapM (mkMonadSTMcWrapper [[t|Retry|]]) [
+  tellQs $ mapM (mkMonadSTMcWrapper [t|Retry|] []) [
     'STM.readTBQueue,
     'STM.peekTBQueue,
     'STM.writeTBQueue,
@@ -449,14 +440,14 @@ $(mconcat <$> (execWriterT do
   tellQs $ mapM mkMonadIOWrapper [
     'STM.newTBQueueIO
     ]
-  ))
+  )
 
 
 #if !MIN_VERSION_stm(2, 5, 1)
 
 -- | Non-blocking write of a new value to a 'TMVar'
 -- Puts if empty. Replaces if populated.
-writeTMVar :: MonadSTMc '[] m => STM.TMVar a -> a -> m ()
-writeTMVar t new = unsafeLiftSTM $ tryTakeTMVar t >> putTMVar t new
+writeTMVar :: MonadSTMc NoRetry '[] m => STM.TMVar a -> a -> m ()
+writeTMVar t new = unsafeLiftSTM (tryTakeTMVar t >> putTMVar t new)
 
 #endif

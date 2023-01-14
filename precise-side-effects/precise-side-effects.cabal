@@ -34,12 +34,14 @@ common shared-properties
     PolyKinds
     QuantifiedConstraints
     RankNTypes
+    RoleAnnotations
     ScopedTypeVariables
     StandaloneDeriving
     StandaloneKindSignatures
     TypeApplications
     TypeFamilies
     TypeOperators
+    ViewPatterns
   default-language: Haskell2010
   ghc-options:
     -Weverything
@@ -65,7 +67,6 @@ library
   exposed-modules:
     Control.Concurrent.STM.Class
     Control.Exception.Ex
-    Control.Monad.Capability
   other-modules:
     Control.Concurrent.STM.Class.TH
   hs-source-dirs:
