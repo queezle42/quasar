@@ -2,6 +2,7 @@ module Quasar.Prelude
   ( module Prelude,
     module Quasar.PreludeExtras,
     module Control.Concurrent.STM.Class,
+    module Control.Exception.Ex,
     (>=>),
     (<=<),
     (<|>),
@@ -81,6 +82,7 @@ import Control.Applicative qualified
 import Control.Concurrent.MVar
 import Control.Concurrent.STM.Class hiding (registerDelay)
 import Control.Exception qualified
+import Control.Exception.Ex
 import Control.Monad ((>=>), (<=<))
 import Control.Monad qualified
 import Control.Monad.Fix qualified

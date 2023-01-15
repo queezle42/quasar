@@ -4,6 +4,7 @@ module Quasar.Exceptions.ExceptionSink (
   newExceptionWitnessSink,
   newExceptionRedirector,
   newExceptionCollector,
+  ExceptionCollectorAlreadyCollected,
 ) where
 
 import Control.Concurrent (forkIO)
@@ -39,40 +40,47 @@ loggingExceptionSink worker =
     logFn :: SomeException -> ShortIO ()
     logFn ex = unsafeShortIO $ Trace.traceIO $ displayException ex
 
-newExceptionWitnessSink :: MonadSTMc '[] m => ExceptionSink -> m (ExceptionSink, STMc '[] Bool)
-newExceptionWitnessSink exChan = liftSTMc @'[] do
+newExceptionWitnessSink :: MonadSTMc NoRetry '[] m => ExceptionSink -> m (ExceptionSink, STMc NoRetry '[] Bool)
+newExceptionWitnessSink exChan = liftSTMc @NoRetry @'[] do
   var <- newTVar False
   let chan = ExceptionSink \ex -> lock var >> throwToExceptionSink exChan ex
   pure (chan, readTVar var)
   where
-    lock :: TVar Bool -> STMc '[] ()
+    lock :: TVar Bool -> STMc NoRetry '[] ()
     lock var = unlessM (readTVar var) (writeTVar var True)
 
-newExceptionRedirector :: MonadSTMc '[] m => ExceptionSink -> m (ExceptionSink, ExceptionSink -> STMc '[] ())
+newExceptionRedirector :: MonadSTMc NoRetry '[] m => ExceptionSink -> m (ExceptionSink, ExceptionSink -> STMc NoRetry '[] ())
 newExceptionRedirector initialExceptionSink = do
   channelVar <- newTVar initialExceptionSink
   pure (ExceptionSink (channelFn channelVar), writeTVar channelVar)
   where
-    channelFn :: TVar ExceptionSink -> SomeException -> STMc '[] ()
+    channelFn :: TVar ExceptionSink -> SomeException -> STMc NoRetry '[] ()
     channelFn channelVar ex = do
       channel <- readTVar channelVar
       throwToExceptionSink channel ex
 
+data ExceptionCollectorAlreadyCollected = ExceptionCollectorAlreadyCollected
+
+instance Show ExceptionCollectorAlreadyCollected where
+  show _ = "ExceptionCollectorAlreadyCollected: Exception collector result can only be generated once."
+
+instance Exception ExceptionCollectorAlreadyCollected
+
 -- | Collects exceptions. After they have been collected (by using the resulting
 -- transaction), further exceptions are forwarded to the backup exception sink.
 -- The collection transaction may only be used once.
-newExceptionCollector :: MonadSTMc '[] m => ExceptionSink -> m (ExceptionSink, STMc '[ThrowAny] [SomeException])
+newExceptionCollector :: MonadSTMc NoRetry '[] m => ExceptionSink -> m (ExceptionSink, STMc NoRetry '[ExceptionCollectorAlreadyCollected] [SomeException])
 newExceptionCollector backupExceptionSink = do
   exceptionsVar <- newTVar (Just [])
   pure (ExceptionSink (channelFn exceptionsVar), gatherResult exceptionsVar)
   where
-    channelFn :: TVar (Maybe [SomeException]) -> SomeException -> STMc '[] ()
+    channelFn :: TVar (Maybe [SomeException]) -> SomeException -> STMc NoRetry '[] ()
     channelFn exceptionsVar ex = do
       readTVar exceptionsVar >>= \case
         Just exceptions -> writeTVar exceptionsVar (Just (ex : exceptions))
         Nothing -> throwToExceptionSink backupExceptionSink ex
-    gatherResult :: TVar (Maybe [SomeException]) -> STMc '[ThrowAny] [SomeException]
+    gatherResult :: TVar (Maybe [SomeException]) -> STMc NoRetry '[ExceptionCollectorAlreadyCollected] [SomeException]
     gatherResult exceptionsVar =
       swapTVar exceptionsVar Nothing >>= \case
         Just exceptions -> pure exceptions
-        Nothing -> throwSTM $ userError "Exception collector result can only be generated once."
+        Nothing -> throwSTM ExceptionCollectorAlreadyCollected

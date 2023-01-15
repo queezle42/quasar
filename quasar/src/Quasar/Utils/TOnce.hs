@@ -23,7 +23,7 @@ newtype TOnce a b = TOnce (TVar (Either a b))
 instance IsFuture b (TOnce a b) where
   toFuture = unsafeAwaitSTMc . readTOnceResult
 
-newTOnce :: MonadSTMc '[] m => a -> m (TOnce a b)
+newTOnce :: MonadSTMc NoRetry '[] m => a -> m (TOnce a b)
 newTOnce initial = TOnce <$> newTVar (Left initial)
 
 newTOnceIO :: MonadIO m => a -> m (TOnce a b)
@@ -31,7 +31,7 @@ newTOnceIO initial = TOnce <$> newTVarIO (Left initial)
 
 
 -- TODO guard against reentry
-mapFinalizeTOnce :: MonadSTMc '[] m => TOnce a b -> (a -> m b) -> m b
+mapFinalizeTOnce :: MonadSTMc NoRetry '[] m => TOnce a b -> (a -> m b) -> m b
 mapFinalizeTOnce (TOnce var) fn =
   readTVar var >>= \case
     Left initial -> do
@@ -40,17 +40,17 @@ mapFinalizeTOnce (TOnce var) fn =
       pure final
     Right final -> pure final
 
-finalizeTOnce :: MonadSTMc '[Throw TOnceAlreadyFinalized] m => TOnce a b -> b -> m ()
+finalizeTOnce :: MonadSTMc NoRetry '[TOnceAlreadyFinalized] m => TOnce a b -> b -> m ()
 finalizeTOnce (TOnce var) value =
   readTVar var >>= \case
     Left _ -> writeTVar var (Right value)
     Right _ -> throwC TOnceAlreadyFinalized
 
 
-readTOnceState :: MonadSTMc '[] m => TOnce a b -> m (Either a b)
+readTOnceState :: MonadSTMc NoRetry '[] m => TOnce a b -> m (Either a b)
 readTOnceState (TOnce var) = readTVar var
 
-readTOnceResult :: MonadSTMc '[Retry] m => TOnce a b -> m b
+readTOnceResult :: MonadSTMc Retry '[] m => TOnce a b -> m b
 readTOnceResult switch =
   readTOnceState switch >>= \case
     Right final -> pure final

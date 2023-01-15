@@ -19,6 +19,7 @@ module Quasar.Async.Fork (
 ) where
 
 import Control.Concurrent (ThreadId, forkIOWithUnmask)
+import Control.Exception.Ex
 import Control.Monad.Catch
 import Quasar.Async.STMHelper
 import Quasar.Future
@@ -29,14 +30,14 @@ import Quasar.Utils.ShortIO
 
 -- * Fork in STM (with ExceptionSink)
 
-forkSTM :: IO () -> TIOWorker -> ExceptionSink -> STM (FutureE ThreadId)
+forkSTM :: IO () -> TIOWorker -> ExceptionSink -> STM (FutureEx '[AsyncException] ThreadId)
 forkSTM fn = forkWithUnmaskSTM (\unmask -> unmask fn)
 
 forkSTM_ :: IO () -> TIOWorker -> ExceptionSink -> STM ()
 forkSTM_ fn worker exChan = void $ forkSTM fn worker exChan
 
 
-forkWithUnmaskSTM :: ((forall a. IO a -> IO a) -> IO ()) -> TIOWorker -> ExceptionSink -> STM (FutureE ThreadId)
+forkWithUnmaskSTM :: ((forall a. IO a -> IO a) -> IO ()) -> TIOWorker -> ExceptionSink -> STM (FutureEx '[AsyncException] ThreadId)
 -- TODO change TIOWorker behavior for spawning threads, so no `unsafeShortIO` is necessary
 forkWithUnmaskSTM fn worker exChan = startShortIOSTM (unsafeShortIO $ forkWithUnmask fn exChan) worker exChan
 
@@ -44,11 +45,11 @@ forkWithUnmaskSTM_ :: ((forall a. IO a -> IO a) -> IO ()) -> TIOWorker -> Except
 forkWithUnmaskSTM_ fn worker exChan = void $ forkWithUnmaskSTM fn worker exChan
 
 
-forkAsyncSTM :: forall a. IO a -> TIOWorker -> ExceptionSink -> STM (FutureE a)
+forkAsyncSTM :: forall a. IO a -> TIOWorker -> ExceptionSink -> STM (FutureEx '[AsyncException] a)
 -- TODO change TIOWorker behavior for spawning threads, so no `unsafeShortIO` is necessary
 forkAsyncSTM fn worker exChan = join <$> startShortIOSTM (unsafeShortIO $ forkFuture fn exChan) worker exChan
 
-forkAsyncWithUnmaskSTM :: forall a. ((forall b. IO b -> IO b) -> IO a) -> TIOWorker -> ExceptionSink -> STM (FutureE a)
+forkAsyncWithUnmaskSTM :: forall a. ((forall b. IO b -> IO b) -> IO a) -> TIOWorker -> ExceptionSink -> STM (FutureEx '[AsyncException] a)
 -- TODO change TIOWorker behavior for spawning threads, so no `unsafeShortIO` is necessary
 forkAsyncWithUnmaskSTM fn worker exChan = join <$> startShortIOSTM (unsafeShortIO $ forkFutureWithUnmask fn exChan) worker exChan
 
@@ -73,16 +74,16 @@ forkWithUnmask_ fn exChan = void $ forkWithUnmask fn exChan
 
 -- * Fork in IO while collecting the result, redirecting errors to an ExceptionSink
 
-forkFuture :: forall a. IO a -> ExceptionSink -> IO (FutureE a)
+forkFuture :: forall a. IO a -> ExceptionSink -> IO (FutureEx '[AsyncException] a)
 forkFuture fn = forkFutureWithUnmask (\unmask -> unmask fn)
 
-forkFutureWithUnmask :: forall a. ((forall b. IO b -> IO b) -> IO a) -> ExceptionSink -> IO (FutureE a)
+forkFutureWithUnmask :: forall a. ((forall b. IO b -> IO b) -> IO a) -> ExceptionSink -> IO (FutureEx '[AsyncException] a)
 forkFutureWithUnmask fn exChan = do
   resultVar <- newPromise
   forkWithUnmask_ (runAndPut resultVar) exChan
-  pure $ toFutureE resultVar
+  pure $ toFutureEx resultVar
   where
-    runAndPut :: PromiseE a -> (forall b. IO b -> IO b) -> IO ()
+    runAndPut :: PromiseEx '[AsyncException] a -> (forall b. IO b -> IO b) -> IO ()
     runAndPut resultVar unmask = do
       -- Called in masked state by `forkWithUnmaskShortIO`
       result <- try $ fn unmask
@@ -90,6 +91,6 @@ forkFutureWithUnmask fn exChan = do
         Left ex ->
           atomically (throwToExceptionSink exChan ex)
             `finally`
-              fulfillPromise resultVar (Left (toException (AsyncException ex)))
+              fulfillPromise resultVar (Left (toEx (AsyncException ex)))
         Right retVal -> do
           fulfillPromise resultVar (Right retVal)

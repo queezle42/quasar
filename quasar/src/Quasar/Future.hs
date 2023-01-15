@@ -7,6 +7,7 @@ module Quasar.Future (
 
   -- * Future
   IsFuture(toFuture),
+  IsFutureEx,
   Future,
 
   -- * Future helpers
@@ -34,18 +35,22 @@ module Quasar.Future (
   peekPromiseSTM,
 
   -- * Exception variants
-  FutureE,
-  toFutureE,
-  PromiseE,
+  FutureEx,
+  toFutureEx,
+  PromiseEx,
+
+  -- * Caching
+  cacheFuture,
 
   -- ** Unsafe implementation helpers
   unsafeSTMcToFuture,
-  unsafeSTMToFutureE,
+  unsafeSTMToFutureEx,
   unsafeAwaitSTMc,
   unsafeAwaitSTM,
 ) where
 
 import Control.Exception (BlockedIndefinitelyOnSTM(..))
+import Control.Exception.Ex
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Control.Monad.Writer (WriterT)
@@ -75,7 +80,7 @@ instance MonadAwait IO where
 
 -- | `awaitSTM` exists as an explicit alternative to a `Future STM`-instance, to prevent code which creates- and
 -- then awaits resources without knowing it's running in STM (which would block indefinitely when run in STM).
-awaitSTM :: MonadSTMc '[Retry] m => IsFuture r a => a -> m r
+awaitSTM :: MonadSTMc Retry '[] m => IsFuture r a => a -> m r
 awaitSTM (toFuture -> Future x) = liftSTMc x
 
 instance MonadAwait m => MonadAwait (ReaderT a m) where
@@ -102,28 +107,32 @@ peekFuture future = atomically $ peekFutureSTM future
 
 -- | Returns the result (in a `Just`) when the future is completed, throws an `Exception` when the future is
 -- failed and returns `Nothing` otherwise.
-peekFutureSTM :: MonadSTMc '[] m => Future a -> m (Maybe a)
-peekFutureSTM future = orElseC @'[Retry] (Just <$> awaitSTM future) (pure Nothing)
+peekFutureSTM :: MonadSTMc NoRetry '[] m => Future a -> m (Maybe a)
+peekFutureSTM future = orElseC @'[] (Just <$> awaitSTM future) (pure Nothing)
 
 
 class IsFuture r a | a -> r where
   toFuture :: a -> Future r
 
+type IsFutureEx exceptions r = IsFuture (Either (Ex exceptions) r)
 
-unsafeSTMToFutureE :: STM a -> FutureE a
-unsafeSTMToFutureE = FutureE
 
-unsafeSTMcToFuture :: STMc '[Retry] a -> Future a
+-- | Only safe if the computation obeys the future laws.
+unsafeSTMToFutureEx :: STM a -> FutureEx '[SomeException] a
+unsafeSTMToFutureEx = FutureEx . liftSTM
+
+-- | Only safe if the computation obeys the future laws.
+unsafeSTMcToFuture :: STMc Retry '[] a -> Future a
 unsafeSTMcToFuture = Future
 
-unsafeAwaitSTMc :: MonadAwait m => STMc '[Retry] a -> m a
+unsafeAwaitSTMc :: MonadAwait m => STMc Retry '[] a -> m a
 unsafeAwaitSTMc = await . unsafeSTMcToFuture
 
-unsafeAwaitSTM :: MonadAwait m => STM a -> m (Either SomeException a)
-unsafeAwaitSTM = await . unsafeSTMToFutureE
+unsafeAwaitSTM :: MonadAwait m => STM a -> m (Either (Ex '[SomeException]) a)
+unsafeAwaitSTM = await . unsafeSTMToFutureEx
 
 
-newtype Future a = Future (STMc '[Retry] a)
+newtype Future a = Future (STMc Retry '[] a)
   deriving newtype (
     Functor,
     Applicative,
@@ -147,7 +156,8 @@ instance Monoid a => Monoid (Future a) where
   mempty = pure mempty
 
 
-newtype FutureE a = FutureE (STM a)
+type FutureEx :: [Type] -> Type -> Type
+newtype FutureEx exceptions a = FutureEx (STMc Retry exceptions a)
   deriving newtype (
     Functor,
     Applicative,
@@ -156,19 +166,25 @@ newtype FutureE a = FutureE (STM a)
     Alternative,
     MonadPlus,
     MonadThrow,
-    MonadCatch
+    MonadCatch,
+    Throw e,
+    ThrowEx
     )
 
-instance IsFuture (Either SomeException a) (FutureE a) where
-  toFuture (FutureE f) = Future (tryAllSTMc @'[Retry, ThrowAny] (liftSTM f))
+instance IsFuture (Either (Ex exceptions) a) (FutureEx exceptions a) where
+  toFuture (FutureEx f) = Future (tryExSTMc f)
 
 
-instance MonadAwait FutureE where
-  await :: IsFuture r a => a -> FutureE r
-  await f = FutureE (awaitSTM (toFuture f))
+instance MonadAwait (FutureEx exceptions) where
+  await :: IsFuture r a => a -> FutureEx exceptions r
+  await f = FutureEx (awaitSTM (toFuture f))
 
-toFutureE :: IsFuture (Either SomeException r) a => a -> FutureE r
-toFutureE x = FutureE (either throwM pure =<< awaitSTM (toFuture x))
+toFutureEx ::
+  forall exceptions r a.
+  (IsFuture (Either (Ex exceptions) r) a, ExceptionList exceptions) =>
+  a -> FutureEx exceptions r
+-- unsafeThrowEx is safe here and prevents an extra `ThrowForAll` constraint
+toFutureEx x = FutureEx (either unsafeThrowEx pure =<< awaitSTM x)
 
 
 
@@ -177,29 +193,26 @@ toFutureE x = FutureE (either throwM pure =<< awaitSTM (toFuture x))
 -- | The default implementation for an `Future` that can be fulfilled later.
 newtype Promise a = Promise (TMVar a)
 
-type PromiseE a = Promise (Either SomeException a)
-
---instance IsFuture' t r (Promise t r) where
---  toFuture (Promise var) = unsafeSTMToFuture $ either throwM pure =<< readTMVar var
+type PromiseEx exceptions a = Promise (Either (Ex exceptions) a)
 
 instance IsFuture a (Promise a) where
   toFuture (Promise var) = unsafeAwaitSTMc (readTMVar var)
 
-newPromiseSTM :: MonadSTMc '[] m => m (Promise a)
+newPromiseSTM :: MonadSTMc NoRetry '[] m => m (Promise a)
 newPromiseSTM = Promise <$> newEmptyTMVar
 
 newPromise :: MonadIO m => m (Promise a)
 newPromise = liftIO $ Promise <$> newEmptyTMVarIO
 
 
-peekPromiseSTM :: MonadSTMc '[] m => Promise a -> m (Maybe a)
+peekPromiseSTM :: MonadSTMc NoRetry '[] m => Promise a -> m (Maybe a)
 peekPromiseSTM (Promise var) = tryReadTMVar var
 
 
 fulfillPromise :: MonadIO m => Promise a -> a -> m ()
 fulfillPromise var result = atomically $ fulfillPromiseSTM var result
 
-fulfillPromiseSTM :: MonadSTMc '[Throw PromiseAlreadyCompleted] m => Promise a -> a -> m ()
+fulfillPromiseSTM :: MonadSTMc NoRetry '[PromiseAlreadyCompleted] m => Promise a -> a -> m ()
 fulfillPromiseSTM var result = do
   success <- tryFulfillPromiseSTM var result
   unless success $ throwC PromiseAlreadyCompleted
@@ -208,38 +221,29 @@ fulfillPromiseSTM var result = do
 tryFulfillPromise :: MonadIO m => Promise a -> a -> m Bool
 tryFulfillPromise var result = atomically $ tryFulfillPromiseSTM var result
 
-tryFulfillPromiseSTM :: MonadSTMc '[] m => Promise a -> a -> m Bool
+tryFulfillPromiseSTM :: MonadSTMc NoRetry '[] m => Promise a -> a -> m Bool
 tryFulfillPromiseSTM (Promise var) result = tryPutTMVar var result
 
 
 
 -- * Utility functions
 
-afix :: (MonadIO m, MonadCatch m) => (FutureE a -> m a) -> m a
-afix action = do
-  var <- newPromise
-  catchAll
-    do
-      result <- action (toFutureE var)
-      fulfillPromise var (Right result)
-      pure result
-    \ex -> do
-      fulfillPromise var (Left ex)
-      throwM ex
+afix :: (MonadIO m, MonadCatch m) => (FutureEx '[SomeException] a -> m a) -> m a
+afix = afixExtra . fmap (fmap dup)
 
-afix_ :: (MonadIO m, MonadCatch m) => (FutureE a -> m a) -> m ()
+afix_ :: (MonadIO m, MonadCatch m) => (FutureEx '[SomeException] a -> m a) -> m ()
 afix_ = void . afix
 
-afixExtra :: (MonadIO m, MonadCatch m) => (FutureE a -> m (r, a)) -> m r
+afixExtra :: (MonadIO m, MonadCatch m) => (FutureEx '[SomeException] a -> m (r, a)) -> m r
 afixExtra action = do
   var <- newPromise
   catchAll
     do
-      (result, fixResult) <- action (toFutureE var)
+      (result, fixResult) <- action (toFutureEx var)
       fulfillPromise var (Right fixResult)
       pure result
     \ex -> do
-      fulfillPromise var (Left ex)
+      fulfillPromise var (Left (toEx ex))
       throwM ex
 
 
@@ -251,7 +255,7 @@ awaitEither :: MonadAwait m => Future ra -> Future rb -> m (Either ra rb)
 awaitEither (Future x) (Future y) = unsafeAwaitSTMc (eitherSTM x y)
 
 -- | Helper for `awaitEither`
-eitherSTM :: STMc '[Retry] a -> STMc '[Retry] b -> STMc '[Retry] (Either a b)
+eitherSTM :: STMc Retry '[] a -> STMc Retry '[] b -> STMc Retry '[] (Either a b)
 eitherSTM x y = fmap Left x `orElseC` fmap Right y
 
 
@@ -261,7 +265,7 @@ awaitAny :: MonadAwait m => [Future r] -> m r
 awaitAny xs = unsafeAwaitSTMc $ anySTM $ awaitSTM <$> xs
 
 -- | Helper for `awaitAny`
-anySTM :: [STMc '[Retry] a] -> STMc '[Retry] a
+anySTM :: [STMc Retry '[] a] -> STMc Retry '[] a
 anySTM [] = retry
 anySTM (x:xs) = x `orElseC` anySTM xs
 
@@ -272,12 +276,12 @@ awaitAny2 x y = awaitAny [toFuture x, toFuture y]
 
 
 -- TODO export; use for awaitEither and awaitAny
-cacheFuture :: forall a m. MonadSTMc '[] m => Future a -> m (Future a)
+cacheFuture :: forall a m. MonadSTMc NoRetry '[] m => Future a -> m (Future a)
 cacheFuture f = do
   cache <- newEmptyTMVar
   pure (unsafeAwaitSTMc (queryCache cache))
   where
-    queryCache :: TMVar a -> STMc '[Retry] a
+    queryCache :: TMVar a -> STMc Retry '[] a
     queryCache cache = do
       tryReadTMVar cache >>= \case
         Just result -> pure result

@@ -33,13 +33,13 @@ import Quasar.Resources
 import Control.Exception (throwTo)
 
 
-data Async a = Async (FutureE a) Disposer
+data Async a = Async (FutureEx '[AsyncException, AsyncDisposed] a) Disposer
 
 instance Resource (Async a) where
   toDisposer (Async _ disposer) = disposer
 
-instance IsFuture (Either SomeException a) (Async a) where
-  toFuture (Async futureE _) = toFuture futureE
+instance IsFuture (Either (Ex '[AsyncException, AsyncDisposed]) a) (Async a) where
+  toFuture (Async future _) = toFuture future
 
 
 async :: (MonadQuasar m, MonadIO m) => QuasarIO a -> m (Async a)
@@ -80,40 +80,42 @@ unmanagedAsyncWithUnmask worker exSink fn = liftIO $ spawnAsync (\_ -> pure ()) 
 
 
 spawnAsync :: forall a m. (MonadIO m, MonadMask m) => (Disposer -> m ()) -> TIOWorker -> ExceptionSink -> ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
-spawnAsync registerDisposerFn worker exSink fn = do
+spawnAsync registerDisposerFn worker exSink fn = mask_ do
   key <- liftIO newUnique
   resultVar <- newPromise
 
-  afixExtra \threadIdFuture -> mask_ do
+  threadIdPromise <- newPromise
+  let threadIdFuture = toFuture threadIdPromise
 
-    -- Disposer is created first to ensure the resource can be safely attached
-    disposer <- atomically $ newUnmanagedIODisposer (disposeFn key resultVar threadIdFuture) worker exSink
+  -- Disposer is created first to ensure the resource can be safely attached
+  disposer <- atomically $ newUnmanagedIODisposer (disposeFn key resultVar threadIdFuture) worker exSink
 
-    registerDisposerFn disposer
+  registerDisposerFn disposer
 
-    threadId <- liftIO $ forkWithUnmask (runAndPut exSink key resultVar disposer) exSink
+  threadId <- liftIO $ forkWithUnmask (runAndPut exSink key resultVar disposer) exSink
+  fulfillPromise threadIdPromise threadId
 
-    pure (Async (toFutureE resultVar) disposer, threadId)
+  pure (Async (toFutureEx resultVar) disposer)
   where
-    runAndPut :: ExceptionSink -> Unique -> PromiseE a -> Disposer -> (forall b. IO b -> IO b) -> IO ()
+    runAndPut :: ExceptionSink -> Unique -> PromiseEx '[AsyncException, AsyncDisposed] a -> Disposer -> (forall b. IO b -> IO b) -> IO ()
     runAndPut exChan key resultVar disposer unmask = do
       -- Called in masked state by `forkWithUnmask`
       result <- try $ fn unmask
       case result of
         Left (fromException -> Just (CancelAsync ((== key) -> True))) ->
-          fulfillPromise resultVar (Left (toException AsyncDisposed))
+          fulfillPromise resultVar (Left (toEx AsyncDisposed))
         Left ex -> do
           atomically (throwToExceptionSink exChan ex)
             `finally` do
-              fulfillPromise resultVar (Left (toException (AsyncException ex)))
+              fulfillPromise resultVar (Left (toEx (AsyncException ex)))
               disposeEventuallyIO_ disposer
         Right retVal -> do
           fulfillPromise resultVar (Right retVal)
           disposeEventuallyIO_ disposer
-    disposeFn :: Unique -> PromiseE a -> FutureE ThreadId -> IO ()
+    disposeFn :: Unique -> PromiseEx '[AsyncException, AsyncDisposed] a -> Future ThreadId -> IO ()
     disposeFn key resultVar threadIdFuture = do
-      -- ThreadId future will be filled by afix
-      threadId <- either throwM pure =<< await threadIdFuture
+      -- ThreadId future will be filled after the thread is forked
+      threadId <- await threadIdFuture
       throwTo threadId (CancelAsync key)
       -- Disposing is considered complete once a result (i.e. success or failure) has been stored
       void $ await resultVar

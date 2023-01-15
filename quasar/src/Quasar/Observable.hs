@@ -91,7 +91,7 @@ class IsObservable r a | a -> r where
   -- The callback should return without blocking, otherwise other callbacks will be delayed. If the value can't be
   -- processed immediately, use `observeBlocking` instead or manually pass the value to a thread that processes the
   -- data.
-  attachObserver :: a -> ObserverCallback r -> STMc '[] TSimpleDisposer
+  attachObserver :: a -> ObserverCallback r -> STMc NoRetry '[] TSimpleDisposer
   attachObserver observable = attachObserver (toObservable observable)
 
   toObservable :: a -> Observable r
@@ -104,18 +104,18 @@ class IsObservable r a | a -> r where
 
 
 observe
-  :: (ResourceCollector m, MonadSTMc '[] m)
+  :: (ResourceCollector m, MonadSTMc NoRetry '[] m)
   => Observable a
-  -> (ObservableState a -> STMc '[] ()) -- ^ callback
+  -> (ObservableState a -> STMc NoRetry '[] ()) -- ^ callback
   -> m ()
 observe observable callback = do
   disposer <- liftSTMc $ attachObserver observable callback
   collectResource disposer
 
 observeQ
-  :: (MonadQuasar m, MonadSTMc '[ThrowAny] m)
+  :: (MonadQuasar m, MonadSTMc NoRetry '[SomeException] m)
   => Observable a
-  -> (ObservableState a -> STMc '[ThrowAny] ()) -- ^ callback
+  -> (ObservableState a -> STMc NoRetry '[SomeException] ()) -- ^ callback
   -> m Disposer
 observeQ observable callbackFn = do
   -- Each observer needs a dedicated scope to guarantee, that the whole observer is detached when the provided callback (or the observable implementation) fails.
@@ -130,26 +130,26 @@ observeQ observable callbackFn = do
 observeQ_
     :: (MonadQuasar m, MonadSTM m)
     => Observable a
-    -> (ObservableState a -> STMc '[ThrowAny] ()) -- ^ callback
+    -> (ObservableState a -> STMc NoRetry '[SomeException] ()) -- ^ callback
     -> m ()
 observeQ_ observable callback = liftQuasarSTM $ void $ observeQ observable callback
 
 observeQIO
   :: (MonadQuasar m, MonadIO m)
   => Observable a
-  -> (ObservableState a -> STMc '[ThrowAny] ()) -- ^ callback
+  -> (ObservableState a -> STMc NoRetry '[SomeException] ()) -- ^ callback
   -> m Disposer
 observeQIO observable callback = quasarAtomically $ observeQ observable callback
 
 observeQIO_
   :: (MonadQuasar m, MonadIO m)
   => Observable a
-  -> (ObservableState a -> STMc '[ThrowAny] ()) -- ^ callback
+  -> (ObservableState a -> STMc NoRetry '[SomeException] ()) -- ^ callback
   -> m ()
 observeQIO_ observable callback = quasarAtomically $ observeQ_ observable callback
 
 
-type ObserverCallback a = ObservableState a -> STMc '[] ()
+type ObserverCallback a = ObservableState a -> STMc NoRetry '[] ()
 
 
 -- | Existential quantification wrapper for the IsObservable type class.
@@ -286,7 +286,7 @@ instance IsObservable a (ObservableStep a) where
         rightDisposer <- attachObserver (fn lmsg) callback
         writeTVar rightDisposerVar rightDisposer
 
-      disposeFn :: TSimpleDisposer -> TVar TSimpleDisposer -> STMc '[] ()
+      disposeFn :: TSimpleDisposer -> TVar TSimpleDisposer -> STMc NoRetry '[] ()
       disposeFn leftDisposer rightDisposerVar = do
         rightDisposer <- swapTVar rightDisposerVar mempty
         disposeTSimpleDisposer (leftDisposer <> rightDisposer)
@@ -305,7 +305,7 @@ catchObservable fx fn = toObservable $ ObservableStep fx \case
   state -> toObservable (ConstObservable state)
 
 
-newtype ObserverRegistry a = ObserverRegistry (TVar (HM.HashMap Unique (ObservableState a -> STMc '[] ())))
+newtype ObserverRegistry a = ObserverRegistry (TVar (HM.HashMap Unique (ObservableState a -> STMc NoRetry '[] ())))
 
 newObserverRegistry :: STM (ObserverRegistry a)
 newObserverRegistry = ObserverRegistry <$> newTVar mempty
@@ -313,7 +313,7 @@ newObserverRegistry = ObserverRegistry <$> newTVar mempty
 newObserverRegistryIO :: MonadIO m => m (ObserverRegistry a)
 newObserverRegistryIO = liftIO $ ObserverRegistry <$> newTVarIO mempty
 
-registerObserver :: ObserverRegistry a -> ObserverCallback a -> ObservableState a -> STMc '[] TSimpleDisposer
+registerObserver :: ObserverRegistry a -> ObserverCallback a -> ObservableState a -> STMc NoRetry '[] TSimpleDisposer
 registerObserver (ObserverRegistry var) callback currentState = do
   key <- newUniqueSTM
   modifyTVar var (HM.insert key callback)
@@ -322,7 +322,7 @@ registerObserver (ObserverRegistry var) callback currentState = do
   liftSTMc $ callback currentState
   pure disposer
 
-updateObservers :: ObserverRegistry a -> ObservableState a -> STMc '[] ()
+updateObservers :: ObserverRegistry a -> ObservableState a -> STMc NoRetry '[] ()
 updateObservers (ObserverRegistry var) newState = liftSTMc do
   mapM_ ($ newState) . HM.elems =<< readTVar var
 

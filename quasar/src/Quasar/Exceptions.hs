@@ -24,26 +24,26 @@ import Control.Monad.Catch
 import Quasar.Prelude
 
 
-newtype ExceptionSink = ExceptionSink (SomeException -> STMc '[] ())
+newtype ExceptionSink = ExceptionSink (SomeException -> STMc NoRetry '[] ())
 
 
-throwToExceptionSink :: (Exception e, MonadSTMc '[] m) => ExceptionSink -> e -> m ()
+throwToExceptionSink :: (Exception e, MonadSTMc NoRetry '[] m) => ExceptionSink -> e -> m ()
 throwToExceptionSink (ExceptionSink channelFn) ex = liftSTMc $ channelFn (toException ex)
 
 throwToExceptionSinkIO :: (Exception e, MonadIO m) => ExceptionSink -> e -> m ()
 throwToExceptionSinkIO sink ex = atomically $ throwToExceptionSink sink ex
 
-catchSink :: forall e. Exception e => (e -> STMc '[ThrowAny] ()) -> ExceptionSink -> ExceptionSink
+catchSink :: forall e. Exception e => (e -> STMc NoRetry '[SomeException] ()) -> ExceptionSink -> ExceptionSink
 catchSink handler parentSink = ExceptionSink \ex ->
   case fromException ex of
     Just matchedException -> wrappedHandler matchedException
     Nothing -> throwToExceptionSink parentSink ex
   where
-    wrappedHandler :: e -> STMc '[] ()
-    wrappedHandler ex = (handler ex) `catchAllSTMc` (throwToExceptionSink parentSink)
+    wrappedHandler :: e -> STMc NoRetry '[] ()
+    wrappedHandler ex = handler ex `catchAllSTMc` throwToExceptionSink parentSink
 
 
-catchAllSink :: (SomeException -> STMc '[ThrowAny] ()) -> ExceptionSink -> ExceptionSink
+catchAllSink :: (SomeException -> STMc NoRetry '[SomeException] ()) -> ExceptionSink -> ExceptionSink
 catchAllSink = catchSink
 
 
