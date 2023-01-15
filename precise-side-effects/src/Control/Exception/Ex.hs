@@ -22,6 +22,9 @@ module Control.Exception.Ex (
   (:<<),
   (:-),
   (:--),
+
+  -- * Implementation helper
+  unsafeToEx
 ) where
 
 import Control.Concurrent.STM (STM, throwSTM)
@@ -124,6 +127,9 @@ newtype Ex exceptions = Ex SomeException
 toEx :: forall exceptions e. (Exception e, e :< exceptions) => e -> Ex exceptions
 toEx = Ex . toException
 
+unsafeToEx :: SomeException -> Ex exceptions
+unsafeToEx = Ex
+
 instance ExceptionList exceptions => Exception (Ex exceptions) where
   toException (Ex ex) = ex
   fromException = someExceptionToEx @exceptions
@@ -179,7 +185,10 @@ class Monad m => ThrowEx m where
   -- | Implementation helper. May only ever be called by `throwEx`.
   unsafeThrowEx :: Exception (Ex exceptions) => Ex exceptions -> m a
 
-throwEx :: (ThrowEx m, ThrowForAll exceptions m, Exception (Ex exceptions)) => Ex exceptions -> m a
+throwEx ::
+  forall exceptions m a.
+  (ThrowEx m, ThrowForAll exceptions m, Exception (Ex exceptions)) =>
+  Ex exceptions -> m a
 throwEx = unsafeThrowEx
 
 instance ThrowEx IO where

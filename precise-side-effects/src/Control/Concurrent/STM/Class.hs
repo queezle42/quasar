@@ -16,11 +16,9 @@ module Control.Concurrent.STM.Class (
   STMc,
   atomicallyC,
 
-  -- *** Limiting capabilities
-  -- TODO
-
-  -- ** MonadSTM'
+  -- ** MonadSTMc
   MonadSTMc,
+  MonadSTMcBase(..),
   liftSTMc,
   (:<),
   (:<<),
@@ -28,10 +26,10 @@ module Control.Concurrent.STM.Class (
   (:--),
 
   -- ** Retry
+  MonadRetry(..),
   CanRetry,
   Retry,
   NoRetry,
-  retry,
   orElse,
   orElseC,
   check,
@@ -43,6 +41,7 @@ module Control.Concurrent.STM.Class (
   catchAllSTMc,
   trySTMc,
   tryAllSTMc,
+  tryExSTMc,
 
   -- * Unique
   Unique,
@@ -131,6 +130,7 @@ import Control.Applicative
 import Control.Concurrent.STM (STM)
 import Control.Concurrent.STM qualified as STM
 import Control.Concurrent.STM.Class.TH
+import Control.Exception (IOException)
 import Control.Exception.Ex
 import Control.Monad (MonadPlus)
 import Control.Monad.Catch
@@ -139,17 +139,34 @@ import Control.Monad.IO.Class
 import Control.Monad.Trans.Class (lift, MonadTrans)
 import Control.Monad.Trans.Writer (execWriterT)
 import Data.Array.MArray qualified as MArray
+import Data.Bifunctor qualified as Bifunctor
 import Data.Kind (Type, Constraint)
 import Data.Unique (Unique, newUnique)
 import GHC.Conc (unsafeIOToSTM)
 import Language.Haskell.TH hiding (Type)
 import Prelude
+import Data.Type.Equality
+import Data.Type.Bool
+
+
+class Monad m => MonadRetry m where
+  retry :: m a
+
+instance MonadRetry STM where
+  retry = STM.retry
+
+instance MonadRetry (STMc Retry exceptions) where
+  retry = unsafeLiftSTM STM.retry
+
+instance (MonadRetry m, Monad (t m), MonadTrans t) => MonadRetry (t m) where
+  retry = lift retry
 
 
 -- TODO use TypeData in a future GHC (currently planned for GHC 9.6.1)
 data CanRetry = Retry | NoRetry
 type Retry = 'Retry
 type NoRetry = 'NoRetry
+
 
 type role STMc phantom phantom _
 type STMc :: CanRetry -> [Type] -> Type -> Type
@@ -161,6 +178,9 @@ instance SomeException :< exceptions => MonadThrow (STMc canRetry exceptions) wh
 
 instance SomeException :< exceptions => MonadCatch (STMc canRetry exceptions) where
   catch ft fc = STMc (STM.catchSTM (runSTMc ft) (runSTMc . fc))
+
+instance IOException :< exceptions => MonadFail (STMc canRetry exceptions) where
+  fail = throwSTM . userError
 
 instance Semigroup a => Semigroup (STMc canRetry exceptions a) where
   (<>) = liftA2 (<>)
@@ -201,7 +221,7 @@ instance (Monad (t m), MonadTrans t, MonadSTMcBase m) => MonadSTMcBase (t m) whe
 
 
 type MonadSTMc :: CanRetry -> [Type] -> (Type -> Type) -> Constraint
-type MonadSTMc canRetry exceptions m = (MonadSTMcBase m, ThrowForAll exceptions m)
+type MonadSTMc canRetry exceptions m = (If (canRetry == Retry) (MonadRetry m) (() :: Constraint), MonadSTMcBase m, ThrowForAll exceptions m)
 
 
 liftSTMc ::
@@ -222,9 +242,6 @@ liftSTM = unsafeLiftSTM
 runSTMc :: STMc canRetry exceptions a -> STM a
 runSTMc (STMc f) = f
 
-
-retry :: forall m a. MonadSTMc Retry '[] m => m a
-retry = unsafeLiftSTM retry
 
 throwSTM :: forall e m a. (Exception e, MonadSTMc NoRetry '[e] m) => e -> m a
 throwSTM = unsafeLiftSTM . STM.throwSTM
@@ -266,15 +283,22 @@ tryAllSTMc ::
 tryAllSTMc f = unsafeLiftSTM (try (runSTMc f))
 {-# INLINABLE tryAllSTMc #-}
 
+tryExSTMc ::
+  forall canRetry exceptions m a. (
+    MonadSTMc canRetry '[] m
+  ) =>
+  STMc canRetry exceptions a -> m (Either (Ex exceptions) a)
+tryExSTMc f = unsafeLiftSTM (Bifunctor.first unsafeToEx <$> try (runSTMc f))
+{-# INLINABLE tryExSTMc #-}
+
 orElseC ::
-  forall canRetry exceptions m a. (MonadSTMc NoRetry exceptions m) =>
-  STMc canRetry exceptions a -> m a -> m a
+  forall exceptions m a. (MonadSTMc NoRetry exceptions m) =>
+  STMc Retry exceptions a -> m a -> m a
 orElseC fx fy =
   unsafeLiftSTM (STM.orElse (Just <$> runSTMc fx) (pure Nothing)) >>= \case
     Just r -> pure r
     Nothing -> fy
 {-# INLINABLE orElseC #-}
-
 
 
 atomicallyC :: MonadIO m => STMc Retry '[SomeException] a -> m a
