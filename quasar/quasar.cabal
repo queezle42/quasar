@@ -33,8 +33,7 @@ common shared-properties
     ImportQualifiedPost
     InstanceSigs
     LambdaCase
-    -- Enable once 9.0.1 is required
-    --LexicalNegation
+    LexicalNegation
     MultiParamTypeClasses
     NamedFieldPuns
     NoImplicitPrelude

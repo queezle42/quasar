@@ -19,7 +19,7 @@
     packages = forAllSystems (system:
       let
         pkgs = import nixpkgs { inherit system; overlays = [ self.overlays.default ]; };
-        haskellPackages = getHaskellPackages pkgs "ghc92.";
+        haskellPackages = getHaskellPackages pkgs "ghc94.";
         results = {
           precise-side-effects = haskellPackages.precise-side-effects;
           quasar = haskellPackages.quasar;
@@ -45,7 +45,7 @@
     devShells = forAllSystems (system:
       let
         pkgs = import nixpkgs { inherit system; overlays = [ self.overlays.default ]; };
-        haskellPackages = getHaskellPackages pkgs "ghc92.";
+        haskellPackages = getHaskellPackages pkgs "ghc94.";
       in rec {
         default = haskellPackages.shellFor {
           packages = hpkgs: [
