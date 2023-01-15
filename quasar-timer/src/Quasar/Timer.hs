@@ -17,13 +17,14 @@ module Quasar.Timer (
 
 import Control.Concurrent
 import Control.Monad.Catch
+import Data.Bifunctor qualified as Bifunctor
+import Data.Foldable (toList)
 import Data.Heap
 import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
-import Data.Foldable (toList)
-import Quasar.Async.STMHelper
 import Quasar.Async
-import Quasar.Future
+import Quasar.Async.STMHelper
 import Quasar.Exceptions
+import Quasar.Future
 import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Resources
@@ -38,7 +39,7 @@ instance Exception TimerCancelled
 data Timer = Timer {
   key :: Unique,
   time :: UTCTime,
-  completed :: Promise (Either SomeException ()),
+  completed :: PromiseEx '[TimerCancelled] (),
   disposer :: Disposer,
   scheduler :: TimerScheduler
 }
@@ -52,7 +53,7 @@ instance Ord Timer where
 instance Resource Timer where
   toDisposer Timer{disposer} = disposer
 
-instance IsFuture (Either SomeException ()) Timer where
+instance IsFuture (Either (Ex '[TimerCancelled]) ()) Timer where
   toFuture Timer{completed} = toFuture completed
 
 
@@ -187,9 +188,9 @@ newUnmanagedTimer scheduler time = liftIO do
     modifyTVar (activeCount scheduler) (+ 1)
     pure timer
   where
-    disposeFn :: PromiseE () -> STM ()
+    disposeFn :: PromiseEx '[TimerCancelled] () -> STM ()
     disposeFn completed = do
-      cancelled <- tryFulfillPromiseSTM completed (Left (toException TimerCancelled))
+      cancelled <- tryFulfillPromiseSTM completed (Left (toEx TimerCancelled))
       when cancelled do
         modifyTVar (activeCount scheduler) (+ (-1))
         modifyTVar (cancelledCount scheduler) (+ 1)
@@ -207,8 +208,8 @@ sleepUntil scheduler time = liftIO do
 newtype Delay = Delay (Async ())
   deriving newtype Resource
 
-instance IsFuture (Either SomeException ()) Delay where
-  toFuture (Delay task) = toFuture (toFutureE task `catch` \AsyncDisposed -> throwM TimerCancelled)
+instance IsFuture (Either (Ex '[TimerCancelled]) ()) Delay where
+  toFuture (Delay task) = Bifunctor.first (const (toEx @'[TimerCancelled] TimerCancelled)) <$> toFuture task
 
 newDelay :: (MonadQuasar m, MonadIO m) => Int -> m Delay
 newDelay microseconds = Delay <$> async (liftIO (threadDelay microseconds))
