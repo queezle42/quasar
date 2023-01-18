@@ -224,10 +224,11 @@ instance IsObservable a (LiftA2Observable a) where
     dy <- attachObserver fy (\update -> writeTVar var1 (Just update) >> callCallback)
     pure $ dx <> dy
 
-  mapObservable f1 (LiftA2Observable f2 fx fy) = toObservable $ LiftA2Observable (\x y -> f1 (f2 x y)) fx fy
   readObservable (LiftA2Observable fn fx fy) =
     liftA2 fn (readObservable fx) (readObservable fy)
 
+  mapObservable f1 (LiftA2Observable f2 fx fy) =
+    toObservable $ LiftA2Observable (\x y -> f1 (f2 x y)) fx fy
 
 
 data BindObservable a = forall b. BindObservable (Observable b) (b -> Observable a)
@@ -249,10 +250,11 @@ instance IsObservable a (BindObservable a) where
         rightDisposer <- swapTVar rightDisposerVar mempty
         disposeTSimpleDisposer (leftDisposer <> rightDisposer)
 
-  mapObservable f (BindObservable fx fn) = toObservable $ BindObservable fx (f <<$>> fn)
   readObservable (BindObservable fx fn) =
     readObservable . fn =<< readObservable fx
 
+  mapObservable f (BindObservable fx fn) =
+    toObservable $ BindObservable fx (f <<$>> fn)
 
 
 newtype ObserverRegistry a = ObserverRegistry (TVar (HM.HashMap Unique (a -> STMc NoRetry '[] ())))
@@ -277,7 +279,8 @@ updateObservers (ObserverRegistry var) value = liftSTMc do
   mapM_ ($ value) . HM.elems =<< readTVar var
 
 observerRegistryHasObservers :: ObserverRegistry a -> STM Bool
-observerRegistryHasObservers (ObserverRegistry var) = not . HM.null <$> readTVar var
+observerRegistryHasObservers (ObserverRegistry var) =
+  not . HM.null <$> readTVar var
 
 
 data ObservableVar a = ObservableVar (TVar a) (ObserverRegistry a)
