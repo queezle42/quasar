@@ -1,7 +1,6 @@
 module Quasar.Observable (
   -- * Observable core
   Observable,
-  IsRetrievable(..),
   IsObservable(..),
   observe,
 
@@ -47,9 +46,6 @@ data ObservableLoading = ObservableLoading
 
 instance Exception ObservableLoading
 
-class IsRetrievable r a | a -> r where
-  retrieve :: IsRetrievable r a => (MonadQuasar m, MonadIO m) => a -> m r
-
 
 type ObserverCallback a = a -> STMc NoRetry '[] ()
 
@@ -67,13 +63,16 @@ class IsObservable r a | a -> r where
   attachObserver :: a -> ObserverCallback r -> STMc NoRetry '[] TSimpleDisposer
   attachObserver observable = attachObserver (toObservable observable)
 
+  readObservable :: a -> STMc NoRetry '[] r
+  readObservable observable = readObservable (toObservable observable)
+
   toObservable :: a -> Observable r
   toObservable = Observable
 
   mapObservable :: (r -> r2) -> a -> Observable r2
   mapObservable f = Observable . MappedObservable f . toObservable
 
-  {-# MINIMAL toObservable | attachObserver #-}
+  {-# MINIMAL toObservable | attachObserver, readObservable #-}
 
 
 observe
@@ -197,10 +196,13 @@ instance IsObservable a (ConstObservable a) where
     callback value
     pure mempty
 
+  readObservable (ConstObservable value) = pure value
+
 
 data MappedObservable a = forall b. MappedObservable (b -> a) (Observable b)
 instance IsObservable a (MappedObservable a) where
   attachObserver (MappedObservable fn observable) callback = attachObserver observable (callback . fn)
+  readObservable (MappedObservable fn observable) = fn <$> readObservable observable
   mapObservable f1 (MappedObservable f2 upstream) = toObservable $ MappedObservable (f1 . f2) upstream
 
 
@@ -223,6 +225,9 @@ instance IsObservable a (LiftA2Observable a) where
     pure $ dx <> dy
 
   mapObservable f1 (LiftA2Observable f2 fx fy) = toObservable $ LiftA2Observable (\x y -> f1 (f2 x y)) fx fy
+  readObservable (LiftA2Observable fn fx fy) =
+    liftA2 fn (readObservable fx) (readObservable fy)
+
 
 
 data BindObservable a = forall b. BindObservable (Observable b) (b -> Observable a)
@@ -245,6 +250,9 @@ instance IsObservable a (BindObservable a) where
         disposeTSimpleDisposer (leftDisposer <> rightDisposer)
 
   mapObservable f (BindObservable fx fn) = toObservable $ BindObservable fx (f <<$>> fn)
+  readObservable (BindObservable fx fn) =
+    readObservable . fn =<< readObservable fx
+
 
 
 newtype ObserverRegistry a = ObserverRegistry (TVar (HM.HashMap Unique (a -> STMc NoRetry '[] ())))
@@ -277,6 +285,8 @@ data ObservableVar a = ObservableVar (TVar a) (ObserverRegistry a)
 instance IsObservable a (ObservableVar a) where
   attachObserver (ObservableVar var registry) callback =
     registerObserver registry callback =<< readTVar var
+
+  readObservable = readObservableVar
 
 newObservableVar :: MonadSTMc NoRetry '[] m => a -> m (ObservableVar a)
 newObservableVar x = liftSTMc $ ObservableVar <$> newTVar x <*> newObserverRegistry
