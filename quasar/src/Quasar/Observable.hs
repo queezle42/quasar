@@ -1,7 +1,6 @@
 module Quasar.Observable (
   -- * Observable core
   Observable,
-  ObservableState(..),
   IsRetrievable(..),
   IsObservable(..),
   observe,
@@ -29,15 +28,6 @@ module Quasar.Observable (
 
   -- ** Helper types
   ObserverCallback,
-
-  -- ** Observable implementation primitive
-  ObservablePrim,
-  newObservablePrim,
-  newObservablePrimIO,
-  setObservablePrim,
-  modifyObservablePrim,
-  stateObservablePrim,
-  observablePrimHasObservers,
 ) where
 
 import Control.Applicative
@@ -52,33 +42,16 @@ import Quasar.Prelude
 import Quasar.MonadQuasar
 import Quasar.Resources.Disposer
 
-data ObservableState a
-  = ObservableValue a
-  | ObservableLoading
-  | ObservableNotAvailable SomeException
+data ObservableLoading = ObservableLoading
   deriving stock (Show, Generic)
 
-instance Functor ObservableState where
-  fmap fn (ObservableValue x) = ObservableValue (fn x)
-  fmap _ ObservableLoading = ObservableLoading
-  fmap _ (ObservableNotAvailable ex) = ObservableNotAvailable ex
-
-instance Applicative ObservableState where
-  pure = ObservableValue
-  liftA2 fn (ObservableValue x) (ObservableValue y) = ObservableValue (fn x y)
-  liftA2 _ (ObservableNotAvailable ex) _ = ObservableNotAvailable ex
-  liftA2 _ ObservableLoading _ = ObservableLoading
-  liftA2 _ _ (ObservableNotAvailable ex) = ObservableNotAvailable ex
-  liftA2 _ _ ObservableLoading = ObservableLoading
-
-instance Monad ObservableState where
-  (ObservableValue x) >>= fn = fn x
-  ObservableLoading >>= _ = ObservableLoading
-  (ObservableNotAvailable ex) >>= _ = ObservableNotAvailable ex
-
+instance Exception ObservableLoading
 
 class IsRetrievable r a | a -> r where
-  retrieve :: (MonadQuasar m, MonadIO m) => a -> m r
+  retrieve :: IsRetrievable r a => (MonadQuasar m, MonadIO m) => a -> m r
+
+
+type ObserverCallback a = a -> STMc NoRetry '[] ()
 
 class IsObservable r a | a -> r where
   -- | Register a callback to observe changes. The callback is called when the value changes, but depending on the
@@ -106,7 +79,7 @@ class IsObservable r a | a -> r where
 observe
   :: (ResourceCollector m, MonadSTMc NoRetry '[] m)
   => Observable a
-  -> (ObservableState a -> STMc NoRetry '[] ()) -- ^ callback
+  -> (a -> STMc NoRetry '[] ()) -- ^ callback
   -> m ()
 observe observable callback = do
   disposer <- liftSTMc $ attachObserver observable callback
@@ -115,7 +88,7 @@ observe observable callback = do
 observeQ
   :: (MonadQuasar m, MonadSTMc NoRetry '[SomeException] m)
   => Observable a
-  -> (ObservableState a -> STMc NoRetry '[SomeException] ()) -- ^ callback
+  -> (a -> STMc NoRetry '[SomeException] ()) -- ^ callback
   -> m Disposer
 observeQ observable callbackFn = do
   -- Each observer needs a dedicated scope to guarantee, that the whole observer is detached when the provided callback (or the observable implementation) fails.
@@ -130,26 +103,23 @@ observeQ observable callbackFn = do
 observeQ_
     :: (MonadQuasar m, MonadSTM m)
     => Observable a
-    -> (ObservableState a -> STMc NoRetry '[SomeException] ()) -- ^ callback
+    -> (a -> STMc NoRetry '[SomeException] ()) -- ^ callback
     -> m ()
 observeQ_ observable callback = liftQuasarSTM $ void $ observeQ observable callback
 
 observeQIO
   :: (MonadQuasar m, MonadIO m)
   => Observable a
-  -> (ObservableState a -> STMc NoRetry '[SomeException] ()) -- ^ callback
+  -> (a -> STMc NoRetry '[SomeException] ()) -- ^ callback
   -> m Disposer
 observeQIO observable callback = quasarAtomically $ observeQ observable callback
 
 observeQIO_
   :: (MonadQuasar m, MonadIO m)
   => Observable a
-  -> (ObservableState a -> STMc NoRetry '[SomeException] ()) -- ^ callback
+  -> (a -> STMc NoRetry '[SomeException] ()) -- ^ callback
   -> m ()
 observeQIO_ observable callback = quasarAtomically $ observeQ_ observable callback
-
-
-type ObserverCallback a = ObservableState a -> STMc NoRetry '[] ()
 
 
 -- | Existential quantification wrapper for the IsObservable type class.
@@ -163,34 +133,18 @@ instance Functor Observable where
   fmap f = mapObservable f
 
 instance Applicative Observable where
-  pure value = toObservable (ConstObservable (ObservableValue value))
+  pure value = toObservable (ConstObservable value)
   liftA2 fn x y = toObservable $ LiftA2Observable fn x y
 
 instance Monad Observable where
-  x >>= f = bindObservable x f
+  x >>= f = toObservable $ BindObservable x f
 
-instance MonadThrow Observable where
-  throwM :: forall e v. Exception e => e -> Observable v
-  throwM ex = toObservable (ConstObservable (ObservableNotAvailable (toException ex)))
-
-instance MonadCatch Observable where
-  catch action handler = catchObservable action handler
-
-instance MonadFail Observable where
-  fail = throwM . userError
-
-instance Alternative Observable where
-  empty = fail "empty"
-  x <|> y = x `catchAll` const y
-
-instance MonadPlus Observable
 
 instance Semigroup a => Semigroup (Observable a) where
   x <> y = liftA2 (<>) x y
 
 instance Monoid a => Monoid (Observable a) where
   mempty = pure mempty
-
 
 
 -- | Observe an observable by handling updates on the current thread.
@@ -202,7 +156,7 @@ instance Monoid a => Monoid (Observable a) where
 observeBlocking
   :: (MonadQuasar m, MonadIO m, MonadMask m)
   => Observable r
-  -> (ObservableState r -> m ())
+  -> (r -> m ())
   -> m a
 observeBlocking observable handler = do
   observeWith observable \fetchNext -> forever do
@@ -212,7 +166,7 @@ observeBlocking observable handler = do
 observeAsync
   :: (MonadQuasar m, MonadIO m)
   => Observable r
-  -> (ObservableState r -> QuasarIO ())
+  -> (r -> QuasarIO ())
   -> m (Async a)
 observeAsync observable handler = async $ observeBlocking observable handler
 
@@ -220,7 +174,7 @@ observeAsync observable handler = async $ observeBlocking observable handler
 observeWith
   :: (MonadQuasar m, MonadIO m, MonadMask m)
   => Observable r
-  -> (STM (ObservableState r) -> m a)
+  -> (STM r -> m a)
   -> m a
 observeWith observable fn = do
   var <- liftIO newEmptyTMVarIO
@@ -237,16 +191,16 @@ data ObserveWhileCompleted = ObserveWhileCompleted
   deriving stock (Eq, Show)
 
 
-newtype ConstObservable a = ConstObservable (ObservableState a)
+newtype ConstObservable a = ConstObservable a
 instance IsObservable a (ConstObservable a) where
-  attachObserver (ConstObservable state) callback = do
-    callback state
+  attachObserver (ConstObservable value) callback = do
+    callback value
     pure mempty
 
 
 data MappedObservable a = forall b. MappedObservable (b -> a) (Observable b)
 instance IsObservable a (MappedObservable a) where
-  attachObserver (MappedObservable fn observable) callback = attachObserver observable (callback . fmap fn)
+  attachObserver (MappedObservable fn observable) callback = attachObserver observable (callback . fn)
   mapObservable f1 (MappedObservable f2 upstream) = toObservable $ MappedObservable (f1 . f2) upstream
 
 
@@ -261,7 +215,7 @@ instance IsObservable a (LiftA2Observable a) where
     var0 <- newTVar Nothing
     var1 <- newTVar Nothing
     let callCallback = do
-          mergedValue <- runMaybeT $ liftA2 (liftA2 fn) (MaybeT (readTVar var0)) (MaybeT (readTVar var1))
+          mergedValue <- runMaybeT $ liftA2 fn (MaybeT (readTVar var0)) (MaybeT (readTVar var1))
           -- Run the callback only once both values have been received
           mapM_ callback mergedValue
     dx <- attachObserver fx (\update -> writeTVar var0 (Just update) >> callCallback)
@@ -271,11 +225,10 @@ instance IsObservable a (LiftA2Observable a) where
   mapObservable f1 (LiftA2Observable f2 fx fy) = toObservable $ LiftA2Observable (\x y -> f1 (f2 x y)) fx fy
 
 
--- Implementation for bind and catch
-data ObservableStep a = forall b. ObservableStep (Observable b) (ObservableState b -> Observable a)
+data BindObservable a = forall b. BindObservable (Observable b) (b -> Observable a)
 
-instance IsObservable a (ObservableStep a) where
-  attachObserver (ObservableStep fx fn) callback = do
+instance IsObservable a (BindObservable a) where
+  attachObserver (BindObservable fx fn) callback = do
     -- Callback isn't called immediately, since subscribing to fx and fn also guarantees a callback.
     rightDisposerVar <- newTVar mempty
     leftDisposer <- attachObserver fx (leftCallback rightDisposerVar)
@@ -291,40 +244,29 @@ instance IsObservable a (ObservableStep a) where
         rightDisposer <- swapTVar rightDisposerVar mempty
         disposeTSimpleDisposer (leftDisposer <> rightDisposer)
 
-  mapObservable f (ObservableStep fx fn) = toObservable $ ObservableStep fx (f <<$>> fn)
-
-bindObservable :: (Observable b) -> (b -> Observable a) -> Observable a
-bindObservable fx fn = toObservable $ ObservableStep fx \case
-  ObservableValue x -> fn x
-  ObservableLoading -> toObservable (ConstObservable ObservableLoading)
-  ObservableNotAvailable ex -> throwM ex
-
-catchObservable :: Exception e => (Observable a) -> (e -> Observable a) -> Observable a
-catchObservable fx fn = toObservable $ ObservableStep fx \case
-  ObservableNotAvailable (fromException -> Just ex) -> fn ex
-  state -> toObservable (ConstObservable state)
+  mapObservable f (BindObservable fx fn) = toObservable $ BindObservable fx (f <<$>> fn)
 
 
-newtype ObserverRegistry a = ObserverRegistry (TVar (HM.HashMap Unique (ObservableState a -> STMc NoRetry '[] ())))
+newtype ObserverRegistry a = ObserverRegistry (TVar (HM.HashMap Unique (a -> STMc NoRetry '[] ())))
 
-newObserverRegistry :: STM (ObserverRegistry a)
+newObserverRegistry :: STMc NoRetry '[] (ObserverRegistry a)
 newObserverRegistry = ObserverRegistry <$> newTVar mempty
 
-newObserverRegistryIO :: MonadIO m => m (ObserverRegistry a)
-newObserverRegistryIO = liftIO $ ObserverRegistry <$> newTVarIO mempty
+newObserverRegistryIO :: IO (ObserverRegistry a)
+newObserverRegistryIO = ObserverRegistry <$> newTVarIO mempty
 
-registerObserver :: ObserverRegistry a -> ObserverCallback a -> ObservableState a -> STMc NoRetry '[] TSimpleDisposer
-registerObserver (ObserverRegistry var) callback currentState = do
+registerObserver :: ObserverRegistry a -> ObserverCallback a -> a -> STMc NoRetry '[] TSimpleDisposer
+registerObserver (ObserverRegistry var) callback currentValue = do
   key <- newUniqueSTM
   modifyTVar var (HM.insert key callback)
   disposer <- newUnmanagedTSimpleDisposer (modifyTVar var (HM.delete key))
 
-  liftSTMc $ callback currentState
+  liftSTMc $ callback currentValue
   pure disposer
 
-updateObservers :: ObserverRegistry a -> ObservableState a -> STMc NoRetry '[] ()
-updateObservers (ObserverRegistry var) newState = liftSTMc do
-  mapM_ ($ newState) . HM.elems =<< readTVar var
+updateObservers :: ObserverRegistry a -> a -> STMc NoRetry '[] ()
+updateObservers (ObserverRegistry var) value = liftSTMc do
+  mapM_ ($ value) . HM.elems =<< readTVar var
 
 observerRegistryHasObservers :: ObserverRegistry a -> STM Bool
 observerRegistryHasObservers (ObserverRegistry var) = not . HM.null <$> readTVar var
@@ -332,32 +274,29 @@ observerRegistryHasObservers (ObserverRegistry var) = not . HM.null <$> readTVar
 
 data ObservableVar a = ObservableVar (TVar a) (ObserverRegistry a)
 
-instance IsRetrievable a (ObservableVar a) where
-  retrieve (ObservableVar var _registry) = readTVarIO var
-
 instance IsObservable a (ObservableVar a) where
   attachObserver (ObservableVar var registry) callback =
-    registerObserver registry callback . ObservableValue =<< readTVar var
+    registerObserver registry callback =<< readTVar var
 
-newObservableVar :: MonadSTM m => a -> m (ObservableVar a)
-newObservableVar x = liftSTM $ ObservableVar <$> newTVar x <*> newObserverRegistry
+newObservableVar :: MonadSTMc NoRetry '[] m => a -> m (ObservableVar a)
+newObservableVar x = liftSTMc $ ObservableVar <$> newTVar x <*> newObserverRegistry
 
 newObservableVarIO :: MonadIO m => a -> m (ObservableVar a)
 newObservableVarIO x = liftIO $ ObservableVar <$> newTVarIO x <*> newObserverRegistryIO
 
-setObservableVar :: MonadSTM m => ObservableVar a -> a -> m ()
-setObservableVar (ObservableVar var registry) newValue = liftSTMc $ do
-  writeTVar var newValue
-  updateObservers registry $ ObservableValue newValue
+setObservableVar :: MonadSTMc NoRetry '[] m => ObservableVar a -> a -> m ()
+setObservableVar (ObservableVar var registry) value = liftSTMc $ do
+  writeTVar var value
+  updateObservers registry value
 
-readObservableVar :: MonadSTM m => ObservableVar a -> m a
+readObservableVar :: ObservableVar a -> STMc NoRetry '[] a
 readObservableVar (ObservableVar var _) = readTVar var
 
-modifyObservableVar :: MonadSTM m => ObservableVar a -> (a -> a) -> m ()
+modifyObservableVar :: MonadSTMc NoRetry '[] m => ObservableVar a -> (a -> a) -> m ()
 modifyObservableVar var f = stateObservableVar var (((), ) . f)
 
-stateObservableVar :: MonadSTM m => ObservableVar a -> (a -> (r, a)) -> m r
-stateObservableVar var f = liftSTM do
+stateObservableVar :: MonadSTMc NoRetry '[] m => ObservableVar a -> (a -> (r, a)) -> m r
+stateObservableVar var f = liftSTMc do
   oldValue <- readObservableVar var
   let (result, newValue) = f oldValue
   setObservableVar var newValue
@@ -365,47 +304,6 @@ stateObservableVar var f = liftSTM do
 
 observableVarHasObservers :: ObservableVar a -> STM Bool
 observableVarHasObservers (ObservableVar _ registry) = observerRegistryHasObservers registry
-
-
-data ObservablePrim a = ObservablePrim (TVar (ObservableState a)) (ObserverRegistry a)
-
-instance IsRetrievable a (ObservablePrim a) where
-  retrieve var = atomically $
-    readObservablePrim var >>= \case
-      ObservableLoading -> retry
-      ObservableValue value -> pure value
-      ObservableNotAvailable ex -> throwM ex
-
-instance IsObservable a (ObservablePrim a) where
-  attachObserver (ObservablePrim var registry) callback = do
-    registerObserver registry callback =<< readTVar var
-
-newObservablePrim :: MonadSTM m => ObservableState a -> m (ObservablePrim a)
-newObservablePrim x = liftSTM $ ObservablePrim <$> newTVar x <*> newObserverRegistry
-
-newObservablePrimIO :: MonadIO m => ObservableState a -> m (ObservablePrim a)
-newObservablePrimIO x = liftIO $ ObservablePrim <$> newTVarIO x <*> newObserverRegistryIO
-
-setObservablePrim :: MonadSTM m => ObservablePrim a -> ObservableState a -> m ()
-setObservablePrim (ObservablePrim var registry) newState = liftSTMc do
-  writeTVar var newState
-  updateObservers registry $ newState
-
-readObservablePrim :: MonadSTM m => ObservablePrim a -> m (ObservableState a)
-readObservablePrim (ObservablePrim var _) = readTVar var
-
-modifyObservablePrim :: MonadSTM m => ObservablePrim a -> (ObservableState a -> ObservableState a) -> m ()
-modifyObservablePrim var f = stateObservablePrim var (((), ) . f)
-
-stateObservablePrim :: MonadSTM m => ObservablePrim a -> (ObservableState a -> (r, ObservableState a)) -> m r
-stateObservablePrim var f = liftSTM do
-  oldValue <- readObservablePrim var
-  let (result, newValue) = f oldValue
-  setObservablePrim var newValue
-  pure result
-
-observablePrimHasObservers :: ObservablePrim a -> STM Bool
-observablePrimHasObservers (ObservablePrim _ registry) = observerRegistryHasObservers registry
 
 
 ---- TODO implement
