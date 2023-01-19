@@ -1,3 +1,5 @@
+{-# LANGUAGE UndecidableInstances #-}
+
 module Quasar.Observable (
   -- * Observable core
   Observable,
@@ -15,6 +17,15 @@ module Quasar.Observable (
   observeBlocking,
   observeAsync,
 
+  -- * ObservableEx
+  ObservableEx,
+  IsObservableEx,
+  toObservableEx,
+  extendObservableEx,
+
+  -- ** Loading state
+  ObservableLoading,
+
   -- * ObservableVar
   ObservableVar,
   newObservableVar,
@@ -29,6 +40,7 @@ import Control.Applicative
 import Control.Monad.Catch
 import Control.Monad.Except
 import Control.Monad.Trans.Maybe
+import Data.Coerce (coerce)
 import Data.HashMap.Strict qualified as HM
 import Data.Unique
 import Quasar.Async
@@ -36,11 +48,6 @@ import Quasar.Exceptions
 import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Resources.Disposer
-
-data ObservableLoading = ObservableLoading
-  deriving stock (Show, Generic)
-
-instance Exception ObservableLoading
 
 
 type ObserverCallback a = a -> STMc NoRetry '[] ()
@@ -133,7 +140,6 @@ instance Applicative Observable where
 
 instance Monad Observable where
   x >>= f = toObservable $ BindObservable x f
-
 
 instance Semigroup a => Semigroup (Observable a) where
   x <> y = liftA2 (<>) x y
@@ -318,3 +324,76 @@ observableVarHasObservers (ObservableVar _ registry) = observerRegistryHasObserv
 ---- TODO implement
 ----cacheObservable :: IsObservable v o => o -> Observable v
 ----cacheObservable = undefined
+
+
+-- * ObservableEx
+
+
+type IsObservableEx exceptions a = IsObservable (Either (Ex exceptions) a)
+
+toObservableEx :: Observable (Either (Ex exceptions) a) -> ObservableEx exceptions a
+toObservableEx = ObservableEx
+
+newtype ObservableEx exceptions a = ObservableEx (Observable (Either (Ex exceptions) a))
+
+extendObservableEx :: sub :<< super => ObservableEx sub a -> ObservableEx super a
+extendObservableEx (ObservableEx o) = ObservableEx $ coerce <$> o
+
+instance IsObservable (Either (Ex exceptions) a) (ObservableEx exceptions a) where
+  attachObserver (ObservableEx o) = attachObserver o
+  readObservable (ObservableEx o) = readObservable o
+  toObservable (ObservableEx o) = o
+  mapObservable f (ObservableEx o) = mapObservable f o
+
+instance Functor (ObservableEx exceptions) where
+  fmap f x = ObservableEx $ mapObservable (fmap f) x
+
+instance Applicative (ObservableEx exceptions) where
+  pure value = ObservableEx $ pure (Right value)
+  liftA2 fn (ObservableEx x) (ObservableEx y) =
+    ObservableEx $ liftA2 (liftA2 fn) x y
+
+instance Monad (ObservableEx exceptions) where
+  (ObservableEx x) >>= f = ObservableEx $ x >>= \case
+    (Left ex) -> pure (Left ex)
+    Right y -> toObservable (f y)
+
+
+instance (Exception e, e :< exceptions) => Throw e (ObservableEx exceptions) where
+  throwC ex = ObservableEx $ pure (Left (toEx ex))
+
+instance ThrowEx (ObservableEx exceptions) where
+  unsafeThrowEx = ObservableEx . pure . Left . unsafeToEx @exceptions
+
+instance SomeException :< exceptions => MonadThrow (ObservableEx exceptions) where
+  throwM = throwC . toException
+
+instance (SomeException :< exceptions, Exception (Ex exceptions)) => MonadCatch (ObservableEx exceptions) where
+  catch (ObservableEx x) f = ObservableEx $ x >>= \case
+    left@(Left ex) -> case fromException (toException ex) of
+      Just matched -> toObservable (f matched)
+      Nothing -> pure left
+    Right y -> pure (Right y)
+
+instance SomeException :< exceptions => MonadFail (ObservableEx exceptions) where
+  fail = throwM . userError
+
+instance (SomeException :< exceptions, Exception (Ex exceptions)) => Alternative (ObservableEx exceptions) where
+  empty = fail "empty"
+  x <|> y = x `catchAll` const y
+
+instance (SomeException :< exceptions, Exception (Ex exceptions)) => MonadPlus (ObservableEx exceptions)
+
+instance Semigroup a => Semigroup (ObservableEx exceptions a) where
+  x <> y = liftA2 (<>) x y
+
+instance Monoid a => Monoid (ObservableEx exceptions a) where
+  mempty = pure mempty
+
+
+-- * ObservableLoading
+
+data ObservableLoading = ObservableLoading
+  deriving stock (Show, Generic)
+
+instance Exception ObservableLoading
