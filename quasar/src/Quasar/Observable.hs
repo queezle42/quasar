@@ -2,6 +2,7 @@ module Quasar.Observable (
   -- * Observable core
   Observable,
   IsObservable(..),
+  ObserverCallback,
   observe,
 
   observeQ,
@@ -22,11 +23,6 @@ module Quasar.Observable (
   modifyObservableVar,
   stateObservableVar,
   observableVarHasObservers,
-
-  -- * Helpers
-
-  -- ** Helper types
-  ObserverCallback,
 ) where
 
 import Control.Applicative
@@ -37,8 +33,8 @@ import Data.HashMap.Strict qualified as HM
 import Data.Unique
 import Quasar.Async
 import Quasar.Exceptions
-import Quasar.Prelude
 import Quasar.MonadQuasar
+import Quasar.Prelude
 import Quasar.Resources.Disposer
 
 data ObservableLoading = ObservableLoading
