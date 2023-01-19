@@ -184,7 +184,7 @@ toFutureEx ::
   (IsFuture (Either (Ex exceptions) r) a, ExceptionList exceptions) =>
   a -> FutureEx exceptions r
 -- unsafeThrowEx is safe here and prevents an extra `ThrowForAll` constraint
-toFutureEx x = FutureEx (either unsafeThrowEx pure =<< awaitSTM x)
+toFutureEx x = FutureEx (either (unsafeThrowEx . toException) pure =<< awaitSTM x)
 
 
 

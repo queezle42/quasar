@@ -183,13 +183,13 @@ type family ThrowForAll xs m where
 -- To use this class see `throwEx`.
 class Monad m => ThrowEx m where
   -- | Implementation helper. May only ever be called by `throwEx`.
-  unsafeThrowEx :: Exception (Ex exceptions) => Ex exceptions -> m a
+  unsafeThrowEx :: SomeException -> m a
 
 throwEx ::
   forall exceptions m a.
   (ThrowEx m, ThrowForAll exceptions m, Exception (Ex exceptions)) =>
   Ex exceptions -> m a
-throwEx = unsafeThrowEx
+throwEx (Ex ex) = unsafeThrowEx ex
 
 instance ThrowEx IO where
   unsafeThrowEx = throwIO
