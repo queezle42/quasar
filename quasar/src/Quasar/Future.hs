@@ -52,13 +52,13 @@ module Quasar.Future (
 import Control.Exception (BlockedIndefinitelyOnSTM(..))
 import Control.Exception.Ex
 import Control.Monad.Catch
-import Control.Monad.Reader
-import Control.Monad.Writer (WriterT)
-import Control.Monad.State (StateT)
 import Control.Monad.RWS (RWST)
+import Control.Monad.Reader
+import Control.Monad.State (StateT)
 import Control.Monad.Trans.Maybe
-import Quasar.Prelude
+import Control.Monad.Writer (WriterT)
 import Quasar.Exceptions
+import Quasar.Prelude
 
 
 class MonadFix m => MonadAwait m where
