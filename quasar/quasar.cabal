@@ -74,6 +74,7 @@ library
   import: shared-properties
   build-depends:
     base >=4.7 && <5,
+    containers,
     exceptions,
     ghc-prim,
     hashable,
@@ -97,6 +98,7 @@ library
     Quasar.Observable.Delta
     Quasar.Observable.ObservableHashMap
     Quasar.Observable.ObservablePriority
+    Quasar.Observable.ObservableMap
     Quasar.Prelude
     Quasar.PreludeExtras
     Quasar.Resources
@@ -105,6 +107,7 @@ library
     Quasar.Utils.ReaderLock
     Quasar.Utils.TOnce
   other-modules:
+    Quasar.Observable.Internal.ObserverRegistry
     Quasar.Resources.Disposer
     Quasar.Utils.ShortIO
   hs-source-dirs:

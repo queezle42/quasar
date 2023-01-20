@@ -41,16 +41,14 @@ import Control.Monad.Catch
 import Control.Monad.Except
 import Control.Monad.Trans.Maybe
 import Data.Coerce (coerce)
-import Data.HashMap.Strict qualified as HM
-import Data.Unique
 import Quasar.Async
 import Quasar.Exceptions
 import Quasar.MonadQuasar
+import Quasar.Observable.Internal.ObserverRegistry
 import Quasar.Prelude
 import Quasar.Resources.Disposer
 
 
-type ObserverCallback a = a -> STMc NoRetry '[] ()
 
 class IsObservable r a | a -> r where
   -- | Register a callback to observe changes. The callback is called when the value changes, but depending on the
@@ -257,32 +255,6 @@ instance IsObservable a (BindObservable a) where
 
   mapObservable f (BindObservable fx fn) =
     toObservable $ BindObservable fx (f <<$>> fn)
-
-
-newtype ObserverRegistry a = ObserverRegistry (TVar (HM.HashMap Unique (a -> STMc NoRetry '[] ())))
-
-newObserverRegistry :: STMc NoRetry '[] (ObserverRegistry a)
-newObserverRegistry = ObserverRegistry <$> newTVar mempty
-
-newObserverRegistryIO :: IO (ObserverRegistry a)
-newObserverRegistryIO = ObserverRegistry <$> newTVarIO mempty
-
-registerObserver :: ObserverRegistry a -> ObserverCallback a -> a -> STMc NoRetry '[] TSimpleDisposer
-registerObserver (ObserverRegistry var) callback currentValue = do
-  key <- newUniqueSTM
-  modifyTVar var (HM.insert key callback)
-  disposer <- newUnmanagedTSimpleDisposer (modifyTVar var (HM.delete key))
-
-  liftSTMc $ callback currentValue
-  pure disposer
-
-updateObservers :: ObserverRegistry a -> a -> STMc NoRetry '[] ()
-updateObservers (ObserverRegistry var) value = liftSTMc do
-  mapM_ ($ value) . HM.elems =<< readTVar var
-
-observerRegistryHasObservers :: ObserverRegistry a -> STM Bool
-observerRegistryHasObservers (ObserverRegistry var) =
-  not . HM.null <$> readTVar var
 
 
 data ObservableVar a = ObservableVar (TVar a) (ObserverRegistry a)
