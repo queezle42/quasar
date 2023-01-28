@@ -27,11 +27,13 @@ module Quasar.Future (
   newPromiseIO,
   fulfillPromiseIO,
   tryFulfillPromiseIO,
+  tryFulfillPromiseIO_,
 
   -- ** Manage `Promise`s in STM
   newPromise,
   fulfillPromise,
   tryFulfillPromise,
+  tryFulfillPromise_,
   peekPromiseSTM,
 
   -- * Exception variants
@@ -221,8 +223,14 @@ fulfillPromise var result = do
 tryFulfillPromiseIO :: MonadIO m => Promise a -> a -> m Bool
 tryFulfillPromiseIO var result = atomically $ tryFulfillPromise var result
 
+tryFulfillPromiseIO_ :: MonadIO m => Promise a -> a -> m ()
+tryFulfillPromiseIO_ var result = void $ tryFulfillPromiseIO var result
+
 tryFulfillPromise :: MonadSTMc NoRetry '[] m => Promise a -> a -> m Bool
 tryFulfillPromise (Promise var) result = tryPutTMVar var result
+
+tryFulfillPromise_ :: MonadSTMc NoRetry '[] m => Promise a -> a -> m ()
+tryFulfillPromise_ var result = void $ tryFulfillPromise var result
 
 
 
