@@ -23,6 +23,7 @@
         results = {
           precise-side-effects = haskellPackages.precise-side-effects;
           quasar = haskellPackages.quasar;
+          quasar-mqtt = haskellPackages.quasar-mqtt;
           quasar-timer = haskellPackages.quasar-timer;
         };
       in results // {
@@ -35,9 +36,11 @@
         packageOverrides = hfinal: hprev: prev.haskell.packageOverrides hfinal hprev // {
           precise-side-effects = hfinal.callCabal2nix "precise-side-effects" ./precise-side-effects {};
           quasar = hfinal.callCabal2nix "quasar" ./quasar {};
+          quasar-mqtt = hfinal.callCabal2nix "quasar-mqtt" ./quasar-mqtt {};
           quasar-timer = hfinal.callCabal2nix "quasar-timer" ./quasar-timer {};
           # Due to a ghc bug in 9.4.3 and 9.2.5
           ListLike = final.haskell.lib.dontCheck hprev.ListLike;
+          net-mqtt = final.haskell.lib.doJailbreak hprev.net-mqtt;
         };
       };
     };
@@ -51,6 +54,7 @@
           packages = hpkgs: [
             hpkgs.precise-side-effects
             hpkgs.quasar
+            hpkgs.quasar-mqtt
             hpkgs.quasar-timer
           ];
           nativeBuildInputs = [

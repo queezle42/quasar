@@ -1,0 +1,77 @@
+cabal-version: 3.0
+
+name:           quasar-mqtt
+version:        0.1.0.0
+license:        BSD-2-Clause
+build-type:     Simple
+
+source-repository head
+  type: git
+  location: https://github.com/queezle42/quasar
+
+common shared-properties
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    BlockArguments
+    DataKinds
+    DefaultSignatures
+    DerivingStrategies
+    DuplicateRecordFields
+    FunctionalDependencies
+    GADTs
+    LambdaCase
+    NoImplicitPrelude
+    NoStarIsType
+    OverloadedRecordDot
+    OverloadedStrings
+    QuasiQuotes
+    TemplateHaskellQuotes
+    TypeFamilies
+    ViewPatterns
+  default-language: GHC2021
+  ghc-options:
+    -Weverything
+    -Wno-all-missed-specialisations
+    -Wno-missing-deriving-strategies
+    -Wno-missing-import-lists
+    -Wno-missing-kind-signatures
+    -Wno-missing-safe-haskell-mode
+    -Wno-unsafe
+    -Werror=incomplete-patterns
+    -Werror=missing-fields
+    -Werror=missing-home-modules
+    -Werror=missing-methods
+
+common shared-executable-properties
+  import: shared-properties
+  ghc-options:
+    -threaded
+    -rtsopts
+    "-with-rtsopts=-N -I0"
+
+library
+  import: shared-properties
+  build-depends:
+    base <5,
+    exceptions,
+    net-mqtt,
+    precise-side-effects,
+    quasar,
+  exposed-modules:
+    Quasar.Mqtt
+  other-modules:
+  hs-source-dirs:
+    src
+
+test-suite quasar-mqtt-test
+  import: shared-executable-properties
+  type: exitcode-stdio-1.0
+  build-depends:
+    base <5,
+    hspec,
+    quasar-mqtt,
+  main-is: Spec.hs
+  other-modules:
+  hs-source-dirs:
+    test
