@@ -21,24 +21,24 @@ spec = parallel $ do
 
   describe "Promise" $ do
     it "can be created" $ do
-      _ <- newPromise :: IO (Promise ())
+      _ <- newPromiseIO :: IO (Promise ())
       pure ()
 
     it "accepts a value" $ do
-      avar <- newPromise :: IO (Promise ())
-      fulfillPromise avar ()
+      avar <- newPromiseIO :: IO (Promise ())
+      fulfillPromiseIO avar ()
 
     it "can be awaited" $ do
-      avar <- newPromise :: IO (Promise ())
-      fulfillPromise avar ()
+      avar <- newPromiseIO :: IO (Promise ())
+      fulfillPromiseIO avar ()
 
       await avar
 
     it "can be awaited when completed asynchronously" $ do
-      avar <- newPromise :: IO (Promise ())
+      avar <- newPromiseIO :: IO (Promise ())
       void $ forkIO $ do
         threadDelay 100000
-        fulfillPromise avar ()
+        fulfillPromiseIO avar ()
 
       await avar
 
@@ -48,17 +48,17 @@ spec = parallel $ do
       awaitAny2 (pure () :: Future ()) (pure () :: Future ()) :: IO ()
 
     it "can be completed later" $ do
-      avar1 <- newPromise :: IO (Promise ())
-      avar2 <- newPromise :: IO (Promise ())
+      avar1 <- newPromiseIO :: IO (Promise ())
+      avar2 <- newPromiseIO :: IO (Promise ())
       void $ forkIO $ do
         threadDelay 100000
-        fulfillPromise avar1 ()
+        fulfillPromiseIO avar1 ()
       awaitAny2 (await avar1) (await avar2)
 
     it "can be completed later by the second parameter" $ do
-      avar1 <- newPromise :: IO (Promise ())
-      avar2 <- newPromise :: IO (Promise ())
+      avar1 <- newPromiseIO :: IO (Promise ())
+      avar2 <- newPromiseIO :: IO (Promise ())
       void $ forkIO $ do
         threadDelay 100000
-        fulfillPromise avar2 ()
+        fulfillPromiseIO avar2 ()
       awaitAny2 (await avar1) (await avar2)

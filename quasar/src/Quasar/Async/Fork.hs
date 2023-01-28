@@ -79,7 +79,7 @@ forkFuture fn = forkFutureWithUnmask (\unmask -> unmask fn)
 
 forkFutureWithUnmask :: forall a. ((forall b. IO b -> IO b) -> IO a) -> ExceptionSink -> IO (FutureEx '[AsyncException] a)
 forkFutureWithUnmask fn exChan = do
-  resultVar <- newPromise
+  resultVar <- newPromiseIO
   forkWithUnmask_ (runAndPut resultVar) exChan
   pure $ toFutureEx resultVar
   where
@@ -91,6 +91,6 @@ forkFutureWithUnmask fn exChan = do
         Left ex ->
           atomically (throwToExceptionSink exChan ex)
             `finally`
-              fulfillPromise resultVar (Left (toEx (AsyncException ex)))
+              fulfillPromiseIO resultVar (Left (toEx (AsyncException ex)))
         Right retVal -> do
-          fulfillPromise resultVar (Right retVal)
+          fulfillPromiseIO resultVar (Right retVal)

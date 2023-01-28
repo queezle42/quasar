@@ -38,7 +38,7 @@ peekFutureShortIO :: Future r -> ShortIO (Maybe r)
 peekFutureShortIO awaitable = ShortIO $ peekFuture awaitable
 
 newPromiseShortIO :: ShortIO (Promise a)
-newPromiseShortIO = ShortIO newPromise
+newPromiseShortIO = ShortIO newPromiseIO
 
 fulfillPromiseShortIO :: Promise a -> a -> ShortIO ()
-fulfillPromiseShortIO var value = ShortIO $ fulfillPromise var value
+fulfillPromiseShortIO var value = ShortIO $ fulfillPromiseIO var value

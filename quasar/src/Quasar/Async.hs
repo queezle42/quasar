@@ -82,9 +82,9 @@ unmanagedAsyncWithUnmask worker exSink fn = liftIO $ spawnAsync (\_ -> pure ()) 
 spawnAsync :: forall a m. (MonadIO m, MonadMask m) => (Disposer -> m ()) -> TIOWorker -> ExceptionSink -> ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
 spawnAsync registerDisposerFn worker exSink fn = mask_ do
   key <- liftIO newUnique
-  resultVar <- newPromise
+  resultVar <- newPromiseIO
 
-  threadIdPromise <- newPromise
+  threadIdPromise <- newPromiseIO
   let threadIdFuture = toFuture threadIdPromise
 
   -- Disposer is created first to ensure the resource can be safely attached
@@ -93,7 +93,7 @@ spawnAsync registerDisposerFn worker exSink fn = mask_ do
   registerDisposerFn disposer
 
   threadId <- liftIO $ forkWithUnmask (runAndPut exSink key resultVar disposer) exSink
-  fulfillPromise threadIdPromise threadId
+  fulfillPromiseIO threadIdPromise threadId
 
   pure (Async (toFutureEx resultVar) disposer)
   where
@@ -103,14 +103,14 @@ spawnAsync registerDisposerFn worker exSink fn = mask_ do
       result <- try $ fn unmask
       case result of
         Left (fromException -> Just (CancelAsync ((== key) -> True))) ->
-          fulfillPromise resultVar (Left (toEx AsyncDisposed))
+          fulfillPromiseIO resultVar (Left (toEx AsyncDisposed))
         Left ex -> do
           atomically (throwToExceptionSink exChan ex)
             `finally` do
-              fulfillPromise resultVar (Left (toEx (AsyncException ex)))
+              fulfillPromiseIO resultVar (Left (toEx (AsyncException ex)))
               disposeEventuallyIO_ disposer
         Right retVal -> do
-          fulfillPromise resultVar (Right retVal)
+          fulfillPromiseIO resultVar (Right retVal)
           disposeEventuallyIO_ disposer
     disposeFn :: Unique -> PromiseEx '[AsyncException, AsyncDisposed] a -> Future ThreadId -> IO ()
     disposeFn key resultVar threadIdFuture = do

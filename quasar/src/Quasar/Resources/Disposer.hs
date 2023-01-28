@@ -136,7 +136,7 @@ beginDisposeSTMDisposer (TDisposerElement _ worker sink state finalizers) = lift
   where
     startDisposeFn :: STM () -> STMc NoRetry '[] (Future ())
     startDisposeFn fn = do
-      promise <- newPromiseSTM
+      promise <- newPromise
       startShortIOSTM_ (runDisposeFn promise disposeFn) worker sink
       pure $ join (toFuture promise)
       where
@@ -240,7 +240,7 @@ beginDisposeIODisposer worker exChan disposeState finalizers = liftSTMc do
   where
     startDisposeFn :: DisposeFnIO -> STMc NoRetry '[] (Future ())
     startDisposeFn disposeFn = do
-      promise <- newPromiseSTM
+      promise <- newPromise
       startShortIOSTM_ (runDisposeFn promise disposeFn) worker exChan
       pure $ join (toFuture promise)
 
@@ -351,7 +351,7 @@ beginDisposeResourceManagerInternal :: ResourceManager -> STMc NoRetry '[] Dispo
 beginDisposeResourceManagerInternal rm = do
   readTVar (resourceManagerState rm) >>= \case
     ResourceManagerNormal attachedResources worker exChan -> do
-      dependenciesVar <- newPromiseSTM
+      dependenciesVar <- newPromise
       writeTVar (resourceManagerState rm) (ResourceManagerDisposing (toFuture dependenciesVar))
       attachedDisposers <- HM.elems <$> readTVar attachedResources
       startShortIOSTM_ (void $ forkIOShortIO (disposeThread dependenciesVar attachedDisposers)) worker exChan
@@ -366,7 +366,7 @@ beginDisposeResourceManagerInternal rm = do
       -- Await direct resource awaitables and collect indirect dependencies
       dependencies <- await (collectDependencies results)
       -- Publish "direct dependencies complete"-status
-      fulfillPromise dependenciesVar dependencies
+      fulfillPromiseIO dependenciesVar dependencies
       -- Await indirect dependencies
       awaitDisposeDependencies $ DisposeDependencies rmKey (pure dependencies)
       -- Set state to disposed and run finalizers

@@ -20,7 +20,7 @@ newtype TIOWorker = TIOWorker (TQueue (IO ()))
 
 startShortIOSTM :: forall a m. MonadSTMc NoRetry '[] m => ShortIO a -> TIOWorker -> ExceptionSink -> m (FutureEx '[AsyncException] a)
 startShortIOSTM fn (TIOWorker jobQueue) exChan = liftSTMc @NoRetry @'[] do
-  resultVar <- newPromiseSTM
+  resultVar <- newPromise
   writeTQueue jobQueue $ job resultVar
   pure $ toFutureEx resultVar
   where
@@ -29,8 +29,8 @@ startShortIOSTM fn (TIOWorker jobQueue) exChan = liftSTMc @NoRetry @'[] do
       try (runShortIO fn) >>= \case
         Left ex -> do
           atomically $ throwToExceptionSink exChan ex
-          fulfillPromise resultVar (Left $ toEx $ AsyncException ex)
-        Right result -> fulfillPromise resultVar (Right result)
+          fulfillPromiseIO resultVar (Left $ toEx $ AsyncException ex)
+        Right result -> fulfillPromiseIO resultVar (Right result)
 
 startShortIOSTM_ :: MonadSTMc NoRetry '[] m => ShortIO () -> TIOWorker -> ExceptionSink -> m ()
 startShortIOSTM_ x y z = void $ startShortIOSTM x y z

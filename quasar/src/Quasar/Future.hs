@@ -24,14 +24,14 @@ module Quasar.Future (
   Promise,
 
   -- ** Manage `Promise`s in IO
+  newPromiseIO,
+  fulfillPromiseIO,
+  tryFulfillPromiseIO,
+
+  -- ** Manage `Promise`s in STM
   newPromise,
   fulfillPromise,
   tryFulfillPromise,
-
-  -- ** Manage `Promise`s in STM
-  newPromiseSTM,
-  fulfillPromiseSTM,
-  tryFulfillPromiseSTM,
   peekPromiseSTM,
 
   -- * Exception variants
@@ -198,31 +198,31 @@ type PromiseEx exceptions a = Promise (Either (Ex exceptions) a)
 instance IsFuture a (Promise a) where
   toFuture (Promise var) = unsafeAwaitSTMc (readTMVar var)
 
-newPromiseSTM :: MonadSTMc NoRetry '[] m => m (Promise a)
-newPromiseSTM = Promise <$> newEmptyTMVar
+newPromise :: MonadSTMc NoRetry '[] m => m (Promise a)
+newPromise = Promise <$> newEmptyTMVar
 
-newPromise :: MonadIO m => m (Promise a)
-newPromise = liftIO $ Promise <$> newEmptyTMVarIO
+newPromiseIO :: MonadIO m => m (Promise a)
+newPromiseIO = liftIO $ Promise <$> newEmptyTMVarIO
 
 
 peekPromiseSTM :: MonadSTMc NoRetry '[] m => Promise a -> m (Maybe a)
 peekPromiseSTM (Promise var) = tryReadTMVar var
 
 
-fulfillPromise :: MonadIO m => Promise a -> a -> m ()
-fulfillPromise var result = atomically $ fulfillPromiseSTM var result
+fulfillPromiseIO :: MonadIO m => Promise a -> a -> m ()
+fulfillPromiseIO var result = atomically $ fulfillPromise var result
 
-fulfillPromiseSTM :: MonadSTMc NoRetry '[PromiseAlreadyCompleted] m => Promise a -> a -> m ()
-fulfillPromiseSTM var result = do
-  success <- tryFulfillPromiseSTM var result
+fulfillPromise :: MonadSTMc NoRetry '[PromiseAlreadyCompleted] m => Promise a -> a -> m ()
+fulfillPromise var result = do
+  success <- tryFulfillPromise var result
   unless success $ throwC PromiseAlreadyCompleted
 
 
-tryFulfillPromise :: MonadIO m => Promise a -> a -> m Bool
-tryFulfillPromise var result = atomically $ tryFulfillPromiseSTM var result
+tryFulfillPromiseIO :: MonadIO m => Promise a -> a -> m Bool
+tryFulfillPromiseIO var result = atomically $ tryFulfillPromise var result
 
-tryFulfillPromiseSTM :: MonadSTMc NoRetry '[] m => Promise a -> a -> m Bool
-tryFulfillPromiseSTM (Promise var) result = tryPutTMVar var result
+tryFulfillPromise :: MonadSTMc NoRetry '[] m => Promise a -> a -> m Bool
+tryFulfillPromise (Promise var) result = tryPutTMVar var result
 
 
 
@@ -236,14 +236,14 @@ afix_ = void . afix
 
 afixExtra :: (MonadIO m, MonadCatch m) => (FutureEx '[SomeException] a -> m (r, a)) -> m r
 afixExtra action = do
-  var <- newPromise
+  var <- newPromiseIO
   catchAll
     do
       (result, fixResult) <- action (toFutureEx var)
-      fulfillPromise var (Right fixResult)
+      fulfillPromiseIO var (Right fixResult)
       pure result
     \ex -> do
-      fulfillPromise var (Left (toEx ex))
+      fulfillPromiseIO var (Left (toEx ex))
       throwM ex
 
 

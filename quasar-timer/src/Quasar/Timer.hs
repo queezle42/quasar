@@ -149,7 +149,7 @@ startSchedulerThread scheduler = async (schedulerThread `finally` liftIO cancelA
 
     fireTimer :: Timer -> STM ()
     fireTimer Timer{completed, disposer} = do
-      result <- tryFulfillPromiseSTM completed (Right ())
+      result <- tryFulfillPromise completed (Right ())
       modifyTVar (if result then activeCount' else cancelledCount') (+ (-1))
       disposeEventually_ disposer
 
@@ -178,7 +178,7 @@ newTimer scheduler time = registerNewResource $ newUnmanagedTimer scheduler time
 newUnmanagedTimer :: MonadIO m => TimerScheduler -> UTCTime -> m Timer
 newUnmanagedTimer scheduler time = liftIO do
   key <- newUnique
-  completed <- newPromise
+  completed <- newPromiseIO
   atomically do
     disposer <- toDisposer <$> newUnmanagedSTMDisposer (disposeFn completed) (ioWorker scheduler) (exceptionSink scheduler)
     let timer = Timer { key, time, completed, disposer, scheduler }
@@ -190,7 +190,7 @@ newUnmanagedTimer scheduler time = liftIO do
   where
     disposeFn :: PromiseEx '[TimerCancelled] () -> STM ()
     disposeFn completed = do
-      cancelled <- tryFulfillPromiseSTM completed (Left (toEx TimerCancelled))
+      cancelled <- tryFulfillPromise completed (Left (toEx TimerCancelled))
       when cancelled do
         modifyTVar (activeCount scheduler) (+ (-1))
         modifyTVar (cancelledCount scheduler) (+ 1)
