@@ -4,8 +4,6 @@ module Quasar.Utils.TOnce (
   newTOnceIO,
   mapFinalizeTOnce,
   finalizeTOnce,
-  readTOnceState,
-  readTOnceResult,
 
   -- * Exceptions
   TOnceAlreadyFinalized,
@@ -18,40 +16,32 @@ data TOnceAlreadyFinalized = TOnceAlreadyFinalized
   deriving stock (Eq, Show)
   deriving anyclass Exception
 
-newtype TOnce a b = TOnce (TVar (Either a b))
+data TOnce a b = TOnce (TVar (Maybe a)) (Promise b)
 
 instance IsFuture b (TOnce a b) where
-  toFuture = unsafeAwaitSTMc . readTOnceResult
+  toFuture (TOnce _ promise) = toFuture promise
 
 newTOnce :: MonadSTMc NoRetry '[] m => a -> m (TOnce a b)
-newTOnce initial = TOnce <$> newTVar (Left initial)
+newTOnce initial = TOnce <$> newTVar (Just initial) <*> newPromise
 
 newTOnceIO :: MonadIO m => a -> m (TOnce a b)
-newTOnceIO initial = TOnce <$> newTVarIO (Left initial)
+newTOnceIO initial = TOnce <$> newTVarIO (Just initial) <*> newPromiseIO
 
 
--- TODO guard against reentry
-mapFinalizeTOnce :: MonadSTMc NoRetry '[] m => TOnce a b -> (a -> m b) -> m b
-mapFinalizeTOnce (TOnce var) fn =
+mapFinalizeTOnce :: MonadSTMc NoRetry '[] m => TOnce a b -> (a -> m b) -> m (Future b)
+mapFinalizeTOnce (TOnce var promise) fn = do
   readTVar var >>= \case
-    Left initial -> do
+    Just initial -> do
+      writeTVar var Nothing
       final <- fn initial
-      writeTVar var (Right final)
-      pure final
-    Right final -> pure final
+      tryFulfillPromise_ promise final
+      pure (toFuture promise)
+    Nothing -> pure (toFuture promise)
 
 finalizeTOnce :: MonadSTMc NoRetry '[TOnceAlreadyFinalized] m => TOnce a b -> b -> m ()
-finalizeTOnce (TOnce var) value =
+finalizeTOnce (TOnce var promise) value =
   readTVar var >>= \case
-    Left _ -> writeTVar var (Right value)
-    Right _ -> throwC TOnceAlreadyFinalized
-
-
-readTOnceState :: MonadSTMc NoRetry '[] m => TOnce a b -> m (Either a b)
-readTOnceState (TOnce var) = readTVar var
-
-readTOnceResult :: MonadSTMc Retry '[] m => TOnce a b -> m b
-readTOnceResult switch =
-  readTOnceState switch >>= \case
-    Right final -> pure final
-    _ -> retry
+    Just _ -> do
+      writeTVar var Nothing
+      tryFulfillPromise_ promise value
+    Nothing -> throwC TOnceAlreadyFinalized

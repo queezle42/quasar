@@ -119,7 +119,7 @@ disposeTDisposer :: MonadSTM m => TDisposer -> m ()
 disposeTDisposer (TDisposer elements) = liftSTM $ mapM_ go elements
   where
     go (TDisposerElement _ _ sink state finalizers) = do
-      future <- mapFinalizeTOnce state startDisposeFn
+      future <- join <$> mapFinalizeTOnce state startDisposeFn
       -- Elements can also be disposed by a resource manager (on a dedicated thread).
       -- In that case that thread has to be awaited (otherwise this is a no-op).
       awaitSTM future
@@ -128,11 +128,11 @@ disposeTDisposer (TDisposer elements) = liftSTM $ mapM_ go elements
         startDisposeFn disposeFn = do
           disposeFn `catchAll` throwToExceptionSink sink
           liftSTMc $ runFinalizers finalizers
-          pure $ pure ()
+          pure (pure ())
 
 beginDisposeSTMDisposer :: forall m. MonadSTMc NoRetry '[] m => TDisposerElement -> m (Future ())
 beginDisposeSTMDisposer (TDisposerElement _ worker sink state finalizers) = liftSTMc do
-  mapFinalizeTOnce state startDisposeFn
+  join <$> mapFinalizeTOnce state startDisposeFn
   where
     startDisposeFn :: STM () -> STMc NoRetry '[] (Future ())
     startDisposeFn fn = do
@@ -191,7 +191,8 @@ disposeTSimpleDisposer (TSimpleDisposer elements) = liftSTMc do
 
 disposeTSimpleDisposerElement :: TSimpleDisposerElement -> STMc NoRetry '[] ()
 disposeTSimpleDisposerElement (TSimpleDisposerElement _ state finalizers) =
-  mapFinalizeTOnce state runDisposeFn
+  -- Voiding the result fixes an edge case when calling `disposeTSimpleDisposerElement` from the disposer itself
+  void $ mapFinalizeTOnce state runDisposeFn
   where
     runDisposeFn :: STMc NoRetry '[] () -> STMc NoRetry '[] ()
     runDisposeFn disposeFn = do
@@ -236,7 +237,7 @@ disposeEventually_ resource = void $ disposeEventually resource
 
 beginDisposeIODisposer :: MonadSTMc NoRetry '[] m => TIOWorker -> ExceptionSink -> DisposerState -> Finalizers -> m (Future ())
 beginDisposeIODisposer worker exChan disposeState finalizers = liftSTMc do
-  mapFinalizeTOnce disposeState startDisposeFn
+  join <$> mapFinalizeTOnce disposeState startDisposeFn
   where
     startDisposeFn :: DisposeFnIO -> STMc NoRetry '[] (Future ())
     startDisposeFn disposeFn = do
