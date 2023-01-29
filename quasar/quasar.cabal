@@ -97,8 +97,8 @@ library
     Quasar.Observable
     Quasar.Observable.Delta
     Quasar.Observable.ObservableHashMap
-    Quasar.Observable.ObservablePriority
     Quasar.Observable.ObservableMap
+    Quasar.Observable.ObservablePriority
     Quasar.Prelude
     Quasar.PreludeExtras
     Quasar.Resources
