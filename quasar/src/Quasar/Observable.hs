@@ -44,11 +44,11 @@ import Data.Coerce (coerce)
 import Quasar.Async
 import Quasar.Exceptions
 import Quasar.MonadQuasar
-import Quasar.Observable.Internal.ObserverRegistry
 import Quasar.Prelude
 import Quasar.Resources.Disposer
+import Quasar.Utils.CallbackRegistry
 
-
+type ObserverCallback a = a -> STMc NoRetry '[] ()
 
 class IsObservable r a | a -> r where
   -- | Register a callback to observe changes. The callback is called when the value changes, but depending on the
@@ -257,24 +257,26 @@ instance IsObservable a (BindObservable a) where
     toObservable $ BindObservable fx (f <<$>> fn)
 
 
-data ObservableVar a = ObservableVar (TVar a) (ObserverRegistry a)
+data ObservableVar a = ObservableVar (TVar a) (CallbackRegistry a)
 
 instance IsObservable a (ObservableVar a) where
-  attachObserver (ObservableVar var registry) callback =
-    registerObserver registry callback =<< readTVar var
+  attachObserver (ObservableVar var registry) callback = do
+    disposer <- registerCallback registry callback
+    callback =<< readTVar var
+    pure disposer
 
   readObservable = readObservableVar
 
 newObservableVar :: MonadSTMc NoRetry '[] m => a -> m (ObservableVar a)
-newObservableVar x = liftSTMc $ ObservableVar <$> newTVar x <*> newObserverRegistry
+newObservableVar x = liftSTMc $ ObservableVar <$> newTVar x <*> newCallbackRegistry
 
 newObservableVarIO :: MonadIO m => a -> m (ObservableVar a)
-newObservableVarIO x = liftIO $ ObservableVar <$> newTVarIO x <*> newObserverRegistryIO
+newObservableVarIO x = liftIO $ ObservableVar <$> newTVarIO x <*> newCallbackRegistryIO
 
 setObservableVar :: MonadSTMc NoRetry '[] m => ObservableVar a -> a -> m ()
 setObservableVar (ObservableVar var registry) value = liftSTMc $ do
   writeTVar var value
-  updateObservers registry value
+  callCallbacks registry value
 
 readObservableVar :: ObservableVar a -> STMc NoRetry '[] a
 readObservableVar (ObservableVar var _) = readTVar var
@@ -290,7 +292,7 @@ stateObservableVar var f = liftSTMc do
   pure result
 
 observableVarHasObservers :: ObservableVar a -> STM Bool
-observableVarHasObservers (ObservableVar _ registry) = observerRegistryHasObservers registry
+observableVarHasObservers (ObservableVar _ registry) = callbackRegistryHasCallbacks registry
 
 
 ---- TODO implement
@@ -369,3 +371,11 @@ data ObservableLoading = ObservableLoading
   deriving stock (Show, Generic)
 
 instance Exception ObservableLoading
+
+
+-- * Convert Observable to Future
+
+--observableMatches :: MonadSTMc NoRetry '[] m => (a -> Bool) -> Observable a -> m (Future a)
+---- TODO remove monad `m` from signature after reworking the Future to allow callbacks
+--observableMatches pred observable = do
+--  promise <- newPromiseIO

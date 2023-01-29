@@ -18,9 +18,9 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Tuple (swap)
 import Quasar.Observable
-import Quasar.Observable.Internal.ObserverRegistry
 import Quasar.Prelude hiding (lookupDelete)
 import Quasar.Resources.Disposer
+import Quasar.Utils.CallbackRegistry
 
 
 class IsObservable (Map k v) a => IsObservableMap k v a where
@@ -82,21 +82,24 @@ instance IsObservableMap k v (MappedObservableMap k v) where
 
 data ObservableMapVar k v = ObservableMapVar {
   content :: TVar (Map k v),
-  observers :: ObserverRegistry (Map k v),
-  deltaObservers :: ObserverRegistry (ObservableMapDelta k v),
-  keyObservers :: TVar (Map k (ObserverRegistry (Maybe v)))
+  observers :: CallbackRegistry (Map k v),
+  deltaObservers :: CallbackRegistry (ObservableMapDelta k v),
+  keyObservers :: TVar (Map k (CallbackRegistry (Maybe v)))
 }
 
 instance IsObservable (Map k v) (ObservableMapVar k v) where
   readObservable ObservableMapVar{content} = readTVar content
-  attachObserver ObservableMapVar{content, observers} callback =
-    registerObserver observers callback =<< readTVar content
+  attachObserver ObservableMapVar{content, observers} callback = do
+    disposer <- registerCallback observers callback
+    callback =<< readTVar content
+    pure disposer
 
 instance IsObservableMap k v (ObservableMapVar k v) where
   observeKey key x = toObservable (ObservableMapVarKeyObservable key x)
   attachDeltaObserver ObservableMapVar{content, deltaObservers} callback = do
-    initial <- initialObservableMapDelta <$> readTVar content
-    registerObserver deltaObservers callback initial
+    disposer <- registerCallback deltaObservers callback
+    callback =<< initialObservableMapDelta <$> readTVar content
+    pure disposer
 
 
 data ObservableMapVarKeyObservable k v = ObservableMapVarKeyObservable k (ObservableMapVar k v)
@@ -107,10 +110,12 @@ instance Ord k => IsObservable (Maybe (v)) (ObservableMapVarKeyObservable k v) w
     registry <- (Map.lookup key <$> readTVar keyObservers) >>= \case
       Just registry -> pure registry
       Nothing -> do
-        registry <- newObserverRegistryWithEmptyCallback (modifyTVar keyObservers (Map.delete key))
+        registry <- newCallbackRegistryWithEmptyCallback (modifyTVar keyObservers (Map.delete key))
         modifyTVar keyObservers (Map.insert key registry)
         pure registry
-    registerObserver registry callback value
+    disposer <- registerCallback registry callback
+    callback value
+    pure disposer
 
   readObservable (ObservableMapVarKeyObservable key ObservableMapVar{content}) =
     Map.lookup key <$> readTVar content
@@ -118,36 +123,36 @@ instance Ord k => IsObservable (Maybe (v)) (ObservableMapVarKeyObservable k v) w
 new :: MonadSTMc NoRetry '[] m => m (ObservableMapVar k v)
 new = liftSTMc @NoRetry @'[] do
   content <- newTVar Map.empty
-  observers <- newObserverRegistry
-  deltaObservers <- newObserverRegistry
+  observers <- newCallbackRegistry
+  deltaObservers <- newCallbackRegistry
   keyObservers <- newTVar Map.empty
   pure ObservableMapVar {content, observers, deltaObservers, keyObservers}
 
 insert :: forall k v m. (Ord k, MonadSTMc NoRetry '[] m) => k -> v -> ObservableMapVar k v -> m ()
 insert key value ObservableMapVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
   state <- stateTVar content (dup . Map.insert key value)
-  updateObservers observers state
-  updateObservers deltaObservers [Insert key value]
+  callCallbacks observers state
+  callCallbacks deltaObservers [Insert key value]
   mkr <- Map.lookup key <$> readTVar keyObservers
-  forM_ mkr \keyRegistry -> updateObservers keyRegistry (Just value)
+  forM_ mkr \keyRegistry -> callCallbacks keyRegistry (Just value)
 
 delete :: forall k v m. (Ord k, MonadSTMc NoRetry '[] m) => k -> ObservableMapVar k v -> m ()
 delete key ObservableMapVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
   state <- stateTVar content (dup . Map.delete key)
-  updateObservers observers state
-  updateObservers deltaObservers [Delete key]
+  callCallbacks observers state
+  callCallbacks deltaObservers [Delete key]
   mkr <- Map.lookup key <$> readTVar keyObservers
-  forM_ mkr \keyRegistry -> updateObservers keyRegistry Nothing
+  forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
 
 lookupDelete :: forall k v m. (Ord k, MonadSTMc NoRetry '[] m) => k -> ObservableMapVar k v -> m (Maybe v)
 lookupDelete key ObservableMapVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
   (result, newMap) <- stateTVar content \orig ->
     let (result, newMap) = mapLookupDelete key orig
     in ((result, newMap), newMap)
-  updateObservers observers newMap
-  updateObservers deltaObservers [Delete key]
+  callCallbacks observers newMap
+  callCallbacks deltaObservers [Delete key]
   mkr <- Map.lookup key <$> readTVar keyObservers
-  forM_ mkr \keyRegistry -> updateObservers keyRegistry Nothing
+  forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
   pure result
   where
     -- | Lookup and delete a value from a Map in one operation

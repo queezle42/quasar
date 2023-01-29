@@ -102,12 +102,12 @@ library
     Quasar.Prelude
     Quasar.PreludeExtras
     Quasar.Resources
+    Quasar.Utils.CallbackRegistry
     Quasar.Utils.Exceptions
     Quasar.Utils.ExtraT
     Quasar.Utils.ReaderLock
     Quasar.Utils.TOnce
   other-modules:
-    Quasar.Observable.Internal.ObserverRegistry
     Quasar.Resources.Disposer
     Quasar.Utils.ShortIO
   hs-source-dirs:
