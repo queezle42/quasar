@@ -119,7 +119,7 @@ disposeTDisposer :: MonadSTM m => TDisposer -> m ()
 disposeTDisposer (TDisposer elements) = liftSTM $ mapM_ go elements
   where
     go (TDisposerElement _ _ sink state finalizers) = do
-      future <- join <$> mapFinalizeTOnce state startDisposeFn
+      future <- mapFinalizeTOnce state startDisposeFn
       -- Elements can also be disposed by a resource manager (on a dedicated thread).
       -- In that case that thread has to be awaited (otherwise this is a no-op).
       awaitSTM future
@@ -132,7 +132,7 @@ disposeTDisposer (TDisposer elements) = liftSTM $ mapM_ go elements
 
 beginDisposeSTMDisposer :: forall m. MonadSTMc NoRetry '[] m => TDisposerElement -> m (Future ())
 beginDisposeSTMDisposer (TDisposerElement _ worker sink state finalizers) = liftSTMc do
-  join <$> mapFinalizeTOnce state startDisposeFn
+  mapFinalizeTOnce state startDisposeFn
   where
     startDisposeFn :: STM () -> STMc NoRetry '[] (Future ())
     startDisposeFn fn = do
@@ -159,7 +159,7 @@ beginDisposeSTMDisposer (TDisposerElement _ worker sink state finalizers) = lift
           throwM $ DisposeException ex
 
 
-type STMSimpleDisposerState = TOnce (STMc NoRetry '[] ()) ()
+type STMSimpleDisposerState = TOnce (STMc NoRetry '[] ()) (Future ())
 
 data TSimpleDisposerElement = TSimpleDisposerElement Unique STMSimpleDisposerState Finalizers
 
@@ -171,7 +171,7 @@ instance Resource TSimpleDisposer where
 
 instance Resource TSimpleDisposerElement where
   toDisposer disposer = Disposer [STMSimpleDisposer disposer]
-  isDisposed (TSimpleDisposerElement _ state _) = toFuture state
+  isDisposed (TSimpleDisposerElement _ state _) = join (toFuture state)
   isDisposing = isDisposed
 
 instance Resource [TSimpleDisposerElement] where
@@ -185,19 +185,22 @@ newUnmanagedTSimpleDisposer fn = do
   element <-  TSimpleDisposerElement key <$> newTOnce fn <*> newFinalizers
   pure $ TSimpleDisposer [element]
 
+-- | In case of reentry this will return without calling the dispose hander again.
 disposeTSimpleDisposer :: MonadSTMc NoRetry '[] m => TSimpleDisposer -> m ()
 disposeTSimpleDisposer (TSimpleDisposer elements) = liftSTMc do
   mapM_ disposeTSimpleDisposerElement elements
 
+-- | In case of reentry this will return without calling the dispose hander again.
 disposeTSimpleDisposerElement :: TSimpleDisposerElement -> STMc NoRetry '[] ()
 disposeTSimpleDisposerElement (TSimpleDisposerElement _ state finalizers) =
-  -- Voiding the result fixes an edge case when calling `disposeTSimpleDisposerElement` from the disposer itself
+  -- Voiding the result fixes the edge case when calling `disposeTSimpleDisposerElement` from the disposer itself
   void $ mapFinalizeTOnce state runDisposeFn
   where
-    runDisposeFn :: STMc NoRetry '[] () -> STMc NoRetry '[] ()
+    runDisposeFn :: STMc NoRetry '[] () -> STMc NoRetry '[] (Future ())
     runDisposeFn disposeFn = do
       disposeFn
       runFinalizers finalizers
+      pure $ pure ()
 
 
 -- | A trivial disposer that does not perform any action when disposed.
@@ -237,7 +240,7 @@ disposeEventually_ resource = void $ disposeEventually resource
 
 beginDisposeIODisposer :: MonadSTMc NoRetry '[] m => TIOWorker -> ExceptionSink -> DisposerState -> Finalizers -> m (Future ())
 beginDisposeIODisposer worker exChan disposeState finalizers = liftSTMc do
-  join <$> mapFinalizeTOnce disposeState startDisposeFn
+  mapFinalizeTOnce disposeState startDisposeFn
   where
     startDisposeFn :: DisposeFnIO -> STMc NoRetry '[] (Future ())
     startDisposeFn disposeFn = do

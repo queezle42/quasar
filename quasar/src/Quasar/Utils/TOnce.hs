@@ -2,9 +2,9 @@ module Quasar.Utils.TOnce (
   TOnce,
   newTOnce,
   newTOnceIO,
-  mapFinalizeTOnce,
   finalizeTOnce,
   readTOnce,
+  mapFinalizeTOnce,
 
   -- * Exceptions
   TOnceAlreadyFinalized,
@@ -29,19 +29,6 @@ newTOnce initial = TOnce <$> newTVar (Left initial)
 newTOnceIO :: MonadIO m => a -> m (TOnce a b)
 newTOnceIO initial = TOnce <$> newTVarIO (Left initial)
 
-
---mapFinalizeTOnce :: MonadSTMc NoRetry '[] m => TOnce a (Future b) -> (a -> m b) -> m (Future b)
-mapFinalizeTOnce :: MonadSTMc NoRetry '[] m => TOnce a b -> (a -> m b) -> m (Future b)
-mapFinalizeTOnce = undefined
---mapFinalizeTOnce (TOnce var) fn = do
---  readTVar var >>= \case
---    Just initial -> do
---      writeTVar var Nothing
---      final <- fn initial
---      tryFulfillPromise_ promise final
---      pure (toFuture promise)
---    Nothing -> pure (toFuture promise)
-
 finalizeTOnce :: MonadSTMc NoRetry '[TOnceAlreadyFinalized] m => TOnce a b -> b -> m ()
 finalizeTOnce (TOnce var) value =
   readTVar var >>= \case
@@ -50,3 +37,14 @@ finalizeTOnce (TOnce var) value =
 
 readTOnce :: MonadSTMc NoRetry '[] m => TOnce a b -> m (Either a b)
 readTOnce (TOnce var) = readTVar var
+
+mapFinalizeTOnce :: MonadSTMc NoRetry '[] m => TOnce a (Future b) -> (a -> m (Future b)) -> m (Future b)
+mapFinalizeTOnce (TOnce var) fn = do
+  readTVar var >>= \case
+    Left initial -> do
+      promise <- newPromise
+      writeTVar var (Right (join (toFuture promise)))
+      final <- fn initial
+      tryFulfillPromise_ promise final
+      pure final
+    Right future -> pure future
