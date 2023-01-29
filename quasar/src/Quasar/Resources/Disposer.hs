@@ -462,19 +462,6 @@ runFinalizersAfterShortIO finalizers future = do
         atomicallyC $ liftSTMc $ runFinalizers finalizers
 
 
-runFinalizersAfter :: TIOWorker -> Finalizers -> Future () -> STMc NoRetry '[] ()
-runFinalizersAfter worker finalizers future = do
-  -- Peek future to ensure trivial disposers always run without forking
-  isCompleted <- isJust <$> peekFuture future
-  if isCompleted
-    then
-      runFinalizers finalizers
-    else
-      enqueueForkIO worker do
-        await future
-        atomicallyC $ liftSTMc $ runFinalizers finalizers
-
-
 -- * ResourceCollector
 
 class Monad m => ResourceCollector m where
