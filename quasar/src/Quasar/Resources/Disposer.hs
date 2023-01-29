@@ -83,12 +83,14 @@ instance Resource DisposerElement where
   isDisposed (IODisposer _ _ _ state _) = join (toFuture state)
   isDisposed (STMDisposer tdisposer) = isDisposed tdisposer
   isDisposed (STMSimpleDisposer tdisposer) = isDisposed tdisposer
-  isDisposed (ResourceManagerDisposer resourceManager) = resourceManagerIsDisposed resourceManager
+  isDisposed (ResourceManagerDisposer resourceManager) =
+    toFuture (resourceManagerIsDisposed resourceManager)
 
   isDisposing (IODisposer _ _ _ state _) = void (toFuture state)
   isDisposing (STMDisposer tdisposer) = isDisposing tdisposer
   isDisposing (STMSimpleDisposer tdisposer) = isDisposing tdisposer
-  isDisposing (ResourceManagerDisposer resourceManager) = resourceManagerIsDisposing resourceManager
+  isDisposing (ResourceManagerDisposer resourceManager) =
+    toFuture (resourceManagerIsDisposing resourceManager)
 
 
 type DisposeFn = ShortIO (Future ())
@@ -289,6 +291,8 @@ data DisposeDependencies = DisposeDependencies Unique (Future [DisposeDependenci
 data ResourceManager = ResourceManager {
   resourceManagerKey :: Unique,
   resourceManagerState :: TVar ResourceManagerState,
+  resourceManagerIsDisposing :: Promise (),
+  resourceManagerIsDisposed :: Promise (),
   resourceManagerFinalizers :: Finalizers
 }
 
@@ -299,8 +303,8 @@ data ResourceManagerState
 
 instance Resource ResourceManager where
   toDisposer rm = Disposer [ResourceManagerDisposer rm]
-  isDisposed = resourceManagerIsDisposed
-  isDisposing = resourceManagerIsDisposing
+  isDisposed rm = toFuture (resourceManagerIsDisposed rm)
+  isDisposing rm = toFuture (resourceManagerIsDisposing rm)
 
 
 newUnmanagedResourceManagerSTM :: MonadSTMc NoRetry '[] m => TIOWorker -> ExceptionSink -> m ResourceManager
@@ -308,10 +312,14 @@ newUnmanagedResourceManagerSTM worker exChan = do
   resourceManagerKey <- newUniqueSTM
   attachedResources <- newTVar mempty
   resourceManagerState <- newTVar (ResourceManagerNormal attachedResources worker exChan)
+  resourceManagerIsDisposing <- newPromise
+  resourceManagerIsDisposed <- newPromise
   resourceManagerFinalizers <- newFinalizers
   pure ResourceManager {
     resourceManagerKey,
     resourceManagerState,
+    resourceManagerIsDisposing,
+    resourceManagerIsDisposed,
     resourceManagerFinalizers
   }
 
@@ -349,14 +357,18 @@ tryAttachDisposer resourceManager disposer = do
 beginDisposeResourceManager :: ResourceManager -> STMc NoRetry '[] (Future ())
 beginDisposeResourceManager rm = do
   void $ beginDisposeResourceManagerInternal rm
-  pure $ resourceManagerIsDisposed rm
+  pure $ toFuture (resourceManagerIsDisposed rm)
 
 beginDisposeResourceManagerInternal :: ResourceManager -> STMc NoRetry '[] DisposeDependencies
 beginDisposeResourceManagerInternal rm = do
   readTVar (resourceManagerState rm) >>= \case
     ResourceManagerNormal attachedResources worker exChan -> do
       dependenciesVar <- newPromise
+
+      -- write before fulfilling the promise since the promise has callbacks
       writeTVar (resourceManagerState rm) (ResourceManagerDisposing (toFuture dependenciesVar))
+      tryFulfillPromise_ (resourceManagerIsDisposing rm) ()
+
       attachedDisposers <- HM.elems <$> readTVar attachedResources
       startShortIOSTM_ (void $ forkIOShortIO (disposeThread dependenciesVar attachedDisposers)) worker exChan
       pure $ DisposeDependencies rmKey (toFuture dependenciesVar)
@@ -375,7 +387,11 @@ beginDisposeResourceManagerInternal rm = do
       awaitDisposeDependencies $ DisposeDependencies rmKey (pure dependencies)
       -- Set state to disposed and run finalizers
       atomicallyC $ liftSTMc do
+
+        -- write before fulfilling the promise since the promise has callbacks
         writeTVar (resourceManagerState rm) ResourceManagerDisposed
+        tryFulfillPromise_ (resourceManagerIsDisposed rm) ()
+
         runFinalizers (resourceManagerFinalizers rm)
 
     rmKey :: Unique
@@ -405,19 +421,6 @@ beginDisposeResourceManagerInternal rm = do
           | otherwise = do
               dependencies <- await deps
               foldM go (HashSet.insert key keys) dependencies
-
-
-resourceManagerIsDisposed :: ResourceManager -> Future ()
-resourceManagerIsDisposed rm = unsafeAwaitSTMc $
-  readTVar (resourceManagerState rm) >>= \case
-    ResourceManagerDisposed -> pure ()
-    _ -> retry
-
-resourceManagerIsDisposing :: ResourceManager -> Future ()
-resourceManagerIsDisposing rm = unsafeAwaitSTMc $
-  readTVar (resourceManagerState rm) >>= \case
-    ResourceManagerNormal {} -> retry
-    _ -> pure ()
 
 
 -- * Implementation internals

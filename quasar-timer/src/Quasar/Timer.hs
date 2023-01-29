@@ -122,11 +122,11 @@ startSchedulerThread scheduler = async (schedulerThread `finally` liftIO cancelA
     wait :: Timer -> Int -> QuasarIO ()
     wait nextTimer microseconds = do
       delay <- newDelay microseconds
-      awaitAny2 (void $ await delay) nextTimerChanged
+      atomically $ (void $ awaitSTM delay) `orElse` nextTimerChanged
       dispose delay
       where
-        nextTimerChanged :: Future ()
-        nextTimerChanged = unsafeAwaitSTMc do
+        nextTimerChanged :: STM ()
+        nextTimerChanged = do
           minTimer <- Data.Heap.minimum <$> readTMVar heap'
           unless (minTimer /= nextTimer) retry
 

@@ -43,12 +43,6 @@ module Quasar.Future (
 
   -- * Caching
   cacheFuture,
-
-  -- ** Unsafe implementation helpers
-  unsafeSTMcToFuture,
-  unsafeSTMToFutureEx,
-  unsafeAwaitSTMc,
-  unsafeAwaitSTM,
 ) where
 
 import Control.Exception (BlockedIndefinitelyOnSTM(..))
