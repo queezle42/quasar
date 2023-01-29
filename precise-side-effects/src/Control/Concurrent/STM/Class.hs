@@ -32,6 +32,7 @@ module Control.Concurrent.STM.Class (
   NoRetry,
   orElse,
   orElseC,
+  orElseNothing,
   check,
 
   -- ** Throw
@@ -295,10 +296,16 @@ orElseC ::
   forall exceptions m a. (MonadSTMc NoRetry exceptions m) =>
   STMc Retry exceptions a -> m a -> m a
 orElseC fx fy =
-  unsafeLiftSTM (STM.orElse (Just <$> runSTMc fx) (pure Nothing)) >>= \case
+  orElseNothing fx >>= \case
     Just r -> pure r
     Nothing -> fy
 {-# INLINABLE orElseC #-}
+
+orElseNothing ::
+  forall exceptions m a. (MonadSTMc NoRetry exceptions m) =>
+  STMc Retry exceptions a -> m (Maybe a)
+orElseNothing fx = unsafeLiftSTM (STM.orElse (Just <$> runSTMc fx) (pure Nothing))
+{-# INLINABLE orElseNothing #-}
 
 
 atomicallyC :: MonadIO m => STMc Retry '[SomeException] a -> m a
