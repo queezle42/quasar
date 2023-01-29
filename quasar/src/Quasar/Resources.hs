@@ -122,7 +122,7 @@ registerSimpleDisposeTransactionIO_ fn = quasarAtomically $ void $ registerSimpl
 registerNewResource :: forall a m. (Resource a, MonadQuasar m, MonadIO m, MonadMask m) => m a -> m a
 registerNewResource fn = do
   rm <- askResourceManager
-  disposing <- isJust <$> peekFuture (isDisposing rm)
+  disposing <- isJust <$> peekFutureIO (isDisposing rm)
   -- Bail out before creating the resource _if possible_
   when disposing $ throwM AlreadyDisposing
 

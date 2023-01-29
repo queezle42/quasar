@@ -465,7 +465,7 @@ runFinalizersAfterShortIO finalizers future = do
 runFinalizersAfter :: TIOWorker -> Finalizers -> Future () -> STMc NoRetry '[] ()
 runFinalizersAfter worker finalizers future = do
   -- Peek future to ensure trivial disposers always run without forking
-  isCompleted <- isJust <$> peekFutureSTM future
+  isCompleted <- isJust <$> peekFuture future
   if isCompleted
     then
       runFinalizers finalizers

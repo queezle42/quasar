@@ -35,7 +35,7 @@ forkIOWithUnmaskShortIO fn = ShortIO $ forkIOWithUnmask fn
 
 
 peekFutureShortIO :: Future r -> ShortIO (Maybe r)
-peekFutureShortIO awaitable = ShortIO $ peekFuture awaitable
+peekFutureShortIO awaitable = ShortIO $ peekFutureIO awaitable
 
 newPromiseShortIO :: ShortIO (Promise a)
 newPromiseShortIO = ShortIO newPromiseIO

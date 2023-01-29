@@ -2,7 +2,7 @@ module Quasar.Future (
   -- * MonadAwait
   MonadAwait(..),
   peekFuture,
-  peekFutureSTM,
+  peekFutureIO,
   awaitSTM,
 
   -- * Future
@@ -98,13 +98,13 @@ instance MonadAwait m => MonadAwait (MaybeT m) where
 
 -- | Returns the result (in a `Just`) when the future is completed, throws an `Exception` when the future is
 -- failed and returns `Nothing` otherwise.
-peekFuture :: MonadIO m => Future r -> m (Maybe r)
-peekFuture future = atomically $ peekFutureSTM future
+peekFutureIO :: MonadIO m => Future r -> m (Maybe r)
+peekFutureIO future = atomically $ peekFuture future
 
 -- | Returns the result (in a `Just`) when the future is completed, throws an `Exception` when the future is
 -- failed and returns `Nothing` otherwise.
-peekFutureSTM :: MonadSTMc NoRetry '[] m => Future a -> m (Maybe a)
-peekFutureSTM future = orElseC @'[] (Just <$> awaitSTM future) (pure Nothing)
+peekFuture :: MonadSTMc NoRetry '[] m => Future a -> m (Maybe a)
+peekFuture future = orElseC @'[] (Just <$> awaitSTM future) (pure Nothing)
 
 
 class IsFuture r a | a -> r where
