@@ -109,6 +109,8 @@ library
     Quasar.Utils.TOnce
   other-modules:
     Quasar.Resources.Disposer
+    Quasar.Resources.Finalizer
+    Quasar.Resources.TSimpleDisposer
     Quasar.Utils.ShortIO
   hs-source-dirs:
     src

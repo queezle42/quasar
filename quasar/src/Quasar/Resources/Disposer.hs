@@ -36,9 +36,11 @@ import Data.HashSet (HashSet)
 import Data.HashSet qualified as HashSet
 import Quasar.Async.Fork
 import Quasar.Async.STMHelper
-import Quasar.Future
 import Quasar.Exceptions
+import Quasar.Future
 import Quasar.Prelude
+import Quasar.Resources.Finalizer
+import Quasar.Resources.TSimpleDisposer
 import Quasar.Utils.ShortIO
 import Quasar.Utils.TOnce
 
@@ -160,13 +162,7 @@ beginDisposeSTMDisposer (TDisposerElement _ worker sink state finalizers) = lift
           runFinalizersShortIO finalizers
           throwM $ DisposeException ex
 
-
-type STMSimpleDisposerState = TOnce (STMc NoRetry '[] ()) (Future ())
-
-data TSimpleDisposerElement = TSimpleDisposerElement Unique STMSimpleDisposerState Finalizers
-
-newtype TSimpleDisposer = TSimpleDisposer [TSimpleDisposerElement]
-  deriving newtype (Semigroup, Monoid)
+-- NOTE TSimpleDisposer is moved to it's own module due to module dependencies
 
 instance Resource TSimpleDisposer where
   toDisposer (TSimpleDisposer ds) = toDisposer ds
@@ -180,29 +176,6 @@ instance Resource [TSimpleDisposerElement] where
   toDisposer tds = Disposer (STMSimpleDisposer <$> tds)
   isDisposed tds = isDisposed (toDisposer tds)
   isDisposing tds = isDisposing (toDisposer tds)
-
-newUnmanagedTSimpleDisposer :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TSimpleDisposer
-newUnmanagedTSimpleDisposer fn = do
-  key <- newUniqueSTM
-  element <-  TSimpleDisposerElement key <$> newTOnce fn <*> newFinalizers
-  pure $ TSimpleDisposer [element]
-
--- | In case of reentry this will return without calling the dispose hander again.
-disposeTSimpleDisposer :: MonadSTMc NoRetry '[] m => TSimpleDisposer -> m ()
-disposeTSimpleDisposer (TSimpleDisposer elements) = liftSTMc do
-  mapM_ disposeTSimpleDisposerElement elements
-
--- | In case of reentry this will return without calling the dispose hander again.
-disposeTSimpleDisposerElement :: TSimpleDisposerElement -> STMc NoRetry '[] ()
-disposeTSimpleDisposerElement (TSimpleDisposerElement _ state finalizers) =
-  -- Voiding the result fixes the edge case when calling `disposeTSimpleDisposerElement` from the disposer itself
-  void $ mapFinalizeTOnce state runDisposeFn
-  where
-    runDisposeFn :: STMc NoRetry '[] () -> STMc NoRetry '[] (Future ())
-    runDisposeFn disposeFn = do
-      disposeFn
-      runFinalizers finalizers
-      pure $ pure ()
 
 
 -- | A trivial disposer that does not perform any action when disposed.
@@ -424,27 +397,6 @@ beginDisposeResourceManagerInternal rm = do
 
 
 -- * Implementation internals
-
-newtype Finalizers = Finalizers (TVar (Maybe [STMc NoRetry '[] ()]))
-
-newFinalizers :: MonadSTMc NoRetry '[] m => m Finalizers
-newFinalizers = Finalizers <$> newTVar (Just [])
-
-registerFinalizer :: MonadSTMc NoRetry '[] m => Finalizers -> STMc NoRetry '[] () -> m Bool
-registerFinalizer (Finalizers finalizerVar) finalizer =
-  readTVar finalizerVar >>= \case
-    Just finalizers -> do
-      writeTVar finalizerVar (Just (finalizer : finalizers))
-      pure True
-    Nothing -> pure False
-
-runFinalizers :: Finalizers -> STMc NoRetry '[] ()
-runFinalizers (Finalizers finalizerVar) = do
-  readTVar finalizerVar >>= \case
-    Just finalizers -> do
-      liftSTMc $ sequence_ finalizers
-      writeTVar finalizerVar Nothing
-    Nothing -> traceM "runFinalizers was called multiple times (it must only be run once)"
 
 runFinalizersShortIO :: Finalizers -> ShortIO ()
 runFinalizersShortIO finalizers = unsafeShortIO $ atomicallyC $ liftSTMc $ runFinalizers finalizers
