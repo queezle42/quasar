@@ -10,13 +10,16 @@ module Quasar.Observable.ObservableMap (
   insert,
   delete,
   lookup,
+  lookupDelete,
 ) where
 
+import Control.Monad.State.Lazy qualified as State
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Tuple (swap)
 import Quasar.Observable
 import Quasar.Observable.Internal.ObserverRegistry
-import Quasar.Prelude
+import Quasar.Prelude hiding (lookupDelete)
 import Quasar.Resources.Disposer
 
 
@@ -135,3 +138,21 @@ delete key ObservableMapVar{content, observers, deltaObservers, keyObservers} = 
   updateObservers deltaObservers [Delete key]
   mkr <- Map.lookup key <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> updateObservers keyRegistry Nothing
+
+lookupDelete :: forall k v m. (Ord k, MonadSTMc NoRetry '[] m) => k -> ObservableMapVar k v -> m (Maybe v)
+lookupDelete key ObservableMapVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
+  (result, newMap) <- stateTVar content \orig ->
+    let (result, newMap) = mapLookupDelete key orig
+    in ((result, newMap), newMap)
+  updateObservers observers newMap
+  updateObservers deltaObservers [Delete key]
+  mkr <- Map.lookup key <$> readTVar keyObservers
+  forM_ mkr \keyRegistry -> updateObservers keyRegistry Nothing
+  pure result
+  where
+    -- | Lookup and delete a value from a Map in one operation
+    mapLookupDelete :: forall k v. Ord k => k -> Map k v -> (Maybe v, Map k v)
+    mapLookupDelete key m = swap $ State.runState fn Nothing
+      where
+        fn :: State.State (Maybe v) (Map k v)
+        fn = Map.alterF (\c -> State.put c >> pure Nothing) key m
