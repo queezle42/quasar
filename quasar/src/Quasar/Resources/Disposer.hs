@@ -169,8 +169,8 @@ instance Resource TSimpleDisposer where
 
 instance Resource TSimpleDisposerElement where
   toDisposer disposer = Disposer [STMSimpleDisposer disposer]
-  isDisposed (TSimpleDisposerElement _ state _) = join (toFuture state)
-  isDisposing = isDisposed
+  isDisposed = _
+  isDisposing = _
 
 instance Resource [TSimpleDisposerElement] where
   toDisposer tds = Disposer (STMSimpleDisposer <$> tds)
