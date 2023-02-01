@@ -81,7 +81,7 @@ lookupDelete :: forall k v. Hashable.Hashable k => k -> HM.HashMap k v -> (Maybe
 lookupDelete key m = swap $ State.runState fn Nothing
   where
     fn :: State.State (Maybe v) (HM.HashMap k v)
-    fn = HM.alterF (\c -> State.put c >> return Nothing) key m
+    fn = HM.alterF (\c -> State.put c >> pure Nothing) key m
 
 -- | Lookup a value and insert the given value if it is not already a member of the HashMap.
 lookupInsert :: forall k v. Hashable.Hashable k => k -> v -> HM.HashMap k v -> (v, HM.HashMap k v)
