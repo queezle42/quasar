@@ -223,7 +223,8 @@ instance IsFuture a (BindFuture a) where
 
   attachFutureCallback (BindFuture fx fn) callback = do
     disposerVar <- newTVar Nothing
-    d2 <- newUnmanagedTSimpleDisposer (mapM_ disposeTSimpleDisposer =<< swapTVar disposerVar Nothing)
+    d2 <- newUnmanagedTSimpleDisposer do
+      mapM_ disposeTSimpleDisposer =<< swapTVar disposerVar Nothing
     d1 <- attachFutureCallback fx \x -> do
       disposer <- attachFutureCallback (fn x) \y -> do
         callback y
