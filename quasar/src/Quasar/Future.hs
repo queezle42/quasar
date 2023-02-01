@@ -40,6 +40,7 @@ module Quasar.Future (
   -- * Exception variants
   FutureEx,
   toFutureEx,
+  limitFutureEx,
   PromiseEx,
 
   -- * Caching
