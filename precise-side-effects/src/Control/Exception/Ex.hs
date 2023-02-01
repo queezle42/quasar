@@ -30,7 +30,6 @@ module Control.Exception.Ex (
 import Control.Concurrent.STM (STM, throwSTM)
 import Control.Exception (Exception(..), SomeException, throwIO)
 import Control.Monad.Catch (MonadThrow (throwM))
-import Data.Coerce (coerce)
 import Data.Kind
 import GHC.TypeLits
 import Prelude
@@ -143,10 +142,10 @@ matchEx ::
   (Exception e, ExceptionList exceptions) =>
   Ex exceptions ->
   Either (Ex (exceptions :- e)) e
-matchEx ex =
-  case fromException (toException ex) of
+matchEx (Ex ex) =
+  case fromException ex of
     Just matchedException -> Right matchedException
-    Nothing -> Left (coerce ex)
+    Nothing -> Left (Ex ex)
 
 -- | Specialized version of `toEx` to limit the list of exceptions to a subset.
 limitEx :: sub :<< super => Ex sub -> Ex super
