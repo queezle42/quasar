@@ -6,7 +6,7 @@ module Control.Exception.Ex (
   toEx,
   ExceptionList,
   matchEx,
-  extendEx,
+  limitEx,
   absurdEx,
 
   Throw(..),
@@ -126,6 +126,7 @@ newtype Ex exceptions = Ex SomeException
 
 toEx :: forall exceptions e. (Exception e, e :< exceptions) => e -> Ex exceptions
 toEx = Ex . toException
+{-# INLINABLE toEx #-}
 
 unsafeToEx :: SomeException -> Ex exceptions
 unsafeToEx = Ex
@@ -147,8 +148,10 @@ matchEx ex =
     Just matchedException -> Right matchedException
     Nothing -> Left (coerce ex)
 
-extendEx :: (sub :<< super) => Ex sub -> Ex super
-extendEx = coerce
+-- | Specialized version of `toEx` to limit the list of exceptions to a subset.
+limitEx :: sub :<< super => Ex sub -> Ex super
+limitEx (Ex x) = Ex x
+
 
 absurdEx :: Ex '[] -> a
 absurdEx = error "unreachable code path"

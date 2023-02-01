@@ -21,7 +21,7 @@ module Quasar.Observable (
   ObservableEx,
   IsObservableEx,
   toObservableEx,
-  extendObservableEx,
+  limitObservableEx,
 
   -- ** Loading state
   ObservableLoading,
@@ -303,15 +303,7 @@ observableVarHasObservers (ObservableVar _ registry) = callbackRegistryHasCallba
 -- * ObservableEx
 
 
-type IsObservableEx exceptions a = IsObservable (Either (Ex exceptions) a)
-
-toObservableEx :: Observable (Either (Ex exceptions) a) -> ObservableEx exceptions a
-toObservableEx = ObservableEx
-
 newtype ObservableEx exceptions a = ObservableEx (Observable (Either (Ex exceptions) a))
-
-extendObservableEx :: sub :<< super => ObservableEx sub a -> ObservableEx super a
-extendObservableEx (ObservableEx o) = ObservableEx $ coerce <$> o
 
 instance IsObservable (Either (Ex exceptions) a) (ObservableEx exceptions a) where
   attachObserver (ObservableEx o) = attachObserver o
@@ -363,6 +355,15 @@ instance Semigroup a => Semigroup (ObservableEx exceptions a) where
 
 instance Monoid a => Monoid (ObservableEx exceptions a) where
   mempty = pure mempty
+
+limitObservableEx :: sub :<< super => ObservableEx sub a -> ObservableEx super a
+limitObservableEx (ObservableEx o) = ObservableEx $ coerce <$> o
+
+
+type IsObservableEx exceptions a = IsObservable (Either (Ex exceptions) a)
+
+toObservableEx :: Observable (Either (Ex exceptions) a) -> ObservableEx exceptions a
+toObservableEx = ObservableEx
 
 
 -- * ObservableLoading
