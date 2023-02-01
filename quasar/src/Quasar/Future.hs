@@ -8,7 +8,7 @@ module Quasar.Future (
   awaitSTM,
 
   -- * Future
-  IsFuture(toFuture),
+  IsFuture(..),
   IsFutureEx,
   Future,
 
