@@ -25,17 +25,17 @@ module Quasar.Future (
   -- * Promise
   Promise,
 
-  -- ** Manage `Promise`s in IO
-  newPromiseIO,
-  fulfillPromiseIO,
-  tryFulfillPromiseIO,
-  tryFulfillPromiseIO_,
-
   -- ** Manage `Promise`s in STM
   newPromise,
   fulfillPromise,
   tryFulfillPromise,
   tryFulfillPromise_,
+
+  -- ** Manage `Promise`s in IO
+  newPromiseIO,
+  fulfillPromiseIO,
+  tryFulfillPromiseIO,
+  tryFulfillPromiseIO_,
 
   -- * Exception variants
   FutureEx,
