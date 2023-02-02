@@ -42,9 +42,6 @@ module Quasar.Future (
   toFutureEx,
   limitFutureEx,
   PromiseEx,
-
-  -- * Caching
-  cacheFuture,
 ) where
 
 import Control.Exception (BlockedIndefinitelyOnSTM(..))
@@ -120,6 +117,9 @@ class IsFuture r a | a -> r where
 
   mapFuture :: (r -> r2) -> a -> Future r2
   mapFuture f = Future . MappedFuture f . toFuture
+
+  cacheFuture :: MonadSTMc NoRetry '[] m => a -> m (Future r)
+  cacheFuture f = liftSTMc $ Future <$> newCachedFuture (toFuture f)
 
   toFuture :: a -> Future r
   toFuture = Future
@@ -235,8 +235,84 @@ instance IsFuture a (BindFuture a) where
 
   mapFuture f (BindFuture fx fn) = toFuture (BindFuture fx (fmap f . fn))
 
-cacheFuture :: forall a m. MonadSTMc NoRetry '[] m => Future a -> m (Future a)
-cacheFuture = undefined
+
+data CachedFuture a = CachedFuture (TVar (CacheState a))
+data CacheState a
+  = CacheIdle (Future a)
+  | CacheAttached (Future a) TSimpleDisposer (CallbackRegistry a)
+  | Cached a
+
+newCachedFuture :: Future a -> STMc NoRetry '[] (CachedFuture a)
+newCachedFuture f = CachedFuture <$> newTVar (CacheIdle f)
+
+instance IsFuture a (CachedFuture a) where
+  readFuture x@(CachedFuture var) = do
+    readTVar var >>= \case
+      CacheIdle future -> readCacheUpstreamFuture x future
+      CacheAttached future _ _ -> readCacheUpstreamFuture x future
+      Cached value -> pure value
+
+  attachFutureCallback x@(CachedFuture var) callback = do
+    readTVar var >>= \case
+      CacheIdle future -> setupCacheListener x future callback
+      CacheAttached _ _ callbackRegistry ->
+        registerCallback callbackRegistry callback
+      Cached value -> mempty <$ callback value
+
+setupCacheListener :: CachedFuture a -> Future a -> (a -> STMc NoRetry '[] ()) -> STMc NoRetry '[] TSimpleDisposer
+setupCacheListener x@(CachedFuture var) future callback = do
+  callbackRegistry <- newCallbackRegistryWithEmptyCallback (removeCacheListener x)
+  callbackDisposer <- registerCallback callbackRegistry callback
+
+  -- Write the registry before calling `attachFutureCallback` (even though
+  -- we don't have the internal disposer yet), since the callback could
+  -- be called by attachFutureCallback and that could change the state.
+  writeTVar var (CacheAttached future mempty callbackRegistry)
+
+  -- Attach to upstream future. Might result in the callback being called, which
+  -- would change the state to Cached.
+  internalDisposer <- attachFutureCallback future \value -> do
+    fulfillCacheValue x value
+
+  -- Now add internalDisposer to state or dispose it if the state is
+  -- already `Cached`.
+  readTVar var >>= \case
+    CacheIdle _ ->
+      -- This is an impossible state since we just attached a callback to
+      -- the callbackRegistry, which cannot be detached until
+      -- `callbackDisposer` is reachable from the outside of this
+      -- function.
+      unreachableCodePath
+    CacheAttached future' disposer' callbackRegistry' ->
+      -- NOTE: `disposer'` should be mempty since it is set to that before
+      -- calling `attachFutureCallback`.
+      writeTVar var (CacheAttached future' (disposer' <> internalDisposer) callbackRegistry')
+    Cached _ -> disposeTSimpleDisposer internalDisposer
+
+  pure callbackDisposer
+
+removeCacheListener :: CachedFuture a -> STMc NoRetry '[] ()
+removeCacheListener (CachedFuture var) = do
+  readTVar var >>= \case
+    CacheIdle _ -> unreachableCodePath
+    CacheAttached future disposer _callbackRegistry -> do
+      writeTVar var (CacheIdle future)
+      disposeTSimpleDisposer disposer
+    Cached _ -> pure ()
+
+fulfillCacheValue :: CachedFuture a -> a -> STMc NoRetry '[] ()
+fulfillCacheValue (CachedFuture var) value =
+  swapTVar var (Cached value) >>= \case
+    CacheAttached _ disposer registry -> do
+      disposeTSimpleDisposer disposer
+      callCallbacks registry value
+    _ -> pure ()
+
+readCacheUpstreamFuture :: CachedFuture a -> Future a -> STMc Retry '[] a
+readCacheUpstreamFuture cache future = do
+  value <- readFuture future
+  liftSTMc $ fulfillCacheValue cache value
+  pure value
 
 
 type FutureEx :: [Type] -> Type -> Type
