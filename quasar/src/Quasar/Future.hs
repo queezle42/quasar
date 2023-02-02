@@ -176,6 +176,7 @@ instance IsFuture a (ConstFuture a) where
   attachFutureCallback (ConstFuture x) callback =
     trivialTSimpleDisposer <$ callback x
   mapFuture f (ConstFuture x) = pure (f x)
+  cacheFuture f = pure (toFuture f)
 
 data MappedFuture a = forall b. MappedFuture (b -> a) (Future b)
 instance IsFuture a (MappedFuture a) where
