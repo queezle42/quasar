@@ -272,8 +272,7 @@ setupCacheListener x@(CachedFuture var) future callback = do
 
   -- Attach to upstream future. Might result in the callback being called, which
   -- would change the state to Cached.
-  internalDisposer <- attachFutureCallback future \value -> do
-    fulfillCacheValue x value
+  internalDisposer <- attachFutureCallback future (fulfillCacheValue x)
 
   -- Now add internalDisposer to state or dispose it if the state is
   -- already `Cached`.
@@ -304,10 +303,11 @@ removeCacheListener (CachedFuture var) = do
 fulfillCacheValue :: CachedFuture a -> a -> STMc NoRetry '[] ()
 fulfillCacheValue (CachedFuture var) value =
   swapTVar var (Cached value) >>= \case
+    CacheIdle _ -> unreachableCodePath
     CacheAttached _ disposer registry -> do
       disposeTSimpleDisposer disposer
       callCallbacks registry value
-    _ -> pure ()
+    Cached _ -> pure ()
 
 readCacheUpstreamFuture :: CachedFuture a -> Future a -> STMc Retry '[] a
 readCacheUpstreamFuture cache future = do
