@@ -17,10 +17,10 @@ module Quasar.Future (
   afix_,
   afixExtra,
 
-  -- ** Awaiting multiple awaitables
-  awaitAny,
-  awaitAny2,
-  awaitEither,
+  -- ** Awaiting multiple futures
+  anyFuture,
+  any2Future,
+  eitherFuture,
 
   -- * Promise
   Promise,
@@ -75,8 +75,9 @@ instance MonadAwait IO where
       (atomically (liftSTMc (readFuture x)))
       \BlockedIndefinitelyOnSTM -> throwM BlockedIndefinitelyOnAwait
 
--- | `awaitSTM` exists as an explicit alternative to a `Future STM`-instance, to prevent code which creates- and
--- then awaits resources without knowing it's running in STM (which would block indefinitely when run in STM).
+-- | `awaitSTM` exists as an explicit alternative to a `Future STM`-instance, to
+-- prevent code which creates- and then awaits resources without knowing it's
+-- running in STM (which would block indefinitely when run in STM).
 awaitSTM :: MonadSTMc Retry '[] m => IsFuture r a => a -> m r
 awaitSTM x = liftSTMc (readFuture x)
 
@@ -260,6 +261,8 @@ instance IsFuture a (CachedFuture a) where
         registerCallback callbackRegistry callback
       Cached value -> mempty <$ callback value
 
+  cacheFuture = pure . toFuture
+
 setupCacheListener :: CachedFuture a -> Future a -> (a -> STMc NoRetry '[] ()) -> STMc NoRetry '[] TSimpleDisposer
 setupCacheListener x@(CachedFuture var) future callback = do
   callbackRegistry <- newCallbackRegistryWithEmptyCallback (removeCacheListener x)
@@ -368,7 +371,7 @@ toFutureEx x = FutureEx (toFuture x)
 
 -- ** Promise
 
--- | The default implementation for an `Future` that can be fulfilled later.
+-- | A value container that can be written once and implements `IsFuture`.
 data Promise a = Promise (TMVar a) (CallbackRegistry a)
 
 type PromiseEx exceptions a = Promise (Either (Ex exceptions) a)
@@ -446,29 +449,42 @@ afixExtra action = do
 
 -- ** Awaiting multiple awaitables
 
+data AnyFuture a = AnyFuture [Future a] (TVar (Maybe a))
 
--- | Completes as soon as either awaitable completes.
--- TODO cache
-awaitEither :: MonadAwait m => Future ra -> Future rb -> m (Either ra rb)
-awaitEither (Future x) (Future y) = undefined -- unsafeAwaitSTMc (eitherSTM x y)
+instance IsFuture a (AnyFuture a) where
+  readFuture (AnyFuture fs var) = do
+    readTVar var >>= \case
+      Just value -> pure value
+      Nothing -> do
+        result <- foldr orElseC retry (readFuture <$> fs)
+        -- Read again in case during a "later" readFuture, an "earlier"
+        -- readFuture became available to read (which should only happen
+        -- as a rare edge case, but it's easy to handle it here).
+        readTVar var >>= \case
+          Just value -> pure value
+          Nothing -> result <$ writeTVar var (Just result)
 
--- | Helper for `awaitEither`
-eitherSTM :: STMc Retry '[] a -> STMc Retry '[] b -> STMc Retry '[] (Either a b)
-eitherSTM x y = fmap Left x `orElseC` fmap Right y
+  attachFutureCallback (AnyFuture fs var) callback = do
+    disposers <- mapM (\f -> attachFutureCallback f eitherCallback) fs
+    pure (mconcat disposers)
+    where
+      eitherCallback value = do
+        readTVar var >>= \case
+          Just _ -> pure ()
+          Nothing -> do
+            writeTVar var (Just value)
+            callback value
 
 
--- Completes as soon as any awaitable in the list is completed and then returns the left-most completed result
--- (or exception).
--- TODO cache
-awaitAny :: MonadAwait m => [Future r] -> m r
-awaitAny xs = undefined -- unsafeAwaitSTMc $ anySTM $ awaitSTM <$> xs
+-- Completes as soon as any future in the list is completed and then returns the
+-- left-most completed result.
+anyFuture :: MonadSTMc NoRetry '[] m => [Future r] -> m (Future r)
+anyFuture fs = toFuture <$> (AnyFuture fs <$> newTVar Nothing)
 
--- | Helper for `awaitAny`
-anySTM :: [STMc Retry '[] a] -> STMc Retry '[] a
-anySTM [] = retry
-anySTM (x:xs) = x `orElseC` anySTM xs
+-- | Like `awaitAny` with two futures.
+any2Future :: MonadSTMc NoRetry '[] m => Future r -> Future r -> m (Future r)
+any2Future x y = anyFuture [toFuture x, toFuture y]
 
-
--- | Like `awaitAny` with two awaitables.
-awaitAny2 :: MonadAwait m => Future r -> Future r -> m r
-awaitAny2 x y = awaitAny [toFuture x, toFuture y]
+-- | Completes as soon as either future completes.
+eitherFuture :: MonadSTMc NoRetry '[] m => Future ra -> Future rb -> m (Future (Either ra rb))
+eitherFuture x y = any2Future (Left <$> x) (Right <$> y)

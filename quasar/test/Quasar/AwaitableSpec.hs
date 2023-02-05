@@ -1,7 +1,6 @@
 module Quasar.AwaitableSpec (spec) where
 
 import Control.Concurrent
-import Control.Concurrent.STM
 import Control.Monad.Catch
 import GHC.Conc (unsafeIOToSTM)
 import Test.Hspec
@@ -45,7 +44,8 @@ spec = parallel $ do
 
   describe "awaitAny" $ do
     it "works with completed awaitables" $ do
-      awaitAny2 (pure () :: Future ()) (pure () :: Future ()) :: IO ()
+      future <- atomically $ any2Future (pure () :: Future ()) (pure () :: Future ())
+      await future :: IO ()
 
     it "can be completed later" $ do
       avar1 <- newPromiseIO :: IO (Promise ())
@@ -53,7 +53,8 @@ spec = parallel $ do
       void $ forkIO $ do
         threadDelay 100000
         fulfillPromiseIO avar1 ()
-      awaitAny2 (await avar1) (await avar2)
+      future <- atomically $ any2Future (await avar1) (await avar2)
+      await future
 
     it "can be completed later by the second parameter" $ do
       avar1 <- newPromiseIO :: IO (Promise ())
@@ -61,4 +62,5 @@ spec = parallel $ do
       void $ forkIO $ do
         threadDelay 100000
         fulfillPromiseIO avar2 ()
-      awaitAny2 (await avar1) (await avar2)
+      future <- atomically $ any2Future (await avar1) (await avar2)
+      await future
