@@ -51,6 +51,14 @@ import Quasar.Utils.CallbackRegistry
 type ObserverCallback a = a -> STMc NoRetry '[] ()
 
 class IsObservable r a | a -> r where
+  {-# MINIMAL toObservable | attachObserver, readObservable #-}
+
+  toObservable :: a -> Observable r
+  toObservable = Observable
+
+  readObservable :: a -> STMc NoRetry '[] r
+  readObservable observable = readObservable (toObservable observable)
+
   -- | Register a callback to observe changes. The callback is called when the value changes, but depending on the
   -- delivery method (e.g. network) intermediate values may be skipped.
   --
@@ -64,16 +72,9 @@ class IsObservable r a | a -> r where
   attachObserver :: a -> ObserverCallback r -> STMc NoRetry '[] TSimpleDisposer
   attachObserver observable = attachObserver (toObservable observable)
 
-  readObservable :: a -> STMc NoRetry '[] r
-  readObservable observable = readObservable (toObservable observable)
-
-  toObservable :: a -> Observable r
-  toObservable = Observable
-
   mapObservable :: (r -> r2) -> a -> Observable r2
   mapObservable f = Observable . MappedObservable f . toObservable
 
-  {-# MINIMAL toObservable | attachObserver, readObservable #-}
 
 
 observe

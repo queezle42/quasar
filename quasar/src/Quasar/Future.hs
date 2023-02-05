@@ -100,6 +100,11 @@ instance MonadAwait m => MonadAwait (MaybeT m) where
 type FutureCallback a = a -> STMc NoRetry '[] ()
 
 class IsFuture r a | a -> r where
+  {-# MINIMAL toFuture | readFuture, attachFutureCallback #-}
+
+  toFuture :: a -> Future r
+  toFuture = Future
+
   -- | Read the value from a future or block until it is available.
   --
   -- For the lifted variant see `awaitSTM`.
@@ -121,11 +126,6 @@ class IsFuture r a | a -> r where
 
   cacheFuture :: MonadSTMc NoRetry '[] m => a -> m (Future r)
   cacheFuture f = liftSTMc $ Future <$> newCachedFuture (toFuture f)
-
-  toFuture :: a -> Future r
-  toFuture = Future
-
-  {-# MINIMAL toFuture | readFuture, attachFutureCallback #-}
 
 type IsFutureEx exceptions r = IsFuture (Either (Ex exceptions) r)
 
