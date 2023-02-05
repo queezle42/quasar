@@ -75,6 +75,8 @@ class IsObservable r a | a -> r where
   mapObservable :: (r -> r2) -> a -> Observable r2
   mapObservable f = Observable . MappedObservable f . toObservable
 
+  cacheObservable :: MonadSTMc NoRetry '[] m => a -> m (Observable r)
+  cacheObservable = undefined
 
 
 observe
@@ -129,6 +131,7 @@ instance IsObservable r (Observable r) where
   attachObserver (Observable o) = attachObserver o
   toObservable = id
   mapObservable f (Observable o) = mapObservable f o
+  cacheObservable (Observable o) = cacheObservable o
 
 instance Functor Observable where
   fmap f = mapObservable f
@@ -199,6 +202,8 @@ instance IsObservable a (ConstObservable a) where
 
   readObservable (ConstObservable value) = pure value
 
+  cacheObservable = pure . toObservable
+
 
 data MappedObservable a = forall b. MappedObservable (b -> a) (Observable b)
 instance IsObservable a (MappedObservable a) where
@@ -268,6 +273,8 @@ instance IsObservable a (ObservableVar a) where
 
   readObservable = readObservableVar
 
+  cacheObservable = pure . toObservable
+
 newObservableVar :: MonadSTMc NoRetry '[] m => a -> m (ObservableVar a)
 newObservableVar x = liftSTMc $ ObservableVar <$> newTVar x <*> newCallbackRegistry
 
@@ -296,13 +303,7 @@ observableVarHasObservers :: ObservableVar a -> STM Bool
 observableVarHasObservers (ObservableVar _ registry) = callbackRegistryHasCallbacks registry
 
 
----- TODO implement
-----cacheObservable :: IsObservable v o => o -> Observable v
-----cacheObservable = undefined
-
-
 -- * ObservableEx
-
 
 newtype ObservableEx exceptions a = ObservableEx (Observable (Either (Ex exceptions) a))
 
@@ -311,6 +312,7 @@ instance IsObservable (Either (Ex exceptions) a) (ObservableEx exceptions a) whe
   readObservable (ObservableEx o) = readObservable o
   toObservable (ObservableEx o) = o
   mapObservable f (ObservableEx o) = mapObservable f o
+  cacheObservable (ObservableEx o) = cacheObservable o
 
 instance Functor (ObservableEx exceptions) where
   fmap f x = ObservableEx $ mapObservable (fmap f) x
