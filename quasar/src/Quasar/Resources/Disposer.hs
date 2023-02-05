@@ -47,6 +47,7 @@ import Quasar.Utils.ShortIO
 import Quasar.Utils.TOnce
 
 
+-- TODO rename to Disposable(getDisposer)
 class Resource a where
   toDisposer :: a -> Disposer
 
