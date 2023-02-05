@@ -488,3 +488,28 @@ any2Future x y = anyFuture [toFuture x, toFuture y]
 -- | Completes as soon as either future completes.
 eitherFuture :: MonadSTMc NoRetry '[] m => Future ra -> Future rb -> m (Future (Either ra rb))
 eitherFuture x y = any2Future (Left <$> x) (Right <$> y)
+
+
+-- * Instance for TSimpleDisposerElement
+
+instance IsFuture () TSimpleDisposerElement where
+  readFuture (TSimpleDisposerElement _ stateVar _) = do
+    readTVar stateVar >>= \case
+      TSimpleDisposerDisposed -> pure ()
+      _ -> retry
+
+  attachFutureCallback (TSimpleDisposerElement _ stateVar _) callback = do
+    readTVar stateVar >>= \case
+      TSimpleDisposerDisposed -> trivialTSimpleDisposer <$ callback ()
+      TSimpleDisposerDisposing registry -> registerDisposedCallback registry
+      TSimpleDisposerNormal _ registry -> registerDisposedCallback registry
+    where
+      registerDisposedCallback registry = do
+        -- NOTE Using mfix to get the disposer is a safe because the registered
+        -- method won't be called immediately.
+        -- Modifying the callback to deregister itself is an inefficient hack
+        -- that could be improved by writing a custom registry.
+        mfix \disposer -> do
+          registerCallback registry \value -> do
+            callback value
+            disposeTSimpleDisposer disposer

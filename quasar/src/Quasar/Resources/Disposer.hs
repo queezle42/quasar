@@ -158,7 +158,7 @@ instance Resource TSimpleDisposer where
 
 instance Resource TSimpleDisposerElement where
   toDisposer disposer = Disposer [STMSimpleDisposer disposer]
-  isDisposed = _
+  isDisposed = toFuture
 
 instance Resource [TSimpleDisposerElement] where
   toDisposer tds = Disposer (STMSimpleDisposer <$> tds)
