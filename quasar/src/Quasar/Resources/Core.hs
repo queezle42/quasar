@@ -63,7 +63,7 @@ callbackRegistryHasCallbacks (CallbackRegistry var _) =
 
 
 data TSimpleDisposerState
-  = TSimpleDisposerNormal (STMc NoRetry '[] ()) (CallbackRegistry ()) (CallbackRegistry ())
+  = TSimpleDisposerNormal (STMc NoRetry '[] ()) (CallbackRegistry ())
   | TSimpleDisposerDisposing (CallbackRegistry ())
   | TSimpleDisposerDisposed
 
@@ -75,9 +75,8 @@ newtype TSimpleDisposer = TSimpleDisposer [TSimpleDisposerElement]
 newUnmanagedTSimpleDisposer :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TSimpleDisposer
 newUnmanagedTSimpleDisposer fn = liftSTMc do
   key <- newUniqueSTM
-  isDisposingRegistry <- newCallbackRegistry
   isDisposedRegistry <- newCallbackRegistry
-  stateVar <- newTVar (TSimpleDisposerNormal fn isDisposingRegistry isDisposedRegistry)
+  stateVar <- newTVar (TSimpleDisposerNormal fn isDisposedRegistry)
   finalizers <- newFinalizers
   let element = TSimpleDisposerElement key stateVar finalizers
   pure $ TSimpleDisposer [element]
@@ -91,9 +90,8 @@ disposeTSimpleDisposer (TSimpleDisposer elements) = liftSTMc do
 disposeTSimpleDisposerElement :: TSimpleDisposerElement -> STMc NoRetry '[] ()
 disposeTSimpleDisposerElement (TSimpleDisposerElement _ state finalizers) =
   readTVar state >>= \case
-    TSimpleDisposerNormal fn isDisposingRegistry isDisposedRegistry -> do
+    TSimpleDisposerNormal fn isDisposedRegistry -> do
       writeTVar state (TSimpleDisposerDisposing isDisposedRegistry)
-      callCallbacks isDisposingRegistry ()
       fn
       writeTVar state TSimpleDisposerDisposed
       callCallbacks isDisposedRegistry ()
