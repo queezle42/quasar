@@ -9,6 +9,7 @@ module Quasar.Resources.Disposer (
   newUnmanagedIODisposer,
   newUnmanagedSTMDisposer,
   trivialDisposer,
+  isDisposed,
 
   TDisposer,
   disposeTDisposer,
@@ -49,8 +50,9 @@ import Quasar.Utils.TOnce
 class Resource a where
   toDisposer :: a -> Disposer
 
-  isDisposed :: a -> Future ()
-  isDisposed r = isDisposed (toDisposer r)
+
+isDisposed :: Resource a => a -> Future ()
+isDisposed r = toFuture (toDisposer r)
 
 
 
@@ -59,7 +61,9 @@ newtype Disposer = Disposer [DisposerElement]
 
 instance Resource Disposer where
   toDisposer = id
-  isDisposed (Disposer ds) = foldMap isDisposed ds
+
+instance IsFuture () Disposer where
+  toFuture (Disposer ds) = foldMap toFuture ds
 
 newtype TDisposer = TDisposer [TDisposerElement]
   deriving newtype (Semigroup, Monoid)
@@ -79,10 +83,11 @@ data DisposerElement
 instance Resource DisposerElement where
   toDisposer disposer = Disposer [disposer]
 
-  isDisposed (IODisposer _ _ _ state _) = join (toFuture state)
-  isDisposed (STMDisposer tdisposer) = isDisposed tdisposer
-  isDisposed (STMSimpleDisposer tdisposer) = isDisposed tdisposer
-  isDisposed (ResourceManagerDisposer resourceManager) =
+instance IsFuture () DisposerElement where
+  toFuture (IODisposer _ _ _ state _) = join (toFuture state)
+  toFuture (STMDisposer tdisposer) = toFuture tdisposer
+  toFuture (STMSimpleDisposer tdisposer) = toFuture tdisposer
+  toFuture (ResourceManagerDisposer resourceManager) =
     toFuture (resourceManagerIsDisposed resourceManager)
 
 
@@ -96,11 +101,12 @@ data TDisposerElement = TDisposerElement Unique TIOWorker ExceptionSink STMDispo
 
 instance Resource TDisposerElement where
   toDisposer disposer = Disposer [STMDisposer disposer]
-  isDisposed (TDisposerElement _ _ _ state _) = join (toFuture state)
+
+instance IsFuture () TDisposerElement where
+  toFuture (TDisposerElement _ _ _ state _) = join (toFuture state)
 
 instance Resource [TDisposerElement] where
   toDisposer tds = Disposer (STMDisposer <$> tds)
-  isDisposed tds = isDisposed (toDisposer tds)
 
 newUnmanagedSTMDisposer :: MonadSTMc NoRetry '[] m => STM () -> TIOWorker -> ExceptionSink -> m TDisposer
 newUnmanagedSTMDisposer fn worker sink = do
@@ -158,11 +164,9 @@ instance Resource TSimpleDisposer where
 
 instance Resource TSimpleDisposerElement where
   toDisposer disposer = Disposer [STMSimpleDisposer disposer]
-  isDisposed = toFuture
 
 instance Resource [TSimpleDisposerElement] where
   toDisposer tds = Disposer (STMSimpleDisposer <$> tds)
-  isDisposed tds = isDisposed (toDisposer tds)
 
 
 -- | A trivial disposer that does not perform any action when disposed.
@@ -266,7 +270,9 @@ data ResourceManagerState
 
 instance Resource ResourceManager where
   toDisposer rm = Disposer [ResourceManagerDisposer rm]
-  isDisposed rm = toFuture (resourceManagerIsDisposed rm)
+
+instance IsFuture () ResourceManager where
+  toFuture rm = toFuture (resourceManagerIsDisposed rm)
 
 
 newUnmanagedResourceManagerSTM :: MonadSTMc NoRetry '[] m => TIOWorker -> ExceptionSink -> m ResourceManager
