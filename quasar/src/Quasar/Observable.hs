@@ -43,6 +43,7 @@ import Control.Monad.Trans.Maybe
 import Data.Coerce (coerce)
 import Quasar.Async
 import Quasar.Exceptions
+import Quasar.Future
 import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Resources.Disposer
@@ -78,6 +79,18 @@ class IsObservable r a | a -> r where
   cacheObservable :: MonadSTMc NoRetry '[] m => a -> m (Observable r)
   cacheObservable = undefined
 
+
+instance IsObservable (Maybe r) (Future r) where
+  readObservable future = orElseNothing (readFuture future)
+
+  attachObserver future callback = do
+    peekFuture future >>= \case
+      Just done -> mempty <$ callback (Just done)
+      Nothing -> do
+        callback Nothing
+        attachFutureCallback future (callback . Just)
+
+  cacheObservable future = toObservable <$> (cacheFuture future)
 
 observe
   :: (ResourceCollector m, MonadSTMc NoRetry '[] m)
