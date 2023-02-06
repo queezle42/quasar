@@ -2,6 +2,7 @@ module Quasar.Resources (
   -- * Resources
   Resource(..),
   dispose,
+  isDisposed,
 
   -- * ResourceCollector
   ResourceCollector(..),
