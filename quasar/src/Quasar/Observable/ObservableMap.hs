@@ -11,15 +11,18 @@ module Quasar.Observable.ObservableMap (
   delete,
   lookup,
   lookupDelete,
+
+  filter,
 ) where
 
+import Data.Foldable (find)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Quasar.Utils.Map qualified as Map
 import Quasar.Observable
-import Quasar.Prelude
+import Quasar.Prelude hiding (filter)
 import Quasar.Resources.Disposer
 import Quasar.Utils.CallbackRegistry
+import Quasar.Utils.Map qualified as Map
 
 
 class IsObservable (Map k v) a => IsObservableMap k v a where
@@ -56,6 +59,11 @@ type ObservableMapDelta k v = [ObservableMapOperation k v]
 
 -- | A single operation that can be applied to an `ObservableMap`. Part of a
 -- `ObservableMapDelta`.
+--
+-- Applying `Delete` to a non-existing key is a no-op.
+--
+-- Applying `Move` with a non-existent source key behaves like a `Delete` on the
+-- target key.
 data ObservableMapOperation k v = Insert k v | Delete k | Move k k | DeleteAll
 
 instance Functor (ObservableMapOperation k) where
@@ -153,3 +161,27 @@ lookupDelete key ObservableMapVar{content, observers, deltaObservers, keyObserve
   mkr <- Map.lookup key <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
   pure result
+
+data FilteredObservableMap k v = FilteredObservableMap (v -> Bool) (ObservableMap k v)
+
+instance IsObservable (Map k v) (FilteredObservableMap k v) where
+  toObservable (FilteredObservableMap predicate upstream) =
+    mapObservable (Map.filter predicate) upstream
+
+instance IsObservableMap k v (FilteredObservableMap k v) where
+  observeKey key (FilteredObservableMap predicate upstream) =
+    find predicate <$> observeKey key upstream
+
+  attachDeltaObserver (FilteredObservableMap predicate upstream) callback =
+    attachDeltaObserver upstream \delta -> callback (filterDelta <$> delta)
+    where
+      filterDelta :: ObservableMapOperation k v -> ObservableMapOperation k v
+      filterDelta (Insert key value) =
+        if predicate value then Insert key value else Delete key
+      filterDelta (Delete key) = Delete key
+      filterDelta (Move k0 k1) = Move k0 k1
+      filterDelta DeleteAll = DeleteAll
+
+filter :: (v -> Bool) -> ObservableMap k v -> ObservableMap k v
+filter predicate upstream =
+  toObservableMap (FilteredObservableMap predicate upstream)
