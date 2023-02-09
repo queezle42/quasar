@@ -182,6 +182,6 @@ instance IsObservableMap k v (FilteredObservableMap k v) where
       filterDelta (Move k0 k1) = Move k0 k1
       filterDelta DeleteAll = DeleteAll
 
-filter :: (v -> Bool) -> ObservableMap k v -> ObservableMap k v
+filter :: IsObservableMap k v a => (v -> Bool) -> a -> ObservableMap k v
 filter predicate upstream =
-  toObservableMap (FilteredObservableMap predicate upstream)
+  toObservableMap (FilteredObservableMap predicate (toObservableMap upstream))
