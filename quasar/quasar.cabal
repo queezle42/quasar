@@ -105,6 +105,7 @@ library
     Quasar.Utils.CallbackRegistry
     Quasar.Utils.Exceptions
     Quasar.Utils.ExtraT
+    Quasar.Utils.Fix
     Quasar.Utils.HashMap
     Quasar.Utils.Map
     Quasar.Utils.ReaderLock

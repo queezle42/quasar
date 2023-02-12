@@ -4,6 +4,7 @@ module Quasar.Observable (
   -- * Observable core
   Observable,
   IsObservable(..),
+  attachObserverAndCall,
   ObserverCallback,
   observe,
 
@@ -39,7 +40,6 @@ module Quasar.Observable (
 import Control.Applicative
 import Control.Monad.Catch
 import Control.Monad.Except
-import Control.Monad.Trans.Maybe
 import Data.Coerce (coerce)
 import Quasar.Async
 import Quasar.Exceptions
@@ -48,6 +48,7 @@ import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Resources.Disposer
 import Quasar.Utils.CallbackRegistry
+import Quasar.Utils.Fix
 
 type ObserverCallback a = a -> STMc NoRetry '[] ()
 
@@ -60,24 +61,31 @@ class IsObservable r a | a -> r where
   readObservable :: a -> STMc NoRetry '[] r
   readObservable observable = readObservable (toObservable observable)
 
-  -- | Register a callback to observe changes. The callback is called when the value changes, but depending on the
-  -- delivery method (e.g. network) intermediate values may be skipped.
+  -- | Register a callback to observe changes. The callback is called when the
+  -- value changes, but depending on the observable implementation intermediate
+  -- values may be skipped.
   --
-  -- A correct implementation of `attachObserver` must call the callback during registration. If no value is available
-  -- immediately an `ObservableLoading` will be delivered. When failing due to `FailedToAttachResource` the callback
-  -- may not be called.
-  --
-  -- The callback should return without blocking, otherwise other callbacks will be delayed. If the value can't be
-  -- processed immediately, use `observeBlocking` instead or manually pass the value to a thread that processes the
-  -- data.
-  attachObserver :: a -> ObserverCallback r -> STMc NoRetry '[] TSimpleDisposer
+  -- The implementation of `attachObserver` MUST NOT call the callback during
+  -- registration.
+  attachObserver :: a -> ObserverCallback r -> STMc NoRetry '[] (TSimpleDisposer, r)
   attachObserver observable = attachObserver (toObservable observable)
 
   mapObservable :: (r -> r2) -> a -> Observable r2
   mapObservable f = Observable . MappedObservable f . toObservable
+  --TODO
+  --mapObservable f = mapObservable f . toObservable
 
   cacheObservable :: MonadSTMc NoRetry '[] m => a -> m (Observable r)
+  --TODO
   cacheObservable = undefined
+
+-- The implementation of `attachObserverAndCall` will call the callback during
+-- registration.
+attachObserverAndCall :: IsObservable r a => a -> ObserverCallback r -> STMc NoRetry '[] TSimpleDisposer
+attachObserverAndCall observable cb = do
+  (disposer, initial) <- attachObserver (toObservable observable) cb
+  cb initial
+  pure disposer
 
 
 instance IsObservable (Maybe r) (Future r) where
@@ -85,10 +93,8 @@ instance IsObservable (Maybe r) (Future r) where
 
   attachObserver future callback = do
     peekFuture future >>= \case
-      Just done -> mempty <$ callback (Just done)
-      Nothing -> do
-        callback Nothing
-        attachFutureCallback future (callback . Just)
+      Just done -> pure (mempty, Just done)
+      Nothing -> (, Nothing) <$> attachFutureCallback future (callback . Just)
 
   cacheObservable future = toObservable <$> (cacheFuture future)
 
@@ -98,7 +104,7 @@ observe
   -> (a -> STMc NoRetry '[] ()) -- ^ callback
   -> m ()
 observe observable callback = do
-  disposer <- liftSTMc $ attachObserver observable callback
+  disposer <- liftSTMc $ attachObserverAndCall observable callback
   collectResource disposer
 
 observeQ
@@ -112,7 +118,7 @@ observeQ observable callbackFn = do
   let
     sink = quasarExceptionSink scope
     wrappedCallback state = callbackFn state `catchAllSTMc` throwToExceptionSink sink
-  disposer <- liftSTMc $ attachObserver observable wrappedCallback
+  disposer <- liftSTMc $ attachObserverAndCall observable wrappedCallback
   collectResource disposer
   pure $ toDisposer (quasarResourceManager scope)
 
@@ -209,9 +215,7 @@ data ObserveWhileCompleted = ObserveWhileCompleted
 
 newtype ConstObservable a = ConstObservable a
 instance IsObservable a (ConstObservable a) where
-  attachObserver (ConstObservable value) callback = do
-    callback value
-    pure mempty
+  attachObserver (ConstObservable value) _ = pure (mempty, value)
 
   readObservable (ConstObservable value) = pure value
 
@@ -220,7 +224,7 @@ instance IsObservable a (ConstObservable a) where
 
 data MappedObservable a = forall b. MappedObservable (b -> a) (Observable b)
 instance IsObservable a (MappedObservable a) where
-  attachObserver (MappedObservable fn observable) callback = attachObserver observable (callback . fn)
+  attachObserver (MappedObservable fn observable) callback = fn <<$>> attachObserver observable (callback . fn)
   readObservable (MappedObservable fn observable) = fn <$> readObservable observable
   mapObservable f1 (MappedObservable f2 upstream) = toObservable $ MappedObservable (f1 . f2) upstream
 
@@ -233,15 +237,16 @@ data LiftA2Observable r = forall a b. LiftA2Observable (a -> b -> r) (Observable
 
 instance IsObservable a (LiftA2Observable a) where
   attachObserver (LiftA2Observable fn fx fy) callback = do
-    var0 <- newTVar Nothing
-    var1 <- newTVar Nothing
-    let callCallback = do
-          mergedValue <- runMaybeT $ liftA2 fn (MaybeT (readTVar var0)) (MaybeT (readTVar var1))
-          -- Run the callback only once both values have been received
-          mapM_ callback mergedValue
-    dx <- attachObserver fx (\update -> writeTVar var0 (Just update) >> callCallback)
-    dy <- attachObserver fy (\update -> writeTVar var1 (Just update) >> callCallback)
-    pure $ dx <> dy
+    mfixExtra \(ixFix, iyFix) -> do
+      var0 <- newTVar ixFix
+      var1 <- newTVar iyFix
+      let callCallback = do
+            x <- readTVar var0
+            y <- readTVar var1
+            callback (fn x y)
+      (dx, ix) <- attachObserver fx (\update -> writeTVar var0 update >> callCallback)
+      (dy, iy) <- attachObserver fy (\update -> writeTVar var1 update >> callCallback)
+      pure ((dx <> dy, fn ix iy), (ix, iy))
 
   readObservable (LiftA2Observable fn fx fy) =
     liftA2 fn (readObservable fx) (readObservable fy)
@@ -254,20 +259,20 @@ data BindObservable a = forall b. BindObservable (Observable b) (b -> Observable
 
 instance IsObservable a (BindObservable a) where
   attachObserver (BindObservable fx fn) callback = do
-    -- Callback isn't called immediately, since subscribing to fx and fn also guarantees a callback.
-    rightDisposerVar <- newTVar mempty
-    leftDisposer <- attachObserver fx (leftCallback rightDisposerVar)
-    newUnmanagedTSimpleDisposer (disposeFn leftDisposer rightDisposerVar)
+    mfixExtra \rightDisposerFix -> do
+      rightDisposerVar <- newTVar rightDisposerFix
+      (leftDisposer, ix) <- attachObserver fx (leftCallback rightDisposerVar)
+      (rightDisposer, iy) <- attachObserver (fn ix) callback
+
+      varDisposer <- newUnmanagedTSimpleDisposer do
+        disposeTSimpleDisposer =<< swapTVar rightDisposerVar mempty
+      pure ((leftDisposer <> varDisposer, iy), rightDisposer)
+
     where
       leftCallback rightDisposerVar lmsg = do
         disposeTSimpleDisposer =<< readTVar rightDisposerVar
-        rightDisposer <- attachObserver (fn lmsg) callback
+        rightDisposer <- attachObserverAndCall (fn lmsg) callback
         writeTVar rightDisposerVar rightDisposer
-
-      disposeFn :: TSimpleDisposer -> TVar TSimpleDisposer -> STMc NoRetry '[] ()
-      disposeFn leftDisposer rightDisposerVar = do
-        rightDisposer <- swapTVar rightDisposerVar mempty
-        disposeTSimpleDisposer (leftDisposer <> rightDisposer)
 
   readObservable (BindObservable fx fn) =
     readObservable . fn =<< readObservable fx
@@ -281,8 +286,8 @@ data ObservableVar a = ObservableVar (TVar a) (CallbackRegistry a)
 instance IsObservable a (ObservableVar a) where
   attachObserver (ObservableVar var registry) callback = do
     disposer <- registerCallback registry callback
-    callback =<< readTVar var
-    pure disposer
+    value <- readTVar var
+    pure (disposer, value)
 
   readObservable = readObservableVar
 

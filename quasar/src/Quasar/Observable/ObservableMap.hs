@@ -98,8 +98,8 @@ instance IsObservable (Map k v) (ObservableMapVar k v) where
   readObservable ObservableMapVar{content} = readTVar content
   attachObserver ObservableMapVar{content, observers} callback = do
     disposer <- registerCallback observers callback
-    callback =<< readTVar content
-    pure disposer
+    value <- readTVar content
+    pure (disposer, value)
 
 instance IsObservableMap k v (ObservableMapVar k v) where
   observeKey key x = toObservable (ObservableMapVarKeyObservable key x)
@@ -111,7 +111,7 @@ instance IsObservableMap k v (ObservableMapVar k v) where
 
 data ObservableMapVarKeyObservable k v = ObservableMapVarKeyObservable k (ObservableMapVar k v)
 
-instance Ord k => IsObservable (Maybe (v)) (ObservableMapVarKeyObservable k v) where
+instance Ord k => IsObservable (Maybe v) (ObservableMapVarKeyObservable k v) where
   attachObserver (ObservableMapVarKeyObservable key ObservableMapVar{content, keyObservers}) callback = do
     value <- Map.lookup key <$> readTVar content
     registry <- (Map.lookup key <$> readTVar keyObservers) >>= \case
@@ -121,8 +121,7 @@ instance Ord k => IsObservable (Maybe (v)) (ObservableMapVarKeyObservable k v) w
         modifyTVar keyObservers (Map.insert key registry)
         pure registry
     disposer <- registerCallback registry callback
-    callback value
-    pure disposer
+    pure (disposer, value)
 
   readObservable (ObservableMapVarKeyObservable key ObservableMapVar{content}) =
     Map.lookup key <$> readTVar content
