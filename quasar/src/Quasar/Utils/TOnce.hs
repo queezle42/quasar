@@ -10,40 +10,57 @@ module Quasar.Utils.TOnce (
   TOnceAlreadyFinalized,
 ) where
 
+import Data.Bifunctor qualified as Bifunctor
 import Quasar.Future
 import Quasar.Prelude
+import Quasar.Utils.CallbackRegistry
 
 data TOnceAlreadyFinalized = TOnceAlreadyFinalized
   deriving stock (Eq, Show)
   deriving anyclass Exception
 
-data TOnce a b = TOnce (TVar (Either a b))
+newtype TOnce a b = TOnce (TVar (Either (a, (CallbackRegistry b)) b))
 
 instance IsFuture b (TOnce a b) where
-  --toFuture (TOnce _ promise) = toFuture promise
-  toFuture = undefined
+  readFuture (TOnce var) =
+    readTVar var >>= \case
+      Left _ -> retry
+      Right value -> pure value
+
+  attachFutureCallback (TOnce var) callback = do
+    readTVar var >>= \case
+      Left (_, registry) -> registerCallback registry callback
+      Right value -> mempty <$ callback value
 
 newTOnce :: MonadSTMc NoRetry '[] m => a -> m (TOnce a b)
-newTOnce initial = TOnce <$> newTVar (Left initial)
+newTOnce initial = liftSTMc do
+  registry <- newCallbackRegistry
+  TOnce <$> newTVar (Left (initial, registry))
 
 newTOnceIO :: MonadIO m => a -> m (TOnce a b)
-newTOnceIO initial = TOnce <$> newTVarIO (Left initial)
+newTOnceIO initial = liftIO do
+  registry <- newCallbackRegistryIO
+  TOnce <$> newTVarIO (Left (initial, registry))
 
 finalizeTOnce :: MonadSTMc NoRetry '[TOnceAlreadyFinalized] m => TOnce a b -> b -> m ()
-finalizeTOnce (TOnce var) value =
+finalizeTOnce (TOnce var) value = liftSTMc @NoRetry @'[TOnceAlreadyFinalized] do
   readTVar var >>= \case
-    Left _ -> writeTVar var (Right value)
+    Left (_, registry) -> do
+      writeTVar var (Right value)
+      liftSTMc $ callCallbacks registry value
     Right _ -> throwC TOnceAlreadyFinalized
 
 readTOnce :: MonadSTMc NoRetry '[] m => TOnce a b -> m (Either a b)
-readTOnce (TOnce var) = readTVar var
+readTOnce (TOnce var) = Bifunctor.first fst <$> readTVar var
 
 mapFinalizeTOnce :: MonadSTMc NoRetry '[] m => TOnce a (Future b) -> (a -> m (Future b)) -> m (Future b)
 mapFinalizeTOnce (TOnce var) fn = do
   readTVar var >>= \case
-    Left initial -> do
+    Left (initial, registry) -> do
       promise <- newPromise
-      writeTVar var (Right (join (toFuture promise)))
+      let future = (join (toFuture promise))
+      writeTVar var (Right future)
+      liftSTMc $ callCallbacks registry future
       final <- fn initial
       tryFulfillPromise_ promise final
       pure final
