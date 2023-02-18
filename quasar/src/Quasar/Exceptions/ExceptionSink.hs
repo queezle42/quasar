@@ -70,6 +70,8 @@ instance Exception ExceptionCollectorAlreadyCollected
 -- transaction), further exceptions are forwarded to the backup exception sink.
 -- The collection transaction may only be used once.
 newExceptionCollector :: MonadSTMc NoRetry '[] m => ExceptionSink -> m (ExceptionSink, STMc NoRetry '[ExceptionCollectorAlreadyCollected] [SomeException])
+-- TODO change signature once locking ensures safety against loops
+--newExceptionCollector :: MonadSTMc NoRetry '[] m => m (ExceptionSink, ExceptionSink -> STMc NoRetry '[ExceptionCollectorAlreadyCollected] [SomeException])
 newExceptionCollector backupExceptionSink = do
   exceptionsVar <- newTVar (Just [])
   pure (ExceptionSink (channelFn exceptionsVar), gatherResult exceptionsVar)
