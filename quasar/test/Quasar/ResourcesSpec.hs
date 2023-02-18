@@ -1,23 +1,64 @@
 module Quasar.ResourcesSpec (spec) where
 
 import Control.Concurrent
-import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad.Catch
-import Quasar.Prelude
-import Test.Hspec
+import Quasar.Async.STMHelper
+import Quasar.Exceptions
+import Quasar.Exceptions.ExceptionSink
 import Quasar.Future
-import Quasar.Resources
 import Quasar.MonadQuasar
+import Quasar.Prelude
+import Quasar.Resources
+import Quasar.Utils.Exceptions
+import Test.Hspec
 
 data TestException = TestException
   deriving stock (Eq, Show)
 
 instance Exception TestException
 
+withTestExceptionSink :: TIOWorker -> (ExceptionSink -> IO a) -> IO a
+withTestExceptionSink worker action = do
+  (sink, collect) <- atomically $ newExceptionCollector (loggingExceptionSink worker)
+  result <- action sink
+  mapM_ throwM . mkCombinedException =<< atomicallyC (liftSTMc collect)
+  pure result
+
 spec :: Spec
-spec = pure ()
---spec = parallel $ do
+spec = parallel $ do
+  describe "Disposer" $ do
+    describe "trivial disposable" $ do
+      it "can be disposed" $ io do
+        dispose trivialDisposer
+
+      it "can be awaited" $ io do
+        await (isDisposed trivialDisposer)
+
+    describe "Disposer" $ do
+      it "signals it's disposed state" $ io do
+        worker <- newTIOWorker
+        withTestExceptionSink worker \sink -> do
+          disposable <- atomically $ newUnmanagedIODisposer (pure ()) worker sink
+          void $ forkIO $ threadDelay 100000 >> dispose disposable
+          await (isDisposed disposable)
+
+      it "can be disposed multiple times" $ io do
+        worker <- newTIOWorker
+        withTestExceptionSink worker \sink -> do
+          disposable <- atomically $ newUnmanagedIODisposer (pure ()) worker sink
+          dispose disposable
+          dispose disposable
+          await (isDisposed disposable)
+
+      it "can be disposed in parallel" $ do
+        worker <- newTIOWorker
+        withTestExceptionSink worker \sink -> do
+          disposable <- atomically $ newUnmanagedIODisposer (threadDelay 100000) worker sink
+          void $ forkIO $ dispose disposable
+          dispose disposable
+          await (isDisposed disposable)
+
 --  describe "ResourceManager" $ do
 --    it "can be created" $ io do
 --      withRootResourceManager $ pure ()
@@ -146,33 +187,3 @@ spec = pure ()
 --            pure ()
 --          throwToResourceManager TestException
 --          liftIO $ threadDelay 100000
-
-
--- From DisposableSpec.hs:
---spec :: Spec
---spec = parallel $ do
---  describe "Disposable" $ do
---    describe "noDisposable" $ do
---      it "can be disposed" $ io do
---        dispose noDisposable
---
---      it "can be awaited" $ io do
---        await (isDisposed noDisposable)
---
---    describe "newDisposable" $ do
---      it "signals it's disposed state" $ io do
---        disposable <- atomically $ newDisposable $ pure ()
---        void $ forkIO $ threadDelay 100000 >> dispose disposable
---        await (isDisposed disposable)
---
---      it "can be disposed multiple times" $ io do
---        disposable <- atomically $ newDisposable $ pure ()
---        dispose disposable
---        dispose disposable
---        await (isDisposed disposable)
---
---      it "can be disposed in parallel" $ do
---        disposable <- atomically $ newDisposable $ threadDelay 100000
---        void $ forkIO $ dispose disposable
---        dispose disposable
---        await (isDisposed disposable)
