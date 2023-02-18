@@ -36,6 +36,14 @@ spec = parallel $ do
         await (isDisposed trivialDisposer)
 
     describe "Disposer" $ do
+      it "can be disposed" $ io do
+        worker <- newTIOWorker
+        withTestExceptionSink worker \sink -> do
+          markVar <- newTVarIO False
+          disposable <- atomically $ newUnmanagedIODisposer (atomically (writeTVar markVar True)) worker sink
+          dispose disposable
+          readTVarIO markVar `shouldReturn` True
+
       it "signals it's disposed state" $ io do
         worker <- newTIOWorker
         withTestExceptionSink worker \sink -> do
@@ -58,6 +66,22 @@ spec = parallel $ do
           void $ forkIO $ dispose disposable
           dispose disposable
           await (isDisposed disposable)
+
+    describe "STM Disposer" $ do
+      it "can be disposed" $ io do
+        worker <- newTIOWorker
+        withTestExceptionSink worker \sink -> do
+          markVar <- newTVarIO False
+          disposable <- atomically $ newUnmanagedSTMDisposer (writeTVar markVar True) worker sink
+          dispose disposable
+          readTVarIO markVar `shouldReturn` True
+
+    describe "TSimpleDisposer" $ do
+      it "can be disposed" $ io do
+        markVar <- newTVarIO False
+        disposable <- atomically $ newUnmanagedTSimpleDisposer (writeTVar markVar True)
+        dispose disposable
+        readTVarIO markVar `shouldReturn` True
 
 --  describe "ResourceManager" $ do
 --    it "can be created" $ io do
