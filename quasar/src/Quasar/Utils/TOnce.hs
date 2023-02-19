@@ -21,13 +21,15 @@ data TOnceAlreadyFinalized = TOnceAlreadyFinalized
 
 newtype TOnce a b = TOnce (TVar (Either (a, (CallbackRegistry b)) b))
 
+instance ToFuture b (TOnce a b)
+
 instance IsFuture b (TOnce a b) where
-  readFuture (TOnce var) =
+  readFuture# (TOnce var) =
     readTVar var >>= \case
       Left _ -> retry
       Right value -> pure value
 
-  attachFutureCallback (TOnce var) callback = do
+  attachFutureCallback# (TOnce var) callback = do
     readTVar var >>= \case
       Left (_, registry) -> registerCallback registry callback
       Right value -> mempty <$ callback value

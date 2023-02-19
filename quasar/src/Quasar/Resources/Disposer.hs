@@ -63,7 +63,7 @@ newtype Disposer = Disposer [DisposerElement]
 instance Resource Disposer where
   toDisposer = id
 
-instance IsFuture () Disposer where
+instance ToFuture () Disposer where
   toFuture (Disposer ds) = foldMap toFuture ds
 
 newtype TDisposer = TDisposer [TDisposerElement]
@@ -84,7 +84,7 @@ data DisposerElement
 instance Resource DisposerElement where
   toDisposer disposer = Disposer [disposer]
 
-instance IsFuture () DisposerElement where
+instance ToFuture () DisposerElement where
   toFuture (IODisposer _ _ _ state _) = join (toFuture state)
   toFuture (STMDisposer tdisposer) = toFuture tdisposer
   toFuture (STMSimpleDisposer tdisposer) = toFuture tdisposer
@@ -103,7 +103,7 @@ data TDisposerElement = TDisposerElement Unique TIOWorker ExceptionSink STMDispo
 instance Resource TDisposerElement where
   toDisposer disposer = Disposer [STMDisposer disposer]
 
-instance IsFuture () TDisposerElement where
+instance ToFuture () TDisposerElement where
   toFuture (TDisposerElement _ _ _ state _) = join (toFuture state)
 
 instance Resource [TDisposerElement] where
@@ -272,7 +272,7 @@ data ResourceManagerState
 instance Resource ResourceManager where
   toDisposer rm = Disposer [ResourceManagerDisposer rm]
 
-instance IsFuture () ResourceManager where
+instance ToFuture () ResourceManager where
   toFuture rm = toFuture (resourceManagerIsDisposed rm)
 
 
@@ -318,8 +318,8 @@ tryAttachDisposer resourceManager disposer = do
     finalizer :: STMc NoRetry '[] ()
     finalizer = readTVar (resourceManagerState resourceManager) >>= \case
       ResourceManagerNormal attachedResources _ _ -> modifyTVar attachedResources (HM.delete key)
-      -- No finalization required in other states, since all resources are disposed soon
-      -- (and awaiting each resource is cheaper than modifying a HashMap until it is empty).
+      -- No resource detach is required in other states, since all resources are disposed soon
+      -- (awaiting each resource should be cheaper than modifying the HashMap until it is empty).
       _ -> pure ()
 
 

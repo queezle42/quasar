@@ -89,7 +89,7 @@ attachObserverAndCall observable cb = do
 
 
 instance IsObservable (Maybe r) (Future r) where
-  readObservable future = orElseNothing (readFuture future)
+  readObservable future = orElseNothing @'[] (readFuture future)
 
   attachObserver future callback = do
     peekFuture future >>= \case

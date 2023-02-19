@@ -34,6 +34,7 @@ common shared-properties
     InstanceSigs
     LambdaCase
     LexicalNegation
+    MagicHash
     MultiParamTypeClasses
     NamedFieldPuns
     NoImplicitPrelude
