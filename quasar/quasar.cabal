@@ -131,10 +131,10 @@ test-suite quasar-test
   main-is: Spec.hs
   other-modules:
     Quasar.AsyncSpec
-    Quasar.AwaitableSpec
-    Quasar.ObservableSpec
+    Quasar.FutureSpec
     Quasar.Observable.ObservableHashMapSpec
     Quasar.Observable.ObservablePrioritySpec
+    Quasar.ObservableSpec
     Quasar.ResourcesSpec
     Quasar.Utils.ReaderLockSpec
   hs-source-dirs:

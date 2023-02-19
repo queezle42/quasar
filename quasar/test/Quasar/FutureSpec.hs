@@ -1,4 +1,4 @@
-module Quasar.AwaitableSpec (spec) where
+module Quasar.FutureSpec (spec) where
 
 import Control.Concurrent
 import Control.Monad.Catch
