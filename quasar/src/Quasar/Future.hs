@@ -52,11 +52,7 @@ module Quasar.Future (
 import Control.Exception (BlockedIndefinitelyOnSTM(..))
 import Control.Exception.Ex
 import Control.Monad.Catch
-import Control.Monad.RWS (RWST)
-import Control.Monad.Reader
-import Control.Monad.State (StateT)
-import Control.Monad.Trans.Maybe
-import Control.Monad.Writer (WriterT)
+import Control.Monad.Trans (MonadTrans, lift)
 import Data.Coerce (coerce)
 import Quasar.Exceptions
 import Quasar.Prelude
@@ -84,19 +80,7 @@ awaitSTM :: MonadSTMc Retry '[] m => ToFuture r a => a -> m r
 awaitSTM x = readFuture x
 {-# DEPRECATED awaitSTM "Use readFuture instead" #-}
 
-instance MonadAwait m => MonadAwait (ReaderT a m) where
-  await = lift . await
-
-instance (MonadAwait m, Monoid a) => MonadAwait (WriterT a m) where
-  await = lift . await
-
-instance MonadAwait m => MonadAwait (StateT a m) where
-  await = lift . await
-
-instance (MonadAwait m, Monoid w) => MonadAwait (RWST r w s m) where
-  await = lift . await
-
-instance MonadAwait m => MonadAwait (MaybeT m) where
+instance (MonadTrans t, MonadAwait m, Monad (t m)) => MonadAwait (t m) where
   await = lift . await
 
 
