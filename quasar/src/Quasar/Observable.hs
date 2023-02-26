@@ -142,7 +142,7 @@ observeQ observable callbackFn = do
     wrappedCallback state = callbackFn state `catchAllSTMc` throwToExceptionSink sink
   disposer <- observeSTM observable wrappedCallback
   collectResource disposer
-  pure $ toDisposer (quasarResourceManager scope)
+  pure $ getDisposer (quasarResourceManager scope)
 
 observeQ_
     :: (MonadQuasar m, MonadSTM m)

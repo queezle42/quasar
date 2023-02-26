@@ -1,6 +1,6 @@
 module Quasar.Resources (
   -- * Resources
-  Resource(..),
+  Disposable(..),
   dispose,
   isDisposed,
 
@@ -120,7 +120,7 @@ registerSimpleDisposeTransactionIO fn = quasarAtomically $ registerSimpleDispose
 registerSimpleDisposeTransactionIO_ :: (MonadQuasar m, MonadIO m) => STMc NoRetry '[] () -> m ()
 registerSimpleDisposeTransactionIO_ fn = quasarAtomically $ void $ registerSimpleDisposeTransaction fn
 
-registerNewResource :: forall a m. (Resource a, MonadQuasar m, MonadIO m, MonadMask m) => m a -> m a
+registerNewResource :: forall a m. (Disposable a, MonadQuasar m, MonadIO m, MonadMask m) => m a -> m a
 registerNewResource fn = do
   rm <- askResourceManager
   disposing <- isJust <$> peekFutureIO (isDisposing rm)
@@ -136,16 +136,16 @@ registerNewResource fn = do
         (fromException -> Just FailedToAttachResource) -> throwM AlreadyDisposing
         _ -> throwM ex
     pure resource
-{-# SPECIALIZE registerNewResource :: Resource a => QuasarIO a -> QuasarIO a #-}
+{-# SPECIALIZE registerNewResource :: Disposable a => QuasarIO a -> QuasarIO a #-}
 
-registerNewResource_ :: forall a m. (Resource a, MonadQuasar m, MonadIO m, MonadMask m) => m a -> m ()
+registerNewResource_ :: forall a m. (Disposable a, MonadQuasar m, MonadIO m, MonadMask m) => m a -> m ()
 registerNewResource_ = void . registerNewResource
 
 
-disposeEventuallyIO :: (Resource r, MonadIO m) => r -> m (Future ())
+disposeEventuallyIO :: (Disposable r, MonadIO m) => r -> m (Future ())
 disposeEventuallyIO res = atomically $ disposeEventually res
 
-disposeEventuallyIO_ :: (Resource r, MonadIO m) => r -> m ()
+disposeEventuallyIO_ :: (Disposable r, MonadIO m) => r -> m ()
 disposeEventuallyIO_ res = atomically $ void $ disposeEventually res
 
 
@@ -154,7 +154,7 @@ captureResources fn = do
   quasar <- newResourceScope
   localQuasar quasar do
     result <- fn
-    pure (result, toDisposer (quasarResourceManager quasar))
+    pure (result, getDisposer (quasarResourceManager quasar))
 
 captureResources_ :: (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m) => m () -> m Disposer
 captureResources_ fn = snd <$> captureResources fn
@@ -164,7 +164,7 @@ captureResourcesIO fn = do
   quasar <- newResourceScopeIO
   localQuasar quasar do
     result <- fn
-    pure (result, toDisposer (quasarResourceManager quasar))
+    pure (result, getDisposer (quasarResourceManager quasar))
 
 captureResourcesIO_ :: (MonadQuasar m, MonadIO m) => m () -> m Disposer
 captureResourcesIO_ fn = snd <$> captureResourcesIO fn

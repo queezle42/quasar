@@ -51,7 +51,7 @@ instance Ord Timer where
   x `compare` y = time x `compare` time y
 
 instance Resource Timer where
-  toDisposer Timer{disposer} = disposer
+  getDisposer Timer{disposer} = disposer
 
 instance ToFuture (Either (Ex '[TimerCancelled]) ()) Timer where
   toFuture Timer{completed} = toFuture completed
@@ -67,7 +67,7 @@ data TimerScheduler = TimerScheduler {
 }
 
 instance Resource TimerScheduler where
-  toDisposer TimerScheduler{thread} = toDisposer thread
+  getDisposer TimerScheduler{thread} = getDisposer thread
 
 data TimerSchedulerDisposed = TimerSchedulerDisposed
   deriving stock (Eq, Show)
@@ -180,7 +180,7 @@ newUnmanagedTimer scheduler time = liftIO do
   key <- newUnique
   completed <- newPromiseIO
   atomically do
-    disposer <- toDisposer <$> newUnmanagedSTMDisposer (disposeFn completed) (ioWorker scheduler) (exceptionSink scheduler)
+    disposer <- getDisposer <$> newUnmanagedSTMDisposer (disposeFn completed) (ioWorker scheduler) (exceptionSink scheduler)
     let timer = Timer { key, time, completed, disposer, scheduler }
     tryTakeTMVar (heap scheduler) >>= \case
       Just timers -> putTMVar (heap scheduler) (insert timer timers)

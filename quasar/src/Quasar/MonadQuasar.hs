@@ -57,8 +57,8 @@ import Control.Monad.Base (MonadBase)
 -- Invariant: the resource manager is disposed as soon as an exception is thrown to the channel
 data Quasar = Quasar Logger TIOWorker ExceptionSink ResourceManager
 
-instance Resource Quasar where
-  toDisposer (Quasar _ _ _ rm) = toDisposer rm
+instance Disposable Quasar where
+  getDisposer (Quasar _ _ _ rm) = getDisposer rm
 
 instance HasField "logger" Quasar Logger where
   getField = quasarLogger

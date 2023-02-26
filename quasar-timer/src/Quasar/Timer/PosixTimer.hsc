@@ -161,7 +161,7 @@ data PosixTimer = PosixTimer {
 }
 
 instance Resource PosixTimer where
-  toDisposer PosixTimer{disposer} = disposer
+  getDisposer PosixTimer{disposer} = disposer
 
 
 newPosixTimer :: (MonadQuasar m, MonadIO m) => ClockId -> IO () -> m PosixTimer

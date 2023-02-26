@@ -1,7 +1,7 @@
 {-# OPTIONS_HADDOCK not-home #-}
 
 module Quasar.Resources.Disposer (
-  Resource(..),
+  Disposable(..),
   Disposer,
   dispose,
   disposeEventually,
@@ -45,22 +45,20 @@ import Quasar.Resources.TSimpleDisposer
 import Quasar.Utils.ShortIO
 import Quasar.Utils.TOnce
 
-
--- TODO rename to Disposable(getDisposer)
-class Resource a where
-  toDisposer :: a -> Disposer
+class Disposable a where
+  getDisposer :: a -> Disposer
 
 
-isDisposed :: Resource a => a -> Future ()
-isDisposed r = toFuture (toDisposer r)
+isDisposed :: Disposable a => a -> Future ()
+isDisposed r = toFuture (getDisposer r)
 
 
 
 newtype Disposer = Disposer [DisposerElement]
   deriving newtype (Semigroup, Monoid)
 
-instance Resource Disposer where
-  toDisposer = id
+instance Disposable Disposer where
+  getDisposer = id
 
 instance ToFuture () Disposer where
   toFuture (Disposer ds) = foldMap toFuture ds
@@ -68,8 +66,8 @@ instance ToFuture () Disposer where
 newtype TDisposer = TDisposer [TDisposerElement]
   deriving newtype (Semigroup, Monoid)
 
-instance Resource TDisposer where
-  toDisposer (TDisposer ds) = toDisposer ds
+instance Disposable TDisposer where
+  getDisposer (TDisposer ds) = getDisposer ds
 
 
 type DisposerState = TOnce DisposeFnIO (Future ())
@@ -80,8 +78,8 @@ data DisposerElement
   | STMSimpleDisposer TSimpleDisposerElement
   | ResourceManagerDisposer ResourceManager
 
-instance Resource DisposerElement where
-  toDisposer disposer = Disposer [disposer]
+instance Disposable DisposerElement where
+  getDisposer disposer = Disposer [disposer]
 
 instance ToFuture () DisposerElement where
   toFuture (IODisposer _ _ _ state) = join (toFuture state)
@@ -99,14 +97,14 @@ type STMDisposerState = TOnce (STM ()) (Future ())
 
 data TDisposerElement = TDisposerElement Unique TIOWorker ExceptionSink STMDisposerState
 
-instance Resource TDisposerElement where
-  toDisposer disposer = Disposer [STMDisposer disposer]
+instance Disposable TDisposerElement where
+  getDisposer disposer = Disposer [STMDisposer disposer]
 
 instance ToFuture () TDisposerElement where
   toFuture (TDisposerElement _ _ _ state) = join (toFuture state)
 
-instance Resource [TDisposerElement] where
-  toDisposer tds = Disposer (STMDisposer <$> tds)
+instance Disposable [TDisposerElement] where
+  getDisposer tds = Disposer (STMDisposer <$> tds)
 
 newUnmanagedSTMDisposer :: MonadSTMc NoRetry '[] m => STM () -> TIOWorker -> ExceptionSink -> m TDisposer
 newUnmanagedSTMDisposer fn worker sink = do
@@ -156,14 +154,14 @@ beginDisposeSTMDisposer (TDisposerElement _ worker sink state) = liftSTMc do
 
 -- NOTE TSimpleDisposer is moved to it's own module due to module dependencies
 
-instance Resource TSimpleDisposer where
-  toDisposer (TSimpleDisposer ds) = toDisposer ds
+instance Disposable TSimpleDisposer where
+  getDisposer (TSimpleDisposer ds) = getDisposer ds
 
-instance Resource TSimpleDisposerElement where
-  toDisposer disposer = Disposer [STMSimpleDisposer disposer]
+instance Disposable TSimpleDisposerElement where
+  getDisposer disposer = Disposer [STMSimpleDisposer disposer]
 
-instance Resource [TSimpleDisposerElement] where
-  toDisposer tds = Disposer (STMSimpleDisposer <$> tds)
+instance Disposable [TSimpleDisposerElement] where
+  getDisposer tds = Disposer (STMSimpleDisposer <$> tds)
 
 
 -- | A trivial disposer that does not perform any action when disposed.
@@ -171,17 +169,17 @@ trivialDisposer :: Disposer
 trivialDisposer = mempty
 
 newUnmanagedIODisposer :: MonadSTMc NoRetry '[] m => IO () -> TIOWorker -> ExceptionSink -> m Disposer
-newUnmanagedIODisposer fn worker exChan = toDisposer <$> do
+newUnmanagedIODisposer fn worker exChan = getDisposer <$> do
   key <- newUniqueSTM
   state <- newTOnce fn
   pure $ IODisposer key worker exChan state
 
 
-dispose :: (MonadIO m, Resource r) => r -> m ()
+dispose :: (MonadIO m, Disposable r) => r -> m ()
 dispose resource = liftIO $ await =<< atomically (disposeEventually resource)
 
-disposeEventually :: (Resource a, MonadSTMc NoRetry '[] m) => a -> m (Future ())
-disposeEventually (toDisposer -> Disposer ds) = liftSTMc do
+disposeEventually :: (Disposable a, MonadSTMc NoRetry '[] m) => a -> m (Future ())
+disposeEventually (getDisposer -> Disposer ds) = liftSTMc do
   mconcat <$> mapM f ds
   where
     f :: DisposerElement -> STMc NoRetry '[] (Future ())
@@ -194,7 +192,7 @@ disposeEventually (toDisposer -> Disposer ds) = liftSTMc do
     f (ResourceManagerDisposer resourceManager) =
       beginDisposeResourceManager resourceManager
 
-disposeEventually_ :: (Resource a, MonadSTMc NoRetry '[] m) => a -> m ()
+disposeEventually_ :: (Disposable a, MonadSTMc NoRetry '[] m) => a -> m ()
 disposeEventually_ resource = void $ disposeEventually resource
 
 
@@ -254,8 +252,8 @@ data ResourceManagerState
   | ResourceManagerDisposing (Future [DisposeDependencies])
   | ResourceManagerDisposed
 
-instance Resource ResourceManager where
-  toDisposer rm = Disposer [ResourceManagerDisposer rm]
+instance Disposable ResourceManager where
+  getDisposer rm = Disposer [ResourceManagerDisposer rm]
 
 instance ToFuture () ResourceManager where
   toFuture rm = toFuture (resourceManagerIsDisposed rm)
@@ -276,12 +274,12 @@ newUnmanagedResourceManagerSTM worker exChan = do
   }
 
 
-attachResource :: (MonadSTMc NoRetry '[FailedToAttachResource] m, Resource a) => ResourceManager -> a -> m ()
+attachResource :: (MonadSTMc NoRetry '[FailedToAttachResource] m, Disposable a) => ResourceManager -> a -> m ()
 attachResource resourceManager disposer = liftSTMc @NoRetry @'[FailedToAttachResource] do
   either throwC pure =<< tryAttachResource resourceManager disposer
 
-tryAttachResource :: (MonadSTMc NoRetry '[] m, Resource a) => ResourceManager -> a -> m (Either FailedToAttachResource ())
-tryAttachResource resourceManager (toDisposer -> Disposer ds) = liftSTMc do
+tryAttachResource :: (MonadSTMc NoRetry '[] m, Disposable a) => ResourceManager -> a -> m (Either FailedToAttachResource ())
+tryAttachResource resourceManager (getDisposer -> Disposer ds) = liftSTMc do
   sequence_ <$> mapM (tryAttachDisposer resourceManager) ds
 
 tryAttachDisposer :: ResourceManager -> DisposerElement -> STMc NoRetry '[] (Either FailedToAttachResource ())
@@ -377,7 +375,7 @@ beginDisposeResourceManagerInternal rm = do
 -- * ResourceCollector
 
 class Monad m => ResourceCollector m where
-  collectResource :: Resource a => a -> m ()
+  collectResource :: Disposable a => a -> m ()
 
 
 --unmanagedCaptureResources :: ResourceT STM () -> STM Disposer
