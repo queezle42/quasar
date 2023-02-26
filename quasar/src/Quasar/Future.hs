@@ -98,7 +98,7 @@ class ToFuture r a => IsFuture r a | a -> r where
 
   -- | Read the value from a future or block until it is available.
   --
-  -- For the lifted variant see `awaitSTM`.
+  -- For the lifted variant see `readFuture`.
   --
   -- The implementation of `readFuture#` MUST NOT directly or indirectly
   -- complete a future. Only working with `TVar`s is guaranteed to be safe.
@@ -117,8 +117,9 @@ class ToFuture r a => IsFuture r a | a -> r where
   -- during registration.
   --
   -- The implementation of `readOrAttachToFuture#` MUST NOT directly or
-  -- indirectly complete a future. Only working with `TVar`s and calling
-  -- `registerCallback` are guaranteed to be safe.
+  -- indirectly complete a future during the current STM transaction. Only
+  -- working with `TVar`s and calling `registerCallback` are guaranteed to be
+  -- safe.
   readOrAttachToFuture# :: a -> FutureCallback r -> STMc NoRetry '[] (Either TSimpleDisposer r)
 
   mapFuture# :: (r -> r2) -> a -> Future r2
