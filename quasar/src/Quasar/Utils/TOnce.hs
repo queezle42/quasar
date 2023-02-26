@@ -29,10 +29,10 @@ instance IsFuture b (TOnce a b) where
       Left _ -> retry
       Right value -> pure value
 
-  attachFutureCallback# (TOnce var) callback = do
+  readOrAttachToFuture# (TOnce var) callback = do
     readTVar var >>= \case
-      Left (_, registry) -> registerCallback registry callback
-      Right value -> mempty <$ callback value
+      Left (_, registry) -> Left <$> registerCallback registry callback
+      Right value -> pure (Right value)
 
 newTOnce :: MonadSTMc NoRetry '[] m => a -> m (TOnce a b)
 newTOnce initial = liftSTMc do

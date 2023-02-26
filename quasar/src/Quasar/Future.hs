@@ -10,7 +10,8 @@ module Quasar.Future (
   -- * Future
   ToFuture(..),
   readFuture,
-  attachFutureCallback,
+  readOrAttachToFuture,
+  callOnceCompleted,
   mapFuture,
   cacheFuture,
   IsFuture(..),
@@ -57,6 +58,7 @@ import Data.Coerce (coerce)
 import Quasar.Exceptions
 import Quasar.Prelude
 import Quasar.Resources.Core
+import Quasar.Utils.Fix
 
 
 class Monad m => MonadAwait m where
@@ -92,21 +94,32 @@ class ToFuture r a | a -> r where
   toFuture = Future
 
 class ToFuture r a => IsFuture r a | a -> r where
-  {-# MINIMAL readFuture#, attachFutureCallback# #-}
+  {-# MINIMAL readFuture#, readOrAttachToFuture# #-}
 
   -- | Read the value from a future or block until it is available.
   --
   -- For the lifted variant see `awaitSTM`.
+  --
+  -- The implementation of `readFuture#` MUST NOT directly or indirectly
+  -- complete a future. Only working with `TVar`s is guaranteed to be safe.
   readFuture# :: a -> STMc Retry '[] r
 
-  -- | Attach a callback to the future. The callback will be called when the
-  -- future is fulfilled.
+  -- | If the future is already completed, the value is returned in a `Right`.
+  -- Otherwise the callback is attached to the future and will be called once
+  -- the future is completed.
   --
   -- The resulting `TSimpleDisposer` can be used to deregister the callback.
   -- When the callback is called, the disposer must be disposed by the
-  -- implementation of `attachFutureCallback#` (i.e. the caller does not have to
-  -- call dispose).
-  attachFutureCallback# :: a -> FutureCallback r -> STMc NoRetry '[] TSimpleDisposer
+  -- implementation of `readOrAttachToFuture#` (i.e. the caller does not have to
+  -- call `dispose`).
+  --
+  -- The implementation of `readOrAttachToFuture#` MUST NOT call the callback
+  -- during registration.
+  --
+  -- The implementation of `readOrAttachToFuture#` MUST NOT directly or
+  -- indirectly complete a future. Only working with `TVar`s and calling
+  -- `registerCallback` are guaranteed to be safe.
+  readOrAttachToFuture# :: a -> FutureCallback r -> STMc NoRetry '[] (Either TSimpleDisposer r)
 
   mapFuture# :: (r -> r2) -> a -> Future r2
   mapFuture# f = Future . MappedFuture f . toFuture
@@ -118,8 +131,18 @@ class ToFuture r a => IsFuture r a | a -> r where
 readFuture :: (ToFuture r a, MonadSTMc Retry '[] m) => a -> m r
 readFuture x = liftSTMc $ readFuture# (toFuture x)
 
-attachFutureCallback :: (ToFuture r a, MonadSTMc NoRetry '[] m) => a -> FutureCallback r -> m TSimpleDisposer
-attachFutureCallback x callback = liftSTMc $ attachFutureCallback# (toFuture x) callback
+readOrAttachToFuture :: (ToFuture r a, MonadSTMc NoRetry '[] m) => a -> FutureCallback r -> m (Either TSimpleDisposer r)
+readOrAttachToFuture x callback = liftSTMc $ readOrAttachToFuture# (toFuture x) callback
+
+-- | Will call the callback immediately if the future is already completed.
+callOnceCompleted :: (ToFuture r a, MonadSTMc NoRetry '[] m) => a -> FutureCallback r -> m TSimpleDisposer
+callOnceCompleted future callback = liftSTMc do
+  readOrAttachToFuture future callback >>= \case
+    Left disposer -> pure disposer
+    Right value -> mempty <$ callback value
+
+callOnceCompleted_ :: (ToFuture r a, MonadSTMc NoRetry '[] m) => a -> FutureCallback r -> m ()
+callOnceCompleted_ future callback = void $ callOnceCompleted future callback
 
 mapFuture :: ToFuture r a => (r -> r2) -> a -> Future r2
 mapFuture f future = mapFuture# f (toFuture future)
@@ -160,7 +183,7 @@ instance ToFuture a (Future a) where
 
 instance IsFuture a (Future a) where
   readFuture# (Future x) = readFuture# x
-  attachFutureCallback# (Future x) = attachFutureCallback# x
+  readOrAttachToFuture# (Future x) = readOrAttachToFuture# x
   mapFuture# f (Future x) = mapFuture# f x
   cacheFuture# (Future x) = cacheFuture# x
 
@@ -180,8 +203,7 @@ instance ToFuture a (ConstFuture a)
 
 instance IsFuture a (ConstFuture a) where
   readFuture# (ConstFuture x) = pure x
-  attachFutureCallback# (ConstFuture x) callback =
-    trivialTSimpleDisposer <$ callback x
+  readOrAttachToFuture# (ConstFuture x) _ = pure (Right x)
   mapFuture# f (ConstFuture x) = pure (f x)
   cacheFuture# f = pure (toFuture f)
 
@@ -191,8 +213,8 @@ instance ToFuture a (MappedFuture a)
 
 instance IsFuture a (MappedFuture a) where
   readFuture# (MappedFuture f future) = f <$> readFuture# future
-  attachFutureCallback# (MappedFuture f future) callback =
-    attachFutureCallback# future (callback . f)
+  readOrAttachToFuture# (MappedFuture f future) callback =
+    f <<$>> readOrAttachToFuture# future (callback . f)
   mapFuture# f1 (MappedFuture f2 future) =
     toFuture (MappedFuture (f1 . f2) future)
 
@@ -207,19 +229,24 @@ instance ToFuture a (LiftA2Future a)
 instance IsFuture a (LiftA2Future a) where
   readFuture# (LiftA2Future fn fx fy) = liftA2 fn (readFuture# fx) (readFuture# fy)
 
-  attachFutureCallback# (LiftA2Future fn fx fy) callback = do
-    var <- newTVar LiftA2Initial
-    d1 <- attachFutureCallback# fx \x -> do
-      readTVar var >>= \case
-        LiftA2Initial -> writeTVar var (LiftA2Left x)
-        LiftA2Right y -> dispatch var x y
-        _ -> unreachableCodePath
-    d2 <- attachFutureCallback# fy \y -> do
-      readTVar var >>= \case
-        LiftA2Initial -> writeTVar var (LiftA2Right y)
-        LiftA2Left x -> dispatch var x y
-        _ -> unreachableCodePath
-    pure (d1 <> d2)
+  readOrAttachToFuture# (LiftA2Future fn fx fy) callback =
+    mfixExtra \s -> do
+      var <- newTVar s
+      r1 <- readOrAttachToFuture# fx \x -> do
+        readTVar var >>= \case
+          LiftA2Initial -> writeTVar var (LiftA2Left x)
+          LiftA2Right y -> dispatch var x y
+          _ -> unreachableCodePath
+      r2 <- readOrAttachToFuture# fy \y -> do
+        readTVar var >>= \case
+          LiftA2Initial -> writeTVar var (LiftA2Right y)
+          LiftA2Left x -> dispatch var x y
+          _ -> unreachableCodePath
+      pure case (r1, r2) of
+        (Right v1, Right v2) -> (Right (fn v1 v2), LiftA2Done)
+        (Right v1, Left d2) -> (Left d2, LiftA2Left v1)
+        (Left d1, Right v2) -> (Left d1, LiftA2Right v2)
+        (Left d1, Left d2) -> (Left (d1 <> d2), LiftA2Initial)
     where
       dispatch var x y = do
         writeTVar var LiftA2Done
@@ -236,16 +263,29 @@ instance ToFuture a (BindFuture a)
 instance IsFuture a (BindFuture a) where
   readFuture# (BindFuture fx fn) = readFuture# . fn =<< readFuture# fx
 
-  attachFutureCallback# (BindFuture fx fn) callback = do
+  readOrAttachToFuture# (BindFuture fx fn) callback = do
     disposerVar <- newTVar Nothing
-    d2 <- newUnmanagedTSimpleDisposer do
+    dyWrapper <- newUnmanagedTSimpleDisposer do
       mapM_ disposeTSimpleDisposer =<< swapTVar disposerVar Nothing
-    d1 <- attachFutureCallback# fx \x -> do
-      disposer <- attachFutureCallback# (fn x) \y -> do
+    rx <- readOrAttachToFuture# fx \x -> do
+      ry <- readOrAttachToFuture# (fn x) \y -> do
         callback y
-        disposeTSimpleDisposer d2
-      writeTVar disposerVar (Just disposer)
-    pure (d1 <> d2)
+        disposeTSimpleDisposer dyWrapper
+      case ry of
+        Left dy -> do
+          writeTVar disposerVar (Just dy)
+          callOnceCompleted_ dy \() ->
+            -- This is not a loop since disposing a TSimpleDisposer is
+            -- reentrant-safe
+            disposeTSimpleDisposer dyWrapper
+        Right y -> do
+          callback y
+          disposeTSimpleDisposer dyWrapper
+    result <- case rx of
+      Left dx -> pure (Left (dx <> dyWrapper))
+      -- LHS already completed, so trivially defer to RHS
+      Right x -> readOrAttachToFuture# (fn x) callback
+    pure result
 
 
   mapFuture# f (BindFuture fx fn) = toFuture (BindFuture fx (fmap f . fn))
@@ -269,45 +309,23 @@ instance IsFuture a (CachedFuture a) where
       CacheAttached future _ _ -> readCacheUpstreamFuture x future
       Cached value -> pure value
 
-  attachFutureCallback# x@(CachedFuture var) callback = do
+  readOrAttachToFuture# x@(CachedFuture var) callback = do
     readTVar var >>= \case
-      CacheIdle future -> setupCacheListener x future callback
+      CacheIdle future -> do
+        readOrAttachToFuture# future (fulfillCacheValue x) >>= \case
+          Left disposer -> do
+            callbackRegistry <- newCallbackRegistryWithEmptyCallback (removeCacheListener x)
+            callbackDisposer <- registerCallback callbackRegistry callback
+            writeTVar var (CacheAttached future disposer callbackRegistry)
+            pure (Left callbackDisposer)
+          Right value -> do
+            writeTVar var (Cached value)
+            pure (Right value)
       CacheAttached _ _ callbackRegistry ->
-        registerCallback callbackRegistry callback
-      Cached value -> mempty <$ callback value
+        Left <$> registerCallback callbackRegistry callback
+      Cached value -> pure (Right value)
 
   cacheFuture# = pure . toFuture
-
-setupCacheListener :: CachedFuture a -> Future a -> (a -> STMc NoRetry '[] ()) -> STMc NoRetry '[] TSimpleDisposer
-setupCacheListener x@(CachedFuture var) future callback = do
-  callbackRegistry <- newCallbackRegistryWithEmptyCallback (removeCacheListener x)
-  callbackDisposer <- registerCallback callbackRegistry callback
-
-  -- Write the registry before calling `attachFutureCallback#` (even though
-  -- we don't have the internal disposer yet), since the callback could
-  -- be called by attachFutureCallback# and that could change the state.
-  writeTVar var (CacheAttached future mempty callbackRegistry)
-
-  -- Attach to upstream future. Might result in the callback being called, which
-  -- would change the state to Cached.
-  internalDisposer <- attachFutureCallback# future (fulfillCacheValue x)
-
-  -- Now add internalDisposer to state or dispose it if the state is
-  -- already `Cached`.
-  readTVar var >>= \case
-    CacheIdle _ ->
-      -- This is an impossible state since we just attached a callback to
-      -- the callbackRegistry, which cannot be detached until
-      -- `callbackDisposer` is reachable from the outside of this
-      -- function.
-      unreachableCodePath
-    CacheAttached future' disposer' callbackRegistry' ->
-      -- NOTE: `disposer'` should be mempty since it is set to that before
-      -- calling `attachFutureCallback#`.
-      writeTVar var (CacheAttached future' (disposer' <> internalDisposer) callbackRegistry')
-    Cached _ -> disposeTSimpleDisposer internalDisposer
-
-  pure callbackDisposer
 
 removeCacheListener :: CachedFuture a -> STMc NoRetry '[] ()
 removeCacheListener (CachedFuture var) = do
@@ -321,7 +339,7 @@ removeCacheListener (CachedFuture var) = do
 fulfillCacheValue :: CachedFuture a -> a -> STMc NoRetry '[] ()
 fulfillCacheValue (CachedFuture var) value =
   swapTVar var (Cached value) >>= \case
-    CacheIdle _ -> unreachableCodePath
+    CacheIdle _ -> pure ()
     CacheAttached _ disposer registry -> do
       disposeTSimpleDisposer disposer
       callCallbacks registry value
@@ -387,33 +405,36 @@ toFutureEx x = FutureEx (toFuture x)
 -- ** Promise
 
 -- | A value container that can be written once and implements `IsFuture`.
-data Promise a = Promise (TMVar a) (CallbackRegistry a)
+newtype Promise a = Promise (TVar (Either (CallbackRegistry a) a))
 
 type PromiseEx exceptions a = Promise (Either (Ex exceptions) a)
 
 instance ToFuture a (Promise a)
 
 instance IsFuture a (Promise a) where
-  readFuture# (Promise var _) = readTMVar var
+  readFuture# (Promise var) =
+    readTVar var >>= \case
+      Left _ -> retry
+      Right value -> pure value
 
-  attachFutureCallback# (Promise var registry) callback =
-    tryReadTMVar var >>= \case
-      Just value -> trivialTSimpleDisposer <$ callback value
-      Nothing ->
+  readOrAttachToFuture# (Promise var) callback =
+    readTVar var >>= \case
+      Right value -> pure (Right value)
+      Left registry ->
         -- NOTE Using mfix to get the disposer is a safe because the registered
         -- method won't be called immediately.
         -- Modifying the callback to deregister itself is an inefficient hack
         -- that could be improved by writing a custom registry.
-        mfix \disposer -> do
+        Left <$> mfix \disposer -> do
           registerCallback registry \value -> do
             callback value
             disposeTSimpleDisposer disposer
 
 newPromise :: MonadSTMc NoRetry '[] m => m (Promise a)
-newPromise = liftSTMc $ Promise <$> newEmptyTMVar <*> newCallbackRegistry
+newPromise = liftSTMc $ Promise <$> (newTVar . Left =<< newCallbackRegistry)
 
 newPromiseIO :: MonadIO m => m (Promise a)
-newPromiseIO = liftIO $ Promise <$> newEmptyTMVarIO <*> newCallbackRegistryIO
+newPromiseIO = liftIO $ Promise <$> (newTVarIO . Left =<< newCallbackRegistryIO)
 
 fulfillPromise :: MonadSTMc NoRetry '[PromiseAlreadyCompleted] m => Promise a -> a -> m ()
 fulfillPromise var result = do
@@ -424,13 +445,15 @@ fulfillPromiseIO :: MonadIO m => Promise a -> a -> m ()
 fulfillPromiseIO var result = atomically $ fulfillPromise var result
 
 tryFulfillPromise :: MonadSTMc NoRetry '[] m => Promise a -> a -> m Bool
-tryFulfillPromise (Promise var registry) value = liftSTMc do
-  success <- tryPutTMVar var value
-  when success do
-    -- Calling the callbacks will also deregister all callbacks due to the
-    -- current implementation of `attachFutureCallback#`.
-    callCallbacks registry value
-  pure success
+tryFulfillPromise (Promise var) value = liftSTMc do
+  readTVar var >>= \case
+    Left registry -> do
+      writeTVar var (Right value)
+      -- Calling the callbacks will also deregister all callbacks due to the
+      -- current implementation of `attachFutureCallback#`.
+      callCallbacks registry value
+      pure True
+    Right _ -> pure False
 
 tryFulfillPromise_ :: MonadSTMc NoRetry '[] m => Promise a -> a -> m ()
 tryFulfillPromise_ var result = void $ tryFulfillPromise var result
@@ -475,19 +498,26 @@ instance IsFuture a (AnyFuture a) where
     readTVar var >>= \case
       Just value -> pure value
       Nothing -> do
-        result <- foldr orElseC retry (readFuture# <$> fs)
-        -- Read again in case during a "later" readFuture#, an "earlier"
-        -- readFuture# became available to read (which should only happen
-        -- as a rare edge case, but it's easy to handle it here).
-        readTVar var >>= \case
-          Just value -> pure value
-          Nothing -> result <$ writeTVar var (Just result)
+        value <- foldr orElseC retry (readFuture# <$> fs)
+        writeTVar var (Just value)
+        pure value
 
-  attachFutureCallback# (AnyFuture fs var) callback = do
-    disposers <- mapM (\f -> attachFutureCallback# f eitherCallback) fs
-    pure (mconcat disposers)
+  readOrAttachToFuture# (AnyFuture futures var) callback = do
+    readTVar var >>= \case
+      Just value -> pure (Right value)
+      Nothing -> go futures []
     where
-      eitherCallback value = do
+      go :: [Future a] -> [TSimpleDisposer] -> STMc NoRetry '[] (Either TSimpleDisposer a)
+      go [] acc = pure (Left (mconcat acc))
+      go (f : fs) acc = do
+        readOrAttachToFuture# f internalCallback >>= \case
+          Left disposer -> go fs (disposer : acc)
+          Right value -> do
+            mapM_ disposeTSimpleDisposer acc
+            writeTVar var (Just value)
+            pure (Right value)
+
+      internalCallback value = do
         readTVar var >>= \case
           Just _ -> pure ()
           Nothing -> do
@@ -519,11 +549,11 @@ instance IsFuture () TSimpleDisposerElement where
       TSimpleDisposerDisposed -> pure ()
       _ -> retry
 
-  attachFutureCallback# (TSimpleDisposerElement _ stateVar _) callback = do
+  readOrAttachToFuture# (TSimpleDisposerElement _ stateVar _) callback = do
     readTVar stateVar >>= \case
-      TSimpleDisposerDisposed -> trivialTSimpleDisposer <$ callback ()
-      TSimpleDisposerDisposing registry -> registerDisposedCallback registry
-      TSimpleDisposerNormal _ registry -> registerDisposedCallback registry
+      TSimpleDisposerDisposed -> pure (Right ())
+      TSimpleDisposerDisposing registry -> Left <$> registerDisposedCallback registry
+      TSimpleDisposerNormal _ registry -> Left <$> registerDisposedCallback registry
     where
       registerDisposedCallback registry = do
         -- NOTE Using mfix to get the disposer is a safe because the registered
@@ -534,3 +564,6 @@ instance IsFuture () TSimpleDisposerElement where
           registerCallback registry \value -> do
             callback value
             disposeTSimpleDisposer disposer
+
+instance ToFuture () TSimpleDisposer where
+  toFuture (TSimpleDisposer elements) = mconcat $ toFuture <$> elements

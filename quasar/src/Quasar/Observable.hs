@@ -92,9 +92,9 @@ instance IsObservable (Maybe r) (Future r) where
   readObservable future = orElseNothing @'[] (readFuture future)
 
   attachObserver future callback = do
-    peekFuture future >>= \case
-      Just done -> pure (mempty, Just done)
-      Nothing -> (, Nothing) <$> attachFutureCallback future (callback . Just)
+    readOrAttachToFuture future (callback . Just) >>= \case
+      Left disposer -> pure (disposer, Nothing)
+      Right value -> pure (mempty, Just value)
 
   cacheObservable future = toObservable <$> (cacheFuture future)
 
