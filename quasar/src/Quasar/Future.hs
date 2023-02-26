@@ -11,7 +11,9 @@ module Quasar.Future (
   ToFuture(..),
   readFuture,
   readOrAttachToFuture,
+  readOrAttachToFuture_,
   callOnceCompleted,
+  callOnceCompleted_,
   mapFuture,
   cacheFuture,
   IsFuture(..),
@@ -135,6 +137,12 @@ readFuture x = liftSTMc $ readFuture# (toFuture x)
 readOrAttachToFuture :: (ToFuture r a, MonadSTMc NoRetry '[] m) => a -> FutureCallback r -> m (Either TSimpleDisposer r)
 readOrAttachToFuture x callback = liftSTMc $ readOrAttachToFuture# (toFuture x) callback
 
+-- | Variant of `readOrAttachToFuture` that does not allow to detach the
+-- callback.
+readOrAttachToFuture_ :: (ToFuture r a, MonadSTMc NoRetry '[] m) => a -> FutureCallback r -> m (Maybe r)
+-- TODO disposer is dropped, revisit later
+readOrAttachToFuture_ x callback = either (const Nothing) Just <$> readOrAttachToFuture x callback
+
 -- | Will call the callback immediately if the future is already completed.
 callOnceCompleted :: (ToFuture r a, MonadSTMc NoRetry '[] m) => a -> FutureCallback r -> m TSimpleDisposer
 callOnceCompleted future callback = liftSTMc do
@@ -142,7 +150,9 @@ callOnceCompleted future callback = liftSTMc do
     Left disposer -> pure disposer
     Right value -> mempty <$ callback value
 
+-- | Variant of `callOnceCompleted` that does not allow to detach the callback.
 callOnceCompleted_ :: (ToFuture r a, MonadSTMc NoRetry '[] m) => a -> FutureCallback r -> m ()
+-- TODO disposer is dropped, revisit later
 callOnceCompleted_ future callback = void $ callOnceCompleted future callback
 
 mapFuture :: ToFuture r a => (r -> r2) -> a -> Future r2
@@ -545,12 +555,12 @@ eitherFuture x y = any2Future (Left <$> x) (Right <$> y)
 instance ToFuture () TSimpleDisposerElement
 
 instance IsFuture () TSimpleDisposerElement where
-  readFuture# (TSimpleDisposerElement _ stateVar _) = do
+  readFuture# (TSimpleDisposerElement _ stateVar) = do
     readTVar stateVar >>= \case
       TSimpleDisposerDisposed -> pure ()
       _ -> retry
 
-  readOrAttachToFuture# (TSimpleDisposerElement _ stateVar _) callback = do
+  readOrAttachToFuture# (TSimpleDisposerElement _ stateVar) callback = do
     readTVar stateVar >>= \case
       TSimpleDisposerDisposed -> pure (Right ())
       TSimpleDisposerDisposing registry -> Left <$> registerDisposedCallback registry
