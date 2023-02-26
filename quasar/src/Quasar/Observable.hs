@@ -9,7 +9,7 @@ module Quasar.Observable (
   mapObservable,
   cacheObservable,
   IsObservable(..),
-  attachObserverAndCall,
+  observeSTM,
   ObserverCallback,
   observe,
 
@@ -87,11 +87,11 @@ class ToObservable r a => IsObservable r a | a -> r where
   cacheObservable# :: a -> STMc NoRetry '[] (Observable r)
   cacheObservable# = undefined
 
-readObservable :: ToObservable r a => a -> STMc NoRetry '[] r
-readObservable o = readObservable (toObservable o)
+readObservable :: (ToObservable r a, MonadSTMc NoRetry '[] m) => a -> m r
+readObservable o = liftSTMc $ readObservable# (toObservable o)
 
-attachObserver :: ToObservable r a => a -> ObserverCallback r -> STMc NoRetry '[] (TSimpleDisposer, r)
-attachObserver o = attachObserver# (toObservable o)
+attachObserver :: (ToObservable r a, MonadSTMc NoRetry '[] m) => a -> ObserverCallback r -> m (TSimpleDisposer, r)
+attachObserver o callback = liftSTMc $ attachObserver# (toObservable o) callback
 
 mapObservable :: ToObservable r a => (r -> r2) -> a -> Observable r2
 mapObservable f o = mapObservable# f (toObservable o)
@@ -99,12 +99,12 @@ mapObservable f o = mapObservable# f (toObservable o)
 cacheObservable :: (ToObservable r a, MonadSTMc NoRetry '[] m) => a -> m (Observable r)
 cacheObservable o = liftSTMc $ cacheObservable# (toObservable o)
 
--- The implementation of `attachObserverAndCall` will call the callback during
+-- The implementation of `observeSTM` will call the callback during
 -- registration.
-attachObserverAndCall :: IsObservable r a => a -> ObserverCallback r -> STMc NoRetry '[] TSimpleDisposer
-attachObserverAndCall observable cb = do
-  (disposer, initial) <- attachObserver# (toObservable observable) cb
-  cb initial
+observeSTM :: (ToObservable r a, MonadSTMc NoRetry '[] m) => a -> ObserverCallback r -> m TSimpleDisposer
+observeSTM observable callback = liftSTMc do
+  (disposer, initial) <- attachObserver# (toObservable observable) callback
+  callback initial
   pure disposer
 
 
@@ -126,7 +126,7 @@ observe
   -> (a -> STMc NoRetry '[] ()) -- ^ callback
   -> m ()
 observe observable callback = do
-  disposer <- liftSTMc $ attachObserverAndCall observable callback
+  disposer <- observeSTM observable callback
   collectResource disposer
 
 observeQ
@@ -140,7 +140,7 @@ observeQ observable callbackFn = do
   let
     sink = quasarExceptionSink scope
     wrappedCallback state = callbackFn state `catchAllSTMc` throwToExceptionSink sink
-  disposer <- liftSTMc $ attachObserverAndCall observable wrappedCallback
+  disposer <- observeSTM observable wrappedCallback
   collectResource disposer
   pure $ toDisposer (quasarResourceManager scope)
 
@@ -307,7 +307,7 @@ instance IsObservable a (BindObservable a) where
     where
       leftCallback rightDisposerVar lmsg = do
         disposeTSimpleDisposer =<< readTVar rightDisposerVar
-        rightDisposer <- attachObserverAndCall (fn lmsg) callback
+        rightDisposer <- observeSTM (fn lmsg) callback
         writeTVar rightDisposerVar rightDisposer
 
   readObservable# (BindObservable fx fn) =
