@@ -26,7 +26,6 @@ import Control.Monad.Except
 import Data.HashMap.Strict qualified as HM
 import Data.Unique
 import Quasar.Prelude
-import Quasar.Resources.Finalizer
 
 data CallbackRegistry a = CallbackRegistry (TVar (HM.HashMap Unique (a -> STMc NoRetry '[] ()))) (STMc NoRetry '[] ())
 
@@ -67,7 +66,7 @@ data TSimpleDisposerState
   | TSimpleDisposerDisposing (CallbackRegistry ())
   | TSimpleDisposerDisposed
 
-data TSimpleDisposerElement = TSimpleDisposerElement Unique (TVar TSimpleDisposerState) Finalizers
+data TSimpleDisposerElement = TSimpleDisposerElement Unique (TVar TSimpleDisposerState)
 
 newtype TSimpleDisposer = TSimpleDisposer [TSimpleDisposerElement]
   deriving newtype (Semigroup, Monoid)
@@ -77,8 +76,7 @@ newUnmanagedTSimpleDisposer fn = liftSTMc do
   key <- newUniqueSTM
   isDisposedRegistry <- newCallbackRegistry
   stateVar <- newTVar (TSimpleDisposerNormal fn isDisposedRegistry)
-  finalizers <- newFinalizers
-  let element = TSimpleDisposerElement key stateVar finalizers
+  let element = TSimpleDisposerElement key stateVar
   pure $ TSimpleDisposer [element]
 
 -- | In case of reentry this will return without calling the dispose hander again.
@@ -88,14 +86,13 @@ disposeTSimpleDisposer (TSimpleDisposer elements) = liftSTMc do
 
 -- | In case of reentry this will return without calling the dispose hander again.
 disposeTSimpleDisposerElement :: TSimpleDisposerElement -> STMc NoRetry '[] ()
-disposeTSimpleDisposerElement (TSimpleDisposerElement _ state finalizers) =
+disposeTSimpleDisposerElement (TSimpleDisposerElement _ state) =
   readTVar state >>= \case
     TSimpleDisposerNormal fn isDisposedRegistry -> do
       writeTVar state (TSimpleDisposerDisposing isDisposedRegistry)
       fn
       writeTVar state TSimpleDisposerDisposed
       callCallbacks isDisposedRegistry ()
-      runFinalizers finalizers
     TSimpleDisposerDisposing _ ->
       -- Doing nothing results in the documented behavior.
       pure ()

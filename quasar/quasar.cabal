@@ -114,7 +114,6 @@ library
   other-modules:
     Quasar.Resources.Core
     Quasar.Resources.Disposer
-    Quasar.Resources.Finalizer
     Quasar.Resources.TSimpleDisposer
     Quasar.Utils.ShortIO
   hs-source-dirs:
