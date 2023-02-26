@@ -3,6 +3,11 @@
 module Quasar.Observable (
   -- * Observable core
   Observable,
+  ToObservable(..),
+  readObservable,
+  attachObserver,
+  mapObservable,
+  cacheObservable,
   IsObservable(..),
   attachObserverAndCall,
   ObserverCallback,
@@ -52,51 +57,68 @@ import Quasar.Utils.Fix
 
 type ObserverCallback a = a -> STMc NoRetry '[] ()
 
-class IsObservable r a | a -> r where
-  {-# MINIMAL toObservable | attachObserver, readObservable #-}
-
+class ToObservable r a | a -> r where
   toObservable :: a -> Observable r
+  default toObservable :: IsObservable r a => a -> Observable r
   toObservable = Observable
 
-  readObservable :: a -> STMc NoRetry '[] r
-  readObservable observable = readObservable (toObservable observable)
+class ToObservable r a => IsObservable r a | a -> r where
+  {-# MINIMAL attachObserver#, readObservable# #-}
+
+  readObservable# :: a -> STMc NoRetry '[] r
+  readObservable# observable = readObservable# (toObservable observable)
 
   -- | Register a callback to observe changes. The callback is called when the
   -- value changes, but depending on the observable implementation intermediate
   -- values may be skipped.
   --
-  -- The implementation of `attachObserver` MUST NOT call the callback during
+  -- The implementation of `attachObserver#` MUST NOT call the callback during
   -- registration.
-  attachObserver :: a -> ObserverCallback r -> STMc NoRetry '[] (TSimpleDisposer, r)
-  attachObserver observable = attachObserver (toObservable observable)
+  --
+  -- The implementation of `attachObserver#` MUST NOT directly or indirectly
+  -- update an observable during the current STM transaction. Only working with
+  -- `TVar`s and calling `registerCallback` is guaranteed to be safe.
+  attachObserver# :: a -> ObserverCallback r -> STMc NoRetry '[] (TSimpleDisposer, r)
+  attachObserver# observable = attachObserver# (toObservable observable)
 
-  mapObservable :: (r -> r2) -> a -> Observable r2
-  mapObservable f = Observable . MappedObservable f . toObservable
-  --TODO
-  --mapObservable f = mapObservable f . toObservable
+  mapObservable# :: (r -> r2) -> a -> Observable r2
+  mapObservable# f o = Observable (MappedObservable f (toObservable o))
 
-  cacheObservable :: MonadSTMc NoRetry '[] m => a -> m (Observable r)
-  --TODO
-  cacheObservable = undefined
+  cacheObservable# :: a -> STMc NoRetry '[] (Observable r)
+  cacheObservable# = undefined
+
+readObservable :: ToObservable r a => a -> STMc NoRetry '[] r
+readObservable o = readObservable (toObservable o)
+
+attachObserver :: ToObservable r a => a -> ObserverCallback r -> STMc NoRetry '[] (TSimpleDisposer, r)
+attachObserver o = attachObserver# (toObservable o)
+
+mapObservable :: ToObservable r a => (r -> r2) -> a -> Observable r2
+mapObservable f o = mapObservable# f (toObservable o)
+
+cacheObservable :: (ToObservable r a, MonadSTMc NoRetry '[] m) => a -> m (Observable r)
+cacheObservable o = liftSTMc $ cacheObservable# (toObservable o)
 
 -- The implementation of `attachObserverAndCall` will call the callback during
 -- registration.
 attachObserverAndCall :: IsObservable r a => a -> ObserverCallback r -> STMc NoRetry '[] TSimpleDisposer
 attachObserverAndCall observable cb = do
-  (disposer, initial) <- attachObserver (toObservable observable) cb
+  (disposer, initial) <- attachObserver# (toObservable observable) cb
   cb initial
   pure disposer
 
 
-instance IsObservable (Maybe r) (Future r) where
-  readObservable future = orElseNothing @'[] (readFuture future)
+instance ToObservable (Maybe r) (Future r)
 
-  attachObserver future callback = do
+instance IsObservable (Maybe r) (Future r) where
+  readObservable# future = orElseNothing @'[] (readFuture future)
+
+  attachObserver# future callback = do
     readOrAttachToFuture future (callback . Just) >>= \case
       Left disposer -> pure (disposer, Nothing)
       Right value -> pure (mempty, Just value)
 
-  cacheObservable future = toObservable <$> (cacheFuture future)
+  cacheObservable# future = toObservable <$> (cacheFuture# future)
 
 observe
   :: (ResourceCollector m, MonadSTMc NoRetry '[] m)
@@ -146,14 +168,18 @@ observeQIO_ observable callback = quasarAtomically $ observeQ_ observable callba
 
 -- | Existential quantification wrapper for the IsObservable type class.
 data Observable r = forall a. IsObservable r a => Observable a
-instance IsObservable r (Observable r) where
-  attachObserver (Observable o) = attachObserver o
+
+instance ToObservable a (Observable a) where
   toObservable = id
-  mapObservable f (Observable o) = mapObservable f o
-  cacheObservable (Observable o) = cacheObservable o
+
+instance IsObservable a (Observable a) where
+  readObservable# (Observable o) = readObservable# o
+  attachObserver# (Observable o) = attachObserver# o
+  mapObservable# f (Observable o) = mapObservable# f o
+  cacheObservable# (Observable o) = cacheObservable# o
 
 instance Functor Observable where
-  fmap f = mapObservable f
+  fmap f = mapObservable# f
 
 instance Applicative Observable where
   pure value = toObservable (ConstObservable value)
@@ -214,19 +240,25 @@ data ObserveWhileCompleted = ObserveWhileCompleted
 
 
 newtype ConstObservable a = ConstObservable a
+
+instance ToObservable a (ConstObservable a)
+
 instance IsObservable a (ConstObservable a) where
-  attachObserver (ConstObservable value) _ = pure (mempty, value)
+  attachObserver# (ConstObservable value) _ = pure (mempty, value)
 
-  readObservable (ConstObservable value) = pure value
+  readObservable# (ConstObservable value) = pure value
 
-  cacheObservable = pure . toObservable
+  cacheObservable# = pure . toObservable
 
 
 data MappedObservable a = forall b. MappedObservable (b -> a) (Observable b)
+
+instance ToObservable a (MappedObservable a)
+
 instance IsObservable a (MappedObservable a) where
-  attachObserver (MappedObservable fn observable) callback = fn <<$>> attachObserver observable (callback . fn)
-  readObservable (MappedObservable fn observable) = fn <$> readObservable observable
-  mapObservable f1 (MappedObservable f2 upstream) = toObservable $ MappedObservable (f1 . f2) upstream
+  attachObserver# (MappedObservable fn observable) callback = fn <<$>> attachObserver# observable (callback . fn)
+  readObservable# (MappedObservable fn observable) = fn <$> readObservable# observable
+  mapObservable# f1 (MappedObservable f2 upstream) = toObservable $ MappedObservable (f1 . f2) upstream
 
 
 -- | Merge two observables using a given merge function. Whenever one of the inputs is updated, the resulting
@@ -235,8 +267,10 @@ instance IsObservable a (MappedObservable a) where
 -- There is no caching involed, every subscriber effectively subscribes to both input observables.
 data LiftA2Observable r = forall a b. LiftA2Observable (a -> b -> r) (Observable a) (Observable b)
 
+instance ToObservable a (LiftA2Observable a)
+
 instance IsObservable a (LiftA2Observable a) where
-  attachObserver (LiftA2Observable fn fx fy) callback = do
+  attachObserver# (LiftA2Observable fn fx fy) callback = do
     mfixExtra \(ixFix, iyFix) -> do
       var0 <- newTVar ixFix
       var1 <- newTVar iyFix
@@ -244,25 +278,27 @@ instance IsObservable a (LiftA2Observable a) where
             x <- readTVar var0
             y <- readTVar var1
             callback (fn x y)
-      (dx, ix) <- attachObserver fx (\update -> writeTVar var0 update >> callCallback)
-      (dy, iy) <- attachObserver fy (\update -> writeTVar var1 update >> callCallback)
+      (dx, ix) <- attachObserver# fx (\update -> writeTVar var0 update >> callCallback)
+      (dy, iy) <- attachObserver# fy (\update -> writeTVar var1 update >> callCallback)
       pure ((dx <> dy, fn ix iy), (ix, iy))
 
-  readObservable (LiftA2Observable fn fx fy) =
-    liftA2 fn (readObservable fx) (readObservable fy)
+  readObservable# (LiftA2Observable fn fx fy) =
+    liftA2 fn (readObservable# fx) (readObservable# fy)
 
-  mapObservable f1 (LiftA2Observable f2 fx fy) =
+  mapObservable# f1 (LiftA2Observable f2 fx fy) =
     toObservable $ LiftA2Observable (\x y -> f1 (f2 x y)) fx fy
 
 
 data BindObservable a = forall b. BindObservable (Observable b) (b -> Observable a)
 
+instance ToObservable a (BindObservable a)
+
 instance IsObservable a (BindObservable a) where
-  attachObserver (BindObservable fx fn) callback = do
+  attachObserver# (BindObservable fx fn) callback = do
     mfixExtra \rightDisposerFix -> do
       rightDisposerVar <- newTVar rightDisposerFix
-      (leftDisposer, ix) <- attachObserver fx (leftCallback rightDisposerVar)
-      (rightDisposer, iy) <- attachObserver (fn ix) callback
+      (leftDisposer, ix) <- attachObserver# fx (leftCallback rightDisposerVar)
+      (rightDisposer, iy) <- attachObserver# (fn ix) callback
 
       varDisposer <- newUnmanagedTSimpleDisposer do
         disposeTSimpleDisposer =<< swapTVar rightDisposerVar mempty
@@ -274,24 +310,26 @@ instance IsObservable a (BindObservable a) where
         rightDisposer <- attachObserverAndCall (fn lmsg) callback
         writeTVar rightDisposerVar rightDisposer
 
-  readObservable (BindObservable fx fn) =
-    readObservable . fn =<< readObservable fx
+  readObservable# (BindObservable fx fn) =
+    readObservable# . fn =<< readObservable# fx
 
-  mapObservable f (BindObservable fx fn) =
+  mapObservable# f (BindObservable fx fn) =
     toObservable $ BindObservable fx (f <<$>> fn)
 
 
 data ObservableVar a = ObservableVar (TVar a) (CallbackRegistry a)
 
+instance ToObservable a (ObservableVar a)
+
 instance IsObservable a (ObservableVar a) where
-  attachObserver (ObservableVar var registry) callback = do
+  attachObserver# (ObservableVar var registry) callback = do
     disposer <- registerCallback registry callback
     value <- readTVar var
     pure (disposer, value)
 
-  readObservable = readObservableVar
+  readObservable# = readObservableVar
 
-  cacheObservable = pure . toObservable
+  cacheObservable# = pure . toObservable
 
 newObservableVar :: MonadSTMc NoRetry '[] m => a -> m (ObservableVar a)
 newObservableVar x = liftSTMc $ ObservableVar <$> newTVar x <*> newCallbackRegistry
@@ -325,15 +363,11 @@ observableVarHasObservers (ObservableVar _ registry) = callbackRegistryHasCallba
 
 newtype ObservableEx exceptions a = ObservableEx (Observable (Either (Ex exceptions) a))
 
-instance IsObservable (Either (Ex exceptions) a) (ObservableEx exceptions a) where
-  attachObserver (ObservableEx o) = attachObserver o
-  readObservable (ObservableEx o) = readObservable o
+instance ToObservable (Either (Ex exceptions) a) (ObservableEx exceptions a) where
   toObservable (ObservableEx o) = o
-  mapObservable f (ObservableEx o) = mapObservable f o
-  cacheObservable (ObservableEx o) = cacheObservable o
 
 instance Functor (ObservableEx exceptions) where
-  fmap f x = ObservableEx $ mapObservable (fmap f) x
+  fmap f (ObservableEx x) = ObservableEx (mapObservable# (fmap f) x)
 
 instance Applicative (ObservableEx exceptions) where
   pure value = ObservableEx $ pure (Right value)

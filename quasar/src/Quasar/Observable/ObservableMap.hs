@@ -25,7 +25,9 @@ import Quasar.Utils.CallbackRegistry
 import Quasar.Utils.Map qualified as Map
 
 
-class IsObservable (Map k v) a => IsObservableMap k v a where
+class ToObservable (Map k v) a => IsObservableMap k v a where
+  {-# MINIMAL toObservableMap | observeKey, attachDeltaObserver #-}
+
   observeKey :: Ord k => k -> a -> Observable (Maybe v)
   observeKey key = observeKey key . toObservableMap
 
@@ -38,12 +40,10 @@ class IsObservable (Map k v) a => IsObservableMap k v a where
   toObservableMap :: a -> ObservableMap k v
   toObservableMap = ObservableMap
 
-  {-# MINIMAL toObservableMap | observeKey, attachDeltaObserver #-}
-
 
 data ObservableMap k v = forall a. IsObservableMap k v a => ObservableMap a
 
-instance IsObservable (Map k v) (ObservableMap k v) where
+instance ToObservable (Map k v) (ObservableMap k v) where
   toObservable (ObservableMap x) = toObservable x
 
 instance IsObservableMap k v (ObservableMap k v) where
@@ -78,7 +78,7 @@ initialObservableMapDelta = fmap (\(k, v) -> Insert k v) . Map.toList
 
 data MappedObservableMap k v = forall a. MappedObservableMap (a -> v) (ObservableMap k a)
 
-instance IsObservable (Map k v) (MappedObservableMap k v) where
+instance ToObservable (Map k v) (MappedObservableMap k v) where
   toObservable (MappedObservableMap fn observable) = fn <<$>> toObservable observable
 
 instance IsObservableMap k v (MappedObservableMap k v) where
@@ -94,9 +94,11 @@ data ObservableMapVar k v = ObservableMapVar {
   keyObservers :: TVar (Map k (CallbackRegistry (Maybe v)))
 }
 
+instance ToObservable (Map k v) (ObservableMapVar k v)
+
 instance IsObservable (Map k v) (ObservableMapVar k v) where
-  readObservable ObservableMapVar{content} = readTVar content
-  attachObserver ObservableMapVar{content, observers} callback = do
+  readObservable# ObservableMapVar{content} = readTVar content
+  attachObserver# ObservableMapVar{content, observers} callback = do
     disposer <- registerCallback observers callback
     value <- readTVar content
     pure (disposer, value)
@@ -111,8 +113,10 @@ instance IsObservableMap k v (ObservableMapVar k v) where
 
 data ObservableMapVarKeyObservable k v = ObservableMapVarKeyObservable k (ObservableMapVar k v)
 
+instance Ord k => ToObservable (Maybe v) (ObservableMapVarKeyObservable k v)
+
 instance Ord k => IsObservable (Maybe v) (ObservableMapVarKeyObservable k v) where
-  attachObserver (ObservableMapVarKeyObservable key ObservableMapVar{content, keyObservers}) callback = do
+  attachObserver# (ObservableMapVarKeyObservable key ObservableMapVar{content, keyObservers}) callback = do
     value <- Map.lookup key <$> readTVar content
     registry <- (Map.lookup key <$> readTVar keyObservers) >>= \case
       Just registry -> pure registry
@@ -123,7 +127,7 @@ instance Ord k => IsObservable (Maybe v) (ObservableMapVarKeyObservable k v) whe
     disposer <- registerCallback registry callback
     pure (disposer, value)
 
-  readObservable (ObservableMapVarKeyObservable key ObservableMapVar{content}) =
+  readObservable# (ObservableMapVarKeyObservable key ObservableMapVar{content}) =
     Map.lookup key <$> readTVar content
 
 new :: MonadSTMc NoRetry '[] m => m (ObservableMapVar k v)
@@ -163,7 +167,7 @@ lookupDelete key ObservableMapVar{content, observers, deltaObservers, keyObserve
 
 data FilteredObservableMap k v = FilteredObservableMap (v -> Bool) (ObservableMap k v)
 
-instance IsObservable (Map k v) (FilteredObservableMap k v) where
+instance ToObservable (Map k v) (FilteredObservableMap k v) where
   toObservable (FilteredObservableMap predicate upstream) =
     mapObservable (Map.filter predicate) upstream
 
