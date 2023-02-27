@@ -17,7 +17,6 @@ module Quasar.Resources.Core (
   newUnmanagedTSimpleDisposer,
   disposeTSimpleDisposer,
   disposeTSimpleDisposerElement,
-  trivialTSimpleDisposer,
 ) where
 
 
@@ -97,7 +96,3 @@ disposeTSimpleDisposerElement (TSimpleDisposerElement _ state) =
       -- Doing nothing results in the documented behavior.
       pure ()
     TSimpleDisposerDisposed -> pure ()
-
--- | A trivial disposer that does not perform any action when disposed.
-trivialTSimpleDisposer :: TSimpleDisposer
-trivialTSimpleDisposer = mempty

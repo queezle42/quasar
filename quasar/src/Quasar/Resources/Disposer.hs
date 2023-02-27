@@ -27,6 +27,10 @@ module Quasar.Resources.Disposer (
 
   -- * ResourceCollector
   ResourceCollector(..),
+
+  -- * Implementing disposers
+  IsDisposerElement(..),
+  toDisposer,
 ) where
 
 import Control.Monad (foldM)
@@ -40,7 +44,7 @@ import Quasar.Async.STMHelper
 import Quasar.Exceptions
 import Quasar.Future
 import Quasar.Prelude
-import Quasar.Resources.TSimpleDisposer
+import Quasar.Resources.Core
 import Quasar.Utils.ShortIO
 import Quasar.Utils.TOnce
 
@@ -52,11 +56,14 @@ isDisposed :: Disposable a => a -> Future ()
 isDisposed r = toFuture (getDisposer r)
 
 
-class (Disposable a, ToFuture () a) => IsDisposerElement a where
+class ToFuture () a => IsDisposerElement a where
   disposerElementKey :: a -> Unique
   disposeEventually# :: a -> STMc NoRetry '[] (Future ())
   beginDispose# :: a -> STMc NoRetry '[] DisposeResult
   beginDispose# disposer = DisposeResultAwait <$> disposeEventually# disposer
+
+toDisposer :: IsDisposerElement a => [a] -> Disposer
+toDisposer x = Disposer (DisposerElement <$> x)
 
 
 newtype Disposer = Disposer [DisposerElement]
@@ -72,15 +79,12 @@ newtype TDisposer = TDisposer [TDisposerElement]
   deriving newtype (Semigroup, Monoid)
 
 instance Disposable TDisposer where
-  getDisposer (TDisposer ds) = getDisposer ds
+  getDisposer (TDisposer tds) = toDisposer tds
 
 
 type DisposerState = TOnce DisposeFnIO (Future ())
 
 data DisposerElement = forall a. IsDisposerElement a => DisposerElement a
-
-instance Disposable DisposerElement where
-  getDisposer disposer = Disposer [disposer]
 
 instance ToFuture () DisposerElement where
   toFuture (DisposerElement x) = toFuture x
@@ -91,9 +95,6 @@ instance IsDisposerElement DisposerElement where
   beginDispose# (DisposerElement x) = beginDispose# x
 
 data IODisposerElement = IODisposerElement Unique TIOWorker ExceptionSink DisposerState
-
-instance Disposable IODisposerElement where
-  getDisposer disposer = Disposer [DisposerElement disposer]
 
 instance ToFuture () IODisposerElement where
   toFuture (IODisposerElement _ _ _ state) = join (toFuture state)
@@ -110,14 +111,8 @@ type STMDisposerState = TOnce (STM ()) (Future ())
 
 data TDisposerElement = TDisposerElement Unique TIOWorker ExceptionSink STMDisposerState
 
-instance Disposable TDisposerElement where
-  getDisposer disposer = Disposer [DisposerElement disposer]
-
 instance ToFuture () TDisposerElement where
   toFuture (TDisposerElement _ _ _ state) = join (toFuture state)
-
-instance Disposable [TDisposerElement] where
-  getDisposer tds = Disposer (DisposerElement <$> tds)
 
 instance IsDisposerElement TDisposerElement where
   disposerElementKey (TDisposerElement key _ _ _) = key
@@ -172,13 +167,7 @@ beginDisposeSTMDisposer (TDisposerElement _ worker sink state) = liftSTMc do
 -- NOTE TSimpleDisposer is moved to it's own module due to module dependencies
 
 instance Disposable TSimpleDisposer where
-  getDisposer (TSimpleDisposer ds) = getDisposer ds
-
-instance Disposable TSimpleDisposerElement where
-  getDisposer disposer = Disposer [DisposerElement disposer]
-
-instance Disposable [TSimpleDisposerElement] where
-  getDisposer tds = Disposer (DisposerElement <$> tds)
+  getDisposer (TSimpleDisposer tds) = toDisposer tds
 
 instance IsDisposerElement TSimpleDisposerElement where
   disposerElementKey (TSimpleDisposerElement key _) = key
@@ -191,10 +180,10 @@ trivialDisposer :: Disposer
 trivialDisposer = mempty
 
 newUnmanagedIODisposer :: MonadSTMc NoRetry '[] m => IO () -> TIOWorker -> ExceptionSink -> m Disposer
-newUnmanagedIODisposer fn worker exChan = getDisposer <$> do
+newUnmanagedIODisposer fn worker exChan = do
   key <- newUniqueSTM
   state <- newTOnce fn
-  pure $ IODisposerElement key worker exChan state
+  pure $ Disposer [DisposerElement (IODisposerElement key worker exChan state)]
 
 
 dispose :: (MonadIO m, Disposable r) => r -> m ()
@@ -259,7 +248,7 @@ data ResourceManagerState
   | ResourceManagerDisposed
 
 instance Disposable ResourceManager where
-  getDisposer rm = Disposer [DisposerElement rm]
+  getDisposer rm = toDisposer [rm]
 
 instance ToFuture () ResourceManager where
   toFuture rm = toFuture (resourceManagerIsDisposed rm)
