@@ -7,8 +7,6 @@ module Quasar.Utils.ShortIO (
   forkIOWithUnmaskShortIO,
 
   -- ** Some specific functions required internally
-  peekFutureShortIO,
-  newPromiseShortIO,
   fulfillPromiseShortIO,
 ) where
 
@@ -33,12 +31,6 @@ forkIOShortIO fn = ShortIO $ forkIO fn
 forkIOWithUnmaskShortIO :: ((forall a. IO a -> IO a) -> IO ()) -> ShortIO ThreadId
 forkIOWithUnmaskShortIO fn = ShortIO $ forkIOWithUnmask fn
 
-
-peekFutureShortIO :: Future r -> ShortIO (Maybe r)
-peekFutureShortIO awaitable = ShortIO $ peekFutureIO awaitable
-
-newPromiseShortIO :: ShortIO (Promise a)
-newPromiseShortIO = ShortIO newPromiseIO
 
 fulfillPromiseShortIO :: Promise a -> a -> ShortIO ()
 fulfillPromiseShortIO var value = ShortIO $ fulfillPromiseIO var value
