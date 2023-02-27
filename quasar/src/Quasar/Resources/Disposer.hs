@@ -101,7 +101,27 @@ instance ToFuture () IODisposerElement where
 
 instance IsDisposerElement IODisposerElement where
   disposerElementKey (IODisposerElement key _ _ _) = key
-  disposeEventually# disposer = beginDisposeIODisposer disposer
+  disposeEventually# (IODisposerElement _ worker exChan disposeState) = do
+    mapFinalizeTOnce disposeState startDisposeFn
+    where
+      startDisposeFn :: DisposeFnIO -> STMc NoRetry '[] (Future ())
+      startDisposeFn disposeFn = do
+        promise <- newPromise
+        startShortIOSTM_ (runDisposeFn promise disposeFn) worker exChan
+        pure $ join (toFuture promise)
+
+      runDisposeFn :: Promise (Future ()) -> DisposeFnIO -> ShortIO ()
+      runDisposeFn promise disposeFn = mask_ $ handleAll exceptionHandler do
+        futureE <- unsafeShortIO $ forkFuture disposeFn exChan
+        -- Error is redirected to `exceptionHandler`, so the result can be safely ignored
+        let future = void (toFuture futureE)
+        fulfillPromiseShortIO promise future
+        where
+          -- In case of an exception mark disposable as completed to prevent resource managers from being stuck indefinitely
+          exceptionHandler :: SomeException -> ShortIO ()
+          exceptionHandler ex = do
+            fulfillPromiseShortIO promise (pure ())
+            throwM $ DisposeException ex
 
 type DisposeFn = ShortIO (Future ())
 type DisposeFnIO = IO ()
@@ -116,7 +136,30 @@ instance ToFuture () TDisposerElement where
 
 instance IsDisposerElement TDisposerElement where
   disposerElementKey (TDisposerElement key _ _ _) = key
-  disposeEventually# disposer = beginDisposeSTMDisposer disposer
+  disposeEventually# (TDisposerElement _ worker sink state) =
+    mapFinalizeTOnce state startDisposeFn
+    where
+      startDisposeFn :: STM () -> STMc NoRetry '[] (Future ())
+      startDisposeFn fn = do
+        promise <- newPromise
+        startShortIOSTM_ (runDisposeFn promise disposeFn) worker sink
+        pure $ join (toFuture promise)
+        where
+          disposeFn :: ShortIO (Future ())
+          disposeFn = unsafeShortIO $ atomically $
+            -- Spawn a thread only if the transaction retries
+            (pure <$> fn) `orElse` (void . toFuture <$> forkAsyncSTM (atomically fn) worker sink)
+
+      runDisposeFn :: Promise (Future ()) -> DisposeFn -> ShortIO ()
+      runDisposeFn promise disposeFn = mask_ $ handleAll exceptionHandler do
+        future <- disposeFn
+        fulfillPromiseShortIO promise future
+        where
+          -- In case of an exception mark disposable as completed to prevent resource managers from being stuck indefinitely
+          exceptionHandler :: SomeException -> ShortIO ()
+          exceptionHandler ex = do
+            fulfillPromiseShortIO promise (pure ())
+            throwM $ DisposeException ex
 
 newUnmanagedSTMDisposer :: MonadSTMc NoRetry '[] m => STM () -> TIOWorker -> ExceptionSink -> m TDisposer
 newUnmanagedSTMDisposer fn worker sink = do
@@ -137,32 +180,6 @@ disposeTDisposer (TDisposer elements) = liftSTM $ mapM_ go elements
         startDisposeFn disposeFn = do
           disposeFn `catchAll` throwToExceptionSink sink
           pure (pure ())
-
-beginDisposeSTMDisposer :: forall m. MonadSTMc NoRetry '[] m => TDisposerElement -> m (Future ())
-beginDisposeSTMDisposer (TDisposerElement _ worker sink state) = liftSTMc do
-  mapFinalizeTOnce state startDisposeFn
-  where
-    startDisposeFn :: STM () -> STMc NoRetry '[] (Future ())
-    startDisposeFn fn = do
-      promise <- newPromise
-      startShortIOSTM_ (runDisposeFn promise disposeFn) worker sink
-      pure $ join (toFuture promise)
-      where
-        disposeFn :: ShortIO (Future ())
-        disposeFn = unsafeShortIO $ atomically $
-          -- Spawn a thread only if the transaction retries
-          (pure <$> fn) `orElse` (void . toFuture <$> forkAsyncSTM (atomically fn) worker sink)
-
-    runDisposeFn :: Promise (Future ()) -> DisposeFn -> ShortIO ()
-    runDisposeFn promise disposeFn = mask_ $ handleAll exceptionHandler do
-      future <- disposeFn
-      fulfillPromiseShortIO promise future
-      where
-        -- In case of an exception mark disposable as completed to prevent resource managers from being stuck indefinitely
-        exceptionHandler :: SomeException -> ShortIO ()
-        exceptionHandler ex = do
-          fulfillPromiseShortIO promise (pure ())
-          throwM $ DisposeException ex
 
 -- NOTE TSimpleDisposer is moved to it's own module due to module dependencies
 
@@ -197,32 +214,6 @@ disposeEventually_ :: (Disposable a, MonadSTMc NoRetry '[] m) => a -> m ()
 disposeEventually_ resource = void $ disposeEventually resource
 
 
-
-
-beginDisposeIODisposer :: MonadSTMc NoRetry '[] m => IODisposerElement -> m (Future ())
-beginDisposeIODisposer (IODisposerElement _ worker exChan disposeState) = liftSTMc do
-  mapFinalizeTOnce disposeState startDisposeFn
-  where
-    startDisposeFn :: DisposeFnIO -> STMc NoRetry '[] (Future ())
-    startDisposeFn disposeFn = do
-      promise <- newPromise
-      startShortIOSTM_ (runDisposeFn promise disposeFn) worker exChan
-      pure $ join (toFuture promise)
-
-    runDisposeFn :: Promise (Future ()) -> DisposeFnIO -> ShortIO ()
-    runDisposeFn promise disposeFn = mask_ $ handleAll exceptionHandler do
-      futureE <- unsafeShortIO $ forkFuture disposeFn exChan
-      -- Error is redirected to `exceptionHandler`, so the result can be safely ignored
-      let future = void (toFuture futureE)
-      fulfillPromiseShortIO promise future
-      where
-        -- In case of an exception mark disposable as completed to prevent resource managers from being stuck indefinitely
-        exceptionHandler :: SomeException -> ShortIO ()
-        exceptionHandler ex = do
-          fulfillPromiseShortIO promise (pure ())
-          throwM $ DisposeException ex
-
-
 data DisposeResult
   = DisposeResultAwait (Future ())
   | DisposeResultDependencies DisposeDependencies
@@ -255,8 +246,9 @@ instance ToFuture () ResourceManager where
 
 instance IsDisposerElement ResourceManager where
   disposerElementKey = resourceManagerKey
-  disposeEventually# resourceManager =
-    beginDisposeResourceManager resourceManager
+  disposeEventually# resourceManager = do
+    void $ beginDisposeResourceManagerInternal resourceManager
+    pure $ toFuture (resourceManagerIsDisposed resourceManager)
   beginDispose# resourceManager =
     DisposeResultDependencies <$> beginDisposeResourceManagerInternal resourceManager
 
@@ -306,11 +298,6 @@ tryAttachDisposer resourceManager disposer = do
       -- (awaiting each resource should be cheaper than modifying the HashMap until it is empty).
       _ -> pure ()
 
-
-beginDisposeResourceManager :: ResourceManager -> STMc NoRetry '[] (Future ())
-beginDisposeResourceManager rm = do
-  void $ beginDisposeResourceManagerInternal rm
-  pure $ toFuture (resourceManagerIsDisposed rm)
 
 beginDisposeResourceManagerInternal :: ResourceManager -> STMc NoRetry '[] DisposeDependencies
 beginDisposeResourceManagerInternal rm = do
