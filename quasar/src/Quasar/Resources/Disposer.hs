@@ -77,40 +77,23 @@ instance Disposable TDisposer where
 
 type DisposerState = TOnce DisposeFnIO (Future ())
 
-data DisposerElement
-  = IODisposer IODisposerElement
-  | STMDisposer TDisposerElement
-  | STMSimpleDisposer TSimpleDisposerElement
-  | ResourceManagerDisposer ResourceManager
+data DisposerElement = forall a. IsDisposerElement a => DisposerElement a
 
 instance Disposable DisposerElement where
   getDisposer disposer = Disposer [disposer]
 
 instance ToFuture () DisposerElement where
-  toFuture (IODisposer disposer) = toFuture disposer
-  toFuture (STMDisposer tdisposer) = toFuture tdisposer
-  toFuture (STMSimpleDisposer tdisposer) = toFuture tdisposer
-  toFuture (ResourceManagerDisposer resourceManager) =
-    toFuture (resourceManagerIsDisposed resourceManager)
+  toFuture (DisposerElement x) = toFuture x
 
 instance IsDisposerElement DisposerElement where
-  disposerElementKey (IODisposer disposable) = disposerElementKey disposable
-  disposerElementKey (STMDisposer disposable) = disposerElementKey disposable
-  disposerElementKey (STMSimpleDisposer disposer) = disposerElementKey disposer
-  disposerElementKey (ResourceManagerDisposer resourceManager) = resourceManagerKey resourceManager
-  disposeEventually# (IODisposer disposer) = disposeEventually# disposer
-  disposeEventually# (STMDisposer disposer) = disposeEventually# disposer
-  disposeEventually# (STMSimpleDisposer disposer) = disposeEventually# disposer
-  disposeEventually# (ResourceManagerDisposer resourceManager) = beginDisposeResourceManager resourceManager
-  beginDispose# (IODisposer disposer) = beginDispose# disposer
-  beginDispose# (STMDisposer disposer) = beginDispose# disposer
-  beginDispose# (STMSimpleDisposer disposer) = beginDispose# disposer
-  beginDispose# (ResourceManagerDisposer resourceManager) = beginDispose# resourceManager
+  disposerElementKey (DisposerElement x) = disposerElementKey x
+  disposeEventually# (DisposerElement x) = disposeEventually# x
+  beginDispose# (DisposerElement x) = beginDispose# x
 
 data IODisposerElement = IODisposerElement Unique TIOWorker ExceptionSink DisposerState
 
 instance Disposable IODisposerElement where
-  getDisposer disposer = Disposer [IODisposer disposer]
+  getDisposer disposer = Disposer [DisposerElement disposer]
 
 instance ToFuture () IODisposerElement where
   toFuture (IODisposerElement _ _ _ state) = join (toFuture state)
@@ -128,13 +111,13 @@ type STMDisposerState = TOnce (STM ()) (Future ())
 data TDisposerElement = TDisposerElement Unique TIOWorker ExceptionSink STMDisposerState
 
 instance Disposable TDisposerElement where
-  getDisposer disposer = Disposer [STMDisposer disposer]
+  getDisposer disposer = Disposer [DisposerElement disposer]
 
 instance ToFuture () TDisposerElement where
   toFuture (TDisposerElement _ _ _ state) = join (toFuture state)
 
 instance Disposable [TDisposerElement] where
-  getDisposer tds = Disposer (STMDisposer <$> tds)
+  getDisposer tds = Disposer (DisposerElement <$> tds)
 
 instance IsDisposerElement TDisposerElement where
   disposerElementKey (TDisposerElement key _ _ _) = key
@@ -192,10 +175,10 @@ instance Disposable TSimpleDisposer where
   getDisposer (TSimpleDisposer ds) = getDisposer ds
 
 instance Disposable TSimpleDisposerElement where
-  getDisposer disposer = Disposer [STMSimpleDisposer disposer]
+  getDisposer disposer = Disposer [DisposerElement disposer]
 
 instance Disposable [TSimpleDisposerElement] where
-  getDisposer tds = Disposer (STMSimpleDisposer <$> tds)
+  getDisposer tds = Disposer (DisposerElement <$> tds)
 
 instance IsDisposerElement TSimpleDisposerElement where
   disposerElementKey (TSimpleDisposerElement key _) = key
@@ -211,7 +194,7 @@ newUnmanagedIODisposer :: MonadSTMc NoRetry '[] m => IO () -> TIOWorker -> Excep
 newUnmanagedIODisposer fn worker exChan = getDisposer <$> do
   key <- newUniqueSTM
   state <- newTOnce fn
-  pure $ IODisposer (IODisposerElement key worker exChan state)
+  pure $ IODisposerElement key worker exChan state
 
 
 dispose :: (MonadIO m, Disposable r) => r -> m ()
@@ -276,7 +259,7 @@ data ResourceManagerState
   | ResourceManagerDisposed
 
 instance Disposable ResourceManager where
-  getDisposer rm = Disposer [ResourceManagerDisposer rm]
+  getDisposer rm = Disposer [DisposerElement rm]
 
 instance ToFuture () ResourceManager where
   toFuture rm = toFuture (resourceManagerIsDisposed rm)
