@@ -3,17 +3,11 @@ module Quasar.Utils.ShortIO (
   runShortIO,
   unsafeShortIO,
 
-  forkIOShortIO,
-  forkIOWithUnmaskShortIO,
-
   -- ** Some specific functions required internally
-  fulfillPromiseShortIO,
 ) where
 
 import Control.Monad.Catch
-import Quasar.Future
 import Quasar.Prelude
-import Control.Concurrent
 
 newtype ShortIO a = ShortIO (IO a)
   deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, MonadMask, MonadFix)
@@ -23,14 +17,3 @@ runShortIO (ShortIO fn) = fn
 
 unsafeShortIO :: IO a -> ShortIO a
 unsafeShortIO = ShortIO
-
-
-forkIOShortIO :: IO () -> ShortIO ThreadId
-forkIOShortIO fn = ShortIO $ forkIO fn
-
-forkIOWithUnmaskShortIO :: ((forall a. IO a -> IO a) -> IO ()) -> ShortIO ThreadId
-forkIOWithUnmaskShortIO fn = ShortIO $ forkIOWithUnmask fn
-
-
-fulfillPromiseShortIO :: Promise a -> a -> ShortIO ()
-fulfillPromiseShortIO var value = ShortIO $ fulfillPromiseIO var value

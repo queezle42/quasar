@@ -67,20 +67,19 @@ async' fn = asyncWithUnmask' (\unmask -> unmask fn)
 
 asyncWithUnmask' :: forall a m. (MonadQuasar m, MonadIO m) => ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
 asyncWithUnmask' fn = liftQuasarIO do
-  worker <- askIOWorker
   exSink <- askExceptionSink
-  spawnAsync collectResource worker exSink fn
+  spawnAsync collectResource exSink fn
 
 
-unmanagedAsync :: forall a m. MonadIO m => TIOWorker -> ExceptionSink -> IO a -> m (Async a)
-unmanagedAsync worker exSink fn = liftIO $ unmanagedAsyncWithUnmask worker exSink (\unmask -> unmask fn)
+unmanagedAsync :: forall a m. MonadIO m => ExceptionSink -> IO a -> m (Async a)
+unmanagedAsync exSink fn = liftIO $ unmanagedAsyncWithUnmask exSink (\unmask -> unmask fn)
 
-unmanagedAsyncWithUnmask :: forall a m. MonadIO m => TIOWorker -> ExceptionSink -> ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
-unmanagedAsyncWithUnmask worker exSink fn = liftIO $ spawnAsync (\_ -> pure ()) worker exSink fn
+unmanagedAsyncWithUnmask :: forall a m. MonadIO m => ExceptionSink -> ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
+unmanagedAsyncWithUnmask exSink fn = liftIO $ spawnAsync (\_ -> pure ()) exSink fn
 
 
-spawnAsync :: forall a m. (MonadIO m, MonadMask m) => (Disposer -> m ()) -> TIOWorker -> ExceptionSink -> ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
-spawnAsync registerDisposerFn worker exSink fn = mask_ do
+spawnAsync :: forall a m. (MonadIO m, MonadMask m) => (Disposer -> m ()) -> ExceptionSink -> ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
+spawnAsync registerDisposerFn exSink fn = mask_ do
   key <- liftIO newUnique
   resultVar <- newPromiseIO
 
@@ -88,7 +87,7 @@ spawnAsync registerDisposerFn worker exSink fn = mask_ do
   let threadIdFuture = toFuture threadIdPromise
 
   -- Disposer is created first to ensure the resource can be safely attached
-  disposer <- atomically $ newUnmanagedIODisposer (disposeFn key resultVar threadIdFuture) worker exSink
+  disposer <- atomically $ newUnmanagedIODisposer (disposeFn key resultVar threadIdFuture) exSink
 
   registerDisposerFn disposer
 

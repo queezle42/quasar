@@ -546,7 +546,7 @@ any2Future :: MonadSTMc NoRetry '[] m => Future r -> Future r -> m (Future r)
 any2Future x y = anyFuture [toFuture x, toFuture y]
 
 -- | Completes as soon as either future completes.
-eitherFuture :: MonadSTMc NoRetry '[] m => Future ra -> Future rb -> m (Future (Either ra rb))
+eitherFuture :: MonadSTMc NoRetry '[] m => Future a -> Future b -> m (Future (Either a b))
 eitherFuture x y = any2Future (Left <$> x) (Right <$> y)
 
 

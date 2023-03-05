@@ -40,21 +40,21 @@ spec = parallel $ do
         worker <- newTIOWorker
         withTestExceptionSink worker \sink -> do
           markVar <- newTVarIO False
-          disposable <- atomically $ newUnmanagedIODisposer (atomically (writeTVar markVar True)) worker sink
+          disposable <- atomically $ newUnmanagedIODisposer (atomically (writeTVar markVar True)) sink
           dispose disposable
           readTVarIO markVar `shouldReturn` True
 
       it "signals it's disposed state" $ io do
         worker <- newTIOWorker
         withTestExceptionSink worker \sink -> do
-          disposable <- atomically $ newUnmanagedIODisposer (pure ()) worker sink
+          disposable <- atomically $ newUnmanagedIODisposer (pure ()) sink
           void $ forkIO $ threadDelay 100000 >> dispose disposable
           await (isDisposed disposable)
 
       it "can be disposed multiple times" $ io do
         worker <- newTIOWorker
         withTestExceptionSink worker \sink -> do
-          disposable <- atomically $ newUnmanagedIODisposer (pure ()) worker sink
+          disposable <- atomically $ newUnmanagedIODisposer (pure ()) sink
           dispose disposable
           dispose disposable
           await (isDisposed disposable)
@@ -62,7 +62,7 @@ spec = parallel $ do
       it "can be disposed in parallel" $ do
         worker <- newTIOWorker
         withTestExceptionSink worker \sink -> do
-          disposable <- atomically $ newUnmanagedIODisposer (threadDelay 100000) worker sink
+          disposable <- atomically $ newUnmanagedIODisposer (threadDelay 100000) sink
           void $ forkIO $ dispose disposable
           dispose disposable
           await (isDisposed disposable)
@@ -72,7 +72,7 @@ spec = parallel $ do
         worker <- newTIOWorker
         withTestExceptionSink worker \sink -> do
           markVar <- newTVarIO False
-          disposable <- atomically $ newUnmanagedSTMDisposer (writeTVar markVar True) worker sink
+          disposable <- atomically $ newUnmanagedSTMDisposer (writeTVar markVar True) sink
           dispose disposable
           readTVarIO markVar `shouldReturn` True
 

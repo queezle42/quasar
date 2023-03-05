@@ -64,11 +64,10 @@ import Quasar.Resources.Disposer
 
 registerDisposeAction :: (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m) => IO () -> m Disposer
 registerDisposeAction fn = do
-  worker <- askIOWorker
   exChan <- askExceptionSink
   rm <- askResourceManager
   liftSTMc @NoRetry @'[FailedToAttachResource] do
-    disposer <- newUnmanagedIODisposer fn worker exChan
+    disposer <- newUnmanagedIODisposer fn exChan
     attachResource rm disposer
     pure disposer
 {-# SPECIALIZE registerDisposeAction :: IO () -> QuasarSTM Disposer #-}
@@ -84,11 +83,10 @@ registerDisposeActionIO_ fn = quasarAtomically $ void $ registerDisposeAction fn
 
 registerDisposeTransaction :: (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m) => STM () -> m TDisposer
 registerDisposeTransaction fn = do
-  worker <- askIOWorker
   exChan <- askExceptionSink
   rm <- askResourceManager
   liftSTMc @NoRetry @'[FailedToAttachResource] do
-    disposer <- newUnmanagedSTMDisposer fn worker exChan
+    disposer <- newUnmanagedSTMDisposer fn exChan
     attachResource rm disposer
     pure disposer
 {-# SPECIALIZE registerDisposeTransaction :: STM () -> QuasarSTM TDisposer #-}
