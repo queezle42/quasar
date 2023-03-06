@@ -22,7 +22,6 @@ import Data.Foldable (toList)
 import Data.Heap
 import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
 import Quasar.Async
-import Quasar.Async.STMHelper
 import Quasar.Exceptions
 import Quasar.Future
 import Quasar.MonadQuasar
@@ -50,7 +49,7 @@ instance Eq Timer where
 instance Ord Timer where
   x `compare` y = time x `compare` time y
 
-instance Resource Timer where
+instance Disposable Timer where
   getDisposer Timer{disposer} = disposer
 
 instance ToFuture (Either (Ex '[TimerCancelled]) ()) Timer where
@@ -62,11 +61,10 @@ data TimerScheduler = TimerScheduler {
   activeCount :: TVar Int,
   cancelledCount :: TVar Int,
   thread :: Async (),
-  ioWorker :: TIOWorker,
   exceptionSink :: ExceptionSink
 }
 
-instance Resource TimerScheduler where
+instance Disposable TimerScheduler where
   getDisposer TimerScheduler{thread} = getDisposer thread
 
 data TimerSchedulerDisposed = TimerSchedulerDisposed
@@ -79,7 +77,6 @@ newTimerScheduler = liftQuasarIO do
   heap <- liftIO $ newTMVarIO empty
   activeCount <- liftIO $ newTVarIO 0
   cancelledCount <- liftIO $ newTVarIO 0
-  ioWorker <- askIOWorker
   exceptionSink <- askExceptionSink
   mfix \scheduler -> do
     thread <- startSchedulerThread scheduler
@@ -88,7 +85,6 @@ newTimerScheduler = liftQuasarIO do
       activeCount,
       cancelledCount,
       thread,
-      ioWorker,
       exceptionSink
     }
 
@@ -180,7 +176,7 @@ newUnmanagedTimer scheduler time = liftIO do
   key <- newUnique
   completed <- newPromiseIO
   atomically do
-    disposer <- getDisposer <$> newUnmanagedSTMDisposer (disposeFn completed) (ioWorker scheduler) (exceptionSink scheduler)
+    disposer <- getDisposer <$> newUnmanagedSTMDisposer (disposeFn completed) (exceptionSink scheduler)
     let timer = Timer { key, time, completed, disposer, scheduler }
     tryTakeTMVar (heap scheduler) >>= \case
       Just timers -> putTMVar (heap scheduler) (insert timer timers)
@@ -206,7 +202,7 @@ sleepUntil scheduler time = liftIO do
 --
 -- Based on `threadDelay`. Provides a `IsFuture` and a `IsDisposable` instance.
 newtype Delay = Delay (Async ())
-  deriving newtype Resource
+  deriving newtype Disposable
 
 instance ToFuture (Either (Ex '[TimerCancelled]) ()) Delay where
   toFuture (Delay task) = Bifunctor.first (const (toEx @'[TimerCancelled] TimerCancelled)) <$> toFuture task

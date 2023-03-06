@@ -14,7 +14,6 @@ module Quasar.Timer.PosixTimer (
 ) where
 
 import Control.Concurrent
-import Control.Monad.Catch (MonadMask)
 import Foreign
 import Foreign.C
 import Quasar.Prelude
@@ -160,7 +159,7 @@ data PosixTimer = PosixTimer {
   disposer :: Disposer
 }
 
-instance Resource PosixTimer where
+instance Disposable PosixTimer where
   getDisposer PosixTimer{disposer} = disposer
 
 
