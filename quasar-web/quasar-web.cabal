@@ -1,0 +1,87 @@
+cabal-version: 3.0
+
+name:           quasar-web
+version:        0.1.0.0
+license:        BSD-2-Clause
+build-type:     Simple
+
+data-dir: data
+data-files:
+  quasar-web-client/**/*.js
+
+source-repository head
+  type: git
+  location: https://github.com/queezle42/quasar
+
+common shared-properties
+  default-extensions:
+    AllowAmbiguousTypes
+    BangPatterns
+    BlockArguments
+    DataKinds
+    DefaultSignatures
+    DerivingStrategies
+    DuplicateRecordFields
+    FunctionalDependencies
+    GADTs
+    LambdaCase
+    MagicHash
+    NoImplicitPrelude
+    NoStarIsType
+    OverloadedRecordDot
+    OverloadedStrings
+    QuasiQuotes
+    TemplateHaskellQuotes
+    TypeFamilies
+    ViewPatterns
+  default-language: GHC2021
+  ghc-options:
+    -Weverything
+    -Wno-all-missed-specialisations
+    -Wno-missing-deriving-strategies
+    -Wno-missing-import-lists
+    -Wno-missing-kind-signatures
+    -Wno-missing-safe-haskell-mode
+    -Wno-unsafe
+    -Werror=incomplete-patterns
+    -Werror=missing-fields
+    -Werror=missing-home-modules
+    -Werror=missing-methods
+
+common shared-executable-properties
+  import: shared-properties
+  ghc-options:
+    -threaded
+    -rtsopts
+    "-with-rtsopts=-N -I0"
+
+library
+  import: shared-properties
+  build-depends:
+    base <5,
+    bytestring,
+    quasar,
+    wai,
+    wai-websockets,
+    websockets,
+  exposed-modules:
+    Quasar.Web
+    Quasar.Web.Server
+  other-modules:
+    Paths_quasar_web
+  autogen-modules:
+    Paths_quasar_web
+  hs-source-dirs:
+    src
+
+test-suite quasar-web-test
+  import: shared-executable-properties
+  type: exitcode-stdio-1.0
+  build-depends:
+    base,
+    hspec,
+    quasar-web,
+  main-is: Spec.hs
+  other-modules:
+  hs-source-dirs:
+    test

@@ -1,0 +1,21 @@
+{
+  "name": "quasar-web-client",
+  "version": "0.1.0.0",
+  "private": true,
+  "license": "BSD-2-Clause",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build && publint",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/node": "^18.14.6",
+    "publint": "^0.1.10",
+    "typescript": "^4.9.3",
+    "vite": "^4.1.4"
+  }
+}

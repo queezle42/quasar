@@ -25,9 +25,11 @@
           quasar = haskellPackages.quasar;
           quasar-mqtt = haskellPackages.quasar-mqtt;
           quasar-timer = haskellPackages.quasar-timer;
+          quasar-web = haskellPackages.quasar-web;
+          quasar-web-client = pkgs.quasar-web-client;
         };
       in results // {
-        default = pkgs.linkFarm "quasar-all" (results // mapAttrs' (k: v: nameValuePair "${k}-doc" v.doc) results);
+        default = pkgs.linkFarm "quasar-all" (results // mapAttrs' (k: v: nameValuePair "${k}-doc" (v.doc or pkgs.emptyDirectory)) results);
       }
     );
 
@@ -38,11 +40,20 @@
           quasar = hfinal.callCabal2nix "quasar" ./quasar {};
           quasar-mqtt = hfinal.callCabal2nix "quasar-mqtt" ./quasar-mqtt {};
           quasar-timer = hfinal.callCabal2nix "quasar-timer" ./quasar-timer {};
+          quasar-web =
+            let srcWithClient = final.runCommand "quasar-web-with-client" {} ''
+              mkdir $out
+              cp -r ${./quasar-web}/* $out
+              chmod +w $out/data
+              ln -s ${final.quasar-web-client} $out/data/quasar-web-client
+            '';
+            in hfinal.callCabal2nix "quasar-web" srcWithClient {};
           # Due to a ghc bug in 9.4.3 and 9.2.5
           ListLike = final.haskell.lib.dontCheck hprev.ListLike;
           net-mqtt = final.haskell.lib.doJailbreak hprev.net-mqtt;
         };
       };
+      quasar-web-client = final.callPackage ./quasar-web-client {};
     };
 
     devShells = forAllSystems (system:
@@ -56,6 +67,7 @@
             hpkgs.quasar
             hpkgs.quasar-mqtt
             hpkgs.quasar-timer
+            hpkgs.quasar-web
           ];
           nativeBuildInputs = [
             pkgs.cabal-install
@@ -64,6 +76,11 @@
             pkgs.ghcid
             haskellPackages.haskell-language-server
             pkgs.hlint
+
+            pkgs.nodejs
+            pkgs.nodePackages.npm
+            pkgs.nodePackages.typescript-language-server
+            pkgs.nodePackages.svelte-language-server
           ];
         };
       }

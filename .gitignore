@@ -1,3 +1,7 @@
 *~
-dist-newstyle
+dist-newstyle/
 result*
+
+dist/
+node_modules/
+quasar-web/data/quasar-web-client
