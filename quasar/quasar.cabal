@@ -114,7 +114,6 @@ library
     Quasar.Resources.Core
     Quasar.Resources.Disposer
     Quasar.Resources.TSimpleDisposer
-    Quasar.Utils.ShortIO
   hs-source-dirs:
     src
 
