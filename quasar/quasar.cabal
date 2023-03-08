@@ -16,42 +16,23 @@ common shared-properties
     AllowAmbiguousTypes
     BangPatterns
     BlockArguments
-    ConstraintKinds
     DataKinds
     DefaultSignatures
-    DeriveAnyClass
-    DeriveGeneric
     DerivingStrategies
-    DisambiguateRecordFields
     DuplicateRecordFields
-    ExistentialQuantification
-    FlexibleContexts
-    FlexibleInstances
     FunctionalDependencies
     GADTs
-    GeneralizedNewtypeDeriving
-    ImportQualifiedPost
-    InstanceSigs
     LambdaCase
-    LexicalNegation
     MagicHash
-    MultiParamTypeClasses
-    NamedFieldPuns
     NoImplicitPrelude
     NoStarIsType
-    NumericUnderscores
+    OverloadedRecordDot
     OverloadedStrings
-    PolyKinds
-    RankNTypes
-    ScopedTypeVariables
-    StandaloneDeriving
-    StandaloneKindSignatures
-    TupleSections
-    TypeApplications
+    QuasiQuotes
+    TemplateHaskellQuotes
     TypeFamilies
-    TypeOperators
     ViewPatterns
-  default-language: Haskell2010
+  default-language: GHC2021
   ghc-options:
     -Weverything
     -Wno-all-missed-specialisations

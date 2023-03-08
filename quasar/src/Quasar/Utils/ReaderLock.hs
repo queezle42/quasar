@@ -13,14 +13,16 @@ import Quasar.Prelude
 
 data ReaderLockDestroyed = ReaderLockDestroyed
   deriving stock Show
-  deriving anyclass Exception
+
+instance Exception ReaderLockDestroyed
 
 isReaderLockDestroyed :: ReaderLockDestroyed -> Bool
 isReaderLockDestroyed ReaderLockDestroyed = True
 
 data ReaderLockInvalidOperation = ReaderLockInvalidOperation
   deriving stock Show
-  deriving anyclass Exception
+
+instance Exception ReaderLockInvalidOperation
 
 data ReaderLockState
   = Valid Word64 (STM ()) (STM ())

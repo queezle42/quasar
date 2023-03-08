@@ -17,7 +17,8 @@ import Quasar.Utils.CallbackRegistry
 
 data TOnceAlreadyFinalized = TOnceAlreadyFinalized
   deriving stock (Eq, Show)
-  deriving anyclass Exception
+
+instance Exception TOnceAlreadyFinalized
 
 newtype TOnce a b = TOnce (TVar (Either (a, (CallbackRegistry b)) b))
 

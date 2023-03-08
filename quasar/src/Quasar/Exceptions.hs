@@ -60,7 +60,8 @@ instance Exception AsyncDisposed where
 -- TODO Needs a descriptive name. This is similar in functionality to `ExceptionThrownInLinkedThread`
 newtype AsyncException = AsyncException SomeException
   deriving stock Show
-  deriving anyclass Exception
+
+instance Exception AsyncException
 
 
 isCancelAsync :: SomeException -> Bool
@@ -112,4 +113,5 @@ isAlreadyDisposing _ = False
 
 data PromiseAlreadyCompleted = PromiseAlreadyCompleted
   deriving stock Show
-  deriving anyclass Exception
+
+instance Exception PromiseAlreadyCompleted
