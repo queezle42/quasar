@@ -1,6 +1,11 @@
+{-# LANGUAGE UndecidableInstances #-}
+
 module Quasar.Logger (
-  MonadLog(..),
+  LogMessage,
   LogLevel(..),
+  flushLogger,
+
+  logMessage,
   logCritical,
   logError,
   logWarning,
@@ -8,17 +13,93 @@ module Quasar.Logger (
   logDebug,
   logString,
 
-  LogWriterT,
-  LogWriter,
-  LogMessage,
-  Logger,
-  stderrLogger,
+  queueLogMessage,
+  queueLogCritical,
+  queueLogError,
+  queueLogWarning,
+  queueLogInfo,
+  queueLogDebug,
+  queueLogString,
+
+  Logger(logLevel, logBufferSize),
+  globalLogger,
 ) where
 
-import Quasar.Prelude
+import Control.Concurrent (forkIOWithUnmask)
 import Debug.Trace qualified
-import Control.Monad.Reader
-import Control.Monad.Writer
+import Quasar.Prelude
+import System.IO.Unsafe (unsafePerformIO)
+
+
+data Logger = Logger {
+  logQueue :: (TQueue LogMessage),
+  logLevel :: (TVar LogLevel),
+  logBufferSize :: (TVar Word64),
+  queuedCounter :: TVar Word64,
+  loggedCounter :: TVar Word64
+}
+
+newLogger :: ([LogMessage] -> IO ()) -> IO Logger
+newLogger logFn = do
+  logQueue <- newTQueueIO
+  logLevel <- newTVarIO LogLevelInfo
+  logBufferSize <- newTVarIO 4
+  queuedCounter <- newTVarIO 0
+  loggedCounter <- newTVarIO 0
+
+  void $ forkIOWithUnmask \unmask -> unmask $ forever do
+    items <- atomically do
+      items <- flushTQueue logQueue
+      check (not (null items))
+      pure items
+    logFn items
+    atomically do
+      modifyTVar loggedCounter (+ fromIntegral (length items))
+
+  pure Logger {
+    logQueue,
+    logLevel,
+    logBufferSize,
+    queuedCounter,
+    loggedCounter
+  }
+
+globalLogger :: Logger
+globalLogger =
+  unsafePerformIO $ newLogger \items -> do
+    forM_ items \(LogMessage _ msg) -> do
+      Debug.Trace.traceIO msg
+{-# NOINLINE globalLogger #-}
+
+flushLogger :: IO ()
+flushLogger = do
+  initialQueued <- readTVarIO (queuedCounter globalLogger)
+  atomically do
+    currentLogged <- readTVar (loggedCounter globalLogger)
+    check (initialQueued <= currentLogged)
+
+logMessage :: MonadIO m => LogMessage -> m ()
+logMessage message@(LogMessage level _) = liftIO do
+  threshold <- readTVarIO (logLevel globalLogger)
+  when (level <= threshold) do
+    atomically do
+      queued <- readTVar (queuedCounter globalLogger)
+      logged <- readTVar (loggedCounter globalLogger)
+      bufferSize <- readTVar (logBufferSize globalLogger)
+      check (queued - logged < bufferSize)
+      writeTQueue (logQueue globalLogger) message
+      writeTVar (queuedCounter globalLogger) (queued + 1)
+
+
+queueLogMessage :: MonadSTMc NoRetry '[] m => LogMessage -> m ()
+queueLogMessage message@(LogMessage level _) = liftSTMc @NoRetry @'[] do
+  threshold <- readTVar (logLevel globalLogger)
+  when (level <= threshold) do
+    writeTQueue (logQueue globalLogger) message
+    queued <- readTVar (queuedCounter globalLogger)
+    writeTVar (queuedCounter globalLogger) (queued + 1)
+
+
 
 data LogLevel
   = LogLevelCritical
@@ -30,41 +111,39 @@ data LogLevel
 
 data LogMessage = LogMessage LogLevel String
 
-type LogWriterT = WriterT [LogMessage]
-type LogWriter = LogWriterT Identity
-
-class Monad m => MonadLog m where
-  logMessage :: LogMessage -> m ()
-
-instance Monad m => MonadLog (LogWriterT m) where
-  logMessage msg = tell [msg]
-
-instance {-# OVERLAPPABLE #-} MonadLog m => MonadLog (ReaderT r m) where
-  logMessage = lift . logMessage
-
--- TODO MonadLog instances for StateT, WriterT, RWST, MaybeT, ...
-
-logCritical :: MonadLog m => String -> m ()
+logCritical :: MonadIO m => String -> m ()
 logCritical = logString LogLevelCritical
 
-logError :: MonadLog m => String -> m ()
+logError :: MonadIO m => String -> m ()
 logError = logString LogLevelError
 
-logWarning :: MonadLog m => String -> m ()
+logWarning :: MonadIO m => String -> m ()
 logWarning = logString LogLevelWarning
 
-logInfo :: MonadLog m => String -> m ()
+logInfo :: MonadIO m => String -> m ()
 logInfo = logString LogLevelInfo
 
-logDebug :: MonadLog m => String -> m ()
+logDebug :: MonadIO m => String -> m ()
 logDebug = logString LogLevelDebug
 
-logString :: MonadLog m => LogLevel -> String -> m ()
+logString :: MonadIO m => LogLevel -> String -> m ()
 logString level msg = logMessage $ LogMessage level msg
 
 
-type Logger = LogMessage -> IO ()
+queueLogCritical :: MonadSTMc NoRetry '[] m => String -> m ()
+queueLogCritical = queueLogString LogLevelCritical
 
-stderrLogger :: LogLevel -> Logger
-stderrLogger threshold (LogMessage level msg) = do
-  when (level <= threshold) $ Debug.Trace.traceIO msg
+queueLogError :: MonadSTMc NoRetry '[] m => String -> m ()
+queueLogError = queueLogString LogLevelError
+
+queueLogWarning :: MonadSTMc NoRetry '[] m => String -> m ()
+queueLogWarning = queueLogString LogLevelWarning
+
+queueLogInfo :: MonadSTMc NoRetry '[] m => String -> m ()
+queueLogInfo = queueLogString LogLevelInfo
+
+queueLogDebug :: MonadSTMc NoRetry '[] m => String -> m ()
+queueLogDebug = queueLogString LogLevelDebug
+
+queueLogString :: MonadSTMc NoRetry '[] m => LogLevel -> String -> m ()
+queueLogString level msg = queueLogMessage $ LogMessage level msg

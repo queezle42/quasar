@@ -48,20 +48,16 @@ import GHC.Records (HasField(..))
 import Quasar.Async.STMHelper
 import Quasar.Exceptions
 import Quasar.Future
-import Quasar.Logger
 import Quasar.Prelude
 import Quasar.Resources.Disposer
 import Control.Monad.Base (MonadBase)
 
 
 -- Invariant: the resource manager is disposed as soon as an exception is thrown to the channel
-data Quasar = Quasar Logger TIOWorker ExceptionSink ResourceManager
+data Quasar = Quasar TIOWorker ExceptionSink ResourceManager
 
 instance Disposable Quasar where
-  getDisposer (Quasar _ _ _ rm) = getDisposer rm
-
-instance HasField "logger" Quasar Logger where
-  getField = quasarLogger
+  getDisposer (Quasar _ _ rm) = getDisposer rm
 
 instance HasField "ioWorker" Quasar TIOWorker where
   getField = quasarIOWorker
@@ -72,32 +68,28 @@ instance HasField "exceptionSink" Quasar ExceptionSink where
 instance HasField "resourceManager" Quasar ResourceManager where
   getField = quasarResourceManager
 
-quasarLogger :: Quasar -> Logger
-quasarLogger (Quasar logger _ _ _) = logger
-
 quasarIOWorker :: Quasar -> TIOWorker
-quasarIOWorker (Quasar _ worker _ _) = worker
+quasarIOWorker (Quasar worker _ _) = worker
 
 quasarExceptionSink :: Quasar -> ExceptionSink
-quasarExceptionSink (Quasar _ _ exChan _) = exChan
+quasarExceptionSink (Quasar _ exChan _) = exChan
 
 quasarResourceManager :: Quasar -> ResourceManager
-quasarResourceManager (Quasar _ _ _ rm) = rm
+quasarResourceManager (Quasar _ _ rm) = rm
 
 newResourceScopeSTM :: MonadSTMc NoRetry '[FailedToAttachResource] m => Quasar -> m Quasar
 newResourceScopeSTM parent = do
   rm <- newUnmanagedResourceManagerSTM parentExceptionSink
   attachResource (quasarResourceManager parent) rm
-  pure $ newQuasar logger worker parentExceptionSink rm
+  pure $ newQuasar worker parentExceptionSink rm
   where
-    logger = quasarLogger parent
     worker = quasarIOWorker parent
     parentExceptionSink = quasarExceptionSink parent
 
 -- | Construct a quasar, ensuring the Quasar invarinat, i.e. when an exception is thrown to the quasar, the provided resource manager will be disposed.
-newQuasar :: Logger -> TIOWorker -> ExceptionSink -> ResourceManager -> Quasar
-newQuasar logger worker parentExceptionSink resourceManager = do
-  Quasar logger worker (ExceptionSink (disposeOnException resourceManager)) resourceManager
+newQuasar :: TIOWorker -> ExceptionSink -> ResourceManager -> Quasar
+newQuasar worker parentExceptionSink resourceManager = do
+  Quasar worker (ExceptionSink (disposeOnException resourceManager)) resourceManager
   where
     disposeOnException :: ResourceManager -> SomeException -> STMc NoRetry '[] ()
     disposeOnException rm ex = do
@@ -132,11 +124,6 @@ instance Semigroup a => Semigroup (QuasarIO a) where
 
 instance Monoid a => Monoid (QuasarIO a) where
   mempty = pure mempty
-
-instance MonadLog QuasarIO where
-  logMessage message = do
-    logger <- askLogger
-    liftIO $ logger message
 
 instance MonadAwait QuasarIO where
   await awaitable = liftIO (await awaitable)
@@ -220,9 +207,6 @@ instance ResourceCollector m => ResourceCollector (ReaderT r m) where
 
 -- TODO MonadQuasar instances for StateT, WriterT, RWST, MaybeT, ...
 
-
-askLogger :: MonadQuasar m => m Logger
-askLogger = quasarLogger <$> askQuasar
 
 askIOWorker :: MonadQuasar m => m TIOWorker
 askIOWorker = quasarIOWorker <$> askQuasar
@@ -309,13 +293,13 @@ redirectExceptionToSinkIO_ fn = void $ redirectExceptionToSinkIO fn
 replaceExceptionSink :: MonadQuasar m => ExceptionSink -> m a -> m a
 replaceExceptionSink exSink fn = do
   quasar <- askQuasar
-  let q = newQuasar (quasarLogger quasar) (quasarIOWorker quasar) exSink (quasarResourceManager quasar)
+  let q = newQuasar (quasarIOWorker quasar) exSink (quasarResourceManager quasar)
   localQuasar q fn
 
 -- * Quasar initialization
 
-withQuasar :: Logger -> TIOWorker -> ExceptionSink -> QuasarIO a -> IO a
-withQuasar logger worker exChan fn = mask \unmask -> do
+withQuasar :: TIOWorker -> ExceptionSink -> QuasarIO a -> IO a
+withQuasar worker exChan fn = mask \unmask -> do
   rm <- atomically $ newUnmanagedResourceManagerSTM exChan
-  let quasar = newQuasar logger worker exChan rm
+  let quasar = newQuasar worker exChan rm
   unmask (runQuasarIO quasar fn) `finally` dispose rm
