@@ -3,7 +3,6 @@ module Quasar.ResourcesSpec (spec) where
 import Control.Concurrent
 import Control.Exception
 import Control.Monad.Catch
-import Quasar.Async.STMHelper
 import Quasar.Exceptions
 import Quasar.Exceptions.ExceptionSink
 import Quasar.Future
@@ -18,9 +17,9 @@ data TestException = TestException
 
 instance Exception TestException
 
-withTestExceptionSink :: TIOWorker -> (ExceptionSink -> IO a) -> IO a
-withTestExceptionSink worker action = do
-  (sink, collect) <- atomically $ newExceptionCollector (loggingExceptionSink worker)
+withTestExceptionSink :: (ExceptionSink -> IO a) -> IO a
+withTestExceptionSink action = do
+  (sink, collect) <- atomically $ newExceptionCollector loggingExceptionSink
   result <- action sink
   mapM_ throwM . mkCombinedException =<< atomicallyC (liftSTMc collect)
   pure result
@@ -37,31 +36,27 @@ spec = parallel $ do
 
     describe "Disposer" $ do
       it "can be disposed" $ io do
-        worker <- newTIOWorker
-        withTestExceptionSink worker \sink -> do
+        withTestExceptionSink \sink -> do
           markVar <- newTVarIO False
           disposable <- atomically $ newUnmanagedIODisposer (atomically (writeTVar markVar True)) sink
           dispose disposable
           readTVarIO markVar `shouldReturn` True
 
       it "signals it's disposed state" $ io do
-        worker <- newTIOWorker
-        withTestExceptionSink worker \sink -> do
+        withTestExceptionSink \sink -> do
           disposable <- atomically $ newUnmanagedIODisposer (pure ()) sink
           void $ forkIO $ threadDelay 100000 >> dispose disposable
           await (isDisposed disposable)
 
       it "can be disposed multiple times" $ io do
-        worker <- newTIOWorker
-        withTestExceptionSink worker \sink -> do
+        withTestExceptionSink \sink -> do
           disposable <- atomically $ newUnmanagedIODisposer (pure ()) sink
           dispose disposable
           dispose disposable
           await (isDisposed disposable)
 
       it "can be disposed in parallel" $ do
-        worker <- newTIOWorker
-        withTestExceptionSink worker \sink -> do
+        withTestExceptionSink \sink -> do
           disposable <- atomically $ newUnmanagedIODisposer (threadDelay 100000) sink
           void $ forkIO $ dispose disposable
           dispose disposable
@@ -69,8 +64,7 @@ spec = parallel $ do
 
     describe "STM Disposer" $ do
       it "can be disposed" $ io do
-        worker <- newTIOWorker
-        withTestExceptionSink worker \sink -> do
+        withTestExceptionSink \sink -> do
           markVar <- newTVarIO False
           disposable <- atomically $ newUnmanagedSTMDisposer (writeTVar markVar True) sink
           dispose disposable

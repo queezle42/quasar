@@ -10,12 +10,10 @@ module Quasar.Exceptions.ExceptionSink (
 import Control.Concurrent (forkIO)
 import Control.Exception (BlockedIndefinitelyOnSTM(..))
 import Control.Monad.Catch
-import Debug.Trace qualified as Trace
 import GHC.IO (unsafePerformIO)
-import Quasar.Async.STMHelper
 import Quasar.Exceptions
+import Quasar.Logger
 import Quasar.Prelude
-import Quasar.Utils.ShortIO
 import System.Exit (die)
 
 
@@ -32,13 +30,9 @@ newPanicSink = do
   pure $ ExceptionSink $ void . tryPutTMVar var
 
 
-loggingExceptionSink :: TIOWorker -> ExceptionSink
-loggingExceptionSink worker =
-  -- Logging an exception should never fail - so if it does this panics the application
-  ExceptionSink \ex -> startShortIOSTM_ (logFn ex) worker panicSink
-  where
-    logFn :: SomeException -> ShortIO ()
-    logFn ex = unsafeShortIO $ Trace.traceIO $ displayException ex
+loggingExceptionSink :: ExceptionSink
+loggingExceptionSink =
+  ExceptionSink \ex -> queueLogError (displayException ex)
 
 newExceptionWitnessSink :: MonadSTMc NoRetry '[] m => ExceptionSink -> m (ExceptionSink, STMc NoRetry '[] Bool)
 newExceptionWitnessSink exChan = liftSTMc @NoRetry @'[] do
