@@ -88,7 +88,6 @@ library
     Quasar
     Quasar.Async
     Quasar.Async.Fork
-    Quasar.Async.STMHelper
     Quasar.Exceptions
     Quasar.Exceptions.ExceptionSink
     Quasar.Future

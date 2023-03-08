@@ -16,7 +16,6 @@ import Control.Monad.Reader
 import Data.List.NonEmpty
 import Quasar.Future
 import Quasar.Async
-import Quasar.Async.STMHelper
 import Quasar.Exceptions.ExceptionSink
 import Quasar.MonadQuasar
 import Quasar.Prelude
@@ -51,9 +50,8 @@ data QuasarExitState a = QuasarExitSuccess a | QuasarExitAsyncException a | Quas
 
 runQuasarAndExitWith :: (QuasarExitState a -> ExitCode) -> QuasarIO a -> IO b
 runQuasarAndExitWith exitCodeFn fn = mask \unmask -> do
-  worker <- newTIOWorker
   (exChan, exceptionWitness) <- atomically $ newExceptionWitnessSink loggingExceptionSink
-  mResult <- unmask $ withQuasar worker exChan (redirectExceptionToSinkIO fn)
+  mResult <- unmask $ withQuasar exChan (redirectExceptionToSinkIO fn)
   failure <- atomicallyC $ liftSTMc exceptionWitness
   exitState <- case (mResult, failure) of
     (Just result, False) -> pure $ QuasarExitSuccess result
@@ -68,8 +66,7 @@ runQuasarAndExitWith exitCodeFn fn = mask \unmask -> do
 runQuasarCollectExceptions :: QuasarIO a -> IO (Either SomeException a, [SomeException])
 runQuasarCollectExceptions fn = do
   (exChan, collectExceptions) <- atomically $ newExceptionCollector panicSink
-  worker <- newTIOWorker
-  result <- try $ withQuasar worker exChan fn
+  result <- try $ withQuasar exChan fn
   exceptions <- atomicallyC $ liftSTMc collectExceptions
   pure (result, exceptions)
 

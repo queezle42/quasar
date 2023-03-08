@@ -34,10 +34,8 @@ module Quasar.MonadQuasar (
   redirectExceptionToSinkIO_,
 
   -- ** Get quasar components
-  quasarIOWorker,
   quasarExceptionSink,
   quasarResourceManager,
-  askIOWorker,
   askExceptionSink,
   askResourceManager,
 ) where
@@ -45,7 +43,6 @@ module Quasar.MonadQuasar (
 import Control.Monad.Catch
 import Control.Monad.Reader
 import GHC.Records (HasField(..))
-import Quasar.Async.STMHelper
 import Quasar.Exceptions
 import Quasar.Future
 import Quasar.Prelude
@@ -54,13 +51,10 @@ import Control.Monad.Base (MonadBase)
 
 
 -- Invariant: the resource manager is disposed as soon as an exception is thrown to the channel
-data Quasar = Quasar TIOWorker ExceptionSink ResourceManager
+data Quasar = Quasar ExceptionSink ResourceManager
 
 instance Disposable Quasar where
-  getDisposer (Quasar _ _ rm) = getDisposer rm
-
-instance HasField "ioWorker" Quasar TIOWorker where
-  getField = quasarIOWorker
+  getDisposer (Quasar _ rm) = getDisposer rm
 
 instance HasField "exceptionSink" Quasar ExceptionSink where
   getField = quasarExceptionSink
@@ -68,28 +62,24 @@ instance HasField "exceptionSink" Quasar ExceptionSink where
 instance HasField "resourceManager" Quasar ResourceManager where
   getField = quasarResourceManager
 
-quasarIOWorker :: Quasar -> TIOWorker
-quasarIOWorker (Quasar worker _ _) = worker
-
 quasarExceptionSink :: Quasar -> ExceptionSink
-quasarExceptionSink (Quasar _ exChan _) = exChan
+quasarExceptionSink (Quasar exChan _) = exChan
 
 quasarResourceManager :: Quasar -> ResourceManager
-quasarResourceManager (Quasar _ _ rm) = rm
+quasarResourceManager (Quasar _ rm) = rm
 
 newResourceScopeSTM :: MonadSTMc NoRetry '[FailedToAttachResource] m => Quasar -> m Quasar
 newResourceScopeSTM parent = do
   rm <- newUnmanagedResourceManagerSTM parentExceptionSink
   attachResource (quasarResourceManager parent) rm
-  pure $ newQuasar worker parentExceptionSink rm
+  pure $ newQuasar parentExceptionSink rm
   where
-    worker = quasarIOWorker parent
     parentExceptionSink = quasarExceptionSink parent
 
 -- | Construct a quasar, ensuring the Quasar invarinat, i.e. when an exception is thrown to the quasar, the provided resource manager will be disposed.
-newQuasar :: TIOWorker -> ExceptionSink -> ResourceManager -> Quasar
-newQuasar worker parentExceptionSink resourceManager = do
-  Quasar worker (ExceptionSink (disposeOnException resourceManager)) resourceManager
+newQuasar :: ExceptionSink -> ResourceManager -> Quasar
+newQuasar parentExceptionSink resourceManager = do
+  Quasar (ExceptionSink (disposeOnException resourceManager)) resourceManager
   where
     disposeOnException :: ResourceManager -> SomeException -> STMc NoRetry '[] ()
     disposeOnException rm ex = do
@@ -208,9 +198,6 @@ instance ResourceCollector m => ResourceCollector (ReaderT r m) where
 -- TODO MonadQuasar instances for StateT, WriterT, RWST, MaybeT, ...
 
 
-askIOWorker :: MonadQuasar m => m TIOWorker
-askIOWorker = quasarIOWorker <$> askQuasar
-
 askExceptionSink :: MonadQuasar m => m ExceptionSink
 askExceptionSink = quasarExceptionSink <$> askQuasar
 
@@ -293,13 +280,13 @@ redirectExceptionToSinkIO_ fn = void $ redirectExceptionToSinkIO fn
 replaceExceptionSink :: MonadQuasar m => ExceptionSink -> m a -> m a
 replaceExceptionSink exSink fn = do
   quasar <- askQuasar
-  let q = newQuasar (quasarIOWorker quasar) exSink (quasarResourceManager quasar)
+  let q = newQuasar exSink (quasarResourceManager quasar)
   localQuasar q fn
 
 -- * Quasar initialization
 
-withQuasar :: TIOWorker -> ExceptionSink -> QuasarIO a -> IO a
-withQuasar worker exChan fn = mask \unmask -> do
+withQuasar :: ExceptionSink -> QuasarIO a -> IO a
+withQuasar exChan fn = mask \unmask -> do
   rm <- atomically $ newUnmanagedResourceManagerSTM exChan
-  let quasar = newQuasar worker exChan rm
+  let quasar = newQuasar exChan rm
   unmask (runQuasarIO quasar fn) `finally` dispose rm
