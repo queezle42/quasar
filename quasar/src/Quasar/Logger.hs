@@ -26,6 +26,8 @@ module Quasar.Logger (
 ) where
 
 import Control.Concurrent (forkIOWithUnmask)
+import Control.Exception (BlockedIndefinitelyOnSTM(..))
+import Control.Monad.Catch
 import Debug.Trace qualified
 import Quasar.Prelude
 import System.IO.Unsafe (unsafePerformIO)
@@ -47,14 +49,16 @@ newLogger logFn = do
   queuedCounter <- newTVarIO 0
   loggedCounter <- newTVarIO 0
 
-  void $ forkIOWithUnmask \unmask -> unmask $ forever do
-    items <- atomically do
-      items <- flushTQueue logQueue
-      check (not (null items))
-      pure items
-    logFn items
-    atomically do
-      modifyTVar loggedCounter (+ fromIntegral (length items))
+  void $ forkIOWithUnmask \unmask -> unmask do
+    handle (\BlockedIndefinitelyOnSTM -> pure ()) do
+      forever do
+        items <- atomically do
+          items <- flushTQueue logQueue
+          check (not (null items))
+          pure items
+        logFn items
+        atomically do
+          modifyTVar loggedCounter (+ fromIntegral (length items))
 
   pure Logger {
     logQueue,
