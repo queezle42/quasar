@@ -76,8 +76,6 @@ library
     Quasar.MonadQuasar
     Quasar.MonadQuasar.Misc
     Quasar.Observable
-    Quasar.Observable.Delta
-    Quasar.Observable.ObservableHashMap
     Quasar.Observable.ObservableMap
     Quasar.Observable.ObservablePriority
     Quasar.Prelude
