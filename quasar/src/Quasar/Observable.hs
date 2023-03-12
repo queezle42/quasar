@@ -85,7 +85,7 @@ class ToObservable r a => IsObservable r a | a -> r where
   mapObservable# f o = Observable (MappedObservable f (toObservable o))
 
   cacheObservable# :: a -> STMc NoRetry '[] (Observable r)
-  cacheObservable# = undefined
+  cacheObservable# o = Observable <$> newCachedObservable (toObservable o)
 
 readObservable :: (ToObservable r a, MonadSTMc NoRetry '[] m) => a -> m r
 readObservable o = liftSTMc $ readObservable# (toObservable o)
@@ -315,6 +315,53 @@ instance IsObservable a (BindObservable a) where
 
   mapObservable# f (BindObservable fx fn) =
     toObservable $ BindObservable fx (f <<$>> fn)
+
+
+data CachedObservable a = CachedObservable (TVar (CacheState a))
+
+data CacheState a
+  = CacheIdle (Observable a)
+  | CacheAttached (Observable a) TSimpleDisposer (CallbackRegistry a) a
+
+instance ToObservable a (CachedObservable a)
+
+instance IsObservable a (CachedObservable a) where
+  readObservable# (CachedObservable var) = do
+    readTVar var >>= \case
+      CacheIdle upstream -> readObservable# upstream
+      CacheAttached _ _ _ value -> pure value
+
+  attachObserver# (CachedObservable var) callback = do
+    (value, registry) <- readTVar var >>= \case
+      CacheIdle upstream -> do
+        registry <- newCallbackRegistryWithEmptyCallback removeCacheListener
+        (upstreamDisposer, value) <- attachObserver# upstream updateCache
+        writeTVar var (CacheAttached upstream upstreamDisposer registry value)
+        pure (value, registry)
+      CacheAttached _ _ registry value ->
+        pure (value, registry)
+    disposer <- registerCallback registry callback
+    pure (disposer, value)
+    where
+      removeCacheListener :: STMc NoRetry '[] ()
+      removeCacheListener = do
+        readTVar var >>= \case
+          CacheIdle _ -> unreachableCodePath
+          CacheAttached upstream upstreamDisposer _ _ -> do
+            writeTVar var (CacheIdle upstream)
+            disposeTSimpleDisposer upstreamDisposer
+      updateCache :: a -> STMc NoRetry '[] ()
+      updateCache value = do
+        readTVar var >>= \case
+          CacheIdle _ -> unreachableCodePath
+          CacheAttached upstream upstreamDisposer registry _ -> do
+            writeTVar var (CacheAttached upstream upstreamDisposer registry value)
+            callCallbacks registry value
+
+  cacheObservable# f = pure (Observable f)
+
+newCachedObservable :: Observable a -> STMc NoRetry '[] (CachedObservable a)
+newCachedObservable f = CachedObservable <$> newTVar (CacheIdle f)
 
 
 data ObservableVar a = ObservableVar (TVar a) (CallbackRegistry a)
