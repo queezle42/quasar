@@ -59,8 +59,13 @@ library
   import: shared-properties
   build-depends:
     base <5,
+    binary,
     bytestring,
+    exceptions,
+    http-types,
     quasar,
+    text,
+    utf8-string,
     wai,
     wai-websockets,
     websockets,
