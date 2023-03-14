@@ -1,7 +1,13 @@
 <!DOCTYPE html>
-<script type="module" src="./src/main.ts"></script>
-<meta charset="UTF-8" />
+<meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>quasar</title>
+<script type="module">
+  import { initializeQuasarWebClient } from "./src/main";
+  // Use environment variable to specify quasar-web server url. If not
+  // available, defaults to the address used by the quasar-web example.
+  const url = import.meta.env.VITE_QUASAR_WEBSOCKET ||  "ws://localhost:9013";
+  initializeQuasarWebClient(url);
+</script>
 
-<div id="app"></div>
+<div id="quasar-web-state"></div>

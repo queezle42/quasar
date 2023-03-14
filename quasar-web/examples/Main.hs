@@ -11,6 +11,6 @@ main = runSettings settings (waiApplication undefined)
     port :: Port
     port = 9013
     settings =
-      (setBeforeMainLoop (hPutStrLn stderr ("Listening on " <> show port))) $
+      (setBeforeMainLoop (hPutStrLn stderr ("Listening on port " <> show port))) $
       (setPort port)
       defaultSettings

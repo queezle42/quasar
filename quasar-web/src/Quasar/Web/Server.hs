@@ -4,9 +4,11 @@ module Quasar.Web.Server (
 
 import Data.Binary.Builder qualified as Builder
 import Data.ByteString qualified as BS
+import Data.ByteString.Lazy qualified as BSL
 import Data.List qualified as List
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Control.Monad.Catch
 import Network.HTTP.Types qualified as HTTP
 import Network.Wai qualified as Wai
 import Network.Wai.Handler.WebSockets qualified as Wai
@@ -14,15 +16,47 @@ import Network.WebSockets qualified as WebSockets
 import Paths_quasar_web (getDataFileName)
 import Quasar.Prelude
 import Quasar.Web
+import System.IO (stderr)
 
 
 waiApplication :: WebUi -> Wai.Application
-waiApplication state = Wai.websocketsOr webSocketsOptions (webSocketsApp state) waiApp
+waiApplication webUi = Wai.websocketsOr webSocketsOptions (webSocketsApp webUi) waiApp
   where
-    webSocketsOptions = WebSockets.defaultConnectionOptions {WebSockets.connectionStrictUnicode = True}
+    webSocketsOptions =
+      WebSockets.defaultConnectionOptions {
+        WebSockets.connectionStrictUnicode = True
+      }
 
 webSocketsApp :: WebUi -> WebSockets.ServerApp
-webSocketsApp = undefined
+webSocketsApp _webUi pendingConnection = do
+  connection <- WebSockets.acceptRequestWith pendingConnection acceptRequestConfig
+  connectionHandler connection
+  where
+    acceptRequestConfig :: WebSockets.AcceptRequest
+    acceptRequestConfig =
+      WebSockets.defaultAcceptRequest {
+        WebSockets.acceptSubprotocol = Just "quasar-web-v1"
+      }
+
+connectionHandler :: WebSockets.Connection -> IO ()
+connectionHandler connection = do
+  WebSockets.sendTextData connection ("/\n<p>Hello World!</p>" :: BS.ByteString)
+  handleWebsocketException connection $ forever do
+      WebSockets.receiveDataMessage connection >>= \case
+        WebSockets.Binary _ -> WebSockets.sendCloseCode connection 1002 ("Client must not send binary data." :: BS.ByteString)
+        WebSockets.Text msg _ -> messageHandler connection msg
+
+handleWebsocketException :: WebSockets.Connection -> IO () -> IO ()
+handleWebsocketException connection =
+  handle \case
+    WebSockets.CloseRequest _ _ -> pure ()
+    WebSockets.ConnectionClosed -> pure ()
+    WebSockets.ParseException _ -> WebSockets.sendCloseCode connection 1001 ("WebSocket communication error." :: BS.ByteString)
+    WebSockets.UnicodeException _ -> WebSockets.sendCloseCode connection 1001 ("Client sent invalid UTF-8." :: BS.ByteString)
+
+messageHandler :: WebSockets.Connection -> BSL.ByteString -> IO ()
+messageHandler connection "ping" = WebSockets.sendTextData connection ("pong" :: BS.ByteString)
+messageHandler _ msg = BSL.hPutStr stderr $ "Unhandled message: " <> msg <> "\n"
 
 waiApp :: Wai.Application
 waiApp req respond =
@@ -45,7 +79,7 @@ index = (Wai.responseBuilder HTTP.status200 [htmlContentType] indexHtml)
     indexHtml :: Builder.Builder
     indexHtml = mconcat [
       Builder.fromByteString "<!DOCTYPE html>\n",
-      Builder.fromByteString "<script type=module src=quasar-web-client/index.js></script>",
+      Builder.fromByteString "<script type=module>import { initializeQuasarWebClient } from './quasar-web-client/main.js'; initializeQuasarWebClient();</script>",
       Builder.fromByteString "<meta charset=utf-8 />",
       Builder.fromByteString "<meta name=viewport content=\"width=device-width, initial-scale=1.0\" />",
       Builder.fromByteString "<title>quasar</title>",
