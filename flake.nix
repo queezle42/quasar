@@ -60,7 +60,12 @@
 
     devShells = forAllSystems (system:
       let
-        pkgs = import nixpkgs { inherit system; overlays = [ self.overlays.default ]; };
+        pkgs = import nixpkgs { inherit system; overlays = [
+          self.overlays.default
+          (final: prev: {
+            quasar-web-client = final.emptyDirectory;
+          })
+        ]; };
         haskellPackages = getHaskellPackages pkgs "ghc94.";
       in rec {
         default = haskellPackages.shellFor {
