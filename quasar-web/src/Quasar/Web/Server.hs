@@ -68,10 +68,10 @@ sendThread webUi connection = do
 
 type SpliceId = Word64
 data Client = Client (TVar SpliceId)
-data ClientSplice = ClientSplice Client SpliceId (TVar (Maybe RawHtml)) (TVar [ClientSplice]) (TVar TSimpleDisposer)
---data ClientSplice = ClientSplice Client SpliceId (TVar (Either WebUi TSimpleDisposer)) (TVar [ClientSplice])
+data ClientSplice = ClientSplice Client SpliceId (TVar (Either WebUi (GenerateClientUpdate, TSimpleDisposer)))
 
-data Command = UpdateSplice
+type GenerateClientUpdate = STMc NoRetry '[] [Command]
+data Command = UpdateSplice SpliceId RawHtml
 
 nextSpliceId :: Client -> STMc NoRetry '[] SpliceId
 nextSpliceId (Client nextSpliceIdVar) = stateTVar nextSpliceIdVar \i -> (i, i + 1)
@@ -79,37 +79,42 @@ nextSpliceId (Client nextSpliceIdVar) = stateTVar nextSpliceIdVar \i -> (i, i + 
 newClientSplice :: Client -> WebUi -> STMc NoRetry '[] (RawHtml, ClientSplice, TSimpleDisposer)
 newClientSplice client content = do
   spliceId <- nextSpliceId client
-  (contentHtml, subSplices, contentDisposer) <- foobar client content
-  spliceUpdateVar <- newTVar Nothing
-  subSplicesVar <- newTVar subSplices
-  disposerVar <- newTVar contentDisposer
-  let clientSplice = ClientSplice client spliceId spliceUpdateVar subSplicesVar disposerVar
+  (contentHtml, buildUpdates, contentDisposer) <- foobar client content
+  stateVar <- newTVar (Right (buildUpdates, contentDisposer))
+  let clientSplice = ClientSplice client spliceId stateVar
   disposer <- newUnmanagedTSimpleDisposer (disposeClientSplice clientSplice)
   let html = mconcat ["<quasar-splice id=quasar-splice-", Builder.fromByteString (BS.pack (show spliceId)), ">", contentHtml, "</quasar-splice>"]
   pure (html, clientSplice, disposer)
 
 disposeClientSplice :: ClientSplice -> STMc NoRetry '[] ()
-disposeClientSplice (ClientSplice _ _ spliceUpdateVar subSplicesVar disposerVar) = do
-  disposeTSimpleDisposer =<< readTVar disposerVar
-  writeTVar spliceUpdateVar Nothing
-  mapM_ disposeClientSplice =<< swapTVar subSplicesVar []
+disposeClientSplice (ClientSplice _ _ stateVar) = do
+  swapTVar stateVar (Right mempty) >>= \case
+    Left _ -> pure ()
+    Right (_, disposer) -> disposeTSimpleDisposer disposer
 
-updateClientSplice :: ClientSplice -> WebUi -> STMc NoRetry '[] ()
-updateClientSplice (ClientSplice client _ spliceUpdateVar subSplicesVar disposerVar) webUi = do
-  disposeTSimpleDisposer =<< readTVar disposerVar
-  (html, subSplices, disposer) <- foobar client webUi
-  writeTVar spliceUpdateVar (Just html)
-  writeTVar subSplicesVar subSplices
-  writeTVar disposerVar disposer
+replaceSpliceContent :: ClientSplice -> WebUi -> STMc NoRetry '[] ()
+replaceSpliceContent (ClientSplice _ _ stateVar) webUi = do
+  swapTVar stateVar (Left webUi) >>= \case
+    Left _ -> pure ()
+    Right (_, disposer) -> disposeTSimpleDisposer disposer
 
-foobar :: Client -> WebUi -> STMc NoRetry '[] (RawHtml, [ClientSplice], TSimpleDisposer)
+generateSpliceUpdate :: ClientSplice -> GenerateClientUpdate
+generateSpliceUpdate (ClientSplice client spliceId stateVar) = do
+  readTVar stateVar >>= \case
+    Left webUi -> do
+      (html, newUpdateFn, disposer) <- foobar client webUi
+      writeTVar stateVar (Right (newUpdateFn, disposer))
+      pure [UpdateSplice spliceId html]
+    Right _ -> pure []
+
+foobar :: Client -> WebUi -> STMc NoRetry '[] (RawHtml, GenerateClientUpdate, TSimpleDisposer)
 foobar client (WebUiObservable observable) =
   mfixExtra \splice -> do
-    (disposer, initial) <- attachObserver observable (updateClientSplice splice)
+    (disposer, initial) <- attachObserver observable (replaceSpliceContent splice)
     (html, splice', spliceDisposer) <- newClientSplice client initial
-    let result = (html, [splice], disposer <> spliceDisposer)
+    let result = (html, generateSpliceUpdate splice', disposer <> spliceDisposer)
     pure (result, splice')
-foobar _ (WebUiHtmlElement (HtmlElement html)) = pure (Builder.fromLazyByteString html, [], mempty)
+foobar _ (WebUiHtmlElement (HtmlElement html)) = pure (Builder.fromLazyByteString html, pure [], mempty)
 foobar client (WebUiConcat webUis) = do
   (htmls, splices, disposers) <- unzip3 <$> mapM (foobar client) webUis
   pure (mconcat htmls, mconcat splices, mconcat disposers)
