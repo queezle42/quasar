@@ -92,6 +92,16 @@ class QuasarWebClient {
           clearTimeout(this.pingTimeout);
           this.pingTimeout = null;
         }
+        const target = document.getElementById("quasar-web-root");
+        if (target) {
+          target.innerHTML = "";
+        }
+        console.debug(`[quasar] cleanup complete`);
+
+        // Reconnect in case of a clean server-side disconnect.
+        // (The `close`-function and the `onerror`-handler would clear the
+        // `Connected`-state in case of an error, so the immediate reconnect
+        // only happens when the connection is closed by the server.
         if (this.state === State.Connected) {
           this.setState(State.WaitingForReconnect);
           this.connect();
