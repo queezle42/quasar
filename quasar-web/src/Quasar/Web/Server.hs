@@ -92,8 +92,8 @@ nextSpliceId (Client nextSpliceIdVar) = stateTVar nextSpliceIdVar \i -> (i, i + 
 newClientSplice :: Client -> WebUi -> STMc NoRetry '[] (RawHtml, ClientSplice, TSimpleDisposer)
 newClientSplice client content = do
   spliceId <- nextSpliceId client
-  (contentHtml, buildUpdates, contentDisposer) <- foobar client content
-  stateVar <- newTVar (Right (buildUpdates, contentDisposer))
+  (contentHtml, generateContentUpdates, contentDisposer) <- foobar client content
+  stateVar <- newTVar (Right (generateContentUpdates, contentDisposer))
   let clientSplice = ClientSplice client spliceId stateVar
   disposer <- newUnmanagedTSimpleDisposer (disposeClientSplice clientSplice)
   let html = mconcat ["<quasar-splice id=quasar-splice-", Builder.fromByteString (BS.pack (show spliceId)), ">", contentHtml, "</quasar-splice>"]
@@ -128,9 +128,7 @@ foobar client (WebUiObservable observable) =
     let result = (html, generateSpliceUpdate splice', disposer <> spliceDisposer)
     pure (result, splice')
 foobar _ (WebUiHtmlElement (HtmlElement html)) = pure (Builder.fromLazyByteString html, pure [], mempty)
-foobar client (WebUiConcat webUis) = do
-  (htmls, splices, disposers) <- unzip3 <$> mapM (foobar client) webUis
-  pure (mconcat htmls, mconcat splices, mconcat disposers)
+foobar client (WebUiConcat webUis) = mconcat <$> mapM (foobar client) webUis
 foobar _ _ = error "not implemented"
 
 handleWebsocketException :: WebSockets.Connection -> IO () -> IO ()
