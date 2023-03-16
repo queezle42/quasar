@@ -3,7 +3,7 @@ module Quasar.Web.Server (
 ) where
 
 import Data.Binary.Builder qualified as Builder
-import Data.ByteString qualified as BS
+import Data.ByteString.Char8 qualified as BS
 import Data.ByteString.Lazy qualified as BSL
 import Data.List qualified as List
 import Data.Text (Text)
@@ -14,8 +14,10 @@ import Network.Wai qualified as Wai
 import Network.Wai.Handler.WebSockets qualified as Wai
 import Network.WebSockets qualified as WebSockets
 import Paths_quasar_web (getDataFileName)
+import Quasar
 import Quasar.Prelude
 import Quasar.Web
+import Quasar.Timer
 import System.IO (stderr)
 
 
@@ -28,9 +30,13 @@ waiApplication webUi = Wai.websocketsOr webSocketsOptions (webSocketsApp webUi) 
       }
 
 webSocketsApp :: WebUi -> WebSockets.ServerApp
-webSocketsApp _webUi pendingConnection = do
+webSocketsApp webUi pendingConnection = do
   connection <- WebSockets.acceptRequestWith pendingConnection acceptRequestConfig
-  connectionHandler connection
+  handleAll (\ex -> logError (show ex)) do
+    runQuasarCombineExceptions do
+      x <- async $ receiveThread connection
+      y <- async $ sendThread webUi connection
+      void $ await x <> await y
   where
     acceptRequestConfig :: WebSockets.AcceptRequest
     acceptRequestConfig =
@@ -38,13 +44,18 @@ webSocketsApp _webUi pendingConnection = do
         WebSockets.acceptSubprotocol = Just "quasar-web-v1"
       }
 
-connectionHandler :: WebSockets.Connection -> IO ()
-connectionHandler connection = do
-  WebSockets.sendTextData connection ("/\n<p>Hello World!</p>" :: BS.ByteString)
+receiveThread :: WebSockets.Connection -> QuasarIO ()
+receiveThread connection = liftIO do
   handleWebsocketException connection $ forever do
       WebSockets.receiveDataMessage connection >>= \case
         WebSockets.Binary _ -> WebSockets.sendCloseCode connection 1002 ("Client must not send binary data." :: BS.ByteString)
         WebSockets.Text msg _ -> messageHandler connection msg
+
+sendThread :: WebUi -> WebSockets.Connection -> QuasarIO ()
+sendThread webUi connection = do
+  forM_ [0..] \(i :: Int) -> do
+    liftIO $ WebSockets.sendTextData connection ("set quasar-web-root\n<p>Hello World! " <> BS.pack (show i) <> "</p>" :: BS.ByteString)
+    await =<< newDelay 1_000_000
 
 handleWebsocketException :: WebSockets.Connection -> IO () -> IO ()
 handleWebsocketException connection =

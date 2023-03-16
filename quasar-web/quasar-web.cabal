@@ -64,6 +64,7 @@ library
     exceptions,
     http-types,
     quasar,
+    quasar-timer,
     text,
     utf8-string,
     wai,

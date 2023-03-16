@@ -166,6 +166,18 @@ class QuasarWebClient {
       case "pong":
         this.receivePong(body);
         break;
+      case "set":
+        if (!arg) {
+          throw "[quasar] received 'set' command without argument";
+        }
+        if (!body) {
+          throw "[quasar] received 'set' command without body";
+        }
+        const target = document.getElementById(arg);
+        if (target) {
+          target.innerHTML = body;
+        }
+        break;
       default:
         console.error("[quasar] received unknown message:", command, arg);
         this.close("protocol error");
