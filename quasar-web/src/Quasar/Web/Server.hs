@@ -118,7 +118,7 @@ generateSpliceUpdate (ClientSplice client spliceId stateVar) = do
       (html, newUpdateFn, disposer) <- foobar client webUi
       writeTVar stateVar (Right (newUpdateFn, disposer))
       pure [UpdateSplice spliceId html]
-    Right _ -> pure []
+    Right (generateContentUpdatesFn, _) -> generateContentUpdatesFn
 
 foobar :: Client -> WebUi -> STMc NoRetry '[] (RawHtml, GenerateClientUpdate, TSimpleDisposer)
 foobar client (WebUiObservable observable) =
