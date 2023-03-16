@@ -2,11 +2,12 @@ module Main (main) where
 
 import Network.Wai.Handler.Warp
 import Quasar.Prelude
+import Quasar.Web
 import Quasar.Web.Server (waiApplication)
 import System.IO (hPutStrLn, stderr)
 
 main :: IO ()
-main = runSettings settings (waiApplication undefined)
+main = runSettings settings (waiApplication (WebUiHtmlElement (HtmlElement "Hello World!")))
   where
     port :: Port
     port = 9013

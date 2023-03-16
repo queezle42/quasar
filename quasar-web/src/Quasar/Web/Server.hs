@@ -2,6 +2,7 @@ module Quasar.Web.Server (
   waiApplication,
 ) where
 
+import Data.Binary.Builder (Builder)
 import Data.Binary.Builder qualified as Builder
 import Data.ByteString.Char8 qualified as BS
 import Data.ByteString.Lazy qualified as BSL
@@ -18,7 +19,11 @@ import Quasar
 import Quasar.Prelude
 import Quasar.Web
 import Quasar.Timer
+import Quasar.Utils.Fix (mfixExtra)
 import System.IO (stderr)
+
+
+type RawHtml = Builder
 
 
 waiApplication :: WebUi -> Wai.Application
@@ -53,9 +58,62 @@ receiveThread connection = liftIO do
 
 sendThread :: WebUi -> WebSockets.Connection -> QuasarIO ()
 sendThread webUi connection = do
+  client <- Client <$> newTVarIO 0
+  (initialHtml, rootSplice, disposer) <- atomically $ liftSTMc $ foobar client webUi
   forM_ [0..] \(i :: Int) -> do
     liftIO $ WebSockets.sendTextData connection ("set quasar-web-root\n<p>Hello World! " <> BS.pack (show i) <> "</p>" :: BS.ByteString)
+    --liftIO $ WebSockets.sendTextData connection ("set quasar-web-root\n" <> html)
     await =<< newDelay 1_000_000
+
+
+type SpliceId = Word64
+data Client = Client (TVar SpliceId)
+data ClientSplice = ClientSplice Client SpliceId (TVar (Maybe RawHtml)) (TVar [ClientSplice]) (TVar TSimpleDisposer)
+--data ClientSplice = ClientSplice Client SpliceId (TVar (Either WebUi TSimpleDisposer)) (TVar [ClientSplice])
+
+data Command = UpdateSplice
+
+nextSpliceId :: Client -> STMc NoRetry '[] SpliceId
+nextSpliceId (Client nextSpliceIdVar) = stateTVar nextSpliceIdVar \i -> (i, i + 1)
+
+newClientSplice :: Client -> WebUi -> STMc NoRetry '[] (RawHtml, ClientSplice, TSimpleDisposer)
+newClientSplice client content = do
+  spliceId <- nextSpliceId client
+  (contentHtml, subSplices, contentDisposer) <- foobar client content
+  spliceUpdateVar <- newTVar Nothing
+  subSplicesVar <- newTVar subSplices
+  disposerVar <- newTVar contentDisposer
+  let clientSplice = ClientSplice client spliceId spliceUpdateVar subSplicesVar disposerVar
+  disposer <- newUnmanagedTSimpleDisposer (disposeClientSplice clientSplice)
+  let html = mconcat ["<quasar-splice id=quasar-splice-", Builder.fromByteString (BS.pack (show spliceId)), ">", contentHtml, "</quasar-splice>"]
+  pure (html, clientSplice, disposer)
+
+disposeClientSplice :: ClientSplice -> STMc NoRetry '[] ()
+disposeClientSplice (ClientSplice _ _ spliceUpdateVar subSplicesVar disposerVar) = do
+  disposeTSimpleDisposer =<< readTVar disposerVar
+  writeTVar spliceUpdateVar Nothing
+  mapM_ disposeClientSplice =<< swapTVar subSplicesVar []
+
+updateClientSplice :: ClientSplice -> WebUi -> STMc NoRetry '[] ()
+updateClientSplice (ClientSplice client _ spliceUpdateVar subSplicesVar disposerVar) webUi = do
+  disposeTSimpleDisposer =<< readTVar disposerVar
+  (html, subSplices, disposer) <- foobar client webUi
+  writeTVar spliceUpdateVar (Just html)
+  writeTVar subSplicesVar subSplices
+  writeTVar disposerVar disposer
+
+foobar :: Client -> WebUi -> STMc NoRetry '[] (RawHtml, [ClientSplice], TSimpleDisposer)
+foobar client (WebUiObservable observable) =
+  mfixExtra \splice -> do
+    (disposer, initial) <- attachObserver observable (updateClientSplice splice)
+    (html, splice', spliceDisposer) <- newClientSplice client initial
+    let result = (html, [splice], disposer <> spliceDisposer)
+    pure (result, splice')
+foobar _ (WebUiHtmlElement (HtmlElement html)) = pure (Builder.fromLazyByteString html, [], mempty)
+foobar client (WebUiConcat webUis) = do
+  (htmls, splices, disposers) <- unzip3 <$> mapM (foobar client) webUis
+  pure (mconcat htmls, mconcat splices, mconcat disposers)
+foobar _ _ = error "not implemented"
 
 handleWebsocketException :: WebSockets.Connection -> IO () -> IO ()
 handleWebsocketException connection =
