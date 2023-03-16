@@ -42,9 +42,9 @@ class QuasarWebClient {
   }
 
   close(reason: string) {
-    this.websocket?.close();
     this.closeReason = reason;
     this.setState(State.Closed);
+    this.websocket?.close();
   }
 
   getStateDescription() {
@@ -91,6 +91,10 @@ class QuasarWebClient {
         if (this.pingTimeout) {
           clearTimeout(this.pingTimeout);
           this.pingTimeout = null;
+        }
+        if (this.state === State.Connected) {
+          this.setState(State.WaitingForReconnect);
+          this.connect();
         }
       };
 
@@ -151,7 +155,7 @@ class QuasarWebClient {
   }
 
   private receivePong(_body: string | null) {
-    if (this.pingTimeout) {
+    if (this.state === State.Connected && this.pingTimeout) {
       clearTimeout(this.pingTimeout);
       this.pingTimeout = null;
     }
