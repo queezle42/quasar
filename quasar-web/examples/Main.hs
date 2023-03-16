@@ -7,7 +7,7 @@ import Quasar.Web.Server (waiApplication)
 import System.IO (hPutStrLn, stderr)
 
 main :: IO ()
-main = runSettings settings (waiApplication (WebUiHtmlElement (HtmlElement "Hello World!")))
+main = runSettings settings (waiApplication (WebUiObservable (pure (WebUiHtmlElement (HtmlElement "<h1>Hello World!</h1>")))))
   where
     port :: Port
     port = 9013

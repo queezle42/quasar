@@ -59,11 +59,23 @@ receiveThread connection = liftIO do
 sendThread :: WebUi -> WebSockets.Connection -> QuasarIO ()
 sendThread webUi connection = do
   client <- Client <$> newTVarIO 0
-  (initialHtml, rootSplice, disposer) <- atomically $ liftSTMc $ foobar client webUi
-  forM_ [0..] \(i :: Int) -> do
-    liftIO $ WebSockets.sendTextData connection ("set quasar-web-root\n<p>Hello World! " <> BS.pack (show i) <> "</p>" :: BS.ByteString)
-    --liftIO $ WebSockets.sendTextData connection ("set quasar-web-root\n" <> html)
-    await =<< newDelay 1_000_000
+  traceIO "new client"
+  (initialHtml, generateUpdateFn, disposer) <- atomically $ liftSTMc $ foobar client webUi
+  let initialMessage = Builder.toLazyByteString ("set quasar-web-root\n" <> initialHtml)
+  traceIO $ "sending " <> show initialMessage
+  liftIO $ WebSockets.sendTextData connection initialMessage
+  handleAll (\ex -> dispose disposer >> throwM ex) do
+    forever do
+      updates <- atomicallyC $ do
+        updates <- liftSTMc generateUpdateFn
+        check (not (null updates))
+        pure updates
+      traceIO $ "should send " <> show updates
+      -- TODO send updates
+
+      -- Waiting should be irrelevant since updates are merged
+      -- This is a test to see if that works (TODO remove)
+      await =<< newDelay 4_000_000
 
 
 type SpliceId = Word64
@@ -72,6 +84,7 @@ data ClientSplice = ClientSplice Client SpliceId (TVar (Either WebUi (GenerateCl
 
 type GenerateClientUpdate = STMc NoRetry '[] [Command]
 data Command = UpdateSplice SpliceId RawHtml
+  deriving Show
 
 nextSpliceId :: Client -> STMc NoRetry '[] SpliceId
 nextSpliceId (Client nextSpliceIdVar) = stateTVar nextSpliceIdVar \i -> (i, i + 1)
