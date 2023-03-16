@@ -2,8 +2,8 @@
 // Reexport public api here
 
 const maxReconnectDelayMs = 10_000;
-const pingIntervalMs = 30_000;
-const pingTimeoutMs = 10_000;
+const pingIntervalMs = 2_000;
+const pingTimeoutMs = 1_000;
 
 enum State {
   Initial,
