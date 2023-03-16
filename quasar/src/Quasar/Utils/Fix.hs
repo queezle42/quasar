@@ -6,5 +6,5 @@ import Quasar.Prelude
 
 mfixExtra :: MonadFix m => (a -> m (r, a)) -> m r
 mfixExtra fn = do
-  (x, _) <- mfix \(_, y) -> fn y
+  (x, _) <- mfix \tuple -> fn (snd tuple)
   pure x
