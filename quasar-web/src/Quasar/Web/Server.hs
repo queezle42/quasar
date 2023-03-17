@@ -184,7 +184,8 @@ index = (Wai.responseBuilder HTTP.status200 [htmlContentType] indexHtml)
       Binary.fromByteString "<meta charset=utf-8 />",
       Binary.fromByteString "<meta name=viewport content=\"width=device-width, initial-scale=1.0\" />",
       Binary.fromByteString "<title>quasar</title>",
-      Binary.fromByteString "<div id=app></div>"
+      Binary.fromByteString "<div id=quasar-web-state></div>",
+      Binary.fromByteString "<div id=quasar-web-root></div>"
       ]
 
 
