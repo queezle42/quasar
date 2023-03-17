@@ -18,7 +18,7 @@ mkCombinedException exs = CombinedException <$> nonEmpty exs
 instance Exception CombinedException where
   displayException (CombinedException exceptions) = intercalate "\n" (header : exceptionMessages)
     where
-      header = mconcat ["CombinedException with ", show (length exceptions), "exceptions:"]
+      header = mconcat ["CombinedException with ", show (length exceptions), " exceptions:"]
       exceptionMessages = displayException <$> toList exceptions
 
 combinedExceptions :: CombinedException -> [SomeException]
