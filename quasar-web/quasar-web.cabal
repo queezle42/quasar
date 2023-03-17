@@ -59,6 +59,7 @@ library
   import: shared-properties
   build-depends:
     base <5,
+    aeson,
     binary,
     bytestring,
     exceptions,

@@ -3,11 +3,11 @@ module Quasar.Web (
   HtmlElement(..),
 ) where
 
-import Data.ByteString.Lazy qualified as BSL
+import Data.Text.Lazy qualified as TL
 import Quasar
 import Quasar.Prelude
 
-newtype HtmlElement = HtmlElement BSL.ByteString
+newtype HtmlElement = HtmlElement TL.Text
 
 data WebUi
   = WebUiObservable (Observable WebUi) -- "<div id="7">...</quasar-splice>

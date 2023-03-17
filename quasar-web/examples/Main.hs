@@ -1,13 +1,13 @@
 module Main (main) where
 
 import Control.Concurrent (forkIO, threadDelay)
+import Data.Text.Lazy qualified as TL
 import Network.Wai.Handler.Warp
-import Quasar.Prelude
 import Quasar
+import Quasar.Prelude
 import Quasar.Web
 import Quasar.Web.Server (waiApplication)
 import System.IO (hPutStrLn, stderr)
-import Data.ByteString.Lazy.UTF8 qualified as UTF8
 
 main :: IO ()
 main = do
@@ -35,4 +35,4 @@ main = do
       defaultSettings
 
 toSpan :: Show a => a -> WebUi
-toSpan x = WebUiHtmlElement (HtmlElement (mconcat ["<span>", UTF8.fromString (show x), "</span>"]))
+toSpan x = WebUiHtmlElement (HtmlElement (mconcat ["<span>", TL.pack (show x), "</span>"]))

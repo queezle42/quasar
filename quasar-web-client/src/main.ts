@@ -10,14 +10,18 @@ enum State {
   Connecting,
   Connected,
   WaitingForReconnect,
+  Reconnecting,
   Closed
 }
+
+type Command =
+  | { fn: "root", html: string }
+  | { fn: "splice", id: number, html: string }
 
 class QuasarWebClient {
   private websocketAddress: string;
   private websocket: WebSocket | null = null;
   private state: State = State.Initial;
-  // TODO show in UI
   private closeReason: string | null = null;
   private reconnectDelay: number = 0;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
@@ -56,7 +60,9 @@ class QuasarWebClient {
       case State.Connected:
         return "connected";
       case State.WaitingForReconnect:
-        return "connecting";
+        return "reconnecting";
+      case State.Reconnecting:
+        return "reconnecting";
       case State.Closed:
         return this.closeReason || "disconnected";
     }
@@ -73,7 +79,7 @@ class QuasarWebClient {
   private connect() {
     if (this.state === State.Initial || this.state === State.WaitingForReconnect) {
       console.log("[quasar] connecting...");
-      this.setState(State.Connecting);
+      this.setState(this.state === State.Initial ? State.Connecting : State.Reconnecting);
       this.websocket = new WebSocket(this.websocketAddress, ["quasar-web-v1"]);
 
       this.websocket.onopen = (_event) => {
@@ -121,26 +127,21 @@ class QuasarWebClient {
         if (typeof event.data !== "string") {
           throw "[quasar] received invalid WebSocket 'data' message type";
         }
-        const index = event.data.indexOf('\n');
 
-        let header = event.data;
-        let body = null;
-        if (index >= 0) {
-          header = event.data.slice(0, index);
-          body = event.data.slice(index + 1);
-        }
-        console.debug("[quasar] received:", header);
-
-        let command = header;
-        let arg = null;
-
-        const index2 = header.indexOf(' ');
-        if (index2 >= 0) {
-          command = header.slice(0, index2);
-          arg = header.slice(index2 + 1);
+        if (event.data === "pong") {
+          this.receivePong();
+          return;
         }
 
-        this.receiveCommand(command, arg, body);
+        try {
+          const parsed = JSON.parse(event.data);
+          console.log("[quasar] received:", parsed);
+          this.receiveMessage(parsed);
+        }
+        catch {
+          console.error("[quasar] received invalid message:", event.data);
+          this.close("protocol error");
+        }
       };
 
     } else {
@@ -164,33 +165,32 @@ class QuasarWebClient {
     }
   }
 
-  private receivePong(_body: string | null) {
+  private receivePong() {
     if (this.state === State.Connected && this.pingTimeout) {
       clearTimeout(this.pingTimeout);
       this.pingTimeout = null;
     }
   }
 
-  private receiveCommand(command: string, arg: string | null, body: string | null) {
-    switch (command) {
-      case "pong":
-        this.receivePong(body);
-        break;
-      case "set":
-        if (!arg) {
-          throw "[quasar] received 'set' command without argument";
-        }
-        if (!body) {
-          throw "[quasar] received 'set' command without body";
-        }
-        const target = document.getElementById(arg);
-        if (target) {
-          target.innerHTML = body;
-        }
-        break;
-      default:
-        console.error("[quasar] received unknown message:", command, arg);
-        this.close("protocol error");
+  private receiveMessage(commands: Command[]) {
+    for (let command of commands) {
+      switch (command.fn) {
+        case "root":
+          const root = document.getElementById("quasar-web-root");
+          if (root) {
+            root.innerHTML = command.html;
+          }
+          break;
+        case "splice":
+          const splice = document.getElementById("quasar-splice-" + command.id);
+          if (splice) {
+            splice.innerHTML = command.html;
+          }
+          break;
+        default:
+          this.close("protocol error");
+          console.error("[quasar] unhandled command:", command);
+      }
     }
   }
 }

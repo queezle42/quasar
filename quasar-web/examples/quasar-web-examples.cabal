@@ -56,6 +56,6 @@ executable quasar-web-example
     base,
     quasar,
     quasar-web,
-    utf8-string,
+    text,
     warp,
   main-is: Main.hs

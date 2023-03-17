@@ -2,14 +2,16 @@ module Quasar.Web.Server (
   waiApplication,
 ) where
 
-import Data.Binary.Builder (Builder)
-import Data.Binary.Builder qualified as Builder
+import Control.Monad.Catch
+import Data.Aeson
+import Data.Binary.Builder qualified as Binary
 import Data.ByteString.Char8 qualified as BS
 import Data.ByteString.Lazy qualified as BSL
 import Data.List qualified as List
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Control.Monad.Catch
+import Data.Text.Lazy.Builder (Builder)
+import Data.Text.Lazy.Builder qualified as Builder
 import Network.HTTP.Types qualified as HTTP
 import Network.Wai qualified as Wai
 import Network.Wai.Handler.WebSockets qualified as Wai
@@ -17,9 +19,9 @@ import Network.WebSockets qualified as WebSockets
 import Paths_quasar_web (getDataFileName)
 import Quasar
 import Quasar.Prelude
-import Quasar.Web
 import Quasar.Timer
 import Quasar.Utils.Fix (mfixExtra)
+import Quasar.Web
 import System.IO (stderr)
 
 
@@ -37,7 +39,7 @@ waiApplication webUi = Wai.websocketsOr webSocketsOptions (webSocketsApp webUi) 
 webSocketsApp :: WebUi -> WebSockets.ServerApp
 webSocketsApp webUi pendingConnection = do
   connection <- WebSockets.acceptRequestWith pendingConnection acceptRequestConfig
-  handleAll (\ex -> logError (show ex)) do
+  handleAll (\ex -> logError (displayException ex)) do
     runQuasarCombineExceptions do
       x <- async $ receiveThread connection
       y <- async $ sendThread webUi connection
@@ -61,17 +63,18 @@ sendThread webUi connection = do
   client <- Client <$> newTVarIO 0
   traceIO "new client"
   (initialHtml, generateUpdateFn, disposer) <- atomically $ liftSTMc $ foobar client webUi
-  let initialMessage = Builder.toLazyByteString ("set quasar-web-root\n" <> initialHtml)
+  -- let initialMessage = TL.encodeUtf8 (Builder.toLazyText ("set quasar-web-root\n" <> initialHtml))
+  let initialMessage = [UpdateRoot initialHtml]
   traceIO $ "sending " <> show initialMessage
-  liftIO $ WebSockets.sendTextData connection initialMessage
+  liftIO $ WebSockets.sendTextData connection (encode initialMessage)
   handleAll (\ex -> dispose disposer >> throwM ex) do
     forever do
       updates <- atomicallyC $ do
         updates <- liftSTMc generateUpdateFn
         check (not (null updates))
         pure updates
-      traceIO $ "should send " <> show updates
-      -- TODO send updates
+      traceIO $ "sending " <> show updates
+      liftIO $ WebSockets.sendTextData connection (encode updates)
 
       -- Waiting should be irrelevant since updates are merged
       -- This is a test to see if that works (TODO remove)
@@ -83,8 +86,21 @@ data Client = Client (TVar SpliceId)
 data ClientSplice = ClientSplice Client SpliceId (TVar (Either WebUi (GenerateClientUpdate, TSimpleDisposer)))
 
 type GenerateClientUpdate = STMc NoRetry '[] [Command]
-data Command = UpdateSplice SpliceId RawHtml
+data Command
+  = UpdateRoot RawHtml
+  | UpdateSplice SpliceId RawHtml
   deriving Show
+
+instance ToJSON Command where
+    toJSON (UpdateRoot html) =
+        object ["fn" .= ("root" :: Text), "html" .= Builder.toLazyText html]
+    toJSON (UpdateSplice spliceId html) =
+        object ["fn" .= ("splice" :: Text), "id" .= spliceId, "html" .= Builder.toLazyText html]
+
+    toEncoding (UpdateRoot html) =
+        pairs ("fn" .= ("root" :: Text) <> "html" .= Builder.toLazyText html)
+    toEncoding (UpdateSplice spliceId html) =
+        pairs ("fn" .= ("splice" :: Text) <> "id" .= spliceId <> "html" .= Builder.toLazyText html)
 
 nextSpliceId :: Client -> STMc NoRetry '[] SpliceId
 nextSpliceId (Client nextSpliceIdVar) = stateTVar nextSpliceIdVar \i -> (i, i + 1)
@@ -96,7 +112,7 @@ newClientSplice client content = do
   stateVar <- newTVar (Right (generateContentUpdates, contentDisposer))
   let clientSplice = ClientSplice client spliceId stateVar
   disposer <- newUnmanagedTSimpleDisposer (disposeClientSplice clientSplice)
-  let html = mconcat ["<quasar-splice id=quasar-splice-", Builder.fromByteString (BS.pack (show spliceId)), ">", contentHtml, "</quasar-splice>"]
+  let html = mconcat ["<quasar-splice id=quasar-splice-", Builder.fromString (show spliceId), ">", contentHtml, "</quasar-splice>"]
   pure (html, clientSplice, disposer)
 
 disposeClientSplice :: ClientSplice -> STMc NoRetry '[] ()
@@ -127,7 +143,7 @@ foobar client (WebUiObservable observable) =
     (html, splice', spliceDisposer) <- newClientSplice client initial
     let result = (html, generateSpliceUpdate splice', disposer <> spliceDisposer)
     pure (result, splice')
-foobar _ (WebUiHtmlElement (HtmlElement html)) = pure (Builder.fromLazyByteString html, pure [], mempty)
+foobar _ (WebUiHtmlElement (HtmlElement html)) = pure (Builder.fromLazyText html, pure [], mempty)
 foobar client (WebUiConcat webUis) = mconcat <$> mapM (foobar client) webUis
 foobar _ _ = error "not implemented"
 
@@ -161,14 +177,14 @@ waiApp req respond =
 index :: Wai.Response
 index = (Wai.responseBuilder HTTP.status200 [htmlContentType] indexHtml)
   where
-    indexHtml :: Builder.Builder
+    indexHtml :: Binary.Builder
     indexHtml = mconcat [
-      Builder.fromByteString "<!DOCTYPE html>\n",
-      Builder.fromByteString "<script type=module>import { initializeQuasarWebClient } from './quasar-web-client/main.js'; initializeQuasarWebClient();</script>",
-      Builder.fromByteString "<meta charset=utf-8 />",
-      Builder.fromByteString "<meta name=viewport content=\"width=device-width, initial-scale=1.0\" />",
-      Builder.fromByteString "<title>quasar</title>",
-      Builder.fromByteString "<div id=app></div>"
+      Binary.fromByteString "<!DOCTYPE html>\n",
+      Binary.fromByteString "<script type=module>import { initializeQuasarWebClient } from './quasar-web-client/main.js'; initializeQuasarWebClient();</script>",
+      Binary.fromByteString "<meta charset=utf-8 />",
+      Binary.fromByteString "<meta name=viewport content=\"width=device-width, initial-scale=1.0\" />",
+      Binary.fromByteString "<title>quasar</title>",
+      Binary.fromByteString "<div id=app></div>"
       ]
 
 
@@ -204,7 +220,7 @@ cssContentType = ("Content-Type", "text/css; charset=utf-8")
 
 -- | Builds an error page from an http status code and a message.
 buildError :: HTTP.Status -> BS.ByteString -> Wai.Response
-buildError status message = Wai.responseBuilder status [textContentType] (Builder.fromByteString message)
+buildError status message = Wai.responseBuilder status [textContentType] (Binary.fromByteString message)
 
 -- | A 404 "Not Found" error page.
 notFound :: Wai.Response
