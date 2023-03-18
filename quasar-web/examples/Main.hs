@@ -11,21 +11,28 @@ import System.IO (hPutStrLn, stderr)
 
 main :: IO ()
 main = do
-  a <- newObservableVarIO (1 :: Int)
+  a <- newObservableVarIO (0 :: Int)
   b <- newObservableVarIO (0 :: Int)
+  c <- newObservableVarIO undefined
 
   void $ forkIO $ forever do
-    v <- atomically $ stateObservableVar a (\x -> (x, x + 1))
-    when (v `mod` 10 == 0) do
-      atomically $ modifyObservableVar b (+ 10)
+    atomically do
+      v <- stateObservableVar a (\x -> (x + 1, x + 1))
+      when (v `mod` 10 == 0) do
+        modifyObservableVar b (+ 10)
+      when (v `mod` 7 == 0) do
+        writeObservableVar c (WebUiHtmlElement (HtmlElement "🐿"))
+      when (v `mod` 7 == 1) do
+        writeObservableVar c do
+          WebUiConcat [
+            WebUiObservable (toSpan <$> toObservable a),
+            WebUiHtmlElement (HtmlElement "/"),
+            WebUiObservable (toSpan <$> toObservable b)
+            ]
     threadDelay 1_000_000
 
   runSettings settings $ waiApplication do
-    WebUiConcat [
-      WebUiObservable (toSpan <$> toObservable a),
-      WebUiHtmlElement (HtmlElement "/"),
-      WebUiObservable (toSpan <$> toObservable b)
-      ]
+    WebUiObservable (toObservable c)
   where
     port :: Port
     port = 9013
