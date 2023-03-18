@@ -27,7 +27,7 @@
           quasar-timer = haskellPackages.quasar-timer;
           quasar-web = haskellPackages.quasar-web;
           quasar-web-client = pkgs.quasar-web-client;
-          quasar-web-examples = pkgs.quasar-web-examples;
+          quasar-web-examples = haskellPackages.quasar-web-examples;
         };
       in results // {
         default = pkgs.linkFarm "quasar-all" (results // mapAttrs' (k: v: nameValuePair "${k}-doc" (v.doc or pkgs.emptyDirectory)) results);
@@ -49,7 +49,7 @@
               ln -s ${final.quasar-web-client} $out/data/quasar-web-client
             '';
             in hfinal.callCabal2nix "quasar-web" srcWithClient {};
-          quasar-web-examples = hfinal.callCabal2nix "quasar-web-examples" ./quasar-web-examples {};
+          quasar-web-examples = hfinal.callCabal2nix "quasar-web-examples" ./quasar-web/examples {};
           # Due to a ghc bug in 9.4.3 and 9.2.5
           ListLike = final.haskell.lib.dontCheck hprev.ListLike;
           net-mqtt = final.haskell.lib.doJailbreak hprev.net-mqtt;
