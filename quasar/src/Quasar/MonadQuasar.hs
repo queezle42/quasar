@@ -9,7 +9,7 @@ module Quasar.MonadQuasar (
   newResourceScopeIO,
   newResourceScopeSTM,
   withResourceScope,
-  --catchQuasar,
+  catchQuasar,
 
   MonadQuasar(..),
 
@@ -272,10 +272,13 @@ redirectExceptionToSinkIO_ fn = void $ redirectExceptionToSinkIO fn
 {-# SPECIALIZE redirectExceptionToSinkIO_ :: QuasarIO a -> QuasarIO () #-}
 
 
---catchQuasar :: forall e m a. (MonadQuasar m, Exception e) => (e -> STM' NoRetry CanThrow ()) -> m a -> m a
---catchQuasar handler fn = do
---  exSink <- catchSink handler <$> askExceptionSink
---  replaceExceptionSink exSink fn
+-- TODO the name does not properly reflect the functionality, and the
+-- functionality is questionable (but already used in quasar-network).
+-- Current behavior: exceptions on the current thread are not handled.
+catchQuasar :: forall e m a. (MonadQuasar m, Exception e) => (e -> STMc NoRetry '[SomeException] ()) -> m a -> m a
+catchQuasar handler fn = do
+  exSink <- catchSink handler <$> askExceptionSink
+  replaceExceptionSink exSink fn
 
 replaceExceptionSink :: MonadQuasar m => ExceptionSink -> m a -> m a
 replaceExceptionSink exSink fn = do
