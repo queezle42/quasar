@@ -166,12 +166,12 @@ type ToFutureEx exceptions r = ToFuture (Either (Ex exceptions) r)
 
 -- | Returns the result (in a `Just`) when the future is completed and returns
 -- `Nothing` otherwise.
-peekFuture :: MonadSTMc NoRetry '[] m => Future a -> m (Maybe a)
-peekFuture future = orElseNothing (readFuture# future)
+peekFuture :: (ToFuture r a, MonadSTMc NoRetry '[] m) => a -> m (Maybe r)
+peekFuture future = orElseNothing (readFuture# (toFuture future))
 
 -- | Returns the result (in a `Just`) when the future is completed and returns
 -- `Nothing` otherwise.
-peekFutureIO :: MonadIO m => Future r -> m (Maybe r)
+peekFutureIO :: (ToFuture r a, MonadIO m) => a -> m (Maybe r)
 peekFutureIO future = atomically $ peekFuture future
 
 
