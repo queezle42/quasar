@@ -34,9 +34,9 @@ import System.IO.Unsafe (unsafePerformIO)
 
 
 data Logger = Logger {
-  logQueue :: (TQueue LogMessage),
-  logLevel :: (TVar LogLevel),
-  logBufferSize :: (TVar Word64),
+  logQueue :: TQueue LogMessage,
+  logLevel :: TVar LogLevel,
+  logBufferSize :: TVar Word64,
   queuedCounter :: TVar Word64,
   loggedCounter :: TVar Word64
 }
