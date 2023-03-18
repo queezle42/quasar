@@ -21,7 +21,7 @@ withTestExceptionSink :: (ExceptionSink -> IO a) -> IO a
 withTestExceptionSink action = do
   (sink, collect) <- atomically $ newExceptionCollector loggingExceptionSink
   result <- action sink
-  mapM_ throwM . mkCombinedException =<< atomicallyC (liftSTMc collect)
+  mapM_ throwM . mkCombinedException =<< atomicallyC collect
   pure result
 
 spec :: Spec

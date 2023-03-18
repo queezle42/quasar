@@ -67,7 +67,7 @@ sendThread webUi connection = do
   liftIO $ WebSockets.sendTextData connection (encode initialMessage)
   handleAll (\ex -> dispose disposer >> throwM ex) do
     forever do
-      updates <- atomicallyC $ do
+      updates <- atomically $ do
         updates <- liftSTMc generateUpdateFn
         check (not (null updates))
         pure updates

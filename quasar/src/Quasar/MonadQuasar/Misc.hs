@@ -67,7 +67,7 @@ runQuasarCollectExceptions :: QuasarIO a -> IO (Either SomeException a, [SomeExc
 runQuasarCollectExceptions fn = do
   (exChan, collectExceptions) <- atomically $ newExceptionCollector panicSink
   result <- try $ withQuasar exChan fn
-  exceptions <- atomicallyC $ liftSTMc collectExceptions
+  exceptions <- atomicallyC collectExceptions
   pure (result, exceptions)
 
 runQuasarCombineExceptions :: QuasarIO a -> IO a

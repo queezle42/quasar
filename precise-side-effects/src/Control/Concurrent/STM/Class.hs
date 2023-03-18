@@ -308,7 +308,7 @@ orElseNothing fx = unsafeLiftSTM (STM.orElse (Just <$> runSTMc fx) (pure Nothing
 {-# INLINABLE orElseNothing #-}
 
 
-atomicallyC :: MonadIO m => STMc Retry '[SomeException] a -> m a
+atomicallyC :: MonadIO m => STMc canRetry exceptions a -> m a
 atomicallyC = liftIO . STM.atomically . runSTMc
 {-# INLINABLE atomicallyC #-}
 
