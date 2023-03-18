@@ -15,6 +15,7 @@ enum State {
 }
 
 type Command =
+  | { fn: "pong" }
   | { fn: "root", html: string }
   | { fn: "splice", id: number, html: string }
 
@@ -25,7 +26,7 @@ class QuasarWebClient {
   private closeReason: string | null = null;
   private reconnectDelay: number = 0;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
-  private pingTimeout: ReturnType<typeof setTimeout> | null = null;
+  private pongTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(websocketAddress?: string) {
     if (websocketAddress == null) {
@@ -94,9 +95,9 @@ class QuasarWebClient {
           clearInterval(this.pingInterval);
           this.pingInterval = null;
         }
-        if (this.pingTimeout) {
-          clearTimeout(this.pingTimeout);
-          this.pingTimeout = null;
+        if (this.pongTimeout) {
+          clearTimeout(this.pongTimeout);
+          this.pongTimeout = null;
         }
         const target = document.getElementById("quasar-web-root");
         if (target) {
@@ -128,11 +129,6 @@ class QuasarWebClient {
           throw "[quasar] received invalid WebSocket 'data' message type";
         }
 
-        if (event.data === "pong") {
-          this.receivePong();
-          return;
-        }
-
         try {
           const parsed = JSON.parse(event.data);
           console.log("[quasar] received:", parsed);
@@ -151,7 +147,7 @@ class QuasarWebClient {
 
   private sendPing() {
     if (this.state === State.Connected && this.websocket !== null) {
-      this.pingTimeout = setTimeout(() => this.pingFailed(), pingTimeoutMs);
+      this.pongTimeout = setTimeout(() => this.pingFailed(), pingTimeoutMs);
       this.websocket.send("ping");
       console.debug("[quasar] ping");
     }
@@ -166,15 +162,18 @@ class QuasarWebClient {
   }
 
   private receivePong() {
-    if (this.state === State.Connected && this.pingTimeout) {
-      clearTimeout(this.pingTimeout);
-      this.pingTimeout = null;
+    if (this.state === State.Connected && this.pongTimeout) {
+      clearTimeout(this.pongTimeout);
+      this.pongTimeout = null;
     }
   }
 
   private receiveMessage(commands: Command[]) {
     for (let command of commands) {
       switch (command.fn) {
+        case "pong":
+          this.receivePong();
+          break;
         case "root":
           const root = document.getElementById("quasar-web-root");
           if (root) {

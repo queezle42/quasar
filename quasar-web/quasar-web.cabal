@@ -67,7 +67,6 @@ library
     quasar,
     quasar-timer,
     text,
-    utf8-string,
     wai,
     wai-websockets,
     websockets,

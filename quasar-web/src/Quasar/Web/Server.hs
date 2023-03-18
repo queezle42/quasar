@@ -61,11 +61,9 @@ receiveThread connection = liftIO do
 sendThread :: WebUi -> WebSockets.Connection -> QuasarIO ()
 sendThread webUi connection = do
   client <- Client <$> newTVarIO 0
-  traceIO "new client"
+  traceIO "[quasar-web] new client"
   (initialHtml, generateUpdateFn, disposer) <- atomically $ liftSTMc $ foobar client webUi
-  -- let initialMessage = TL.encodeUtf8 (Builder.toLazyText ("set quasar-web-root\n" <> initialHtml))
   let initialMessage = [UpdateRoot initialHtml]
-  traceIO $ "sending " <> show initialMessage
   liftIO $ WebSockets.sendTextData connection (encode initialMessage)
   handleAll (\ex -> dispose disposer >> throwM ex) do
     forever do
@@ -73,12 +71,11 @@ sendThread webUi connection = do
         updates <- liftSTMc generateUpdateFn
         check (not (null updates))
         pure updates
-      traceIO $ "sending " <> show updates
       liftIO $ WebSockets.sendTextData connection (encode updates)
 
       -- Waiting should be irrelevant since updates are merged
       -- This is a test to see if that works (TODO remove)
-      await =<< newDelay 4_000_000
+      --await =<< newDelay 4_000_000
 
 
 type SpliceId = Word64
@@ -89,6 +86,7 @@ type GenerateClientUpdate = STMc NoRetry '[] [Command]
 data Command
   = UpdateRoot RawHtml
   | UpdateSplice SpliceId RawHtml
+  | Pong
   deriving Show
 
 instance ToJSON Command where
@@ -96,11 +94,15 @@ instance ToJSON Command where
         object ["fn" .= ("root" :: Text), "html" .= Builder.toLazyText html]
     toJSON (UpdateSplice spliceId html) =
         object ["fn" .= ("splice" :: Text), "id" .= spliceId, "html" .= Builder.toLazyText html]
+    toJSON (Pong) =
+        object ["fn" .= ("pong" :: Text)]
 
     toEncoding (UpdateRoot html) =
         pairs ("fn" .= ("root" :: Text) <> "html" .= Builder.toLazyText html)
     toEncoding (UpdateSplice spliceId html) =
         pairs ("fn" .= ("splice" :: Text) <> "id" .= spliceId <> "html" .= Builder.toLazyText html)
+    toEncoding (Pong) =
+        pairs ("fn" .= ("pong" :: Text))
 
 nextSpliceId :: Client -> STMc NoRetry '[] SpliceId
 nextSpliceId (Client nextSpliceIdVar) = stateTVar nextSpliceIdVar \i -> (i, i + 1)
@@ -156,7 +158,7 @@ handleWebsocketException connection =
     WebSockets.UnicodeException _ -> WebSockets.sendCloseCode connection 1001 ("Client sent invalid UTF-8." :: BS.ByteString)
 
 messageHandler :: WebSockets.Connection -> BSL.ByteString -> IO ()
-messageHandler connection "ping" = WebSockets.sendTextData connection ("pong" :: BS.ByteString)
+messageHandler connection "ping" = WebSockets.sendTextData connection (encode [Pong])
 messageHandler _ msg = BSL.hPutStr stderr $ "Unhandled message: " <> msg <> "\n"
 
 waiApp :: Wai.Application
