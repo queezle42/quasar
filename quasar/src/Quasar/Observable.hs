@@ -36,7 +36,7 @@ module Quasar.Observable (
   ObservableVar,
   newObservableVar,
   newObservableVarIO,
-  setObservableVar,
+  writeObservableVar,
   modifyObservableVar,
   stateObservableVar,
   observableVarHasObservers,
@@ -384,8 +384,8 @@ newObservableVar x = liftSTMc $ ObservableVar <$> newTVar x <*> newCallbackRegis
 newObservableVarIO :: MonadIO m => a -> m (ObservableVar a)
 newObservableVarIO x = liftIO $ ObservableVar <$> newTVarIO x <*> newCallbackRegistryIO
 
-setObservableVar :: MonadSTMc NoRetry '[] m => ObservableVar a -> a -> m ()
-setObservableVar (ObservableVar var registry) value = liftSTMc $ do
+writeObservableVar :: MonadSTMc NoRetry '[] m => ObservableVar a -> a -> m ()
+writeObservableVar (ObservableVar var registry) value = liftSTMc $ do
   writeTVar var value
   callCallbacks registry value
 
@@ -399,7 +399,7 @@ stateObservableVar :: MonadSTMc NoRetry '[] m => ObservableVar a -> (a -> (r, a)
 stateObservableVar var f = liftSTMc do
   oldValue <- readObservableVar var
   let (result, newValue) = f oldValue
-  setObservableVar var newValue
+  writeObservableVar var newValue
   pure result
 
 observableVarHasObservers :: ObservableVar a -> STM Bool
