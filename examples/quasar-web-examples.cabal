@@ -1,6 +1,6 @@
 cabal-version: 3.0
 
-name:           quasar-web-examples
+name:           quasar-examples
 version:        0.1.0.0
 license:        BSD-2-Clause
 build-type:     Simple
@@ -58,4 +58,4 @@ executable quasar-web-example
     quasar-web,
     text,
     warp,
-  main-is: Main.hs
+  main-is: Web.hs
