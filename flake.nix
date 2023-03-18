@@ -50,9 +50,6 @@
               ln -s ${final.quasar-web-client} $out/data/quasar-web-client
             '';
             in hfinal.callCabal2nix "quasar-web" srcWithClient {};
-          # Due to a ghc bug in 9.4.3 and 9.2.5
-          ListLike = final.haskell.lib.dontCheck hprev.ListLike;
-          net-mqtt = final.haskell.lib.doJailbreak hprev.net-mqtt;
         };
       };
       quasar-web-client = final.callPackage ./quasar-web-client {};
