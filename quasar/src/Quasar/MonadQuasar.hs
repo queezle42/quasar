@@ -193,11 +193,6 @@ instance MonadQuasar m => MonadQuasar (ReaderT r m) where
     x <- ask
     lift (localQuasar quasar (runReaderT fn x))
 
-instance ResourceCollector m => ResourceCollector (ReaderT r m) where
-  collectResource = lift . collectResource
-
--- TODO MonadQuasar instances for StateT, WriterT, RWST, MaybeT, ...
-
 
 askExceptionSink :: MonadQuasar m => m ExceptionSink
 askExceptionSink = quasarExceptionSink <$> askQuasar

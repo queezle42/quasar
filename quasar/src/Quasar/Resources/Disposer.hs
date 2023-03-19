@@ -1,4 +1,5 @@
 {-# OPTIONS_HADDOCK not-home #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Quasar.Resources.Disposer (
   Disposable(..),
@@ -35,6 +36,7 @@ module Quasar.Resources.Disposer (
 
 import Control.Monad (foldM)
 import Control.Monad.Catch
+import Control.Monad.Trans (MonadTrans (lift))
 import Data.HashMap.Strict (HashMap)
 import Data.HashMap.Strict qualified as HM
 import Data.HashSet (HashSet)
@@ -317,9 +319,5 @@ beginDisposeResourceManagerInternal rm = do
 class Monad m => ResourceCollector m where
   collectResource :: (Disposable a, HasCallStack) => a -> m ()
 
-
---unmanagedCaptureResources :: ResourceT STM () -> STM Disposer
---unmanagedCaptureResources = undefined
---
---unmanagedCaptureResourcesIO :: ResourceT IO () -> IO Disposer
---unmanagedCaptureResourcesIO = undefined
+instance (ResourceCollector m, MonadTrans t, Monad (t m)) => ResourceCollector (t m) where
+  collectResource = lift . collectResource
