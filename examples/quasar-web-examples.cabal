@@ -48,7 +48,7 @@ common shared-executable-properties
   ghc-options:
     -threaded
     -rtsopts
-    "-with-rtsopts=-N -I0"
+    "-with-rtsopts=-N"
 
 executable quasar-web-example
   import: shared-executable-properties
