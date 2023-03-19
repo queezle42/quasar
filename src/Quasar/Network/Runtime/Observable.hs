@@ -128,7 +128,8 @@ sendObservableReference observable channel = do
           swapTVar ref.outbox Nothing >>= \case
             Just (ObservableValue content) -> do
               let (cdata, mBindObjectFn) = sendObject content
-              pure ((channelMessage (PackedObservableValue cdata)) { createChannels = 1 }, mBindObjectFn)
+              let createChannels = maybe 0 (const 1) mBindObjectFn
+              pure ((channelMessage (PackedObservableValue cdata)) { createChannels }, mBindObjectFn)
 
             Just (ObservableNotAvailable ex) ->
               pure (channelMessage (PackedObservableNotAvailable (packException ex)), Nothing)
