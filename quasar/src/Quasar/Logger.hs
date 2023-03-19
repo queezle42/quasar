@@ -75,7 +75,7 @@ globalLogger =
       Debug.Trace.traceIO msg
 {-# NOINLINE globalLogger #-}
 
-flushLogger :: IO ()
+flushLogger :: MonadIO m => m ()
 flushLogger = do
   initialQueued <- readTVarIO (queuedCounter globalLogger)
   atomically do
