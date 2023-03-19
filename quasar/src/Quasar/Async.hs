@@ -88,10 +88,10 @@ spawnAsync registerDisposerFn exSink fn = mask_ do
   -- Disposer is created first to ensure the resource can be safely attached
   disposer <- atomically $ newUnmanagedIODisposer (disposeFn key resultVar threadIdFuture) exSink
 
-  registerDisposerFn disposer
+  registerDisposerFn disposer `onException` tryFulfillPromiseIO_ threadIdPromise Nothing
 
   threadId <- liftIO $ forkWithUnmask (runAndPut exSink key resultVar disposer) exSink
-  fulfillPromiseIO threadIdPromise threadId
+  fulfillPromiseIO threadIdPromise (Just threadId)
 
   pure (Async (toFutureEx resultVar) disposer)
   where
@@ -110,10 +110,10 @@ spawnAsync registerDisposerFn exSink fn = mask_ do
         Right retVal -> do
           fulfillPromiseIO resultVar (Right retVal)
           disposeEventuallyIO_ disposer
-    disposeFn :: Unique -> PromiseEx '[AsyncException, AsyncDisposed] a -> Future ThreadId -> IO ()
+    disposeFn :: Unique -> PromiseEx '[AsyncException, AsyncDisposed] a -> Future (Maybe ThreadId) -> IO ()
     disposeFn key resultVar threadIdFuture = do
       -- ThreadId future will be filled after the thread is forked
-      threadId <- await threadIdFuture
-      throwTo threadId (CancelAsync key)
-      -- Disposing is considered complete once a result (i.e. success or failure) has been stored
-      void $ await resultVar
+      await threadIdFuture >>= mapM_ \threadId -> do
+        throwTo threadId (CancelAsync key)
+        -- Disposing is considered complete once a result (i.e. success or failure) has been stored
+        void $ await resultVar
