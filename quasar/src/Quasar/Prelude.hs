@@ -48,6 +48,7 @@ module Quasar.Prelude
     Data.Word.Word16,
     Data.Word.Word32,
     Data.Word.Word64,
+    GHC.Stack.HasCallStack,
     error,
     errorWithoutStackTrace,
     Debug.Trace.trace,
@@ -98,12 +99,12 @@ import Data.Void qualified
 import Data.Word qualified
 import Debug.Trace qualified
 import GHC.Generics qualified
-import GHC.Stack.Types qualified
+import GHC.Stack qualified
 import GHC.Types qualified
 import Quasar.PreludeExtras
 
 {-# WARNING error "Undefined." #-}
-error :: forall (r :: GHC.Types.RuntimeRep). forall (a :: GHC.Types.TYPE r). GHC.Stack.Types.HasCallStack => String -> a
+error :: forall (r :: GHC.Types.RuntimeRep). forall (a :: GHC.Types.TYPE r). GHC.Stack.HasCallStack => String -> a
 error = P.error
 
 {-# WARNING errorWithoutStackTrace "Undefined." #-}
@@ -111,7 +112,7 @@ errorWithoutStackTrace :: String -> a
 errorWithoutStackTrace = P.errorWithoutStackTrace
 
 {-# WARNING undefined "Undefined." #-}
-undefined :: forall (r :: GHC.Types.RuntimeRep). forall (a :: GHC.Types.TYPE r). GHC.Stack.Types.HasCallStack => a
+undefined :: forall (r :: GHC.Types.RuntimeRep). forall (a :: GHC.Types.TYPE r). GHC.Stack.HasCallStack => a
 undefined = P.undefined
 
 traceIO :: Control.Monad.IO.Class.MonadIO m => String -> m ()

@@ -22,7 +22,7 @@ module Quasar.Exceptions (
 
 import Control.Monad.Catch
 import Quasar.Prelude
-import GHC.Stack (HasCallStack, callStack)
+import GHC.Stack (callStack)
 import GHC.Exception (prettyCallStack)
 
 
