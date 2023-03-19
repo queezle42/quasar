@@ -63,8 +63,6 @@ import Data.HashMap.Strict qualified as HM
 import GHC.Records
 import Network.Socket qualified as Socket
 import Quasar
-import Quasar.Async.Fork
-import Quasar.Exceptions (FailedToAttachResource)
 import Quasar.Network.Connection
 import Quasar.Network.Multiplexer
 import Quasar.Prelude
@@ -238,7 +236,7 @@ sendChannelMessageDeferred (Channel channel) payloadHook = liftIO $ sendRawChann
 sendSimpleChannelMessageDeferred :: (Binary up, MonadIO m) => Channel up down -> STMc NoRetry '[AbortSend] (up, a) -> m a
 sendSimpleChannelMessageDeferred (Channel channel) payloadHook = liftIO $ sendSimpleRawChannelMessageDeferred channel (const (first encode <$> payloadHook))
 
-unsafeQueueChannelMessage :: (Binary up, MonadSTMc NoRetry '[AbortSend, ChannelException, MultiplexerException, FailedToAttachResource] m) => Channel up down -> up -> m ()
+unsafeQueueChannelMessage :: (Binary up, MonadSTMc NoRetry '[AbortSend, ChannelException, MultiplexerException] m) => Channel up down -> up -> m ()
 unsafeQueueChannelMessage (Channel channel) value =
   unsafeQueueRawChannelMessageSimple channel (encode value)
 

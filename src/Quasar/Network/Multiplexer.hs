@@ -196,42 +196,43 @@ newRootChannel multiplexer = do
 
   pure channel
 
-newChannelSTM :: RawChannel -> ChannelId -> STMc NoRetry '[FailedToAttachResource] RawChannel
-newChannelSTM parent@RawChannel{multiplexer, quasar=parentQuasar} channelId = do
-  -- Channels inherit their parents close state
-  parentReceivedCloseMessage <- readTVar parent.receivedCloseMessage
-  parentSentCloseMessage <- readTVar parent.sentCloseMessage
+newChannelSTM :: RawChannel -> ChannelId -> STMc NoRetry '[ChannelException] RawChannel
+newChannelSTM parent@RawChannel{multiplexer, quasar=parentQuasar} channelId =
+  (flip (catchSTMc @NoRetry @'[ChannelException, FailedToAttachResource])) (\FailedToAttachResource -> throwC ChannelNotConnected) do
+    -- Channels inherit their parents close state
+    parentReceivedCloseMessage <- readTVar parent.receivedCloseMessage
+    parentSentCloseMessage <- readTVar parent.sentCloseMessage
 
-  quasar <- newResourceScopeSTM parentQuasar
-  channelHandler <- newTVar Nothing
-  children <- newTVar mempty
-  nextSendMessageId <- newTVar 0
-  nextReceiveMessageId <- newTVar 0
-  receivedCloseMessage <- newTVar parentReceivedCloseMessage
-  sentCloseMessage <- newTVar parentSentCloseMessage
+    quasar <- newResourceScopeSTM parentQuasar
+    channelHandler <- newTVar Nothing
+    children <- newTVar mempty
+    nextSendMessageId <- newTVar 0
+    nextReceiveMessageId <- newTVar 0
+    receivedCloseMessage <- newTVar parentReceivedCloseMessage
+    sentCloseMessage <- newTVar parentSentCloseMessage
 
-  let channel = RawChannel {
-    multiplexer,
-    quasar,
-    channelId,
-    channelHandler,
-    parent = Just parent,
-    children,
-    nextSendMessageId,
-    nextReceiveMessageId,
-    receivedCloseMessage,
-    sentCloseMessage
-  }
+    let channel = RawChannel {
+      multiplexer,
+      quasar,
+      channelId,
+      channelHandler,
+      parent = Just parent,
+      children,
+      nextSendMessageId,
+      nextReceiveMessageId,
+      receivedCloseMessage,
+      sentCloseMessage
+    }
 
-  -- Attach to parent
-  modifyTVar parent.children $ HM.insert channelId channel
+    -- Attach to parent
+    modifyTVar parent.children $ HM.insert channelId channel
 
-  runQuasarSTMc @NoRetry @'[FailedToAttachResource] quasar do
-    registerSimpleDisposeTransaction_ $ sendChannelCloseMessage channel
+    runQuasarSTMc @NoRetry @'[FailedToAttachResource] quasar do
+      registerSimpleDisposeTransaction_ $ sendChannelCloseMessage channel
 
-  modifyTVar multiplexer.channelsVar $ HM.insert channelId channel
+    modifyTVar multiplexer.channelsVar $ HM.insert channelId channel
 
-  pure channel
+    pure channel
 
 sendChannelCloseMessage :: RawChannel -> STMc NoRetry '[] ()
 sendChannelCloseMessage channel = do
@@ -653,12 +654,12 @@ sendRawChannelMessageDeferred channel@RawChannel{multiplexer} msgHook = liftIO d
     atomicallyC $ sendRawChannelMessageInternal blockUntilReadyBehavior channel msgHook
 
 -- | Unsafely queue a network message to an unbounded send queue. This function does not block, even if `sendChannelMessage` would block. Queued messages will cause concurrent or following `sendChannelMessage`-calls to block until the queue is flushed.
-unsafeQueueRawChannelMessage :: RawChannel -> ChannelMessage BSL.ByteString -> STMc NoRetry '[AbortSend, ChannelException, MultiplexerException, FailedToAttachResource] SentMessageResources
+unsafeQueueRawChannelMessage :: RawChannel -> ChannelMessage BSL.ByteString -> STMc NoRetry '[AbortSend, ChannelException, MultiplexerException] SentMessageResources
 unsafeQueueRawChannelMessage channel msg = do
   (res, ()) <- sendRawChannelMessageInternal unboundedQueueBehavior channel (const (pure (msg, ())))
   pure res
 
-unsafeQueueRawChannelMessageSimple :: MonadSTMc NoRetry '[AbortSend, ChannelException, MultiplexerException, FailedToAttachResource] m => RawChannel -> BSL.ByteString -> m ()
+unsafeQueueRawChannelMessageSimple :: MonadSTMc NoRetry '[AbortSend, ChannelException, MultiplexerException] m => RawChannel -> BSL.ByteString -> m ()
 unsafeQueueRawChannelMessageSimple channel payload = liftSTMc do
   unsafeQueueRawChannelMessage channel (channelMessage payload) >>=
     \case
@@ -673,7 +674,7 @@ blockUntilReadyBehavior = check
 unboundedQueueBehavior :: Bool -> STMc NoRetry exceptions ()
 unboundedQueueBehavior _ = pure ()
 
-sendRawChannelMessageInternal :: (Bool -> STMc canRetry '[AbortSend, ChannelException, MultiplexerException, FailedToAttachResource] ()) -> RawChannel -> (MessageId -> STMc NoRetry '[AbortSend] (ChannelMessage BSL.ByteString, a)) -> STMc canRetry '[AbortSend, ChannelException, MultiplexerException, FailedToAttachResource] (SentMessageResources, a)
+sendRawChannelMessageInternal :: (Bool -> STMc canRetry '[AbortSend, ChannelException, MultiplexerException] ()) -> RawChannel -> (MessageId -> STMc NoRetry '[AbortSend] (ChannelMessage BSL.ByteString, a)) -> STMc canRetry '[AbortSend, ChannelException, MultiplexerException] (SentMessageResources, a)
 sendRawChannelMessageInternal queueBehavior channel@RawChannel{multiplexer} msgHook = do
   -- NOTE At most one message can be queued per STM transaction, so `sendChannelMessage` cannot be changed to STM
 
