@@ -41,13 +41,13 @@ instance ToFuture (Either (Ex '[AsyncException, AsyncDisposed]) a) (Async a) whe
   toFuture (Async future _) = toFuture future
 
 
-async :: (MonadQuasar m, MonadIO m) => QuasarIO a -> m (Async a)
+async :: (MonadQuasar m, MonadIO m, HasCallStack) => QuasarIO a -> m (Async a)
 async fn = asyncWithUnmask (\unmask -> unmask fn)
 
-async_ :: (MonadQuasar m, MonadIO m) => QuasarIO () -> m ()
+async_ :: (MonadQuasar m, MonadIO m, HasCallStack) => QuasarIO () -> m ()
 async_ fn = void $ asyncWithUnmask (\unmask -> unmask fn)
 
-asyncWithUnmask :: (MonadQuasar m, MonadIO m) => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO a) -> m (Async a)
+asyncWithUnmask :: (MonadQuasar m, MonadIO m, HasCallStack) => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO a) -> m (Async a)
 asyncWithUnmask fn = do
   quasar <- askQuasar
   asyncWithUnmask' (\unmask -> runQuasarIO quasar (fn (liftUnmask unmask)))
@@ -57,14 +57,14 @@ asyncWithUnmask fn = do
       quasar <- askQuasar
       liftIO $ unmask $ runQuasarIO quasar innerAction
 
-asyncWithUnmask_ :: (MonadQuasar m, MonadIO m) => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO ()) -> m ()
+asyncWithUnmask_ :: (MonadQuasar m, MonadIO m, HasCallStack) => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO ()) -> m ()
 asyncWithUnmask_ fn = void $ asyncWithUnmask fn
 
 
-async' :: (MonadQuasar m, MonadIO m) => IO a -> m (Async a)
+async' :: (MonadQuasar m, MonadIO m, HasCallStack) => IO a -> m (Async a)
 async' fn = asyncWithUnmask' (\unmask -> unmask fn)
 
-asyncWithUnmask' :: forall a m. (MonadQuasar m, MonadIO m) => ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
+asyncWithUnmask' :: forall a m. (MonadQuasar m, MonadIO m, HasCallStack) => ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
 asyncWithUnmask' fn = liftQuasarIO do
   exSink <- askExceptionSink
   spawnAsync collectResource exSink fn

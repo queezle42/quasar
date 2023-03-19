@@ -24,7 +24,7 @@ import Quasar.Utils.Exceptions
 import System.Exit
 
 
-execForeignQuasarIO :: MonadIO m => Quasar -> QuasarIO () -> m ()
+execForeignQuasarIO :: (MonadIO m, HasCallStack) => Quasar -> QuasarIO () -> m ()
 execForeignQuasarIO quasar fn = runQuasarIO quasar $
   bracket
     (async fn)
