@@ -757,8 +757,11 @@ rawChannelSetHandler channel fn = rawChannelSetInternalHandler channel bytestrin
         go accum (Just chunk) = pure $ InternalMessageHandler $ go (chunk:accum)
         go accum Nothing =
           InternalMessageHandler (const unreachableCodePathM) <$ do
-            execForeignQuasarIO channel.quasar do
-              fn resources $ BSL.fromChunks (reverse accum)
+            -- When the channel/multiplexer is currently closing, running the
+            -- callback might no longer be possible.
+            handle (\FailedToAttachResource -> pure ()) do
+              execForeignQuasarIO channel.quasar do
+                fn resources $ BSL.fromChunks (reverse accum)
 
 rawChannelSetSimpleHandler :: MonadIO m => RawChannel -> (BSL.ByteString -> QuasarIO ()) -> m ()
 rawChannelSetSimpleHandler channel fn = rawChannelSetHandler channel \case
@@ -785,7 +788,11 @@ rawChannelSetBinaryHandler channel fn = rawChannelSetInternalHandler channel bin
           mconcat ["Decoder failed to consume complete message (", show (fromIntegral resources.messageLength - bytesRead), " bytes left)"]
 
         runHandler :: a -> IO ()
-        runHandler result = execForeignQuasarIO channel.quasar (fn resources result)
+        runHandler result =
+          -- When the channel/multiplexer is currently closing, running the
+          -- callback might no longer be possible.
+          handle (\FailedToAttachResource -> pure ()) do
+            execForeignQuasarIO channel.quasar (fn resources result)
 
 -- | Sets a simple channel message handler, which cannot handle sub-resurces (e.g. new channels). When a resource is received the channel will be terminated with a channel protocol error.
 rawChannelSetSimpleBinaryHandler :: forall a m. (Binary a, MonadIO m) => RawChannel -> (a -> QuasarIO ()) -> m ()
