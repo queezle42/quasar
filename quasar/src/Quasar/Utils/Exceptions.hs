@@ -10,7 +10,8 @@ import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import Quasar.Prelude
 
 newtype CombinedException = CombinedException (NonEmpty SomeException)
-  deriving stock Show
+  deriving stock (Show)
+  deriving newtype (Semigroup)
 
 mkCombinedException :: [SomeException] -> Maybe CombinedException
 mkCombinedException exs = CombinedException <$> nonEmpty exs
