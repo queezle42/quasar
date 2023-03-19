@@ -229,15 +229,15 @@ newUnmanagedResourceManagerSTM exChan = do
   }
 
 
-attachResource :: (MonadSTMc NoRetry '[FailedToAttachResource] m, Disposable a) => ResourceManager -> a -> m ()
+attachResource :: HasCallStack => (MonadSTMc NoRetry '[FailedToAttachResource] m, Disposable a) => ResourceManager -> a -> m ()
 attachResource resourceManager disposer = liftSTMc @NoRetry @'[FailedToAttachResource] do
   either throwC pure =<< tryAttachResource resourceManager disposer
 
-tryAttachResource :: (MonadSTMc NoRetry '[] m, Disposable a) => ResourceManager -> a -> m (Either FailedToAttachResource ())
+tryAttachResource :: HasCallStack => (MonadSTMc NoRetry '[] m, Disposable a) => ResourceManager -> a -> m (Either FailedToAttachResource ())
 tryAttachResource resourceManager (getDisposer -> Disposer ds) = liftSTMc do
   sequence_ <$> mapM (tryAttachDisposer resourceManager) ds
 
-tryAttachDisposer :: ResourceManager -> DisposerElement -> STMc NoRetry '[] (Either FailedToAttachResource ())
+tryAttachDisposer :: HasCallStack => ResourceManager -> DisposerElement -> STMc NoRetry '[] (Either FailedToAttachResource ())
 tryAttachDisposer resourceManager disposer = do
   readTVar (resourceManagerState resourceManager) >>= \case
     ResourceManagerNormal attachedResources _ -> do
@@ -315,7 +315,7 @@ beginDisposeResourceManagerInternal rm = do
 -- * ResourceCollector
 
 class Monad m => ResourceCollector m where
-  collectResource :: Disposable a => a -> m ()
+  collectResource :: (Disposable a, HasCallStack) => a -> m ()
 
 
 --unmanagedCaptureResources :: ResourceT STM () -> STM Disposer

@@ -69,7 +69,7 @@ quasarExceptionSink (Quasar exChan _) = exChan
 quasarResourceManager :: Quasar -> ResourceManager
 quasarResourceManager (Quasar _ rm) = rm
 
-newResourceScopeSTM :: MonadSTMc NoRetry '[FailedToAttachResource] m => Quasar -> m Quasar
+newResourceScopeSTM :: (MonadSTMc NoRetry '[FailedToAttachResource] m, HasCallStack) => Quasar -> m Quasar
 newResourceScopeSTM parent = do
   rm <- newUnmanagedResourceManagerSTM parentExceptionSink
   attachResource (quasarResourceManager parent) rm
@@ -87,16 +87,16 @@ newQuasar parentExceptionSink resourceManager = do
       disposeEventually_ rm
       throwToExceptionSink parentExceptionSink ex
 
-newResourceScope :: (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m) => m Quasar
+newResourceScope :: (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m, HasCallStack) => m Quasar
 newResourceScope = liftSTMc @NoRetry @'[FailedToAttachResource] . newResourceScopeSTM =<< askQuasar
 {-# SPECIALIZE newResourceScope :: QuasarSTM Quasar #-}
 
-newResourceScopeIO :: (MonadQuasar m, MonadIO m) => m Quasar
+newResourceScopeIO :: (MonadQuasar m, MonadIO m, HasCallStack) => m Quasar
 newResourceScopeIO = quasarAtomically newResourceScope
 {-# SPECIALIZE newResourceScopeIO :: QuasarIO Quasar #-}
 
 
-withResourceScope :: (MonadQuasar m, MonadIO m, MonadMask m) => m a -> m a
+withResourceScope :: (MonadQuasar m, MonadIO m, MonadMask m, HasCallStack) => m a -> m a
 withResourceScope fn = bracket newResourceScopeIO dispose (`localQuasar` fn)
 {-# SPECIALIZE withResourceScope :: QuasarIO a -> QuasarIO a #-}
 
