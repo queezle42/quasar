@@ -10,6 +10,7 @@ module Quasar.MonadQuasar (
   newResourceScopeSTM,
   withResourceScope,
   catchQuasar,
+  replaceExceptionSink,
 
   MonadQuasar(..),
 
