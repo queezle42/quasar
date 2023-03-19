@@ -11,7 +11,7 @@ import Test.Hspec.Core.Spec
 
 -- Type is pinned to IO, otherwise hspec spec type cannot be inferred
 rm :: QuasarIO a -> IO a
-rm = runQuasarCombineExceptions (stderrLogger LogLevelWarning)
+rm = runQuasarCombineExceptions
 
 $(makeInterface $ interface "Foobar" $ do
     addObservable "demoObservable" $ binaryType [t|Bool|]

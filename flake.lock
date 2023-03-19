@@ -18,11 +18,11 @@
     },
     "nixpkgs_2": {
       "locked": {
-        "lastModified": 1649225869,
-        "narHash": "sha256-u1zLtPmQzhT9mNXyM8Ey9pk7orDrIKdwooeGDEXm5xM=",
+        "lastModified": 1678898370,
+        "narHash": "sha256-xTICr1j+uat5hk9FyuPOFGxpWHdJRibwZC+ATi0RbtE=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "b6966d911da89e5a7301aaef8b4f0a44c77e103c",
+        "rev": "ac718d02867a84b42522a0ece52d841188208f2c",
         "type": "github"
       },
       "original": {
@@ -37,19 +37,17 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "host": "git.c3pb.de",
-        "lastModified": 1651589494,
-        "narHash": "sha256-Kkqo2QK3poOnFBCWOYJl8swnhzpDwH9g6OoZsBh6/cA=",
-        "owner": "jens",
+        "lastModified": 1679198811,
+        "narHash": "sha256-3pJGmcfzw9KNiPttpQ4THiH/KtGNRZNEZ3OK00fWK5Y=",
+        "owner": "queezle42",
         "repo": "quasar",
-        "rev": "a9c2fe5b7ae7d95d2f587513d4e05eab02bc3739",
-        "type": "gitlab"
+        "rev": "b7cfdb1d1e873152556d99a71e198058facd1005",
+        "type": "github"
       },
       "original": {
-        "host": "git.c3pb.de",
-        "owner": "jens",
+        "owner": "queezle42",
         "repo": "quasar",
-        "type": "gitlab"
+        "type": "github"
       }
     },
     "root": {

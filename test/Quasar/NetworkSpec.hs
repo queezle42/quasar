@@ -26,7 +26,7 @@ import Test.QuickCheck.Monadic
 
 -- Type is pinned to IO, otherwise hspec spec type cannot be inferred
 rm :: QuasarIO a -> IO a
-rm = runQuasarCombineExceptions (stderrLogger LogLevelWarning)
+rm = runQuasarCombineExceptions
 
 shouldThrow :: (HasCallStack, Exception e, MonadQuasar m, MonadIO m) => QuasarIO a -> Hspec.Selector e -> m ()
 shouldThrow action expected = do

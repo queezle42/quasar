@@ -15,7 +15,7 @@ import Quasar.Network.Multiplexer (sendRawChannelMessage, sendSimpleRawChannelMe
 
 -- Type is pinned to IO, otherwise hspec spec type cannot be inferred
 rm :: QuasarIO a -> IO a
-rm = runQuasarCombineExceptions (stderrLogger LogLevelWarning)
+rm = runQuasarCombineExceptions
 
 shouldThrow :: (HasCallStack, Exception e, MonadQuasar m, MonadIO m) => QuasarIO a -> Hspec.Selector e -> m ()
 shouldThrow action expected = do
@@ -37,17 +37,17 @@ spec = parallel $ describe "runMultiplexer" $ do
       do rm (runMultiplexer MultiplexerSideB dispose y)
 
   it "will dispose an attached resource" $ rm do
-    var <- newPromise
+    var <- newPromiseIO
     (x, y) <- newConnectionPair
     void $ newMultiplexer MultiplexerSideB y
     runMultiplexer
       do MultiplexerSideA
       do
         \channel -> do
-          runQuasarIO channel.quasar $ registerDisposeTransactionIO_ (fulfillPromiseSTM var ())
+          runQuasarIO channel.quasar $ registerDisposeTransactionIO_ (fulfillPromise var ())
           dispose channel
       do x
-    peekFuture (await var) `shouldReturn` Just ()
+    peekFutureIO (toFuture var) `shouldReturn` Just ()
 
   it "can send and receive simple messages" $ do
     recvMVar <- newEmptyMVar

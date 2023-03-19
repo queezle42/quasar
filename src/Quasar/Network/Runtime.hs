@@ -64,15 +64,17 @@ import GHC.Records
 import Network.Socket qualified as Socket
 import Quasar
 import Quasar.Async.Fork
+import Quasar.Exceptions (FailedToAttachResource)
 import Quasar.Network.Connection
 import Quasar.Network.Multiplexer
 import Quasar.Prelude
+import Quasar.Utils.HashMap qualified as HM
 import System.Posix.Files (getFileStatus, isSocket, fileExist, removeLink)
 
 -- * Interacting with objects over network
 
 
-class (IsChannel (ReverseChannelType a), a ~ ReverseChannelType (ReverseChannelType a), Resource a) => IsChannel a where
+class (IsChannel (ReverseChannelType a), a ~ ReverseChannelType (ReverseChannelType a), Disposable a) => IsChannel a where
   type ReverseChannelType a
   castChannel :: RawChannel -> a
 
@@ -160,15 +162,15 @@ data Client p = Client {
   callbacksVar :: TVar (HM.HashMap MessageId (ProtocolResponse p -> IO ()))
 }
 
-instance Resource (Client p) where
-  toDisposer client = toDisposer client.channel
+instance Disposable (Client p) where
+  getDisposer client = getDisposer client.channel
 
 clientSend :: forall p m. (MonadIO m, RpcProtocol p) => Client p -> ChannelMessage (ProtocolRequest p) -> m SentMessageResources
 clientSend client req = liftIO $ sendRawChannelMessage client.channel (encode <$> req)
 
 clientRequest :: forall p m a. (MonadIO m, RpcProtocol p) => Client p -> (ProtocolResponse p -> Maybe a) -> ChannelMessage (ProtocolRequest p) -> m (Future a, SentMessageResources)
 clientRequest client checkResponse req = do
-  resultPromise <- newPromise
+  resultPromise <- newPromiseIO
   (sentMessageResources, ()) <- liftIO $ sendRawChannelMessageDeferred client.channel \msgId -> do
     modifyTVar client.callbacksVar $ HM.insert msgId (requestCompletedCallback resultPromise msgId)
     pure (encode <$> req, ())
@@ -181,7 +183,7 @@ clientRequest client checkResponse req = do
 
       case checkResponse response of
         Nothing -> clientReportProtocolError client "Invalid response"
-        Just result -> fulfillPromise resultPromise result
+        Just result -> fulfillPromiseIO resultPromise result
 
 -- TODO use new direct decoder api instead
 clientHandleChannelMessage :: Client p -> ReceivedMessageResources -> ProtocolResponseWrapper p -> QuasarIO ()
@@ -191,7 +193,7 @@ clientHandleChannelMessage client resources (requestId, resp) = liftIO clientHan
     clientHandleResponse = do
       unless (null resources.createdChannels) (channelReportProtocolError client.channel "Received unexpected new channel during a rpc response")
       join $ atomically $ stateTVar client.callbacksVar $ \oldCallbacks -> do
-        let (mCallback, callbacks) = lookupDelete requestId oldCallbacks
+        let (mCallback, callbacks) = HM.lookupDelete requestId oldCallbacks
         case mCallback of
           Just callback -> (callback resp, callbacks)
           Nothing -> (channelReportProtocolError client.channel ("Received response with invalid request id " <> show requestId), callbacks)
@@ -219,7 +221,7 @@ serverHandleChannelMessage protocolImpl channel resources req = liftIO $ serverH
 
 
 newtype Channel up down = Channel RawChannel
-  deriving newtype Resource
+  deriving newtype Disposable
 
 instance HasField "quasar" (Channel up down) Quasar where
   getField (Channel rawChannel) = rawChannel.quasar
@@ -230,14 +232,14 @@ newChannel = pure . castChannel
 channelSend :: (Binary up, MonadIO m) => Channel up down -> up -> m ()
 channelSend (Channel channel) value = liftIO $ sendSimpleRawChannelMessage channel (encode value)
 
-sendChannelMessageDeferred :: (Binary up, MonadIO m) => Channel up down -> STM (ChannelMessage up, a) -> m (SentMessageResources, a)
+sendChannelMessageDeferred :: (Binary up, MonadIO m) => Channel up down -> STMc NoRetry '[AbortSend] (ChannelMessage up, a) -> m (SentMessageResources, a)
 sendChannelMessageDeferred (Channel channel) payloadHook = liftIO $ sendRawChannelMessageDeferred channel (const (first (fmap encode) <$> payloadHook))
 
-sendSimpleChannelMessageDeferred :: (Binary up, MonadIO m) => Channel up down -> STM (up, a) -> m a
+sendSimpleChannelMessageDeferred :: (Binary up, MonadIO m) => Channel up down -> STMc NoRetry '[AbortSend] (up, a) -> m a
 sendSimpleChannelMessageDeferred (Channel channel) payloadHook = liftIO $ sendSimpleRawChannelMessageDeferred channel (const (first encode <$> payloadHook))
 
-unsafeQueueChannelMessage :: (Binary up, MonadSTM m) => Channel up down -> up -> m ()
-unsafeQueueChannelMessage (Channel channel) value = liftSTM do
+unsafeQueueChannelMessage :: (Binary up, MonadSTMc NoRetry '[AbortSend, ChannelException, MultiplexerException, FailedToAttachResource] m) => Channel up down -> up -> m ()
+unsafeQueueChannelMessage (Channel channel) value =
   unsafeQueueRawChannelMessageSimple channel (encode value)
 
 channelSetHandler :: (Binary down, MonadIO m) => Channel up down -> (ReceivedMessageResources -> down -> QuasarIO ()) -> m ()
@@ -304,8 +306,8 @@ data Server p = Server {
   protocolImpl :: ProtocolImpl p
 }
 
-instance Resource (Server p) where
-  toDisposer server = toDisposer server.quasar
+instance Disposable (Server p) where
+  getDisposer server = getDisposer server.quasar
 
 
 newServer :: forall p m. (HasProtocolImpl p, MonadQuasar m, MonadIO m) => ProtocolImpl p -> [Listener] -> m (Server p)
@@ -316,7 +318,7 @@ newServer protocolImpl listeners = do
   pure server
 
 addListener :: (HasProtocolImpl p, MonadIO m) => Server p -> Listener -> m Disposer
-addListener server listener = runQuasarIO server.quasar $ toDisposer <$> async (runListener listener)
+addListener server listener = runQuasarIO server.quasar $ getDisposer <$> async (runListener listener)
   where
     runListener :: Listener -> QuasarIO a
     runListener (TcpPort mhost port) = runTCPListener server mhost port
@@ -387,24 +389,11 @@ connectToServer :: forall p m. (HasProtocolImpl p, MonadIO m) => Server p -> Con
 connectToServer server connection =
   -- Attach to server resource manager: When the server is closed, all listeners should be closed.
   runQuasarIO server.quasar do
-    connectionMessages <- liftIO newTQueueIO
-
-    afix_ \(join -> done) -> do
-
-      -- TODO use quasar logger
-      quasar <- askQuasar
-      liftIO $ fork_ (runQuasarIO quasar (logUntilDone done connectionMessages)) (quasarExceptionSink quasar)
-
-      catchQuasar (writeTQueue connectionMessages . formatException) do
-        async_  do
-          --logInfo $ mconcat ["Client connected (", connection.description, ")"]
-
-          runMultiplexer MultiplexerSideB registerChannelServerHandler $ connection
-
-          --logInfo $ mconcat ["Client connection closed (", connection.description, ")"]
-
-        -- Capture inner quasar - used to terminate connection logger once everything is closed.
-        isDisposed <$> askQuasar
+    catchQuasar (queueLogError . formatException) do
+      async_  do
+        --logInfo $ mconcat ["Client connected (", connection.description, ")"]
+        runMultiplexer MultiplexerSideB registerChannelServerHandler $ connection
+        --logInfo $ mconcat ["Client connection closed (", connection.description, ")"]
   where
     registerChannelServerHandler :: RawChannel -> QuasarIO ()
     registerChannelServerHandler channel = liftIO do
@@ -417,13 +406,6 @@ connectToServer server connection =
       mconcat ["Client connection lost (", connection.description, "): ", displayException ex]
     formatException ex =
       mconcat ["Client exception (", connection.description, "): ", displayException ex]
-
-    logUntilDone :: Future () -> TQueue String -> QuasarIO ()
-    logUntilDone done messageQueue =
-      join $ atomically $
-        ((\msg -> logError msg >> logUntilDone done messageQueue) <$> readTQueue messageQueue)
-          `orElse`
-            (pure () <$ peekFutureSTM done)
 
 
 withLocalClient :: forall p a m. (HasProtocolImpl p, MonadQuasar m, MonadIO m, MonadMask m) => Server p -> (Client p -> m a) -> m a
@@ -462,4 +444,4 @@ withStandaloneProxy obj fn = do
     fn proxy
   where
     release :: (NetworkReferenceChannel a, ReverseChannelType (NetworkReferenceChannel a)) -> m ()
-    release (x, y) = dispose (toDisposer x <> toDisposer y)
+    release (x, y) = dispose (getDisposer x <> getDisposer y)

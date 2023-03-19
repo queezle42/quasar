@@ -48,12 +48,6 @@ common shared-properties
     -Werror=missing-fields
     -Werror=missing-methods
 
-common shared-executable-properties
-  import: shared-properties
-  ghc-options:
-    -threaded
-    -rtsopts "-with-rtsopts=-N -I0"
-
 library
   import: shared-properties
   exposed-modules:
@@ -85,8 +79,11 @@ library
     src
 
 test-suite quasar-network-test
-  import: shared-executable-properties
+  import: shared-properties
   type: exitcode-stdio-1.0
+  ghc-options:
+    -threaded
+    -rtsopts "-with-rtsopts=-N"
   build-depends:
     base >=4.7 && <5,
     QuickCheck,

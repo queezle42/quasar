@@ -8,6 +8,7 @@ module Quasar.Network.Multiplexer (
   -- ** Sending messages
   ChannelMessage(..),
   SentMessageResources(..),
+  AbortSend(..),
   channelMessage,
   sendRawChannelMessage,
   sendRawChannelMessageDeferred,
@@ -107,8 +108,8 @@ data Multiplexer = Multiplexer {
   nextReceiveChannelId :: TVar ChannelId,
   nextSendChannelId :: TVar ChannelId
 }
-instance Resource Multiplexer where
-  toDisposer multiplexer = multiplexer.disposer
+instance Disposable Multiplexer where
+  getDisposer multiplexer = multiplexer.disposer
 
 -- | 'MultiplexerSideA' describes the initiator of a connection, i.e. the client in most cases.
 --
@@ -164,8 +165,8 @@ data RawChannel = RawChannel {
   sentCloseMessage :: TVar Bool
 }
 
-instance Resource RawChannel where
-  toDisposer channel = toDisposer channel.quasar
+instance Disposable RawChannel where
+  getDisposer channel = getDisposer channel.quasar
 
 newRootChannel :: Multiplexer -> QuasarIO RawChannel
 newRootChannel multiplexer = do
@@ -191,11 +192,11 @@ newRootChannel multiplexer = do
       sentCloseMessage
     }
 
-  registerDisposeTransactionIO_ $ sendChannelCloseMessage channel
+  registerSimpleDisposeTransactionIO_ $ sendChannelCloseMessage channel
 
   pure channel
 
-newChannelSTM :: RawChannel -> ChannelId -> STM RawChannel
+newChannelSTM :: RawChannel -> ChannelId -> STMc NoRetry '[FailedToAttachResource] RawChannel
 newChannelSTM parent@RawChannel{multiplexer, quasar=parentQuasar} channelId = do
   -- Channels inherit their parents close state
   parentReceivedCloseMessage <- readTVar parent.receivedCloseMessage
@@ -225,13 +226,14 @@ newChannelSTM parent@RawChannel{multiplexer, quasar=parentQuasar} channelId = do
   -- Attach to parent
   modifyTVar parent.children $ HM.insert channelId channel
 
-  runQuasarSTM quasar $ registerDisposeTransaction_ $ sendChannelCloseMessage channel
+  runQuasarSTMc @NoRetry @'[FailedToAttachResource] quasar do
+    registerSimpleDisposeTransaction_ $ sendChannelCloseMessage channel
 
   modifyTVar multiplexer.channelsVar $ HM.insert channelId channel
 
   pure channel
 
-sendChannelCloseMessage :: RawChannel -> STM ()
+sendChannelCloseMessage :: RawChannel -> STMc NoRetry '[] ()
 sendChannelCloseMessage channel = do
   alreadySent <- readTVar channel.sentCloseMessage
   unless alreadySent do
@@ -240,20 +242,20 @@ sendChannelCloseMessage channel = do
     markAsClosed channel
     cleanupChannel channel
   where
-    markAsClosed :: RawChannel -> STM ()
+    markAsClosed :: RawChannel -> STMc NoRetry '[] ()
     markAsClosed markChannel = do
       writeTVar markChannel.sentCloseMessage True
       children <- readTVar markChannel.children
       mapM_ markAsClosed children
 
-setReceivedChannelCloseMessage :: RawChannel -> STM ()
+setReceivedChannelCloseMessage :: RawChannel -> STMc NoRetry '[] ()
 setReceivedChannelCloseMessage channel = do
   writeTVar channel.receivedCloseMessage True
   children <- readTVar channel.children
   mapM_ setReceivedChannelCloseMessage children
   cleanupChannel channel
 
-cleanupChannel :: RawChannel -> STM ()
+cleanupChannel :: RawChannel -> STMc NoRetry '[] ()
 cleanupChannel channel = do
   whenM (readTVar channel.sentCloseMessage) do
     whenM (readTVar channel.receivedCloseMessage) do
@@ -268,10 +270,10 @@ cleanupChannel channel = do
       -- Children are closed implicitly, so they have to be cleaned up as well
       mapM_ cleanupChannel =<< readTVar channel.children
 
-verifyChannelIsConnected :: RawChannel -> STM ()
+verifyChannelIsConnected :: RawChannel -> STMc NoRetry '[ChannelException] ()
 verifyChannelIsConnected channel = do
-  whenM (readTVar channel.sentCloseMessage) $ throwM ChannelNotConnected
-  whenM (readTVar channel.receivedCloseMessage) $ throwM ChannelNotConnected
+  whenM (readTVar channel.sentCloseMessage) $ throwC ChannelNotConnected
+  whenM (readTVar channel.receivedCloseMessage) $ throwC ChannelNotConnected
 
 data ChannelException = ChannelNotConnected
   deriving stock Show
@@ -343,8 +345,8 @@ newMultiplexerInternal side connection = disposeOnError do
   resourceManager <- askResourceManager
 
   outbox <- liftIO $ newTVarIO []
-  multiplexerException <- newPromise
-  multiplexerResult <- newPromise
+  multiplexerException <- newPromiseIO
+  multiplexerResult <- newPromiseIO
   outboxGuard <- liftIO $ newMVar ()
   receivedHeader <- liftIO $ newTVarIO False
   nextReceiveChannelId <- liftIO $ newTVarIO $ if side == MultiplexerSideA then 2 else 1
@@ -354,17 +356,16 @@ newMultiplexerInternal side connection = disposeOnError do
     channelsVar <- liftIO $ newTVarIO $ HM.singleton 0 rootChannel
 
     multiplexer <- mfix \multiplexer -> do
-      worker <- askIOWorker
       exSink <- catchSink (multiplexerExceptionHandler multiplexer) <$> askExceptionSink
 
-      receiveTask <- unmanagedAsync worker exSink $
+      receiveTask <- unmanagedAsync exSink $
         receiveThread multiplexer (receiveCheckEOF connection)
-      sendTask <- unmanagedAsync worker exSink $
+      sendTask <- unmanagedAsync exSink $
         sendThread multiplexer connection.send
 
       let
-        sendThreadCompleted = awaitSuccessOrFailure sendTask
-        receiveThreadCompleted = awaitSuccessOrFailure receiveTask
+        sendThreadCompleted = void $ toFuture sendTask
+        receiveThreadCompleted = void $ toFuture receiveTask
 
       registerDisposeActionIO do
         -- NOTE The network connection should be closed automatically when the root channel is closed.
@@ -379,7 +380,7 @@ newMultiplexerInternal side connection = disposeOnError do
 
         -- Timeout reached
         when (isNothing r) do
-          fulfillPromise multiplexerException $ ConnectionLost CloseTimeoutReached
+          fulfillPromiseIO multiplexerException $ ConnectionLost CloseTimeoutReached
 
         sf <- disposeEventuallyIO sendTask
         rf <- disposeEventuallyIO receiveTask
@@ -387,11 +388,11 @@ newMultiplexerInternal side connection = disposeOnError do
 
         connection.close
 
-        fulfillPromise multiplexerResult =<< peekFuture (toFuture multiplexerException)
+        fulfillPromiseIO multiplexerResult =<< peekFutureIO (toFuture multiplexerException)
 
       pure Multiplexer {
         side,
-        disposer = toDisposer resourceManager,
+        disposer = getDisposer resourceManager,
         multiplexerException,
         multiplexerResult,
         receiveThreadCompleted,
@@ -408,10 +409,10 @@ newMultiplexerInternal side connection = disposeOnError do
   pure (rootChannel, toFuture multiplexerResult)
 
 
-multiplexerExceptionHandler :: Multiplexer -> SomeException -> STM ()
-multiplexerExceptionHandler multiplexer (toMultiplexerException -> ex) = do
-  unlessM (tryFulfillPromiseSTM multiplexer.multiplexerException ex) do
-    traceM $ "Multiplexer ignored exception: " <> displayException ex <> "\nMultiplexer already failed with: " <> displayException ex
+multiplexerExceptionHandler :: MonadSTMc NoRetry '[] m => Multiplexer -> SomeException -> m ()
+multiplexerExceptionHandler multiplexer (toMultiplexerException -> ex) = liftSTMc @NoRetry @'[] do
+  unlessM (tryFulfillPromise multiplexer.multiplexerException ex) do
+    queueLogError $ "Multiplexer ignored exception: " <> displayException ex <> "\nMultiplexer already failed with: " <> displayException ex
   disposeEventually_ multiplexer
 
 toMultiplexerException :: SomeException -> MultiplexerException
@@ -437,7 +438,7 @@ sendThread multiplexer sendFn = do
     sendLoop :: StateT ChannelId IO ()
     sendLoop = do
       join $ liftIO $ atomically do
-        peekFutureSTM (toFuture multiplexer.multiplexerException) >>= \case
+        peekFuture (toFuture multiplexer.multiplexerException) >>= \case
           -- Send exception (if required for that exception type) and then terminate send loop
           Just fatalException -> pure $ sendException fatalException
           Nothing -> do
@@ -542,7 +543,7 @@ receiveThread multiplexer readFn = do
     execReceivedMultiplexerMessage :: ReceiveThreadState -> MultiplexerMessage -> StateT BS.ByteString IO (Maybe ReceiveThreadState)
     execReceivedMultiplexerMessage Nothing (ChannelMessageHeader _ _) = undefined
     execReceivedMultiplexerMessage state@(Just channel) (ChannelMessageHeader newChannelCount messageLength) = do
-      join $ liftIO $ atomically do
+      join $ liftIO $ atomicallyC do
         closedByRemote <- readTVar channel.receivedCloseMessage
         sentClose <- readTVar channel.sentCloseMessage
         -- Create channels even if the current channel has been closed, to stay in sync with the remote side
@@ -570,7 +571,7 @@ receiveThread multiplexer readFn = do
 
     execReceivedMultiplexerMessage Nothing CloseChannel = undefined
     execReceivedMultiplexerMessage (Just channel) CloseChannel = liftIO do
-      atomically do
+      atomicallyC do
         setReceivedChannelCloseMessage channel
         sendChannelCloseMessage channel
       disposeEventuallyIO_ channel
@@ -631,70 +632,76 @@ receiveThread multiplexer readFn = do
             chunkLength = fromIntegral $ BS.length chunk
 
 
+data AbortSend = AbortSend
+  deriving stock (Eq, Show)
+  deriving anyclass Exception
+
+
 sendRawChannelMessage :: MonadIO m => RawChannel -> ChannelMessage BSL.ByteString -> m SentMessageResources
 sendRawChannelMessage channel@RawChannel{multiplexer} message = liftIO do
   -- Locking the 'outboxGuard' guarantees fairness when sending messages concurrently (it also prevents unnecessary
   -- STM retries)
   (res, ()) <- withMVar multiplexer.outboxGuard \_ ->
-    atomically $ sendRawChannelMessageInternal BlockUntilReady channel (const (pure (message, ())))
+    atomicallyC $ sendRawChannelMessageInternal blockUntilReadyBehavior channel (const (pure (message, ())))
   pure res
 
-sendRawChannelMessageDeferred :: MonadIO m => RawChannel -> (MessageId -> STM (ChannelMessage BSL.ByteString, a)) -> m (SentMessageResources, a)
+sendRawChannelMessageDeferred :: MonadIO m => RawChannel -> (MessageId -> STMc NoRetry '[AbortSend] (ChannelMessage BSL.ByteString, a)) -> m (SentMessageResources, a)
 sendRawChannelMessageDeferred channel@RawChannel{multiplexer} msgHook = liftIO do
   -- Locking the 'outboxGuard' guarantees fairness when sending messages concurrently (it also prevents unnecessary
   -- STM retries)
   withMVar multiplexer.outboxGuard \_ ->
-    atomically $ sendRawChannelMessageInternal BlockUntilReady channel msgHook
+    atomicallyC $ sendRawChannelMessageInternal blockUntilReadyBehavior channel msgHook
 
 -- | Unsafely queue a network message to an unbounded send queue. This function does not block, even if `sendChannelMessage` would block. Queued messages will cause concurrent or following `sendChannelMessage`-calls to block until the queue is flushed.
-unsafeQueueRawChannelMessage :: RawChannel -> ChannelMessage BSL.ByteString -> STM SentMessageResources
+unsafeQueueRawChannelMessage :: RawChannel -> ChannelMessage BSL.ByteString -> STMc NoRetry '[AbortSend, ChannelException, MultiplexerException, FailedToAttachResource] SentMessageResources
 unsafeQueueRawChannelMessage channel msg = do
-  (res, ()) <- sendRawChannelMessageInternal UnboundedQueue channel (const (pure (msg, ())))
+  (res, ()) <- sendRawChannelMessageInternal unboundedQueueBehavior channel (const (pure (msg, ())))
   pure res
 
-unsafeQueueRawChannelMessageSimple :: MonadSTM m => RawChannel -> BSL.ByteString -> m ()
-unsafeQueueRawChannelMessageSimple channel payload = liftSTM do
+unsafeQueueRawChannelMessageSimple :: MonadSTMc NoRetry '[AbortSend, ChannelException, MultiplexerException, FailedToAttachResource] m => RawChannel -> BSL.ByteString -> m ()
+unsafeQueueRawChannelMessageSimple channel payload = liftSTMc do
   unsafeQueueRawChannelMessage channel (channelMessage payload) >>=
     \case
       -- Pattern match verifies no channels are created due to a bug
       SentMessageResources{createdChannels=[]} -> pure ()
-      _ -> unreachableCodePathM
+      _ -> unreachableCodePath
 
 
-data QueueBehavior = BlockUntilReady | UnboundedQueue
+blockUntilReadyBehavior :: Bool -> STMc Retry exceptions ()
+blockUntilReadyBehavior = check
 
-sendRawChannelMessageInternal :: QueueBehavior -> RawChannel -> (MessageId -> STM (ChannelMessage BSL.ByteString, a)) -> STM (SentMessageResources, a)
+unboundedQueueBehavior :: Bool -> STMc NoRetry exceptions ()
+unboundedQueueBehavior _ = pure ()
+
+sendRawChannelMessageInternal :: (Bool -> STMc canRetry '[AbortSend, ChannelException, MultiplexerException, FailedToAttachResource] ()) -> RawChannel -> (MessageId -> STMc NoRetry '[AbortSend] (ChannelMessage BSL.ByteString, a)) -> STMc canRetry '[AbortSend, ChannelException, MultiplexerException, FailedToAttachResource] (SentMessageResources, a)
 sendRawChannelMessageInternal queueBehavior channel@RawChannel{multiplexer} msgHook = do
   -- NOTE At most one message can be queued per STM transaction, so `sendChannelMessage` cannot be changed to STM
 
   -- Abort if the multiplexer is finished or currently cleaning up
-  mapM_ throwM =<< peekFutureSTM (toFuture multiplexer.multiplexerException)
+  mapM_ throwC =<< peekFuture (toFuture multiplexer.multiplexerException)
 
   -- Abort if the channel is closed
-  verifyChannelIsConnected channel
+  liftSTMc $ verifyChannelIsConnected channel
 
   msgs <- readTVar multiplexer.outbox
 
-  case queueBehavior of
-    BlockUntilReady ->
-      -- Block until all previously queued messages have been sent.
-      check $ null msgs
-    UnboundedQueue -> pure ()
+  -- Block until all previously queued messages have been sent, if requested
+  queueBehavior (null msgs)
 
   messageId <- stateTVar channel.nextSendMessageId (\x -> (x, x + 1))
 
-  (ChannelMessage{payload, closeChannel, createChannels}, returnData) <- msgHook messageId
+  (ChannelMessage{payload, closeChannel, createChannels}, returnData) <- liftSTMc (msgHook messageId)
 
   -- Put the message into the outbox. It will be picked up by the send thread.
   let msg = OutboxSendMessage channel.channelId createChannels payload
   writeTVar multiplexer.outbox (msg:msgs)
 
-  when closeChannel do
+  liftSTMc $ when closeChannel do
     sendChannelCloseMessage channel
     disposeEventually_ channel
 
   createdChannelIds <- stateTVar multiplexer.nextSendChannelId (createChannelIds createChannels)
-  createdChannels <- mapM (newChannelSTM channel) createdChannelIds
+  createdChannels <- liftSTMc $ mapM (newChannelSTM channel) createdChannelIds
 
   let res = SentMessageResources {
     messageId,
@@ -715,7 +722,7 @@ sendSimpleRawChannelMessage channel payload = liftIO do
   SentMessageResources{createdChannels=[]} <- sendRawChannelMessage channel (channelMessage payload)
   pure ()
 
-sendSimpleRawChannelMessageDeferred :: MonadIO m => RawChannel -> (MessageId -> STM (BSL.ByteString, a)) -> m a
+sendSimpleRawChannelMessageDeferred :: MonadIO m => RawChannel -> (MessageId -> STMc NoRetry '[AbortSend] (BSL.ByteString, a)) -> m a
 sendSimpleRawChannelMessageDeferred channel msgHook = liftIO do
   -- Pattern match verifies no channels are created due to a bug
   (SentMessageResources{createdChannels=[]}, returnData) <- sendRawChannelMessageDeferred channel (first channelMessage <<$>> msgHook)
