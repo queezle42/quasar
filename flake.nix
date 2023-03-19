@@ -30,7 +30,7 @@
         };
       };
 
-      quasar = quasar.overlay;
+      quasar = quasar.overlays.default;
     };
 
     devShell = forAllSystems (system:
