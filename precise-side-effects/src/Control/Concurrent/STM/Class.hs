@@ -40,6 +40,8 @@ module Control.Concurrent.STM.Class (
   catchSTM,
   catchSTMc,
   catchAllSTMc,
+  handleSTMc,
+  handleAllSTMc,
   trySTMc,
   tryAllSTMc,
   tryExSTMc,
@@ -265,6 +267,26 @@ catchAllSTMc ::
 
 catchAllSTMc ft fc = tryAllSTMc ft >>= either fc pure
 {-# INLINABLE catchAllSTMc #-}
+
+
+handleSTMc ::
+  forall canRetry exceptions e m a. (
+    Exception e,
+    MonadSTMc canRetry (exceptions :- e) m
+  ) =>
+  (e -> m a) -> STMc canRetry exceptions a -> m a
+
+handleSTMc = flip catchSTMc
+{-# INLINABLE handleSTMc #-}
+
+handleAllSTMc ::
+  forall canRetry exceptions m a. (
+    MonadSTMc canRetry '[] m
+  ) =>
+  (SomeException -> m a) -> STMc canRetry exceptions a -> m a
+
+handleAllSTMc = flip catchAllSTMc
+{-# INLINABLE handleAllSTMc #-}
 
 
 trySTMc ::
