@@ -22,6 +22,8 @@ module Quasar.Exceptions (
 
 import Control.Monad.Catch
 import Quasar.Prelude
+import GHC.Stack (HasCallStack, callStack)
+import GHC.Exception (prettyCallStack)
 
 
 newtype ExceptionSink = ExceptionSink (SomeException -> STMc NoRetry '[] ())
@@ -91,12 +93,14 @@ isDisposeException _ = False
 
 
 
-data FailedToAttachResource = FailedToAttachResource
-  deriving stock (Eq, Show)
+data FailedToAttachResource = HasCallStack => FailedToAttachResource
+
+instance Show FailedToAttachResource where
+  showsPrec d FailedToAttachResource = showParen (d > 10) $ showString "FailedToAttachResource " . showsPrec 11 callStack
 
 instance Exception FailedToAttachResource where
   displayException FailedToAttachResource =
-    "FailedToRegisterResource: Failed to attach a resource to a resource manager. This might result in leaked resources if left unhandled."
+    "FailedToRegisterResource: Failed to attach a resource to a resource manager. This might result in leaked resources if left unhandled\n" <> prettyCallStack callStack
 
 isFailedToAttachResource :: SomeException -> Bool
 isFailedToAttachResource (fromException @FailedToAttachResource -> Just _) = True
