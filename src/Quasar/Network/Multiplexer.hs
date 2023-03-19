@@ -135,6 +135,8 @@ data MultiplexerException
 instance Exception MultiplexerException where
   displayException (InvalidMagicBytes received) =
     mconcat ["Magic bytes don't match: Expected ", show magicBytes, ", got ", show received]
+  displayException (LocalException direction inner) =
+    mconcat ["Multiplexer failed due to a local exception (", show direction, "):\n", displayException inner]
   displayException ex = show ex
 
 data MultiplexerDirection = Sending | Receiving
