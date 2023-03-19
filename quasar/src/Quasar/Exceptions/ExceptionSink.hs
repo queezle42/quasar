@@ -13,8 +13,7 @@ import Quasar.Prelude
 
 
 loggingExceptionSink :: ExceptionSink
-loggingExceptionSink =
-  ExceptionSink \ex -> queueLogError (displayException ex)
+loggingExceptionSink = ExceptionSink \ex -> queueLogError (displayException ex)
 
 newExceptionWitnessSink :: MonadSTMc NoRetry '[] m => ExceptionSink -> m (ExceptionSink, STMc NoRetry '[] Bool)
 newExceptionWitnessSink exChan = liftSTMc @NoRetry @'[] do
