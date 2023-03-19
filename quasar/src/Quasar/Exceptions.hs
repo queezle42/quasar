@@ -26,6 +26,11 @@ import Quasar.Prelude
 
 newtype ExceptionSink = ExceptionSink (SomeException -> STMc NoRetry '[] ())
 
+instance Semigroup ExceptionSink where
+  ExceptionSink x <> ExceptionSink y = ExceptionSink \e -> do
+    () <- x e
+    y e
+
 
 throwToExceptionSink :: (Exception e, MonadSTMc NoRetry '[] m) => ExceptionSink -> e -> m ()
 throwToExceptionSink (ExceptionSink channelFn) ex = liftSTMc $ channelFn (toException ex)
