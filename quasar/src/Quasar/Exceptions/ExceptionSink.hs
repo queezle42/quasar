@@ -1,5 +1,4 @@
 module Quasar.Exceptions.ExceptionSink (
-  panicSink,
   loggingExceptionSink,
   newExceptionWitnessSink,
   newExceptionRedirector,
@@ -7,27 +6,10 @@ module Quasar.Exceptions.ExceptionSink (
   ExceptionCollectorAlreadyCollected,
 ) where
 
-import Control.Concurrent (forkIO)
-import Control.Exception (BlockedIndefinitelyOnSTM(..))
 import Control.Monad.Catch
-import GHC.IO (unsafePerformIO)
 import Quasar.Exceptions
 import Quasar.Logger
 import Quasar.Prelude
-import System.Exit (die)
-
-
-{-# NOINLINE panicSink #-}
-panicSink :: ExceptionSink
-panicSink = unsafePerformIO newPanicSink
-
-newPanicSink :: IO ExceptionSink
-newPanicSink = do
-  var <- newEmptyTMVarIO
-  void $ forkIO $ handle (\BlockedIndefinitelyOnSTM -> pure ()) do
-    ex <- atomically $ readTMVar var
-    die $ "Panic: " <> displayException ex
-  pure $ ExceptionSink $ void . tryPutTMVar var
 
 
 loggingExceptionSink :: ExceptionSink

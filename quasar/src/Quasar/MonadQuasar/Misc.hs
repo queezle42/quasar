@@ -65,7 +65,7 @@ runQuasarAndExitWith exitCodeFn fn = mask \unmask -> do
 
 runQuasarCollectExceptions :: QuasarIO a -> IO (Either SomeException a, [SomeException])
 runQuasarCollectExceptions fn = do
-  (exChan, collectExceptions) <- atomically $ newExceptionCollector panicSink
+  (exChan, collectExceptions) <- atomically $ newExceptionCollector loggingExceptionSink
   result <- try $ withQuasar exChan fn
   exceptions <- atomicallyC collectExceptions
   pure (result, exceptions)
