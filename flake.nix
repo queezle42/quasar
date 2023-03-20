@@ -25,6 +25,7 @@
           quasar = haskellPackages.quasar;
           quasar-examples = haskellPackages.quasar-examples;
           quasar-mqtt = haskellPackages.quasar-mqtt;
+          quasar-network = haskellPackages.quasar-network;
           quasar-timer = haskellPackages.quasar-timer;
           quasar-web = haskellPackages.quasar-web;
           quasar-web-client = pkgs.quasar-web-client;
@@ -41,6 +42,7 @@
           quasar = hfinal.callCabal2nix "quasar" ./quasar {};
           quasar-examples = hfinal.callCabal2nix "quasar-examples" ./examples {};
           quasar-mqtt = hfinal.callCabal2nix "quasar-mqtt" ./quasar-mqtt {};
+          quasar-network = hfinal.callCabal2nix "quasar-network" ./quasar-network {};
           quasar-timer = hfinal.callCabal2nix "quasar-timer" ./quasar-timer {};
           quasar-web =
             let srcWithClient = final.runCommand "quasar-web-with-client" {} ''
@@ -71,6 +73,7 @@
             hpkgs.quasar
             hpkgs.quasar-examples
             hpkgs.quasar-mqtt
+            hpkgs.quasar-network
             hpkgs.quasar-timer
             hpkgs.quasar-web
           ];

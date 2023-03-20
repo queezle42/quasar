@@ -1,0 +1,107 @@
+cabal-version: 3.0
+
+name: quasar-network
+version: 0.1.0.0
+category: Protocol, Network, Networking, Network API
+description: RPC library with support for pipelining, reverse calls and data streams.
+author: Jens Nolte
+maintainer: Jens Nolte
+copyright: 2021 Jens Nolte
+license: BSD-2-Clause
+build-type: Simple
+extra-source-files:
+  README.md
+
+source-repository head
+  type: git
+  location: https://github.com/queezle42/quasar
+
+common shared-properties
+  default-extensions:
+    AllowAmbiguousTypes
+    BlockArguments
+    DataKinds
+    DefaultSignatures
+    DeriveAnyClass
+    DerivingStrategies
+    DuplicateRecordFields
+    FunctionalDependencies
+    GADTs
+    LambdaCase
+    LexicalNegation
+    NoImplicitPrelude
+    OverloadedRecordDot
+    OverloadedStrings
+    TemplateHaskell
+    TypeFamilies
+    ViewPatterns
+  default-language: GHC2021
+  ghc-options:
+    -Weverything
+    -Wno-all-missed-specialisations
+    -Wno-missing-safe-haskell-mode
+    -Wno-missing-kind-signatures
+    -Wno-missing-import-lists
+    -Wno-unsafe
+    -Werror=incomplete-patterns
+    -Werror=missing-fields
+    -Werror=missing-methods
+
+library
+  import: shared-properties
+  exposed-modules:
+    Quasar.Network
+    Quasar.Network.Connection
+    Quasar.Network.Exception
+    Quasar.Network.Multiplexer
+    Quasar.Network.Runtime
+    Quasar.Network.Runtime.Observable
+    Quasar.Network.SocketLocation
+    Quasar.Network.TH
+    Quasar.Network.TH.Generator
+    Quasar.Network.TH.Spec
+  other-modules:
+  build-depends:
+    base >=4.7 && <5,
+    async,
+    binary,
+    bytestring,
+    containers,
+    exceptions,
+    mtl,
+    network,
+    quasar,
+    template-haskell,
+    unix,
+    unordered-containers,
+  hs-source-dirs:
+    src
+
+test-suite quasar-network-test
+  import: shared-properties
+  type: exitcode-stdio-1.0
+  ghc-options:
+    -threaded
+    -rtsopts "-with-rtsopts=-N"
+  build-depends:
+    base >=4.7 && <5,
+    QuickCheck,
+    async,
+    binary,
+    bytestring,
+    exceptions,
+    hspec,
+    hspec-core,
+    hspec-expectations-lifted,
+    mtl,
+    quasar,
+    quasar-network,
+    stm,
+  main-is: Spec.hs
+  other-modules:
+    Quasar.NetworkSpec
+    Quasar.Network.InterfaceSpec
+    Quasar.Network.MultiplexerSpec
+    Quasar.Network.ObservableSpec
+  hs-source-dirs:
+    test
