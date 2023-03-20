@@ -37,11 +37,11 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1679198811,
-        "narHash": "sha256-3pJGmcfzw9KNiPttpQ4THiH/KtGNRZNEZ3OK00fWK5Y=",
+        "lastModified": 1679269404,
+        "narHash": "sha256-C3eI1juG3r3XW4bubi1YalODFKgmswqkHe5zmM92BdI=",
         "owner": "queezle42",
         "repo": "quasar",
-        "rev": "b7cfdb1d1e873152556d99a71e198058facd1005",
+        "rev": "d5f6de483f623d2f3e15a04f62e7e5a24fc43f1c",
         "type": "github"
       },
       "original": {
