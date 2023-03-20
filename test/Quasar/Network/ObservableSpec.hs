@@ -8,17 +8,10 @@ import Quasar.Network.Runtime.Observable
 import Quasar.Prelude
 import System.Timeout (timeout)
 import Test.Hspec.Core.Spec
-import Test.Hspec.Expectations.Lifted
-import Test.Hspec qualified as Hspec
 
 -- Type is pinned to IO, otherwise hspec spec type cannot be inferred
 rm :: QuasarIO a -> IO a
 rm = runQuasarCombineExceptions
-
-shouldThrow :: (HasCallStack, Exception e, MonadQuasar m, MonadIO m) => QuasarIO a -> Hspec.Selector e -> m ()
-shouldThrow action expected = do
-  quasar <- askQuasar
-  liftIO $ runQuasarIO quasar action `Hspec.shouldThrow` expected
 
 spec :: Spec
 spec = parallel $ describe "ObservableProxy" $ do
