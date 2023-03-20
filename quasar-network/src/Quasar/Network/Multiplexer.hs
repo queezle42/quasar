@@ -204,7 +204,7 @@ newRootChannel multiplexer = do
 
 newChannel :: RawChannel -> ChannelId -> STMc NoRetry '[ChannelException] RawChannel
 newChannel parent@RawChannel{multiplexer, quasar=parentQuasar} channelId =
-  (flip (catchSTMc @NoRetry @'[ChannelException, FailedToAttachResource])) (\FailedToAttachResource -> throwC ChannelNotConnected) do
+  handleSTMc @NoRetry @'[ChannelException, FailedToAttachResource] (\FailedToAttachResource -> throwC ChannelNotConnected) do
     -- Channels inherit their parents close state
     parentReceivedCloseMessage <- readTVar parent.receivedCloseMessage
     parentSentCloseMessage <- readTVar parent.sentCloseMessage
