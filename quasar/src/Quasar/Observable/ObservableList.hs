@@ -1,6 +1,5 @@
 module Quasar.Observable.ObservableList (
   ToObservableList(..),
-  --observeIndex,
   attachDeltaObserver,
   IsObservableList(..),
   ObservableList,
@@ -14,11 +13,8 @@ module Quasar.Observable.ObservableList (
   delete,
   lookup,
   lookupDelete,
-
-  --filter,
 ) where
 
-import Data.Foldable (toList)
 import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
 import Quasar.Observable
@@ -40,9 +36,9 @@ class ToObservableList v a => IsObservableList v a | a -> v where
   -- | Register a listener to observe changes to the whole map. The callback
   -- will be invoked with the current state of the map immediately after
   -- registering and after that will be invoked for every change to the map.
-  attachDeltaObserver# :: a -> (ObservableListDelta v -> STMc NoRetry '[] ()) -> STMc NoRetry '[] TSimpleDisposer
+  attachDeltaObserver# :: a -> (ObservableListDelta v -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Seq v)
 
-attachDeltaObserver :: (ToObservableList v a, MonadSTMc NoRetry '[] m) => a -> (ObservableListDelta v -> STMc NoRetry '[] ()) -> m TSimpleDisposer
+attachDeltaObserver :: (ToObservableList v a, MonadSTMc NoRetry '[] m) => a -> (ObservableListDelta v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Seq v)
 attachDeltaObserver x callback = liftSTMc $ attachDeltaObserver# (toObservableList x) callback
 
 data ObservableList v = forall a. IsObservableList v a => ObservableList a
@@ -81,9 +77,6 @@ instance Functor ObservableListOperation where
   fmap _ (Delete k) = Delete k
   fmap _ DeleteAll = DeleteAll
 
-initialObservableListDelta :: [v] -> ObservableListDelta v
-initialObservableListDelta = fmap Append
-
 
 data MappedObservableList v = forall a. MappedObservableList (a -> v) (ObservableList a)
 
@@ -96,7 +89,7 @@ instance IsObservableList v (MappedObservableList v) where
   observeIsEmpty# (MappedObservableList _ observable) = observeIsEmpty# observable
   observeLength# (MappedObservableList _ observable) = observeLength# observable
   attachDeltaObserver# (MappedObservableList fn observable) callback =
-    attachDeltaObserver# observable (\update -> callback (fn <<$>> update))
+    fmap fn <<$>> attachDeltaObserver# observable (\update -> callback (fn <<$>> update))
 
 
 data ObservableListVar v = ObservableListVar {
@@ -122,8 +115,8 @@ instance IsObservableList v (ObservableListVar v) where
   observeLength# x = deduplicateObservable (Seq.length <$> toObservable x)
   attachDeltaObserver# ObservableListVar{content, deltaObservers} callback = do
     disposer <- registerCallback deltaObservers callback
-    callback . initialObservableListDelta . toList =<< readTVar content
-    pure disposer
+    initial <- readTVar content
+    pure (disposer, initial)
 
 
 data ObservableListVarIndexObservable v = ObservableListVarIndexObservable Int (ObservableListVar v)
