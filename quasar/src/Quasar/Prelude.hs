@@ -10,6 +10,7 @@ module Quasar.Prelude
     Control.Applicative.Alternative,
     Data.Foldable.sequenceA_,
     Data.Foldable.traverse_,
+    Data.Foldable.toList,
     Data.Functor.Identity.Identity,
     module Control.Concurrent.MVar,
     Control.Exception.Exception,
