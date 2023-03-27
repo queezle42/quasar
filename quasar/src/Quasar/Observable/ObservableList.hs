@@ -62,8 +62,7 @@ instance Functor ObservableList where
 -- | A single operation that can be applied to an `ObservableList`. Part of a
 -- `ObservableListDelta`.
 --
--- Valid indices for `Insert` are @0 <= i <= length@. Inserting with an
--- out-of-range index is a no-op.
+-- `Insert` indices are clamped to @[0, length]@.
 --
 -- Applying `Delete` to a non-existing index is a no-op.
 data ObservableListOperation v
@@ -178,29 +177,38 @@ newObservableListVarIO = liftIO do
 
 insert :: forall v m. (MonadSTMc NoRetry '[] m) => Int -> v -> ObservableListVar v -> m ()
 insert index value ObservableListVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
-  state <- stateTVar content (dup . Seq.insertAt index value)
+  initial <- readTVar content
+  let clampedIndex = min (max index 0) (length initial)
+  state <- stateTVar content (dup . Seq.insertAt clampedIndex value)
   callCallbacks observers state
-  callCallbacks deltaObservers (singleton (Insert index value))
+  callCallbacks deltaObservers (singleton (Insert clampedIndex value))
   mkr <- Seq.lookup index <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry (Just value)
 
 delete :: forall v m. (MonadSTMc NoRetry '[] m) => Int -> ObservableListVar v -> m ()
 delete index ObservableListVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
-  state <- stateTVar content (dup . Seq.deleteAt index)
-  callCallbacks observers state
-  callCallbacks deltaObservers (singleton (Delete index))
-  mkr <- Seq.lookup index <$> readTVar keyObservers
-  forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
+  initial <- readTVar content
+  when (index >= 0 && index < length initial) do
+    let state = Seq.deleteAt index initial
+    callCallbacks observers state
+    callCallbacks deltaObservers (singleton (Delete index))
+    mkr <- Seq.lookup index <$> readTVar keyObservers
+    forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
 
 lookupDelete :: forall v m. (MonadSTMc NoRetry '[] m) => Int -> ObservableListVar v -> m (Maybe v)
 lookupDelete index ObservableListVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
-  (result, newList) <- stateTVar content \orig ->
-    let
-      result = Seq.lookup index orig
-      newList = Seq.deleteAt index orig
-    in ((result, newList), newList)
-  callCallbacks observers newList
-  callCallbacks deltaObservers (singleton (Delete index))
-  mkr <- Seq.lookup index <$> readTVar keyObservers
-  forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
-  pure result
+  initial <- readTVar content
+  if index >= 0 && index < length initial
+    then do
+      (result, newList) <- stateTVar content \orig ->
+        let
+          result = Seq.lookup index orig
+          newList = Seq.deleteAt index orig
+        in ((result, newList), newList)
+      callCallbacks observers newList
+      callCallbacks deltaObservers (singleton (Delete index))
+      mkr <- Seq.lookup index <$> readTVar keyObservers
+      forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
+      pure result
+    else
+      pure Nothing
