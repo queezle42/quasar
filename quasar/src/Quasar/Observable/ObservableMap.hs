@@ -12,7 +12,8 @@ module Quasar.Observable.ObservableMap (
   ObservableMapOperation,
 
   ObservableMapVar,
-  new,
+  newObservableMapVar,
+  newObservableMapVarIO,
   insert,
   delete,
   lookup,
@@ -170,12 +171,20 @@ instance Ord k => IsObservable (Maybe v) (ObservableMapVarKeyObservable k v) whe
   readObservable# (ObservableMapVarKeyObservable key ObservableMapVar{content}) =
     Map.lookup key <$> readTVar content
 
-new :: MonadSTMc NoRetry '[] m => m (ObservableMapVar k v)
-new = liftSTMc @NoRetry @'[] do
+newObservableMapVar :: MonadSTMc NoRetry '[] m => m (ObservableMapVar k v)
+newObservableMapVar = liftSTMc @NoRetry @'[] do
   content <- newTVar Map.empty
   observers <- newCallbackRegistry
   deltaObservers <- newCallbackRegistry
   keyObservers <- newTVar Map.empty
+  pure ObservableMapVar {content, observers, deltaObservers, keyObservers}
+
+newObservableMapVarIO :: MonadIO m => m (ObservableMapVar k v)
+newObservableMapVarIO = liftIO do
+  content <- newTVarIO Map.empty
+  observers <- newCallbackRegistryIO
+  deltaObservers <- newCallbackRegistryIO
+  keyObservers <- newTVarIO Map.empty
   pure ObservableMapVar {content, observers, deltaObservers, keyObservers}
 
 insert :: forall k v m. (Ord k, MonadSTMc NoRetry '[] m) => k -> v -> ObservableMapVar k v -> m ()

@@ -8,7 +8,8 @@ module Quasar.Observable.ObservableList (
   ObservableListOperation(..),
 
   ObservableListVar,
-  new,
+  newObservableListVar,
+  newObservableListVarIO,
   insert,
   delete,
   lookup,
@@ -159,12 +160,20 @@ instance IsObservable (Maybe v) (ObservableListVarIndexObservable v) where
   readObservable# (ObservableListVarIndexObservable index ObservableListVar{content}) =
     Seq.lookup index <$> readTVar content
 
-new :: MonadSTMc NoRetry '[] m => m (ObservableListVar v)
-new = liftSTMc @NoRetry @'[] do
+newObservableListVar :: MonadSTMc NoRetry '[] m => m (ObservableListVar v)
+newObservableListVar = liftSTMc @NoRetry @'[] do
   content <- newTVar Seq.empty
   observers <- newCallbackRegistry
   deltaObservers <- newCallbackRegistry
   keyObservers <- newTVar Seq.empty
+  pure ObservableListVar {content, observers, deltaObservers, keyObservers}
+
+newObservableListVarIO :: MonadIO m => m (ObservableListVar v)
+newObservableListVarIO = liftIO do
+  content <- newTVarIO Seq.empty
+  observers <- newCallbackRegistryIO
+  deltaObservers <- newCallbackRegistryIO
+  keyObservers <- newTVarIO Seq.empty
   pure ObservableListVar {content, observers, deltaObservers, keyObservers}
 
 insert :: forall v m. (MonadSTMc NoRetry '[] m) => Int -> v -> ObservableListVar v -> m ()
