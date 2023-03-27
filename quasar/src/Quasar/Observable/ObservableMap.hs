@@ -28,7 +28,7 @@ import Data.Map.Strict qualified as Map
 import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
 import Quasar.Observable
-import Quasar.Observable.ObservableList (ObservableList, IsObservableList, ToObservableList(..))
+import Quasar.Observable.ObservableList (ObservableList, IsObservableList, ToObservableList(..), ObservableListDelta(..))
 import Quasar.Observable.ObservableList qualified as ObservableList
 import Quasar.Prelude hiding (filter)
 import Quasar.Resources.Disposer
@@ -78,9 +78,6 @@ instance Functor (ObservableMap k) where
   fmap f x = toObservableMap (MappedObservableMap (const f) x)
 
 
--- | A list of operations that is applied atomically to an `ObservableMap`.
-type ObservableMapDelta k v = Seq (ObservableMapOperation k v)
-
 -- | A single operation that can be applied to an `ObservableMap`. Part of a
 -- `ObservableMapDelta`.
 --
@@ -91,6 +88,17 @@ instance Functor (ObservableMapOperation k) where
   fmap f (Insert k v) = Insert k (f v)
   fmap _ (Delete k) = Delete k
   fmap _ DeleteAll = DeleteAll
+
+
+-- | A list of operations that is applied atomically to an `ObservableMap`.
+newtype ObservableMapDelta k v = ObservableMapDelta (Seq (ObservableMapOperation k v))
+
+instance Functor (ObservableMapDelta k) where
+  fmap f (ObservableMapDelta ops) = ObservableMapDelta (f <<$>> ops)
+
+singleton :: ObservableMapOperation k v -> ObservableMapDelta k v
+singleton op = ObservableMapDelta (Seq.singleton op)
+
 
 data MappedObservableMap k v = forall a. MappedObservableMap (k -> a -> v) (ObservableMap k a)
 
@@ -104,12 +112,12 @@ instance IsObservableMap k v (MappedObservableMap k v) where
   observeLength# (MappedObservableMap _ observable) = observeLength# observable
   observeKey# key (MappedObservableMap fn observable) = fn key <<$>> observeKey# key observable
   attachDeltaObserver# (MappedObservableMap fn observable) callback =
-    Map.mapWithKey fn <<$>> attachDeltaObserver# observable \update -> callback (fmapDeltaWithKey fn <$> update)
+    Map.mapWithKey fn <<$>> attachDeltaObserver# observable \update -> callback (mapDeltaWithKey update)
     where
-      fmapDeltaWithKey :: (k -> a -> b) -> ObservableMapOperation k a -> ObservableMapOperation k b
-      fmapDeltaWithKey f (Insert k v) = Insert k (f k v)
-      fmapDeltaWithKey _ (Delete k) = Delete k
-      fmapDeltaWithKey _ DeleteAll = DeleteAll
+      mapDeltaWithKey (ObservableMapDelta ops) = ObservableMapDelta (mapUpdateWithKey <$> ops)
+      mapUpdateWithKey (Insert k v) = Insert k (fn k v)
+      mapUpdateWithKey (Delete k) = Delete k
+      mapUpdateWithKey DeleteAll = DeleteAll
 
 mapWithKey :: ToObservableMap k v1 a => (k -> v1 -> v2) -> a -> ObservableMap k v2
 mapWithKey f x = ObservableMap (MappedObservableMap f (toObservableMap x))
@@ -174,7 +182,7 @@ insert :: forall k v m. (Ord k, MonadSTMc NoRetry '[] m) => k -> v -> Observable
 insert key value ObservableMapVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
   state <- stateTVar content (dup . Map.insert key value)
   callCallbacks observers state
-  callCallbacks deltaObservers (Seq.singleton (Insert key value))
+  callCallbacks deltaObservers (singleton (Insert key value))
   mkr <- Map.lookup key <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry (Just value)
 
@@ -182,7 +190,7 @@ delete :: forall k v m. (Ord k, MonadSTMc NoRetry '[] m) => k -> ObservableMapVa
 delete key ObservableMapVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
   state <- stateTVar content (dup . Map.delete key)
   callCallbacks observers state
-  callCallbacks deltaObservers (Seq.singleton (Delete key))
+  callCallbacks deltaObservers (singleton (Delete key))
   mkr <- Map.lookup key <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
 
@@ -192,7 +200,7 @@ lookupDelete key ObservableMapVar{content, observers, deltaObservers, keyObserve
     let (result, newMap) = Map.lookupDelete key orig
     in ((result, newMap), newMap)
   callCallbacks observers newMap
-  callCallbacks deltaObservers (Seq.singleton (Delete key))
+  callCallbacks deltaObservers (singleton (Delete key))
   mkr <- Map.lookup key <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
   pure result
@@ -218,13 +226,15 @@ instance IsObservableMap k v (FilteredObservableMap k v) where
     find (predicate key) <$> observeKey# key upstream
 
   attachDeltaObserver# (FilteredObservableMap predicate upstream) callback =
-    attachDeltaObserver# upstream \delta -> callback (filterDelta <$> delta)
+    attachDeltaObserver# upstream \delta -> callback (filterDelta delta)
     where
-      filterDelta :: ObservableMapOperation k v -> ObservableMapOperation k v
-      filterDelta (Insert key value) =
+      filterDelta :: ObservableMapDelta k v -> ObservableMapDelta k v
+      filterDelta (ObservableMapDelta ops) = ObservableMapDelta (filterOperation <$> ops)
+      filterOperation :: ObservableMapOperation k v -> ObservableMapOperation k v
+      filterOperation (Insert key value) =
         if predicate key value then Insert key value else Delete key
-      filterDelta (Delete key) = Delete key
-      filterDelta DeleteAll = DeleteAll
+      filterOperation (Delete key) = Delete key
+      filterOperation DeleteAll = DeleteAll
 
 filter :: IsObservableMap k v a => (v -> Bool) -> a -> ObservableMap k v
 filter predicate = filterWithKey (const predicate)
@@ -249,8 +259,8 @@ instance IsObservableList v (ObservableMapValues v) where
   attachDeltaObserver# (ObservableMapValues x) callback = do
     mfixExtra \initialFixed -> do
       var <- newTVar initialFixed
-      (disposer, initial) <- attachDeltaObserver# x \operations -> do
-        listOperations <- forM operations \case
+      (disposer, initial) <- attachDeltaObserver# x \(ObservableMapDelta ops) -> do
+        listOperations <- forM ops \case
           Insert key value -> do
             m <- stateTVar var (dup . Map.insert key value)
             pure (Seq.singleton (ObservableList.Insert (Map.findIndex key m) value))
@@ -264,7 +274,7 @@ instance IsObservableList v (ObservableMapValues v) where
           DeleteAll -> do
             writeTVar var mempty
             pure (Seq.singleton ObservableList.DeleteAll)
-        callback (join listOperations)
+        callback (ObservableListDelta (join listOperations))
       pure ((disposer, Seq.fromList (Map.elems initial)), initial)
 
 values :: (Ord k, IsObservableMap k v a) => a -> ObservableList v

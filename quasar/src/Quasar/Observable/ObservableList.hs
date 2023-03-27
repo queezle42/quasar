@@ -4,7 +4,7 @@ module Quasar.Observable.ObservableList (
   IsObservableList(..),
   ObservableList,
 
-  ObservableListDelta,
+  ObservableListDelta(..),
   ObservableListOperation(..),
 
   ObservableListVar,
@@ -15,7 +15,7 @@ module Quasar.Observable.ObservableList (
   lookupDelete,
 ) where
 
-import Data.Sequence (Seq)
+import Data.Sequence (Seq(..))
 import Data.Sequence qualified as Seq
 import Quasar.Observable
 import Quasar.Prelude hiding (filter)
@@ -58,9 +58,6 @@ instance Functor ObservableList where
   fmap f x = toObservableList (MappedObservableList f x)
 
 
--- | A list of operations that is applied atomically to an `ObservableList`.
-type ObservableListDelta v = Seq (ObservableListOperation v)
-
 -- | A single operation that can be applied to an `ObservableList`. Part of a
 -- `ObservableListDelta`.
 --
@@ -78,6 +75,16 @@ instance Functor ObservableListOperation where
   fmap _ DeleteAll = DeleteAll
 
 
+-- | A list of operations that is applied atomically to an `ObservableList`.
+newtype ObservableListDelta v = ObservableListDelta (Seq (ObservableListOperation v))
+
+instance Functor ObservableListDelta where
+  fmap f (ObservableListDelta ops) = ObservableListDelta (f <<$>> ops)
+
+singleton :: ObservableListOperation v -> ObservableListDelta v
+singleton op = ObservableListDelta (Seq.singleton op)
+
+
 data MappedObservableList v = forall a. MappedObservableList (a -> v) (ObservableList a)
 
 instance ToObservable (Seq v) (MappedObservableList v) where
@@ -89,7 +96,7 @@ instance IsObservableList v (MappedObservableList v) where
   observeIsEmpty# (MappedObservableList _ observable) = observeIsEmpty# observable
   observeLength# (MappedObservableList _ observable) = observeLength# observable
   attachDeltaObserver# (MappedObservableList fn observable) callback =
-    fmap fn <<$>> attachDeltaObserver# observable (\update -> callback (fn <<$>> update))
+    fmap fn <<$>> attachDeltaObserver# observable (\update -> callback (fn <$> update))
 
 
 data ObservableListVar v = ObservableListVar {
@@ -150,7 +157,7 @@ insert :: forall v m. (MonadSTMc NoRetry '[] m) => Int -> v -> ObservableListVar
 insert index value ObservableListVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
   state <- stateTVar content (dup . Seq.insertAt index value)
   callCallbacks observers state
-  callCallbacks deltaObservers (Seq.singleton (Insert index value))
+  callCallbacks deltaObservers (singleton (Insert index value))
   mkr <- Seq.lookup index <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry (Just value)
 
@@ -158,7 +165,7 @@ delete :: forall v m. (MonadSTMc NoRetry '[] m) => Int -> ObservableListVar v ->
 delete index ObservableListVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
   state <- stateTVar content (dup . Seq.deleteAt index)
   callCallbacks observers state
-  callCallbacks deltaObservers (Seq.singleton (Delete index))
+  callCallbacks deltaObservers (singleton (Delete index))
   mkr <- Seq.lookup index <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
 
@@ -170,7 +177,7 @@ lookupDelete index ObservableListVar{content, observers, deltaObservers, keyObse
       newList = Seq.deleteAt index orig
     in ((result, newList), newList)
   callCallbacks observers newList
-  callCallbacks deltaObservers (Seq.singleton (Delete index))
+  callCallbacks deltaObservers (singleton (Delete index))
   mkr <- Seq.lookup index <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
   pure result
