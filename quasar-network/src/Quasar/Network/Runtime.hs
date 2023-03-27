@@ -92,7 +92,7 @@ type IsNetworkStrategy :: (Type -> Constraint) -> Type -> Constraint
 class (s a, NetworkObject a, Binary (CData a)) => IsNetworkStrategy s a where
   type ChannelIsRequired s :: Bool
   type StrategyCData s a :: Type
-  sendObject :: NetworkStrategy a ~ s => a -> (CData a, (Maybe (RawChannel -> QuasarIO ())))
+  sendObject :: NetworkStrategy a ~ s => a -> (CData a, Maybe (RawChannel -> QuasarIO ()))
   receiveObject :: NetworkStrategy a ~ s => CData a -> Either a (Future RawChannel -> QuasarIO a)
 
 type CData :: Type -> Type
@@ -114,7 +114,7 @@ instance (NetworkReference a, NetworkObject a) => IsNetworkStrategy NetworkRefer
   type ChannelIsRequired NetworkReference = 'True
   type StrategyCData NetworkReference _ = ()
   sendObject x = ((), Just \channel -> sendReference x (castChannel channel))
-  receiveObject () = Right (\channel -> receiveReference (castChannel <$> channel))
+  receiveObject () = Right \channel -> receiveReference (castChannel <$> channel)
 
 
 class IsChannel (NetworkReferenceChannel a) => NetworkReference a where

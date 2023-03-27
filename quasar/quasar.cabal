@@ -55,8 +55,6 @@ library
     hashable,
     mtl,
     precise-side-effects,
-    transformers,
-    transformers-base,
     unordered-containers,
   exposed-modules:
     Quasar
@@ -101,7 +99,6 @@ test-suite quasar-test
     exceptions,
     hspec,
     quasar,
-    stm,
   main-is: Spec.hs
   other-modules:
     Quasar.AsyncSpec

@@ -107,7 +107,7 @@ setFixedHandler handler = State.modify (\fun -> fun{fixedHandler = Just handler}
 -- | Generates rpc protocol types, rpc client and rpc server
 makeRpc :: RpcApi -> Q [Dec]
 makeRpc api = do
-  code <- mconcat <$> sequence ((generateFunction api <$> api.functions))
+  code <- mconcat <$> mapM (generateFunction api) api.functions
   mconcat <$> sequence [makeProtocol api code, makeClient api code, makeServer api code]
 
 makeProtocol :: RpcApi -> Code -> Q [Dec]
@@ -143,14 +143,14 @@ makeProtocol api code = sequence [protocolDec, protocolInstanceDec, requestDec, 
 
 makeClient :: RpcApi -> Code -> Q [Dec]
 makeClient api code = do
-  requestStubDecs <- mconcat <$> sequence (clientRequestStub api <$> code.requests)
+  requestStubDecs <- mconcat <$> mapM (clientRequestStub api) code.requests
   sequence $ code.clientStubDecs <> requestStubDecs
 
 clientRequestStub :: RpcApi -> Request -> Q [Q Dec]
 clientRequestStub api req = do
   clientStubPrimeName <- newName req.name
   clientVarName <- newName "client"
-  argNames <- sequence (newName . (.name) <$> req.fields)
+  argNames <- mapM (newName . (.name)) req.fields
   clientRequestStub' clientStubPrimeName clientVarName argNames
   where
     stubName :: Name
@@ -161,7 +161,7 @@ clientRequestStub api req = do
     optionalResultType :: Q [Type]
     optionalResultType = case req.mResponse of
                             Nothing -> pure []
-                            Just resp -> sequence [[t|Future $(buildTupleType (sequence ((.ty) <$> resp.fields)))|]]
+                            Just resp -> sequence [[t|Future $(buildTupleType (mapM (.ty) resp.fields))|]]
 
     clientRequestStub' :: Name -> Name -> [Name] -> Q [Q Dec]
     clientRequestStub' clientStubPrimeName clientVarName argNames = do
@@ -190,7 +190,7 @@ clientRequestStub api req = do
             mainClause = do
               resultAsyncName <- newName "result"
 
-              channelNames <- sequence $ newName . ("channel" <>) . show <$> [0 .. (numPipelinedChannels req - 1)]
+              channelNames <- mapM (newName . ("channel" <>) . show) [0 .. (numPipelinedChannels req - 1)]
 
               clause
                 (whenHasResult (varP resultAsyncName) <> [listP (varP <$> channelNames)])
@@ -257,17 +257,17 @@ makeServer api code = sequence [protocolImplDec, logicInstanceDec]
       funD 'handleRequest [clause [varP implRecordName, varP channelName] (normalB (varE requestHandlerPrimeName)) [funD requestHandlerPrimeName (requestHandlerClauses implRecordName channelName)]]
       where
         requestHandlerClauses :: Name -> Name -> [Q Clause]
-        requestHandlerClauses implRecordName channelName = (mconcat $ (requestClauses implRecordName channelName) <$> code.requests)
+        requestHandlerClauses implRecordName channelName = mconcat $ requestClauses implRecordName channelName <$> code.requests
         requestClauses :: Name -> Name -> Request -> [Q Clause]
         requestClauses implRecordName channelName req = [mainClause, invalidChannelCountClause]
           where
             mainClause :: Q Clause
             mainClause = do
-              channelNames <- sequence $ newName . ("channel" <>) . show <$> [0 .. (numPipelinedChannels req - 1)]
-              resourceNames <- sequence $ (\(res, num) -> newName (resourceNamePrefix res <> show num)) <$> zip req.createdResources [0 .. (numPipelinedChannels req - 1)]
+              channelNames <- mapM (newName . ("channel" <>) . show) [0 .. (numPipelinedChannels req - 1)]
+              resourceNames <- mapM (\(res, num) -> newName (resourceNamePrefix res <> show num)) (zip req.createdResources [0 .. (numPipelinedChannels req - 1)])
               handlerName <- newName "handler"
 
-              fieldNames <- sequence $ newName . (.name) <$> req.fields
+              fieldNames <- mapM (newName . (.name)) req.fields
               let requestConP = conP (requestConName api req) (varP <$> fieldNames)
                   ctx = RequestHandlerContext {
                     implRecordE = varE implRecordName,
@@ -430,12 +430,12 @@ generateFunction api fun = do
     response = Response {
       name = fun.name,
       -- TODO unpack?
-      fields = [ Field { name = "packedResponse", ty = buildTupleType (sequence ((.ty) <$> fun.results)) } ]
+      fields = [ Field { name = "packedResponse", ty = buildTupleType (mapM (.ty) fun.results) } ]
     }
     implFieldName :: Name
     implFieldName = functionImplFieldName api fun
     implSig :: Q Type
-    implSig = buildFunctionType ((functionArgumentTypes fun) <<>> (implResourceTypes request)) (implResultType request)
+    implSig = buildFunctionType (functionArgumentTypes fun <<>> implResourceTypes request) (implResultType request)
 
     serverRequestHandlerE :: RequestHandlerContext -> Q Exp
     serverRequestHandlerE ctx = applyResources (applyArgs (implFieldE ctx.implRecordE)) ctx.resourceEs
@@ -461,7 +461,7 @@ generateFunction api fun = do
 
 
 functionArgumentTypes :: RpcFunction -> Q [Type]
-functionArgumentTypes fun = sequence $ (.ty) <$> fun.arguments
+functionArgumentTypes fun = mapM (.ty) fun.arguments
 
 hasResult :: RpcFunction -> Bool
 hasResult fun = not (null fun.results)
@@ -509,10 +509,10 @@ clientRequestStubName :: RpcApi -> Request -> Name
 clientRequestStubName api req = mkName ("_" <> api.name <> "_" <> req.name)
 
 clientRequestStubE :: RpcApi -> Request -> Q Exp
-clientRequestStubE api req = (varE (clientRequestStubName api req))
+clientRequestStubE api req = varE (clientRequestStubName api req)
 
 clientRequestStubSig :: RpcApi -> Request -> Q Type
-clientRequestStubSig api req = makeStubSig (sequence ((clientType api) : ((.ty) <$> req.fields)))
+clientRequestStubSig api req = makeStubSig (sequence (clientType api : ((.ty) <$> req.fields)))
   where
     makeStubSig :: Q [Type] -> Q Type
     makeStubSig arguments =
@@ -520,16 +520,16 @@ clientRequestStubSig api req = makeStubSig (sequence ((clientType api) : ((.ty) 
     optionalResultType :: Q [Type]
     optionalResultType = case req.mResponse of
                             Nothing -> pure []
-                            Just resp -> sequence [[t|Future $(buildTupleType (sequence ((.ty) <$> resp.fields)))|]]
+                            Just resp -> sequence [[t|Future $(buildTupleType (mapM (.ty) resp.fields))|]]
 
 clientRequestStubSigDec :: RpcApi -> Request -> Q Dec
 clientRequestStubSigDec api req = sigD (clientRequestStubName api req) (clientRequestStubSig api req)
 
 stubResourceTypes :: Request -> Q [Type]
-stubResourceTypes req = sequence $ stubResourceType <$> req.createdResources
+stubResourceTypes req = mapM stubResourceType req.createdResources
 
 implResourceTypes :: Request -> Q [Type]
-implResourceTypes req = sequence $ implResourceType <$> req.createdResources
+implResourceTypes req = mapM implResourceType req.createdResources
 
 stubResourceType :: RequestCreateResource -> Q Type
 stubResourceType RequestCreateRawChannel = [t|RawChannel|]
@@ -548,11 +548,11 @@ createResource RequestCreateRawChannel channelE = [|pure $channelE|]
 createResource (RequestCreateChannel _up _down) channelE = [|newChannel $channelE|]
 
 implResultType :: Request -> Q Type
-implResultType req = [t|QuasarIO $(resultType)|]
+implResultType req = [t|QuasarIO $resultType|]
   where
     resultType = case req.mResponse of
       Nothing -> [t|()|]
-      Just resp -> [t|Future $(buildTupleType (sequence ((.ty) <$> resp.fields)))|]
+      Just resp -> [t|Future $(buildTupleType (mapM (.ty) resp.fields))|]
 
 -- * Template Haskell helper functions
 
@@ -580,7 +580,7 @@ buildTupleM fields = buildTuple' =<< fields
     buildTuple' :: [Exp] -> Q Exp
     buildTuple' [] = [|pure ()|]
     buildTuple' [single] = pure single
-    buildTuple' fs = pure (TupE (const Nothing <$> fs)) `applyA` (pure <$> fs)
+    buildTuple' fs = pure (TupE (Nothing <$ fs)) `applyA` (pure <$> fs)
 
 -- | (a -> b -> c -> d) -> [m a, m b, m c] -> m d
 applyA :: Q Exp -> [Q Exp] -> Q Exp

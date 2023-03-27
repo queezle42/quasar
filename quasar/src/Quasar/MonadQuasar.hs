@@ -48,7 +48,6 @@ import Quasar.Exceptions
 import Quasar.Future
 import Quasar.Prelude
 import Quasar.Resources.Disposer
-import Control.Monad.Base (MonadBase)
 
 
 -- Invariant: the resource manager is disposed as soon as an exception is thrown to the channel
@@ -108,7 +107,7 @@ class (MonadFix m, ResourceCollector m) => MonadQuasar m where
 type QuasarT = ReaderT Quasar
 
 newtype QuasarIO a = QuasarIO (QuasarT IO a)
-  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, Throw e, ThrowEx, MonadMask, MonadFail, MonadFix, Alternative, MonadPlus, MonadBase IO, MonadIO)
+  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, Throw e, ThrowEx, MonadMask, MonadFail, MonadFix, Alternative, MonadPlus, MonadIO)
 
 instance Semigroup a => Semigroup (QuasarIO a) where
   fx <> fy = liftA2 (<>) fx fy
