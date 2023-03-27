@@ -66,7 +66,6 @@ class ToObservable r a => IsObservable r a | a -> r where
   {-# MINIMAL attachObserver#, readObservable# #-}
 
   readObservable# :: a -> STMc NoRetry '[] r
-  readObservable# observable = readObservable# (toObservable observable)
 
   -- | Register a callback to observe changes. The callback is called when the
   -- value changes, but depending on the observable implementation intermediate
@@ -79,7 +78,6 @@ class ToObservable r a => IsObservable r a | a -> r where
   -- update an observable during the current STM transaction. Only working with
   -- `TVar`s and calling `registerCallback` is guaranteed to be safe.
   attachObserver# :: a -> ObserverCallback r -> STMc NoRetry '[] (TSimpleDisposer, r)
-  attachObserver# observable = attachObserver# (toObservable observable)
 
   mapObservable# :: (r -> r2) -> a -> Observable r2
   mapObservable# f o = Observable (MappedObservable f (toObservable o))

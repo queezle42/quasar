@@ -34,16 +34,13 @@ class ToObservable (Map k v) a => ToObservableMap k v a where
   toObservableMap = ObservableMap
 
 class ToObservableMap k v a => IsObservableMap k v a where
-  {-# MINIMAL observeKey#, attachDeltaObserver# #-}
 
   observeKey# :: Ord k => k -> a -> Observable (Maybe v)
-  observeKey# key = observeKey# key . toObservableMap
 
   -- | Register a listener to observe changes to the whole map. The callback
   -- will be invoked with the current state of the map immediately after
   -- registering and after that will be invoked for every change to the map.
   attachDeltaObserver# :: a -> (ObservableMapDelta k v -> STMc NoRetry '[] ()) -> STMc NoRetry '[] TSimpleDisposer
-  attachDeltaObserver# x = attachDeltaObserver# (toObservableMap x)
 
 observeKey :: (ToObservableMap k v a, Ord k) => k -> a -> Observable (Maybe v)
 observeKey key x = observeKey# key (toObservableMap x)
