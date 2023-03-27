@@ -262,8 +262,11 @@ instance IsObservableList v (ObservableMapValues v) where
       (disposer, initial) <- attachMapDeltaObserver# x \(ObservableMapDelta mapOps) -> do
         listOperations <- forM mapOps \case
           Insert key value -> do
-            m <- stateTVar var (dup . Map.insert key value)
-            pure (Seq.singleton (ObservableList.Insert (Map.findIndex key m) value))
+            (m, replaced) <- stateTVar var ((\(b, m) -> ((m, b), m)) . Map.insertCheckReplace key value)
+            let index = Map.findIndex key m
+            pure if replaced
+              then Seq.fromList [ObservableList.Delete index, ObservableList.Insert index value]
+              else Seq.singleton (ObservableList.Insert index value)
           Delete key -> do
             m <- readTVar var
             let i = Map.lookupIndex key m
