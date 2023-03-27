@@ -7,6 +7,7 @@ module Quasar.Observable (
   readObservable,
   attachObserver,
   mapObservable,
+  deduplicateObservable,
   cacheObservable,
   IsObservable(..),
   observeSTM,
@@ -360,6 +361,26 @@ instance IsObservable a (CachedObservable a) where
 
 newCachedObservable :: Observable a -> STMc NoRetry '[] (CachedObservable a)
 newCachedObservable f = CachedObservable <$> newTVar (CacheIdle f)
+
+
+newtype DeduplicatedObservable a = DeduplicatedObservable (Observable a)
+
+instance Eq a => ToObservable a (DeduplicatedObservable a)
+
+instance Eq a => IsObservable a (DeduplicatedObservable a) where
+  readObservable# (DeduplicatedObservable upstream) = readObservable# upstream
+  attachObserver# (DeduplicatedObservable upstream) callback =
+    mfixExtra \initialFix -> do
+      var <- newTVar initialFix
+      (disposer, initialValue) <- attachObserver# upstream \value -> do
+        old <- readTVar var
+        when (old /= value) do
+          writeTVar var value
+          callback value
+      pure ((disposer, initialValue), initialValue)
+
+deduplicateObservable :: (Eq r, ToObservable r a) => a -> Observable r
+deduplicateObservable x = Observable (DeduplicatedObservable (toObservable x))
 
 
 data ObservableVar a = ObservableVar (TVar a) (CallbackRegistry a)
