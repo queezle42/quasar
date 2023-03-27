@@ -61,6 +61,9 @@ instance Functor ObservableList where
 -- | A single operation that can be applied to an `ObservableList`. Part of a
 -- `ObservableListDelta`.
 --
+-- Valid indices for `Insert` are @0 <= i <= length@. Inserting with an
+-- out-of-range index is a no-op.
+--
 -- Applying `Delete` to a non-existing index is a no-op.
 data ObservableListOperation v
   = Insert Int v
@@ -78,6 +81,19 @@ newtype ObservableListDelta v = ObservableListDelta (Seq (ObservableListOperatio
 
 instance Functor ObservableListDelta where
   fmap f (ObservableListDelta ops) = ObservableListDelta (f <<$>> ops)
+
+instance Semigroup (ObservableListDelta v) where
+  ObservableListDelta Empty <> y = y
+  ObservableListDelta x <> ObservableListDelta y = ObservableListDelta (go x y)
+    where
+      go :: Seq (ObservableListOperation v) -> Seq (ObservableListOperation v) -> Seq (ObservableListOperation v)
+      go _ ys@(DeleteAll :<| _) = ys
+      go (xs :|> Insert key1 _) (Delete key2 :<| ys) | key1 == key2 = go xs ys
+      go xs (i :<| ys) = go (xs :|> i) ys
+      go xs Empty = xs
+
+instance Monoid (ObservableListDelta v) where
+  mempty = ObservableListDelta mempty
 
 singleton :: ObservableListOperation v -> ObservableListDelta v
 singleton op = ObservableListDelta (Seq.singleton op)
