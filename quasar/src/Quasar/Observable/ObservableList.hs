@@ -59,7 +59,7 @@ instance Functor ObservableList where
 
 
 -- | A list of operations that is applied atomically to an `ObservableList`.
-type ObservableListDelta v = [ObservableListOperation v]
+type ObservableListDelta v = Seq (ObservableListOperation v)
 
 -- | A single operation that can be applied to an `ObservableList`. Part of a
 -- `ObservableListDelta`.
@@ -150,7 +150,7 @@ insert :: forall v m. (MonadSTMc NoRetry '[] m) => Int -> v -> ObservableListVar
 insert index value ObservableListVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
   state <- stateTVar content (dup . Seq.insertAt index value)
   callCallbacks observers state
-  callCallbacks deltaObservers [Insert index value]
+  callCallbacks deltaObservers (Seq.singleton (Insert index value))
   mkr <- Seq.lookup index <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry (Just value)
 
@@ -158,7 +158,7 @@ delete :: forall v m. (MonadSTMc NoRetry '[] m) => Int -> ObservableListVar v ->
 delete index ObservableListVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
   state <- stateTVar content (dup . Seq.deleteAt index)
   callCallbacks observers state
-  callCallbacks deltaObservers [Delete index]
+  callCallbacks deltaObservers (Seq.singleton (Delete index))
   mkr <- Seq.lookup index <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
 
@@ -170,7 +170,7 @@ lookupDelete index ObservableListVar{content, observers, deltaObservers, keyObse
       newList = Seq.deleteAt index orig
     in ((result, newList), newList)
   callCallbacks observers newList
-  callCallbacks deltaObservers [Delete index]
+  callCallbacks deltaObservers (Seq.singleton (Delete index))
   mkr <- Seq.lookup index <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
   pure result

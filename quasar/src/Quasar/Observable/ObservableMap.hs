@@ -79,7 +79,7 @@ instance Functor (ObservableMap k) where
 
 
 -- | A list of operations that is applied atomically to an `ObservableMap`.
-type ObservableMapDelta k v = [ObservableMapOperation k v]
+type ObservableMapDelta k v = Seq (ObservableMapOperation k v)
 
 -- | A single operation that can be applied to an `ObservableMap`. Part of a
 -- `ObservableMapDelta`.
@@ -174,7 +174,7 @@ insert :: forall k v m. (Ord k, MonadSTMc NoRetry '[] m) => k -> v -> Observable
 insert key value ObservableMapVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
   state <- stateTVar content (dup . Map.insert key value)
   callCallbacks observers state
-  callCallbacks deltaObservers [Insert key value]
+  callCallbacks deltaObservers (Seq.singleton (Insert key value))
   mkr <- Map.lookup key <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry (Just value)
 
@@ -182,7 +182,7 @@ delete :: forall k v m. (Ord k, MonadSTMc NoRetry '[] m) => k -> ObservableMapVa
 delete key ObservableMapVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
   state <- stateTVar content (dup . Map.delete key)
   callCallbacks observers state
-  callCallbacks deltaObservers [Delete key]
+  callCallbacks deltaObservers (Seq.singleton (Delete key))
   mkr <- Map.lookup key <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
 
@@ -192,7 +192,7 @@ lookupDelete key ObservableMapVar{content, observers, deltaObservers, keyObserve
     let (result, newMap) = Map.lookupDelete key orig
     in ((result, newMap), newMap)
   callCallbacks observers newMap
-  callCallbacks deltaObservers [Delete key]
+  callCallbacks deltaObservers (Seq.singleton (Delete key))
   mkr <- Map.lookup key <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
   pure result
@@ -253,16 +253,18 @@ instance IsObservableList v (ObservableMapValues v) where
         listOperations <- forM operations \case
           Insert key value -> do
             m <- stateTVar var (dup . Map.insert key value)
-            pure [ObservableList.Insert (Map.findIndex key m) value]
+            pure (Seq.singleton (ObservableList.Insert (Map.findIndex key m) value))
           Delete key -> do
             m <- readTVar var
             let i = Map.lookupIndex key m
             writeTVar var (Map.delete key m)
-            pure (ObservableList.Delete <$> maybeToList i)
+            pure case i of
+              Nothing -> mempty
+              Just i' -> Seq.singleton (ObservableList.Delete i')
           DeleteAll -> do
             writeTVar var mempty
-            pure [ObservableList.DeleteAll]
-        callback (mconcat listOperations)
+            pure (Seq.singleton ObservableList.DeleteAll)
+        callback (join listOperations)
       pure ((disposer, Seq.fromList (Map.elems initial)), initial)
 
 values :: (Ord k, IsObservableMap k v a) => a -> ObservableList v
