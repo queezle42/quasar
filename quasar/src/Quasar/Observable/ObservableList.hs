@@ -64,13 +64,11 @@ instance Functor ObservableList where
 -- Applying `Delete` to a non-existing index is a no-op.
 data ObservableListOperation v
   = Insert Int v
-  | Append v
   | Delete Int
   | DeleteAll
 
 instance Functor ObservableListOperation where
   fmap f (Insert k v) = Insert k (f v)
-  fmap f (Append v) = Append (f v)
   fmap _ (Delete k) = Delete k
   fmap _ DeleteAll = DeleteAll
 
