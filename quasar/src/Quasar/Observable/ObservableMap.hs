@@ -1,7 +1,7 @@
 module Quasar.Observable.ObservableMap (
   ToObservableMap(..),
   observeKey,
-  attachDeltaObserver,
+  attachMapDeltaObserver,
   IsObservableMap(..),
   ObservableMap,
   mapWithKey,
@@ -52,13 +52,13 @@ class ToObservableMap k v a => IsObservableMap k v a where
   -- | Register a listener to observe changes to the whole map. The callback
   -- will be invoked with the current state of the map immediately after
   -- registering and after that will be invoked for every change to the map.
-  attachDeltaObserver# :: a -> (ObservableMapDelta k v -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Map k v)
+  attachMapDeltaObserver# :: a -> (ObservableMapDelta k v -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Map k v)
 
 observeKey :: (ToObservableMap k v a, Ord k) => k -> a -> Observable (Maybe v)
 observeKey key x = observeKey# key (toObservableMap x)
 
-attachDeltaObserver :: (ToObservableMap k v a, MonadSTMc NoRetry '[] m) => a -> (ObservableMapDelta k v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Map k v)
-attachDeltaObserver x callback = liftSTMc $ attachDeltaObserver# (toObservableMap x) callback
+attachMapDeltaObserver :: (ToObservableMap k v a, MonadSTMc NoRetry '[] m) => a -> (ObservableMapDelta k v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Map k v)
+attachMapDeltaObserver x callback = liftSTMc $ attachMapDeltaObserver# (toObservableMap x) callback
 
 data ObservableMap k v = forall a. IsObservableMap k v a => ObservableMap a
 
@@ -72,7 +72,7 @@ instance IsObservableMap k v (ObservableMap k v) where
   observeIsEmpty# (ObservableMap x) = observeIsEmpty# x
   observeLength# (ObservableMap x) = observeLength# x
   observeKey# key (ObservableMap x) = observeKey# key x
-  attachDeltaObserver# (ObservableMap x) = attachDeltaObserver# x
+  attachMapDeltaObserver# (ObservableMap x) = attachMapDeltaObserver# x
 
 instance Functor (ObservableMap k) where
   fmap f x = toObservableMap (MappedObservableMap (const f) x)
@@ -111,8 +111,8 @@ instance IsObservableMap k v (MappedObservableMap k v) where
   observeIsEmpty# (MappedObservableMap _ observable) = observeIsEmpty# observable
   observeLength# (MappedObservableMap _ observable) = observeLength# observable
   observeKey# key (MappedObservableMap fn observable) = fn key <<$>> observeKey# key observable
-  attachDeltaObserver# (MappedObservableMap fn observable) callback =
-    Map.mapWithKey fn <<$>> attachDeltaObserver# observable \update -> callback (mapDeltaWithKey update)
+  attachMapDeltaObserver# (MappedObservableMap fn observable) callback =
+    Map.mapWithKey fn <<$>> attachMapDeltaObserver# observable \update -> callback (mapDeltaWithKey update)
     where
       mapDeltaWithKey (ObservableMapDelta ops) = ObservableMapDelta (mapUpdateWithKey <$> ops)
       mapUpdateWithKey (Insert k v) = Insert k (fn k v)
@@ -145,7 +145,7 @@ instance IsObservableMap k v (ObservableMapVar k v) where
   observeIsEmpty# x = deduplicateObservable (Map.null <$> toObservable x)
   observeLength# x = deduplicateObservable (length <$> toObservable x)
   observeKey# key x = toObservable (ObservableMapVarKeyObservable key x)
-  attachDeltaObserver# ObservableMapVar{content, deltaObservers} callback = do
+  attachMapDeltaObserver# ObservableMapVar{content, deltaObservers} callback = do
     disposer <- registerCallback deltaObservers callback
     initial <- readTVar content
     pure (disposer, initial)
@@ -225,8 +225,8 @@ instance IsObservableMap k v (FilteredObservableMap k v) where
   observeKey# key (FilteredObservableMap predicate upstream) =
     find (predicate key) <$> observeKey# key upstream
 
-  attachDeltaObserver# (FilteredObservableMap predicate upstream) callback =
-    attachDeltaObserver# upstream \delta -> callback (filterDelta delta)
+  attachMapDeltaObserver# (FilteredObservableMap predicate upstream) callback =
+    attachMapDeltaObserver# upstream \delta -> callback (filterDelta delta)
     where
       filterDelta :: ObservableMapDelta k v -> ObservableMapDelta k v
       filterDelta (ObservableMapDelta ops) = ObservableMapDelta (filterOperation <$> ops)
@@ -256,11 +256,11 @@ instance IsObservableList v (ObservableMapValues v) where
 
   observeLength# (ObservableMapValues x) = observeLength# x
 
-  attachDeltaObserver# (ObservableMapValues x) callback = do
+  attachListDeltaObserver# (ObservableMapValues x) callback = do
     mfixExtra \initialFixed -> do
       var <- newTVar initialFixed
-      (disposer, initial) <- attachDeltaObserver# x \(ObservableMapDelta ops) -> do
-        listOperations <- forM ops \case
+      (disposer, initial) <- attachMapDeltaObserver# x \(ObservableMapDelta mapOps) -> do
+        listOperations <- forM mapOps \case
           Insert key value -> do
             m <- stateTVar var (dup . Map.insert key value)
             pure (Seq.singleton (ObservableList.Insert (Map.findIndex key m) value))
