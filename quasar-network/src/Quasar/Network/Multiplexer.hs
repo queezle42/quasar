@@ -24,8 +24,6 @@ module Quasar.Network.Multiplexer (
   rawChannelSetSimpleHandler,
   rawChannelSetBinaryHandler,
   rawChannelSetSimpleBinaryHandler,
-  ImmediateChannelHandler,
-  rawChannelSetImmediateHandler,
 
   -- ** Exception handling
   MultiplexerException(..),
@@ -290,8 +288,6 @@ data ChannelException = ChannelNotConnected
 
 type InternalHandler = ReceivedMessageResources -> IO InternalMessageHandler
 newtype InternalMessageHandler = InternalMessageHandler (Maybe BS.ByteString -> IO InternalMessageHandler)
-
-type ImmediateChannelHandler = ReceivedMessageResources -> QuasarIO (BS.ByteString -> IO (), QuasarIO ())
 
 data ChannelMessage a = ChannelMessage {
   payload :: a,
@@ -768,9 +764,6 @@ rawChannelSetSimpleHandler channel fn = rawChannelSetHandler channel \case
   ReceivedMessageResources{createdChannels=[]} -> fn
   _ -> const $ throwM $ ChannelProtocolException channel.channelId "Unexpectedly received new channels"
 
-
-rawChannelSetImmediateHandler :: MonadIO m => RawChannel -> ImmediateChannelHandler -> m ()
-rawChannelSetImmediateHandler channel handler = undefined -- liftIO $ atomically $ writeTVar channel.channelHandler (Just handler)
 
 -- | Sets a simple channel message handler, which cannot handle sub-resurces (e.g. new channels). When a resource is received the channel will be terminated with a channel protocol error.
 rawChannelSetBinaryHandler :: forall a m. (Binary a, MonadIO m) => RawChannel -> (ReceivedMessageResources -> a -> QuasarIO ()) -> m ()
