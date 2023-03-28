@@ -166,7 +166,7 @@ data RawChannel = RawChannel {
   multiplexer :: Multiplexer,
   quasar :: Quasar,
   channelId :: ChannelId,
-  channelHandler :: TVar (Maybe InternalHandler),
+  channelHandler :: TVar (Maybe ChannelHandler),
   parent :: Maybe RawChannel,
   children :: TVar (HM.HashMap ChannelId RawChannel),
   nextSendMessageId :: TVar MessageId,
@@ -292,8 +292,11 @@ data ChannelException = ChannelNotConnected
 
 -- ** Channel message interface
 
-newtype ChannelHandler = ChannelHandler InternalHandler
-type InternalHandler = ReceivedMessageResources -> IO InternalMessageHandler
+newtype ChannelHandler = ChannelHandler (ReceivedMessageResources -> IO InternalMessageHandler)
+
+runChannelHandler :: ChannelHandler -> ReceivedMessageResources -> IO InternalMessageHandler
+runChannelHandler (ChannelHandler fn) = fn
+
 newtype InternalMessageHandler = InternalMessageHandler (Maybe BS.ByteString -> IO InternalMessageHandler)
 
 data ChannelMessage a = ChannelMessage {
@@ -606,7 +609,7 @@ receiveThread multiplexer readFn = do
       modifyStateM \chunk -> liftIO do
         messageId <- atomically $ stateTVar channel.nextReceiveMessageId (\x -> (x, x + 1))
         -- NOTE blocks until a channel handler is set
-        handler <- atomically $ maybe retry pure =<< readTVar channel.channelHandler
+        handler <- atomically $ maybe retry (pure . runChannelHandler) =<< readTVar channel.channelHandler
 
         messageHandler <- handler ReceivedMessageResources {
           channel,
@@ -750,7 +753,7 @@ channelReportException = undefined
 
 
 rawChannelSetHandler :: MonadIO m => RawChannel -> ChannelHandler -> m ()
-rawChannelSetHandler channel (ChannelHandler handler) = liftIO $ atomically $ writeTVar channel.channelHandler (Just handler)
+rawChannelSetHandler channel handler = liftIO $ atomically $ writeTVar channel.channelHandler (Just handler)
 
 
 simpleByteStringHandler :: (BSL.ByteString -> QuasarIO ()) -> ChannelHandler
