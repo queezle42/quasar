@@ -20,7 +20,7 @@ module Quasar.Network.Multiplexer (
   -- ** Receiving messages
   ReceivedMessageResources(..),
   MessageLength,
-  ChannelHandler,
+  RawChannelHandler,
   rawChannelSetHandler,
   binaryHandler,
   simpleBinaryHandler,
@@ -166,7 +166,7 @@ data RawChannel = RawChannel {
   multiplexer :: Multiplexer,
   quasar :: Quasar,
   channelId :: ChannelId,
-  channelHandler :: TVar (Maybe ChannelHandler),
+  channelHandler :: TVar (Maybe RawChannelHandler),
   parent :: Maybe RawChannel,
   children :: TVar (HM.HashMap ChannelId RawChannel),
   nextSendMessageId :: TVar MessageId,
@@ -292,10 +292,10 @@ data ChannelException = ChannelNotConnected
 
 -- ** Channel message interface
 
-newtype ChannelHandler = ChannelHandler (ReceivedMessageResources -> IO InternalMessageHandler)
+newtype RawChannelHandler = RawChannelHandler (ReceivedMessageResources -> IO InternalMessageHandler)
 
-runChannelHandler :: ChannelHandler -> ReceivedMessageResources -> IO InternalMessageHandler
-runChannelHandler (ChannelHandler fn) = fn
+runChannelHandler :: RawChannelHandler -> ReceivedMessageResources -> IO InternalMessageHandler
+runChannelHandler (RawChannelHandler fn) = fn
 
 newtype InternalMessageHandler = InternalMessageHandler (Maybe BS.ByteString -> IO InternalMessageHandler)
 
@@ -752,18 +752,18 @@ channelReportException :: MonadIO m => RawChannel -> SomeException -> m b
 channelReportException = undefined
 
 
-rawChannelSetHandler :: MonadIO m => RawChannel -> ChannelHandler -> m ()
+rawChannelSetHandler :: MonadIO m => RawChannel -> RawChannelHandler -> m ()
 rawChannelSetHandler channel handler = liftIO $ atomically $ writeTVar channel.channelHandler (Just handler)
 
 
-simpleByteStringHandler :: (BSL.ByteString -> QuasarIO ()) -> ChannelHandler
+simpleByteStringHandler :: (BSL.ByteString -> QuasarIO ()) -> RawChannelHandler
 simpleByteStringHandler fn = byteStringHandler \case
   ReceivedMessageResources{createdChannels=[]} -> fn
   resources -> const $ throwM $ ChannelProtocolException resources.channel.channelId "Unexpectedly received new channels"
 
 
-byteStringHandler :: (ReceivedMessageResources -> BSL.ByteString -> QuasarIO ()) -> ChannelHandler
-byteStringHandler fn = ChannelHandler handler
+byteStringHandler :: (ReceivedMessageResources -> BSL.ByteString -> QuasarIO ()) -> RawChannelHandler
+byteStringHandler fn = RawChannelHandler handler
   where
     handler :: ReceivedMessageResources -> IO InternalMessageHandler
     handler resources = pure $ InternalMessageHandler $ go []
@@ -786,8 +786,8 @@ rawChannelSetSimpleByteStringHandler :: MonadIO m => RawChannel -> (BSL.ByteStri
 rawChannelSetSimpleByteStringHandler channel fn = rawChannelSetHandler channel (simpleByteStringHandler fn)
 
 
-binaryHandler :: forall a. Binary a => (ReceivedMessageResources -> a -> QuasarIO ()) -> ChannelHandler
-binaryHandler fn = ChannelHandler handler
+binaryHandler :: forall a. Binary a => (ReceivedMessageResources -> a -> QuasarIO ()) -> RawChannelHandler
+binaryHandler fn = RawChannelHandler handler
   where
     handler :: ReceivedMessageResources -> IO InternalMessageHandler
     handler resources = pure $ InternalMessageHandler $ stepDecoder $ runGetIncremental Binary.get
@@ -811,7 +811,7 @@ binaryHandler fn = ChannelHandler handler
 rawChannelSetBinaryHandler :: forall a m. (Binary a, MonadIO m) => RawChannel -> (ReceivedMessageResources -> a -> QuasarIO ()) -> m ()
 rawChannelSetBinaryHandler channel fn = rawChannelSetHandler channel (binaryHandler fn)
 
-simpleBinaryHandler :: forall a. Binary a => (a -> QuasarIO ()) -> ChannelHandler
+simpleBinaryHandler :: forall a. Binary a => (a -> QuasarIO ()) -> RawChannelHandler
 simpleBinaryHandler fn = binaryHandler \case
   ReceivedMessageResources{createdChannels=[]} -> fn
   resources -> const $ throwM $ ChannelProtocolException resources.channel.channelId "Unexpectedly received new channels"
