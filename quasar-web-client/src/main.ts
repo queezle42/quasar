@@ -18,6 +18,10 @@ type Command =
   | { fn: "pong" }
   | { fn: "root", html: string }
   | { fn: "splice", id: number, html: string }
+  | { fn: "listInsert", id: number, i: number, html: string }
+  | { fn: "listAppend", id: number, html: string }
+  | { fn: "listRemove", id: number, i: number }
+  | { fn: "listRemoveAll", id: number }
 
 class QuasarWebClient {
   private websocketAddress: string;
@@ -83,14 +87,14 @@ class QuasarWebClient {
       this.setState(this.state === State.Initial ? State.Connecting : State.Reconnecting);
       this.websocket = new WebSocket(this.websocketAddress, ["quasar-web-v1"]);
 
-      this.websocket.onopen = (_event) => {
+      this.websocket.onopen = _event => {
         this.setState(State.Connected);
         this.reconnectDelay = 0;
         this.pingInterval = setInterval(() => this.sendPing(), pingIntervalMs);
         console.log("[quasar] connected");
       };
 
-      this.websocket.onclose = (_event) => {
+      this.websocket.onclose = _event => {
         if (this.pingInterval) {
           clearInterval(this.pingInterval);
           this.pingInterval = null;
@@ -129,15 +133,18 @@ class QuasarWebClient {
           throw "[quasar] received invalid WebSocket 'data' message type";
         }
 
+        let parsed = null;
         try {
-          const parsed = JSON.parse(event.data);
+          parsed = JSON.parse(event.data);
           console.log("[quasar] received:", parsed);
-          this.receiveMessage(parsed);
         }
         catch {
           console.error("[quasar] received invalid message:", event.data);
           this.close("protocol error");
+          return;
         }
+
+        this.receiveMessage(parsed);
       };
 
     } else {
@@ -181,9 +188,55 @@ class QuasarWebClient {
           }
           break;
         case "splice":
-          const splice = document.getElementById("quasar-splice-" + command.id);
-          if (splice) {
-            splice.innerHTML = command.html;
+          const id = "quasar-splice-" + command.id;
+          const splice = document.getElementById(id);
+          if (!splice) {
+              throw `[quasar-web] Splice with id ${id} does not exist`;
+          }
+          splice.innerHTML = command.html;
+          break;
+        case "listInsert":
+          {
+            const id = "quasar-list-" + command.id;
+            const list = document.getElementById(id);
+            if (!list) {
+              throw `[quasar-web] List with id ${id} does not exist`;
+            }
+            const target = list.children[command.i];
+            if (!target) {
+              throw `[quasar-web] List index ${command.i} out of bounds`;
+            }
+            target.insertAdjacentHTML("beforebegin", command.html);
+          }
+          break;
+        case "listAppend":
+          {
+            const id = "quasar-list-" + command.id;
+            const list = document.getElementById(id);
+            if (!list) {
+              throw `[quasar-web] List with id ${id} does not exist`;
+            }
+            list.insertAdjacentHTML("beforeend", command.html);
+          }
+          break;
+        case "listRemove":
+          {
+            const id = "quasar-list-" + command.id;
+            const list = document.getElementById(id);
+            if (!list) {
+              throw `[quasar-web] List with id ${id} does not exist`;
+            }
+            list.children[command.i]?.remove();
+          }
+          break;
+        case "listRemoveAll":
+          {
+            const id = "quasar-list-" + command.id;
+            const list = document.getElementById(id);
+            if (!list) {
+              throw `[quasar-web] List with id ${id} does not exist`;
+            }
+            list.replaceChildren();
           }
           break;
         default:

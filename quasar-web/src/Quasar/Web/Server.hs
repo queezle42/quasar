@@ -7,7 +7,10 @@ import Data.Aeson
 import Data.Binary.Builder qualified as Binary
 import Data.ByteString.Char8 qualified as BS
 import Data.ByteString.Lazy qualified as BSL
+import Data.Foldable (fold)
 import Data.List qualified as List
+import Data.Sequence (Seq(..))
+import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Lazy.Builder (Builder)
@@ -18,8 +21,8 @@ import Network.Wai.Handler.WebSockets qualified as Wai
 import Network.WebSockets qualified as WebSockets
 import Paths_quasar_web (getDataFileName)
 import Quasar
+import Quasar.Observable.ObservableList as ObservableList
 import Quasar.Prelude
-import Quasar.Timer
 import Quasar.Utils.Fix (mfixExtra)
 import Quasar.Web
 import System.IO (stderr)
@@ -73,39 +76,83 @@ sendThread webUi connection = do
         pure updates
       liftIO $ WebSockets.sendTextData connection (encode updates)
 
-      -- Waiting should be irrelevant since updates are merged
-      -- This is a test to see if that works (TODO remove)
-      --await =<< newDelay 4_000_000
+
+handleWebsocketException :: WebSockets.Connection -> IO () -> IO ()
+handleWebsocketException connection =
+  handle \case
+    WebSockets.CloseRequest _ _ -> pure ()
+    WebSockets.ConnectionClosed -> pure ()
+    WebSockets.ParseException _ -> WebSockets.sendCloseCode connection 1001 ("WebSocket communication error." :: BS.ByteString)
+    WebSockets.UnicodeException _ -> WebSockets.sendCloseCode connection 1001 ("Client sent invalid UTF-8." :: BS.ByteString)
+
+messageHandler :: WebSockets.Connection -> BSL.ByteString -> IO ()
+messageHandler connection "ping" = WebSockets.sendTextData connection (encode [Pong])
+messageHandler _ msg = BSL.hPutStr stderr $ "Unhandled message: " <> msg <> "\n"
 
 
 type SpliceId = Word64
-data Client = Client (TVar SpliceId)
-data ClientSplice = ClientSplice Client SpliceId (TVar (Either WebUi (GenerateClientUpdate, TSimpleDisposer)))
+newtype Client = Client (TVar SpliceId)
 
 type GenerateClientUpdate = STMc NoRetry '[] [Command]
 data Command
   = UpdateRoot RawHtml
   | UpdateSplice SpliceId RawHtml
+  | ListInsert SpliceId Int RawHtml
+  | ListAppend SpliceId RawHtml
+  | ListRemove SpliceId Int
+  | ListRemoveAll SpliceId
   | Pong
   deriving Show
 
 instance ToJSON Command where
-    toJSON (UpdateRoot html) =
-        object ["fn" .= ("root" :: Text), "html" .= Builder.toLazyText html]
-    toJSON (UpdateSplice spliceId html) =
-        object ["fn" .= ("splice" :: Text), "id" .= spliceId, "html" .= Builder.toLazyText html]
-    toJSON (Pong) =
-        object ["fn" .= ("pong" :: Text)]
+  toJSON (UpdateRoot html) =
+    object ["fn" .= ("root" :: Text), "html" .= Builder.toLazyText html]
+  toJSON (UpdateSplice spliceId html) =
+    object ["fn" .= ("splice" :: Text), "id" .= spliceId, "html" .= Builder.toLazyText html]
+  toJSON (ListInsert listId index html) =
+    object ["fn" .= ("listInsert" :: Text), "id" .= listId, "i" .= index, "html" .= Builder.toLazyText html]
+  toJSON (ListAppend listId html) =
+    object ["fn" .= ("listAppend" :: Text), "id" .= listId, "html" .= Builder.toLazyText html]
+  toJSON (ListRemove listId index) =
+    object ["fn" .= ("listRemove" :: Text), "id" .= listId, "i" .= index]
+  toJSON (ListRemoveAll listId) =
+    object ["fn" .= ("listRemoveAll" :: Text), "id" .= listId]
+  toJSON Pong =
+    object ["fn" .= ("pong" :: Text)]
 
-    toEncoding (UpdateRoot html) =
-        pairs ("fn" .= ("root" :: Text) <> "html" .= Builder.toLazyText html)
-    toEncoding (UpdateSplice spliceId html) =
-        pairs ("fn" .= ("splice" :: Text) <> "id" .= spliceId <> "html" .= Builder.toLazyText html)
-    toEncoding (Pong) =
-        pairs ("fn" .= ("pong" :: Text))
+  toEncoding (UpdateRoot html) =
+    pairs ("fn" .= ("root" :: Text) <> "html" .= Builder.toLazyText html)
+  toEncoding (UpdateSplice spliceId html) =
+    pairs ("fn" .= ("splice" :: Text) <> "id" .= spliceId <> "html" .= Builder.toLazyText html)
+  toEncoding (ListInsert listId index html) =
+    pairs ("fn" .= ("listInsert" :: Text) <> "id" .= listId <> "i" .= index <> "html" .= Builder.toLazyText html)
+  toEncoding (ListAppend listId html) =
+    pairs ("fn" .= ("listAppend" :: Text) <> "id" .= listId <> "html" .= Builder.toLazyText html)
+  toEncoding (ListRemove listId index) =
+    pairs ("fn" .= ("listRemove" :: Text) <> "id" .= listId <> "i" .= index)
+  toEncoding (ListRemoveAll listId) =
+    pairs ("fn" .= ("listRemoveAll" :: Text) <> "id" .= listId)
+  toEncoding Pong =
+    pairs ("fn" .= ("pong" :: Text))
 
 nextSpliceId :: Client -> STMc NoRetry '[] SpliceId
 nextSpliceId (Client nextSpliceIdVar) = stateTVar nextSpliceIdVar \i -> (i, i + 1)
+
+
+foobar :: Client -> WebUi -> STMc NoRetry '[] (RawHtml, GenerateClientUpdate, TSimpleDisposer)
+foobar client (WebUiObservable observable) =
+  mfixExtra \splice -> do
+    (disposer, initial) <- attachObserver observable (replaceSpliceContent splice)
+    (html, splice', spliceDisposer) <- newClientSplice client initial
+    let result = (html, generateSpliceUpdate splice', disposer <> spliceDisposer)
+    pure (result, splice')
+foobar _ (WebUiHtmlElement (HtmlElement html)) = pure (Builder.fromLazyText html, pure [], mempty)
+foobar client (WebUiConcat webUis) = mconcat <$> mapM (foobar client) webUis
+foobar client (WebUiObservableList observableList) = setupClientList client observableList
+foobar _ _ = error "not implemented"
+
+
+data ClientSplice = ClientSplice Client SpliceId (TVar (Either WebUi (GenerateClientUpdate, TSimpleDisposer)))
 
 newClientSplice :: Client -> WebUi -> STMc NoRetry '[] (RawHtml, ClientSplice, TSimpleDisposer)
 newClientSplice client content = do
@@ -138,28 +185,61 @@ generateSpliceUpdate (ClientSplice client spliceId stateVar) = do
       pure [UpdateSplice spliceId html]
     Right (generateContentUpdatesFn, _) -> generateContentUpdatesFn
 
-foobar :: Client -> WebUi -> STMc NoRetry '[] (RawHtml, GenerateClientUpdate, TSimpleDisposer)
-foobar client (WebUiObservable observable) =
-  mfixExtra \splice -> do
-    (disposer, initial) <- attachObserver observable (replaceSpliceContent splice)
-    (html, splice', spliceDisposer) <- newClientSplice client initial
-    let result = (html, generateSpliceUpdate splice', disposer <> spliceDisposer)
-    pure (result, splice')
-foobar _ (WebUiHtmlElement (HtmlElement html)) = pure (Builder.fromLazyText html, pure [], mempty)
-foobar client (WebUiConcat webUis) = mconcat <$> mapM (foobar client) webUis
-foobar _ _ = error "not implemented"
 
-handleWebsocketException :: WebSockets.Connection -> IO () -> IO ()
-handleWebsocketException connection =
-  handle \case
-    WebSockets.CloseRequest _ _ -> pure ()
-    WebSockets.ConnectionClosed -> pure ()
-    WebSockets.ParseException _ -> WebSockets.sendCloseCode connection 1001 ("WebSocket communication error." :: BS.ByteString)
-    WebSockets.UnicodeException _ -> WebSockets.sendCloseCode connection 1001 ("Client sent invalid UTF-8." :: BS.ByteString)
+setupClientList :: Client -> ObservableList WebUi -> STMc NoRetry '[] (RawHtml, GenerateClientUpdate, TSimpleDisposer)
+setupClientList client observableList = do
+  listId <- nextSpliceId client
+  deltas <- newTVar (mempty :: ObservableListDelta WebUi)
+  items <- newTVar (mempty :: Seq (GenerateClientUpdate, TSimpleDisposer))
 
-messageHandler :: WebSockets.Connection -> BSL.ByteString -> IO ()
-messageHandler connection "ping" = WebSockets.sendTextData connection (encode [Pong])
-messageHandler _ msg = BSL.hPutStr stderr $ "Unhandled message: " <> msg <> "\n"
+  (listDisposer, initial) <- attachListDeltaObserver observableList \delta -> modifyTVar deltas (<> delta)
+  initialResults <- mapM (foobar client) initial
+  let (itemHtmls, initialItems) = Seq.unzipWith (\(html, update, disposer) -> (html, (update, disposer))) initialResults
+  writeTVar items initialItems
+
+  itemsDisposer <- newUnmanagedTSimpleDisposer do
+    swapTVar items mempty >>= mapM_ (disposeTSimpleDisposer . snd)
+
+  let
+    initialHtml = mconcat [
+      "<quasar-list id=quasar-list-",
+      Builder.fromString (show listId),
+      ">",
+      fold itemHtmls,
+      "</quasar-list>"]
+    update = generateClientListUpdate client listId deltas items
+    disposer = listDisposer <> itemsDisposer
+
+  pure (initialHtml, update, disposer)
+
+generateClientListUpdate :: Client -> SpliceId -> TVar (ObservableListDelta WebUi) -> TVar (Seq (GenerateClientUpdate, TSimpleDisposer)) -> STMc NoRetry '[] [Command]
+generateClientListUpdate client listId deltas items = do
+  (ObservableListDelta listOperations) <- swapTVar deltas mempty
+  deltaCommands <- forM listOperations \case
+    Insert index webUi -> do
+      itemsLength <- length <$> readTVar items
+      let clampedIndex = min (max index 0) itemsLength
+      (html, update, disposer) <- foobar client webUi
+      modifyTVar items (Seq.insertAt index (update, disposer))
+      pure if clampedIndex == itemsLength
+        then ListAppend listId html
+        else ListInsert listId index html
+    Delete index -> do
+      removed <- stateTVar items \orig ->
+        let
+          removed = Seq.lookup index orig
+          newList = Seq.deleteAt index orig
+        in (removed, newList)
+      forM_ removed \(_, disposer) -> disposeTSimpleDisposer disposer
+      pure (ListRemove listId index)
+    DeleteAll -> do
+      mapM_ (disposeTSimpleDisposer . snd) =<< swapTVar items mempty
+      pure (ListRemoveAll listId)
+
+  itemCommands <- mapM fst =<< readTVar items
+
+  pure (toList deltaCommands <> fold itemCommands)
+
 
 waiApp :: Wai.Application
 waiApp req respond =
@@ -168,7 +248,7 @@ waiApp req respond =
     else respond methodNotAllowed
   where
     servePath :: [Text] -> IO Wai.Response
-    servePath [] = pure index
+    servePath [] = pure waiIndex
     servePath ("quasar-web-client":path) = do
       let dataFile = intercalate "/" ("quasar-web-client":(Text.unpack <$> path))
       filePath <- getDataFileName dataFile
@@ -176,8 +256,8 @@ waiApp req respond =
       pure $ Wai.responseFile HTTP.status200 headers filePath Nothing
     servePath _ = pure notFound
 
-index :: Wai.Response
-index = (Wai.responseBuilder HTTP.status200 [htmlContentType] indexHtml)
+waiIndex :: Wai.Response
+waiIndex = Wai.responseBuilder HTTP.status200 [htmlContentType] indexHtml
   where
     indexHtml :: Binary.Builder
     indexHtml = mconcat [
