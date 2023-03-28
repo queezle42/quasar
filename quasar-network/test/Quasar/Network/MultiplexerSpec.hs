@@ -52,7 +52,7 @@ spec = parallel $ describe "runMultiplexer" $ do
   it "can send and receive simple messages" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
-      rawChannelSetSimpleHandler channel ((liftIO . putMVar recvMVar) :: BSL.ByteString -> QuasarIO ())
+      rawChannelSetSimpleByteStringHandler channel ((liftIO . putMVar recvMVar) :: BSL.ByteString -> QuasarIO ())
       sendSimpleRawChannelMessage channel "foobar"
       liftIO $ takeMVar recvMVar `shouldReturn` "foobar"
       sendSimpleRawChannelMessage channel "test"
@@ -63,7 +63,7 @@ spec = parallel $ describe "runMultiplexer" $ do
   it "can create sub-channels" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
-      rawChannelSetHandler channel ((\_ -> liftIO . putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> QuasarIO ())
+      rawChannelSetByteStringHandler channel ((\_ -> liftIO . putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> QuasarIO ())
       SentMessageResources{createdChannels=[_]} <- sendRawChannelMessage channel (channelMessage "create a channel"){createChannels=1}
       liftIO $ takeMVar recvMVar `shouldReturn` "create a channel"
       SentMessageResources{createdChannels=[_, _, _]} <- sendRawChannelMessage channel (channelMessage "create more channels"){createChannels=3}
@@ -76,14 +76,14 @@ spec = parallel $ describe "runMultiplexer" $ do
     c2RecvMVar <- newEmptyMVar
     c3RecvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
-      rawChannelSetSimpleHandler channel $ (liftIO . putMVar recvMVar :: BSL.ByteString -> QuasarIO ())
+      rawChannelSetSimpleByteStringHandler channel $ (liftIO . putMVar recvMVar :: BSL.ByteString -> QuasarIO ())
       sendSimpleRawChannelMessage channel "foobar"
       liftIO $ takeMVar recvMVar `shouldReturn` "foobar"
 
       SentMessageResources{createdChannels=[c1, c2]} <- sendRawChannelMessage channel (channelMessage "create channels"){createChannels=2}
       liftIO $ takeMVar recvMVar `shouldReturn` "create channels"
-      rawChannelSetSimpleHandler c1 (liftIO . putMVar c1RecvMVar :: BSL.ByteString -> QuasarIO ())
-      rawChannelSetSimpleHandler c2 (liftIO . putMVar c2RecvMVar :: BSL.ByteString -> QuasarIO ())
+      rawChannelSetSimpleByteStringHandler c1 (liftIO . putMVar c1RecvMVar :: BSL.ByteString -> QuasarIO ())
+      rawChannelSetSimpleByteStringHandler c2 (liftIO . putMVar c2RecvMVar :: BSL.ByteString -> QuasarIO ())
 
       sendSimpleRawChannelMessage c1 "test"
       liftIO $ takeMVar c1RecvMVar `shouldReturn` "test"
@@ -96,7 +96,7 @@ spec = parallel $ describe "runMultiplexer" $ do
 
       SentMessageResources{createdChannels=[c3]} <- sendRawChannelMessage channel (channelMessage "create another channel"){createChannels=1}
       liftIO $ takeMVar recvMVar `shouldReturn` "create another channel"
-      rawChannelSetSimpleHandler c3 (liftIO . putMVar c3RecvMVar :: BSL.ByteString -> QuasarIO ())
+      rawChannelSetSimpleByteStringHandler c3 (liftIO . putMVar c3RecvMVar :: BSL.ByteString -> QuasarIO ())
 
       sendSimpleRawChannelMessage c3 "test5"
       liftIO $ takeMVar c3RecvMVar `shouldReturn` "test5"
@@ -133,7 +133,7 @@ withEchoServer fn = rm $ bracket setup closePair (\(channel, _) -> fn channel)
     closePair :: (RawChannel, RawChannel) -> QuasarIO ()
     closePair (x, y) = dispose x >> dispose y
     configureEchoHandler :: MonadIO m => RawChannel -> m ()
-    configureEchoHandler channel = rawChannelSetHandler channel (echoHandler channel)
+    configureEchoHandler channel = rawChannelSetByteStringHandler channel (echoHandler channel)
     echoHandler :: RawChannel -> ReceivedMessageResources -> BSL.ByteString -> QuasarIO ()
     echoHandler channel resources msg = do
       mapM_ configureEchoHandler resources.createdChannels

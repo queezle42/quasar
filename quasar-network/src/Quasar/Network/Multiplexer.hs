@@ -20,8 +20,14 @@ module Quasar.Network.Multiplexer (
   -- ** Receiving messages
   ReceivedMessageResources(..),
   MessageLength,
+  ChannelHandler,
   rawChannelSetHandler,
-  rawChannelSetSimpleHandler,
+  binaryHandler,
+  simpleBinaryHandler,
+  byteStringHandler,
+  simpleByteStringHandler,
+  rawChannelSetByteStringHandler,
+  rawChannelSetSimpleByteStringHandler,
   rawChannelSetBinaryHandler,
   rawChannelSetSimpleBinaryHandler,
 
@@ -286,6 +292,7 @@ data ChannelException = ChannelNotConnected
 
 -- ** Channel message interface
 
+newtype ChannelHandler = ChannelHandler InternalHandler
 type InternalHandler = ReceivedMessageResources -> IO InternalMessageHandler
 newtype InternalMessageHandler = InternalMessageHandler (Maybe BS.ByteString -> IO InternalMessageHandler)
 
@@ -312,6 +319,7 @@ data SentMessageResources = SentMessageResources {
   --unixFds :: Undefined
 }
 data ReceivedMessageResources = ReceivedMessageResources {
+  channel :: RawChannel,
   messageLength :: MessageLength,
   messageId :: MessageId,
   createdChannels :: [RawChannel]
@@ -601,6 +609,7 @@ receiveThread multiplexer readFn = do
         handler <- atomically $ maybe retry pure =<< readTVar channel.channelHandler
 
         messageHandler <- handler ReceivedMessageResources {
+          channel,
           createdChannels,
           messageId,
           messageLength
@@ -740,14 +749,21 @@ channelReportException :: MonadIO m => RawChannel -> SomeException -> m b
 channelReportException = undefined
 
 
-rawChannelSetInternalHandler :: MonadIO m => RawChannel -> InternalHandler -> m ()
-rawChannelSetInternalHandler channel handler = liftIO $ atomically $ writeTVar channel.channelHandler (Just handler)
+rawChannelSetHandler :: MonadIO m => RawChannel -> ChannelHandler -> m ()
+rawChannelSetHandler channel (ChannelHandler handler) = liftIO $ atomically $ writeTVar channel.channelHandler (Just handler)
 
-rawChannelSetHandler :: MonadIO m => RawChannel -> (ReceivedMessageResources -> BSL.ByteString -> QuasarIO ()) -> m ()
-rawChannelSetHandler channel fn = rawChannelSetInternalHandler channel bytestringHandler
+
+simpleByteStringHandler :: (BSL.ByteString -> QuasarIO ()) -> ChannelHandler
+simpleByteStringHandler fn = byteStringHandler \case
+  ReceivedMessageResources{createdChannels=[]} -> fn
+  resources -> const $ throwM $ ChannelProtocolException resources.channel.channelId "Unexpectedly received new channels"
+
+
+byteStringHandler :: (ReceivedMessageResources -> BSL.ByteString -> QuasarIO ()) -> ChannelHandler
+byteStringHandler fn = ChannelHandler handler
   where
-    bytestringHandler :: ReceivedMessageResources -> IO InternalMessageHandler
-    bytestringHandler resources = pure $ InternalMessageHandler $ go []
+    handler :: ReceivedMessageResources -> IO InternalMessageHandler
+    handler resources = pure $ InternalMessageHandler $ go []
       where
         go :: [BS.ByteString] -> Maybe BS.ByteString -> IO InternalMessageHandler
         go accum (Just chunk) = pure $ InternalMessageHandler $ go (chunk:accum)
@@ -756,28 +772,29 @@ rawChannelSetHandler channel fn = rawChannelSetInternalHandler channel bytestrin
             -- When the channel/multiplexer is currently closing, running the
             -- callback might no longer be possible.
             handle (\FailedToAttachResource -> pure ()) do
-              execForeignQuasarIO channel.quasar do
+              execForeignQuasarIO resources.channel.quasar do
                 fn resources $ BSL.fromChunks (reverse accum)
 
-rawChannelSetSimpleHandler :: MonadIO m => RawChannel -> (BSL.ByteString -> QuasarIO ()) -> m ()
-rawChannelSetSimpleHandler channel fn = rawChannelSetHandler channel \case
-  ReceivedMessageResources{createdChannels=[]} -> fn
-  _ -> const $ throwM $ ChannelProtocolException channel.channelId "Unexpectedly received new channels"
+rawChannelSetByteStringHandler :: MonadIO m => RawChannel -> (ReceivedMessageResources -> BSL.ByteString -> QuasarIO ()) -> m ()
+rawChannelSetByteStringHandler channel fn = rawChannelSetHandler channel (byteStringHandler fn)
 
 
--- | Sets a simple channel message handler, which cannot handle sub-resurces (e.g. new channels). When a resource is received the channel will be terminated with a channel protocol error.
-rawChannelSetBinaryHandler :: forall a m. (Binary a, MonadIO m) => RawChannel -> (ReceivedMessageResources -> a -> QuasarIO ()) -> m ()
-rawChannelSetBinaryHandler channel fn = rawChannelSetInternalHandler channel binaryHandler
+rawChannelSetSimpleByteStringHandler :: MonadIO m => RawChannel -> (BSL.ByteString -> QuasarIO ()) -> m ()
+rawChannelSetSimpleByteStringHandler channel fn = rawChannelSetHandler channel (simpleByteStringHandler fn)
+
+
+binaryHandler :: forall a. Binary a => (ReceivedMessageResources -> a -> QuasarIO ()) -> ChannelHandler
+binaryHandler fn = ChannelHandler handler
   where
-    binaryHandler :: ReceivedMessageResources -> IO InternalMessageHandler
-    binaryHandler resources = pure $ InternalMessageHandler $ stepDecoder $ runGetIncremental Binary.get
+    handler :: ReceivedMessageResources -> IO InternalMessageHandler
+    handler resources = pure $ InternalMessageHandler $ stepDecoder $ runGetIncremental Binary.get
       where
         stepDecoder :: Decoder a -> Maybe BS.ByteString -> IO InternalMessageHandler
-        stepDecoder (Fail _ _ errMsg) _ = throwM $ ChannelProtocolException channel.channelId $ "Failed to parse channel message: " <> errMsg
+        stepDecoder (Fail _ _ errMsg) _ = throwM $ ChannelProtocolException resources.channel.channelId $ "Failed to parse channel message: " <> errMsg
         stepDecoder (Partial feedFn) chunk@(Just _) = pure $ InternalMessageHandler $ stepDecoder (feedFn chunk)
-        stepDecoder (Partial _feedFn) Nothing = throwM $ ChannelProtocolException channel.channelId $ "End of message has been reached but decoder expects more data"
+        stepDecoder (Partial _feedFn) Nothing = throwM $ ChannelProtocolException resources.channel.channelId $ "End of message has been reached but decoder expects more data"
         stepDecoder (Done "" _ result) Nothing = InternalMessageHandler (const unreachableCodePathM) <$ runHandler result
-        stepDecoder (Done _ bytesRead _msg) _ = throwM $ ChannelProtocolException channel.channelId $
+        stepDecoder (Done _ bytesRead _msg) _ = throwM $ ChannelProtocolException resources.channel.channelId $
           mconcat ["Decoder failed to consume complete message (", show (fromIntegral resources.messageLength - bytesRead), " bytes left)"]
 
         runHandler :: a -> IO ()
@@ -785,13 +802,20 @@ rawChannelSetBinaryHandler channel fn = rawChannelSetInternalHandler channel bin
           -- When the channel/multiplexer is currently closing, running the
           -- callback might no longer be possible.
           handle (\FailedToAttachResource -> pure ()) do
-            execForeignQuasarIO channel.quasar (fn resources result)
+            execForeignQuasarIO resources.channel.quasar (fn resources result)
+
+
+rawChannelSetBinaryHandler :: forall a m. (Binary a, MonadIO m) => RawChannel -> (ReceivedMessageResources -> a -> QuasarIO ()) -> m ()
+rawChannelSetBinaryHandler channel fn = rawChannelSetHandler channel (binaryHandler fn)
+
+simpleBinaryHandler :: forall a. Binary a => (a -> QuasarIO ()) -> ChannelHandler
+simpleBinaryHandler fn = binaryHandler \case
+  ReceivedMessageResources{createdChannels=[]} -> fn
+  resources -> const $ throwM $ ChannelProtocolException resources.channel.channelId "Unexpectedly received new channels"
 
 -- | Sets a simple channel message handler, which cannot handle sub-resurces (e.g. new channels). When a resource is received the channel will be terminated with a channel protocol error.
 rawChannelSetSimpleBinaryHandler :: forall a m. (Binary a, MonadIO m) => RawChannel -> (a -> QuasarIO ()) -> m ()
-rawChannelSetSimpleBinaryHandler channel fn = rawChannelSetBinaryHandler channel \case
-  ReceivedMessageResources{createdChannels=[]} -> fn
-  _ -> const $ throwM $ ChannelProtocolException channel.channelId "Unexpectedly received new channels"
+rawChannelSetSimpleBinaryHandler channel fn = rawChannelSetHandler channel (simpleBinaryHandler fn)
 
 
 
