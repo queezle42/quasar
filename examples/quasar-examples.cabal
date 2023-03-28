@@ -56,6 +56,7 @@ executable quasar-web-example
     base,
     quasar,
     quasar-web,
+    random,
     text,
     warp,
   main-is: Web.hs
