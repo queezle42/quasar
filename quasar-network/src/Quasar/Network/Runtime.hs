@@ -70,6 +70,7 @@ class (IsChannel (ReverseChannelType a), a ~ ReverseChannelType (ReverseChannelT
   type ChannelHandlerType a
   castChannel :: RawChannel -> a
   rawChannelHandler :: ChannelHandlerType a -> RawChannelHandler
+  setChannelHandler :: a -> ChannelHandlerType a -> STMc NoRetry '[] ()
 
 instance IsChannel RawChannel where
   type ReverseChannelType RawChannel = RawChannel
@@ -78,6 +79,7 @@ instance IsChannel RawChannel where
   castChannel = id
   rawChannelHandler :: RawChannelHandler -> RawChannelHandler
   rawChannelHandler = id
+  setChannelHandler = rawChannelSetHandler
 
 
 instance (Binary up, Binary down) => IsChannel (Channel up down) where
@@ -87,6 +89,8 @@ instance (Binary up, Binary down) => IsChannel (Channel up down) where
   castChannel = Channel
   rawChannelHandler :: ChannelHandler down -> RawChannelHandler
   rawChannelHandler = binaryHandler
+  setChannelHandler :: Channel up down -> ChannelHandler down -> STMc NoRetry '[] ()
+  setChannelHandler (Channel channel) handler = rawChannelSetHandler channel (rawChannelHandler @(Channel up down) handler)
 
 type ReverseChannelHandlerType a = ChannelHandlerType (ReverseChannelType a)
 
@@ -360,14 +364,12 @@ newChannelPair = liftQuasarIO do
 --   withLocalClient server runClientHook
 
 withStandaloneProxy :: forall a m b. (NetworkReference a, MonadQuasar m, MonadIO m, MonadMask m) => a -> (a -> m b) -> m b
-withStandaloneProxy = undefined
---withStandaloneProxy obj fn = do
---  bracket newChannelPair release \(x, y) -> do
---    (handler, proxy) <- atomicallyC $ receiveReference y
---    -- TODO need to set handler on underlying raw channel
---    atomically $ rawChannelSetHandler y (rawChannelHandler @(ReverseChannelType (NetworkReferenceChannel a)) handler)
---    liftQuasarIO $ sendReference obj x
---    fn proxy
---  where
---    release :: (NetworkReferenceChannel a, ReverseChannelType (NetworkReferenceChannel a)) -> m ()
---    release (x, y) = dispose (getDisposer x <> getDisposer y)
+withStandaloneProxy obj fn = do
+  bracket newChannelPair release \(x, y) -> do
+    (handler, proxy) <- atomicallyC $ receiveReference y
+    atomicallyC $ setChannelHandler y handler
+    liftQuasarIO $ sendReference obj x
+    fn proxy
+  where
+    release :: (NetworkReferenceChannel a, ReverseChannelType (NetworkReferenceChannel a)) -> m ()
+    release (x, y) = dispose (getDisposer x <> getDisposer y)
