@@ -13,6 +13,7 @@ import Quasar.Network.Exception
 import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
 import Quasar.Prelude
+import Quasar.Exceptions
 
 
 data ObservableState a
@@ -162,8 +163,13 @@ receiveObservableReference channel = do
       channel,
       observableVar
     }
-  -- TODO async has to run in STMc and attach the resource to the channel
-  undefined -- async_ $ manageObservableProxy proxy
+
+  ac <- unmanagedAsyncSTM channel.quasar.exceptionSink do
+    runQuasarIO channel.quasar (manageObservableProxy proxy)
+
+  handleSTMc @NoRetry @'[FailedToAttachResource] @FailedToAttachResource (throwToExceptionSink channel.quasar.exceptionSink) do
+    attachResource channel.quasar.resourceManager ac
+
   pure (callback proxy, toObservable proxy)
   where
     callback :: ObservableProxy a -> ReceivedMessageResources -> ObservableResponse a -> QuasarIO ()
@@ -185,10 +191,11 @@ instance NetworkObject a => ToObservable (ObservableState a) (ObservableProxy a)
 
 manageObservableProxy :: ObservableProxy a -> QuasarIO ()
 manageObservableProxy proxy =
-  task `catchAll` \ex ->
-    atomically (writeObservableVar proxy.observableVar (ObservableNotAvailable (toException (ObservableProxyException ex))))
+  -- TODO verify no other exceptions can be thrown by `channelSend`
+  task `catch` \(ex :: Ex '[MultiplexerException, ChannelException]) ->
+    atomically (writeObservableVar proxy.observableVar (ObservableNotAvailable (toException (ObservableProxyException (toException ex)))))
   where
-    task = bracket (pure proxy.channel) dispose \channel -> do
+    task = bracket (pure proxy.channel) disposeEventuallyIO_ \channel -> do
       forever do
         atomically $ check =<< observableVarHasObservers proxy.observableVar
 
