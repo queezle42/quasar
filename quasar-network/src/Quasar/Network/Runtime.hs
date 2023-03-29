@@ -165,11 +165,11 @@ unsafeQueueChannelMessage :: (Binary up, MonadSTMc NoRetry '[AbortSend, ChannelE
 unsafeQueueChannelMessage (Channel channel) value =
   unsafeQueueRawChannelMessageSimple channel (encode value)
 
-channelSetHandler :: (Binary down, MonadIO m) => Channel up down -> ChannelHandler down -> m ()
-channelSetHandler (Channel s) = rawChannelSetBinaryHandler s
+channelSetHandler :: (Binary down, MonadSTMc NoRetry '[] m) => Channel up down -> ChannelHandler down -> m ()
+channelSetHandler (Channel s) fn = rawChannelSetHandler s (binaryHandler fn)
 
-channelSetSimpleHandler :: (Binary down, MonadIO m) => Channel up down -> (down -> QuasarIO ()) -> m ()
-channelSetSimpleHandler (Channel channel) handler = liftIO $ rawChannelSetSimpleBinaryHandler channel handler
+channelSetSimpleHandler :: (Binary down, MonadSTMc NoRetry '[] m) => Channel up down -> (down -> QuasarIO ()) -> m ()
+channelSetSimpleHandler (Channel channel) fn = rawChannelSetHandler channel (simpleBinaryHandler fn)
 
 channelQuasar :: Channel up down -> Quasar
 channelQuasar (Channel s) = s.quasar
@@ -364,7 +364,8 @@ withStandaloneProxy = undefined
 --withStandaloneProxy obj fn = do
 --  bracket newChannelPair release \(x, y) -> do
 --    (handler, proxy) <- atomicallyC $ receiveReference y
---    channelSetHandlerFoobar y handler
+--    -- TODO need to set handler on underlying raw channel
+--    atomically $ rawChannelSetHandler y (rawChannelHandler @(ReverseChannelType (NetworkReferenceChannel a)) handler)
 --    liftQuasarIO $ sendReference obj x
 --    fn proxy
 --  where

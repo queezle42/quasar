@@ -91,7 +91,7 @@ sendObservableReference observable channel = do
     outbox <- newTVarIO Nothing
     activeDisposer <- newTVarIO trivialDisposer
     let ref = ObservableReference { isLoading, outbox, activeDisposer }
-    channelSetSimpleHandler channel requestCallback
+    atomically $ channelSetSimpleHandler channel requestCallback
     async_ $ sendThread ref
     quasarAtomically $ observeQ_ observable (callback ref)
   where
@@ -171,7 +171,7 @@ receiveObservableReference channel = do
       content <- case receiveObject cdata of
         Left content -> pure content
         Right createContent ->
-          atomicallyC $ (receiveChannel resources) createContent
+          atomicallyC $ initializeReceivedChannel resources createContent
       atomically $ writeObservableVar proxy.observableVar (ObservableValue content)
     callback proxy _resources PackedObservableLoading = do
       atomically $ writeObservableVar proxy.observableVar ObservableLoading

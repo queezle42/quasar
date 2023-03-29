@@ -122,7 +122,7 @@ withEchoServer fn = rm $ bracket setup closePair (\(channel, _) -> fn channel)
       mainChannel <- newMultiplexer MultiplexerSideA mainSocket
       echoChannel <- newMultiplexer MultiplexerSideB echoSocket
       (handler, ()) <- configureEchoHandler echoChannel
-      rawChannelSetHandler echoChannel handler
+      atomically $ rawChannelSetHandler echoChannel handler
       pure (mainChannel, echoChannel)
     closePair :: (RawChannel, RawChannel) -> QuasarIO ()
     closePair (x, y) = dispose x >> dispose y
@@ -132,5 +132,5 @@ withEchoServer fn = rm $ bracket setup closePair (\(channel, _) -> fn channel)
     echoHandler channel resources msg = do
       atomicallyC do
         replicateM_ resources.numCreatedChannels do
-          receiveChannel resources configureEchoHandler
+          initializeReceivedChannel resources configureEchoHandler
       sendSimpleRawChannelMessage channel msg

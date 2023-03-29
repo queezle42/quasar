@@ -28,8 +28,6 @@ module Quasar.Network.Multiplexer (
   simpleByteStringHandler,
   rawChannelSetByteStringHandler,
   rawChannelSetSimpleByteStringHandler,
-  rawChannelSetBinaryHandler,
-  rawChannelSetSimpleBinaryHandler,
 
   -- ** Exception handling
   MultiplexerException(..),
@@ -331,7 +329,7 @@ data ReceivedMessageResources = ReceivedMessageResources {
   messageId :: MessageId,
   numCreatedChannels :: Int,
   -- Must be called exactly once for every sent channel.
-  receiveChannel :: forall a. (RawChannel -> STMc NoRetry '[] (RawChannelHandler, a)) -> STMc NoRetry '[] a
+  initializeReceivedChannel :: forall a. (RawChannel -> STMc NoRetry '[] (RawChannelHandler, a)) -> STMc NoRetry '[] a
   --unixFds :: Undefined
 }
 
@@ -617,16 +615,21 @@ receiveThread multiplexer readFn = do
         -- NOTE blocks until a channel handler is set
         handler <- atomically $ maybe retry (pure . runChannelHandler) =<< readTVar channel.channelHandler
 
-        let receiveChannel = undefined
+        channels <- newTVarIO createdChannels
 
         messageHandler <- handler ReceivedMessageResources {
           channel,
           messageId,
           messageLength,
           numCreatedChannels = length createdChannels,
-          receiveChannel
+          initializeReceivedChannel = receiveChannelCallback channels
         }
-        runHandler messageHandler messageLength chunk
+        leftovers <- runHandler messageHandler messageLength chunk
+
+        unlessM (null <$> readTVarIO channels) do
+          throwM $ ChannelProtocolException channel.channelId "Received channels were not initialized"
+
+        pure leftovers
       where
         runHandler :: InternalMessageHandler -> MessageLength -> BS.ByteString -> IO BS.ByteString
         -- Signal to handler, that receiving is completed
@@ -644,6 +647,16 @@ receiveThread multiplexer readFn = do
             runHandler next 0 leftovers
           where
             chunkLength = fromIntegral $ BS.length chunk
+
+        receiveChannelCallback :: TVar [RawChannel] -> (RawChannel -> STMc NoRetry '[] (RawChannelHandler, a)) -> STMc NoRetry '[] a
+        receiveChannelCallback channels fn = do
+          readTVar channels >>= \case
+            [] -> undefined -- TODO error: Trying to initialize a channel but none is available
+            c:cs -> do
+              writeTVar channels cs
+              (handler, result) <- fn c
+              rawChannelSetHandler c handler
+              pure result
 
     dropBytes :: MessageLength -> StateT BS.ByteString IO ()
     dropBytes = modifyStateM . go
@@ -762,8 +775,8 @@ channelReportException :: MonadIO m => RawChannel -> SomeException -> m b
 channelReportException = undefined
 
 
-rawChannelSetHandler :: MonadIO m => RawChannel -> RawChannelHandler -> m ()
-rawChannelSetHandler channel handler = liftIO $ atomically $ writeTVar channel.channelHandler (Just handler)
+rawChannelSetHandler :: MonadSTMc NoRetry '[] m => RawChannel -> RawChannelHandler -> m ()
+rawChannelSetHandler channel handler = writeTVar channel.channelHandler (Just handler)
 
 
 simpleByteStringHandler :: (BSL.ByteString -> QuasarIO ()) -> RawChannelHandler
@@ -788,12 +801,12 @@ byteStringHandler fn = RawChannelHandler handler
               execForeignQuasarIO resources.channel.quasar do
                 fn resources $ BSL.fromChunks (reverse accum)
 
-rawChannelSetByteStringHandler :: MonadIO m => RawChannel -> (ReceivedMessageResources -> BSL.ByteString -> QuasarIO ()) -> m ()
-rawChannelSetByteStringHandler channel fn = rawChannelSetHandler channel (byteStringHandler fn)
 
+rawChannelSetByteStringHandler :: MonadIO m => RawChannel -> (ReceivedMessageResources -> BSL.ByteString -> QuasarIO ()) -> m ()
+rawChannelSetByteStringHandler channel fn = atomically $ rawChannelSetHandler channel (byteStringHandler fn)
 
 rawChannelSetSimpleByteStringHandler :: MonadIO m => RawChannel -> (BSL.ByteString -> QuasarIO ()) -> m ()
-rawChannelSetSimpleByteStringHandler channel fn = rawChannelSetHandler channel (simpleByteStringHandler fn)
+rawChannelSetSimpleByteStringHandler channel fn = atomically $ rawChannelSetHandler channel (simpleByteStringHandler fn)
 
 
 binaryHandler :: forall a. Binary a => (ReceivedMessageResources -> a -> QuasarIO ()) -> RawChannelHandler
@@ -818,17 +831,12 @@ binaryHandler fn = RawChannelHandler handler
             execForeignQuasarIO resources.channel.quasar (fn resources result)
 
 
-rawChannelSetBinaryHandler :: forall a m. (Binary a, MonadIO m) => RawChannel -> (ReceivedMessageResources -> a -> QuasarIO ()) -> m ()
-rawChannelSetBinaryHandler channel fn = rawChannelSetHandler channel (binaryHandler fn)
-
+-- | Creates a simple channel message handler, which cannot handle sub-resurces (e.g. new channels). When a resource is received the channel will be terminated with a channel protocol error.
 simpleBinaryHandler :: forall a. Binary a => (a -> QuasarIO ()) -> RawChannelHandler
 simpleBinaryHandler fn = binaryHandler \case
   ReceivedMessageResources{numCreatedChannels = 0} -> fn
   resources -> const $ throwM $ ChannelProtocolException resources.channel.channelId "Unexpectedly received new channels"
 
--- | Sets a simple channel message handler, which cannot handle sub-resurces (e.g. new channels). When a resource is received the channel will be terminated with a channel protocol error.
-rawChannelSetSimpleBinaryHandler :: forall a m. (Binary a, MonadIO m) => RawChannel -> (a -> QuasarIO ()) -> m ()
-rawChannelSetSimpleBinaryHandler channel fn = rawChannelSetHandler channel (simpleBinaryHandler fn)
 
 
 
