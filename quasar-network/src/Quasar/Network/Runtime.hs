@@ -90,7 +90,7 @@ instance (Binary up, Binary down) => IsChannel (Channel up down) where
   rawChannelHandler :: ChannelHandler down -> RawChannelHandler
   rawChannelHandler = binaryHandler
   setChannelHandler :: Channel up down -> ChannelHandler down -> STMc NoRetry '[] ()
-  setChannelHandler (Channel channel) handler = rawChannelSetHandler channel (rawChannelHandler @(Channel up down) handler)
+  setChannelHandler (Channel channel) handler = rawChannelSetHandler channel (binaryHandler handler)
 
 type ReverseChannelHandlerType a = ChannelHandlerType (ReverseChannelType a)
 
