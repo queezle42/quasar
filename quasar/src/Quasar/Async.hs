@@ -4,6 +4,10 @@ module Quasar.Async (
   async_,
   asyncWithUnmask,
   asyncWithUnmask_,
+  asyncSTM,
+  asyncSTM_,
+  asyncWithUnmaskSTM,
+  asyncWithUnmaskSTM_,
 
   -- ** Async exceptions
   CancelAsync(..),
@@ -15,21 +19,26 @@ module Quasar.Async (
   -- ** IO variant
   async',
   asyncWithUnmask',
+  asyncSTM',
+  asyncWithUnmaskSTM',
 
   -- ** Unmanaged variants
   unmanagedAsync,
   unmanagedAsyncWithUnmask,
+  unmanagedAsyncSTM,
+  unmanagedAsyncWithUnmaskSTM,
 ) where
 
 import Control.Concurrent (ThreadId)
+import Control.Exception (throwTo)
 import Control.Monad.Catch
 import Quasar.Async.Fork
-import Quasar.Future
 import Quasar.Exceptions
+import Quasar.Future
 import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Resources
-import Control.Exception (throwTo)
+import Quasar.Utils.Fix
 
 
 data Async a = Async (FutureEx '[AsyncException, AsyncDisposed] a) Disposer
@@ -90,26 +99,11 @@ spawnAsync registerDisposerFn exSink fn = mask_ do
 
   registerDisposerFn disposer `onException` tryFulfillPromiseIO_ threadIdPromise Nothing
 
-  threadId <- liftIO $ forkWithUnmask (runAndPut exSink key resultVar disposer) exSink
+  threadId <- liftIO $ forkWithUnmask (runAndPut exSink key resultVar disposer fn) exSink
   fulfillPromiseIO threadIdPromise (Just threadId)
 
   pure (Async (toFutureEx resultVar) disposer)
   where
-    runAndPut :: ExceptionSink -> Unique -> PromiseEx '[AsyncException, AsyncDisposed] a -> Disposer -> (forall b. IO b -> IO b) -> IO ()
-    runAndPut exChan key resultVar disposer unmask = do
-      -- Called in masked state by `forkWithUnmask`
-      result <- try $ fn unmask
-      case result of
-        Left (fromException -> Just (CancelAsync ((== key) -> True))) ->
-          fulfillPromiseIO resultVar (Left (toEx AsyncDisposed))
-        Left ex -> do
-          atomically (throwToExceptionSink exChan ex)
-            `finally` do
-              fulfillPromiseIO resultVar (Left (toEx (AsyncException ex)))
-              disposeEventuallyIO_ disposer
-        Right retVal -> do
-          fulfillPromiseIO resultVar (Right retVal)
-          disposeEventuallyIO_ disposer
     disposeFn :: Unique -> PromiseEx '[AsyncException, AsyncDisposed] a -> Future (Maybe ThreadId) -> IO ()
     disposeFn key resultVar threadIdFuture = do
       -- ThreadId future will be filled after the thread is forked
@@ -117,3 +111,74 @@ spawnAsync registerDisposerFn exSink fn = mask_ do
         throwTo threadId (CancelAsync key)
         -- Disposing is considered complete once a result (i.e. success or failure) has been stored
         void $ await resultVar
+
+runAndPut :: ExceptionSink -> Unique -> PromiseEx '[AsyncException, AsyncDisposed] a -> Disposer -> ((forall b. IO b -> IO b) -> IO a) -> (forall b. IO b -> IO b) -> IO ()
+runAndPut exChan key resultVar disposer fn unmask = do
+  -- Called in masked state by `forkWithUnmask`
+  result <- try $ fn unmask
+  case result of
+    Left (fromException -> Just (CancelAsync ((== key) -> True))) ->
+      fulfillPromiseIO resultVar (Left (toEx AsyncDisposed))
+    Left ex -> do
+      atomically (throwToExceptionSink exChan ex)
+        `finally` do
+          fulfillPromiseIO resultVar (Left (toEx (AsyncException ex)))
+          disposeEventuallyIO_ disposer
+    Right retVal -> do
+      fulfillPromiseIO resultVar (Right retVal)
+      disposeEventuallyIO_ disposer
+
+
+
+
+asyncSTM :: (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m, HasCallStack) => QuasarIO a -> m (Async a)
+asyncSTM fn = asyncWithUnmaskSTM (\unmask -> unmask fn)
+
+asyncSTM_ :: (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m, HasCallStack) => QuasarIO () -> m ()
+asyncSTM_ fn = void $ asyncWithUnmaskSTM (\unmask -> unmask fn)
+
+asyncWithUnmaskSTM :: (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m, HasCallStack) => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO a) -> m (Async a)
+asyncWithUnmaskSTM fn = do
+  quasar <- askQuasar
+  asyncWithUnmaskSTM' (\unmask -> runQuasarIO quasar (fn (liftUnmask unmask)))
+  where
+    liftUnmask :: (forall b. IO b -> IO b) -> QuasarIO a -> QuasarIO a
+    liftUnmask unmask innerAction = do
+      quasar <- askQuasar
+      liftIO $ unmask $ runQuasarIO quasar innerAction
+
+asyncWithUnmaskSTM_ :: (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m, HasCallStack) => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO ()) -> m ()
+asyncWithUnmaskSTM_ fn = void $ asyncWithUnmaskSTM fn
+
+asyncSTM' :: (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m, HasCallStack) => IO a -> m (Async a)
+asyncSTM' fn = asyncWithUnmaskSTM' (\unmask -> unmask fn)
+
+asyncWithUnmaskSTM' :: forall a m. (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m, HasCallStack) => ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
+asyncWithUnmaskSTM' fn = liftQuasarSTMc @NoRetry @'[FailedToAttachResource] do
+  exSink <- askExceptionSink
+  x <- unmanagedAsyncWithUnmaskSTM exSink fn
+  collectResource x
+  pure x
+
+unmanagedAsyncSTM :: forall a m. MonadSTMc NoRetry '[] m => ExceptionSink -> IO a -> m (Async a)
+unmanagedAsyncSTM exSink fn = unmanagedAsyncWithUnmaskSTM exSink (\unmask -> unmask fn)
+
+unmanagedAsyncWithUnmaskSTM :: forall a m. MonadSTMc NoRetry '[] m => ExceptionSink -> ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
+unmanagedAsyncWithUnmaskSTM exSink fn = liftSTMc @NoRetry @'[] do
+  key <- newUniqueSTM
+  resultVar <- newPromise
+
+  mfixExtra \threadIdFixed -> do
+    disposer <- newUnmanagedIODisposer (disposeFn key resultVar threadIdFixed) exSink
+
+    threadId <- forkWithUnmaskSTM (runAndPut exSink key resultVar disposer fn) exSink
+
+    pure (Async (toFutureEx resultVar) disposer, threadId)
+  where
+    disposeFn :: Unique -> PromiseEx '[AsyncException, AsyncDisposed] a -> Future ThreadId -> IO ()
+    disposeFn key resultVar threadIdFuture = do
+      -- ThreadId future will be filled after the thread is forked
+      threadId <- await threadIdFuture
+      throwTo threadId (CancelAsync key)
+      -- Disposing is considered complete once a result (i.e. success or failure) has been stored
+      void $ await resultVar
