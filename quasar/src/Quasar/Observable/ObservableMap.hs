@@ -235,7 +235,7 @@ instance IsObservableMap k v (FilteredObservableMap k v) where
     find (predicate key) <$> observeKey# key upstream
 
   attachMapDeltaObserver# (FilteredObservableMap predicate upstream) callback =
-    attachMapDeltaObserver# upstream \delta -> callback (filterDelta delta)
+    Map.filterWithKey predicate <<$>> attachMapDeltaObserver# upstream \delta -> callback (filterDelta delta)
     where
       filterDelta :: ObservableMapDelta k v -> ObservableMapDelta k v
       filterDelta (ObservableMapDelta ops) = ObservableMapDelta (filterOperation <$> ops)
