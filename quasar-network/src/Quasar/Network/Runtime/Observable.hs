@@ -171,7 +171,7 @@ receiveObservableReference channel = do
       content <- case receiveObject cdata of
         Left content -> pure content
         Right createContent ->
-          atomicallyC $ initializeReceivedChannel resources createContent
+          atomicallyC $ acceptReceivedChannel resources createContent
       atomically $ writeObservableVar proxy.observableVar (ObservableValue content)
     callback proxy _resources PackedObservableLoading = do
       atomically $ writeObservableVar proxy.observableVar ObservableLoading

@@ -329,7 +329,7 @@ data ReceivedMessageResources = ReceivedMessageResources {
   messageId :: MessageId,
   numCreatedChannels :: Int,
   -- Must be called exactly once for every sent channel.
-  initializeReceivedChannel :: forall a. (RawChannel -> STMc NoRetry '[] (RawChannelHandler, a)) -> STMc NoRetry '[] a
+  acceptReceivedChannel :: forall a. (RawChannel -> STMc NoRetry '[] (RawChannelHandler, a)) -> STMc NoRetry '[] a
   --unixFds :: Undefined
 }
 
@@ -622,7 +622,7 @@ receiveThread multiplexer readFn = do
           messageId,
           messageLength,
           numCreatedChannels = length createdChannels,
-          initializeReceivedChannel = receiveChannelCallback channels
+          acceptReceivedChannel = receiveChannelCallback channels
         }
         leftovers <- runHandler messageHandler messageLength chunk
 

@@ -132,5 +132,5 @@ withEchoServer fn = rm $ bracket setup closePair (\(channel, _) -> fn channel)
     echoHandler channel resources msg = do
       atomicallyC do
         replicateM_ resources.numCreatedChannels do
-          initializeReceivedChannel resources configureEchoHandler
+          acceptReceivedChannel resources configureEchoHandler
       sendSimpleRawChannelMessage channel msg
