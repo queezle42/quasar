@@ -55,7 +55,7 @@ callCallbacks :: CallbackRegistry a -> a -> STMc NoRetry '[] ()
 callCallbacks (CallbackRegistry var _) value = liftSTMc do
   mapM_ ($ value) . HM.elems =<< readTVar var
 
-callbackRegistryHasCallbacks :: CallbackRegistry a -> STM Bool
+callbackRegistryHasCallbacks :: MonadSTMc NoRetry '[] m => CallbackRegistry a -> m Bool
 callbackRegistryHasCallbacks (CallbackRegistry var _) =
   not . HM.null <$> readTVar var
 

@@ -421,8 +421,9 @@ stateObservableVar var f = liftSTMc do
   writeObservableVar var newValue
   pure result
 
-observableVarHasObservers :: ObservableVar a -> STM Bool
-observableVarHasObservers (ObservableVar _ registry) = callbackRegistryHasCallbacks registry
+observableVarHasObservers :: MonadSTMc NoRetry '[] m => ObservableVar a -> m Bool
+observableVarHasObservers (ObservableVar _ registry) =
+  callbackRegistryHasCallbacks registry
 
 
 -- * ObservableEx
