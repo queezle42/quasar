@@ -53,7 +53,8 @@ socketConnection description sock = Connection {
 
 data EOF = EOF
   deriving stock Show
-  deriving anyclass Exception
+
+instance Exception EOF
 
 receiveCheckEOF :: Connection -> IO BS.ByteString
 receiveCheckEOF connection = do
@@ -136,7 +137,8 @@ openSocket addr = Socket.socket (Socket.addrFamily addr) (Socket.addrSocketType 
 
 data ConnectionPairException = ConnectionPairClosed
   deriving stock Show
-  deriving anyclass Exception
+
+instance Exception ConnectionPairException
 
 newConnectionPair :: MonadIO m => m (Connection, Connection)
 newConnectionPair = liftIO do

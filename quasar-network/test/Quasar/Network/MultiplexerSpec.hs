@@ -5,22 +5,15 @@ import Control.Concurrent.MVar
 import Control.Monad.Catch
 import Data.ByteString.Lazy qualified as BSL
 import Quasar
-import Quasar.Network.Multiplexer
 import Quasar.Network.Connection
+import Quasar.Network.Multiplexer
 import Quasar.Prelude
 import Test.Hspec.Core.Spec
 import Test.Hspec.Expectations.Lifted
-import Test.Hspec qualified as Hspec
-import Quasar.Network.Multiplexer (sendRawChannelMessage, sendSimpleRawChannelMessage)
 
 -- Type is pinned to IO, otherwise hspec spec type cannot be inferred
 rm :: QuasarIO a -> IO a
 rm = runQuasarCombineExceptions
-
-shouldThrow :: (HasCallStack, Exception e, MonadQuasar m, MonadIO m) => QuasarIO a -> Hspec.Selector e -> m ()
-shouldThrow action expected = do
-  quasar <- askQuasar
-  liftIO $ runQuasarIO quasar action `Hspec.shouldThrow` expected
 
 spec :: Spec
 spec = parallel $ describe "runMultiplexer" $ do
@@ -128,13 +121,16 @@ withEchoServer fn = rm $ bracket setup closePair (\(channel, _) -> fn channel)
       (mainSocket, echoSocket) <- newConnectionPair
       mainChannel <- newMultiplexer MultiplexerSideA mainSocket
       echoChannel <- newMultiplexer MultiplexerSideB echoSocket
-      configureEchoHandler echoChannel
+      (handler, ()) <- configureEchoHandler echoChannel
+      rawChannelSetHandler echoChannel handler
       pure (mainChannel, echoChannel)
     closePair :: (RawChannel, RawChannel) -> QuasarIO ()
     closePair (x, y) = dispose x >> dispose y
-    configureEchoHandler :: MonadIO m => RawChannel -> m ()
-    configureEchoHandler channel = rawChannelSetByteStringHandler channel (echoHandler channel)
+    configureEchoHandler :: Monad m => RawChannel -> m (RawChannelHandler, ())
+    configureEchoHandler channel = pure (byteStringHandler (echoHandler channel), ())
     echoHandler :: RawChannel -> ReceivedMessageResources -> BSL.ByteString -> QuasarIO ()
     echoHandler channel resources msg = do
-      mapM_ configureEchoHandler resources.createdChannels
+      atomicallyC do
+        replicateM_ resources.numCreatedChannels do
+          receiveChannel resources configureEchoHandler
       sendSimpleRawChannelMessage channel msg

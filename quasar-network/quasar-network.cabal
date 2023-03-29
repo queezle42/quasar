@@ -19,20 +19,22 @@ source-repository head
 common shared-properties
   default-extensions:
     AllowAmbiguousTypes
+    BangPatterns
     BlockArguments
     DataKinds
     DefaultSignatures
-    DeriveAnyClass
     DerivingStrategies
     DuplicateRecordFields
     FunctionalDependencies
     GADTs
     LambdaCase
-    LexicalNegation
+    MagicHash
     NoImplicitPrelude
+    NoStarIsType
     OverloadedRecordDot
     OverloadedStrings
-    TemplateHaskell
+    QuasiQuotes
+    TemplateHaskellQuotes
     TypeFamilies
     ViewPatterns
   default-language: GHC2021
@@ -45,6 +47,7 @@ common shared-properties
     -Wno-unsafe
     -Werror=incomplete-patterns
     -Werror=missing-fields
+    -Werror=missing-home-modules
     -Werror=missing-methods
 
 library
@@ -57,9 +60,6 @@ library
     Quasar.Network.Runtime
     Quasar.Network.Runtime.Observable
     Quasar.Network.SocketLocation
-    Quasar.Network.TH
-    Quasar.Network.TH.Generator
-    Quasar.Network.TH.Spec
   other-modules:
   build-depends:
     base >=4.7 && <5,
@@ -99,8 +99,6 @@ test-suite quasar-network-test
     stm,
   main-is: Spec.hs
   other-modules:
-    Quasar.NetworkSpec
-    Quasar.Network.InterfaceSpec
     Quasar.Network.MultiplexerSpec
     Quasar.Network.ObservableSpec
   hs-source-dirs:

@@ -8,11 +8,14 @@ import Quasar.Prelude
 
 data PackedException = PackedAnyException AnyException
   deriving stock (Show, Eq, Generic)
-  deriving anyclass Binary
+
+instance Binary PackedException
 
 data AnyException = AnyException String
   deriving stock (Show, Eq, Generic)
-  deriving anyclass (Binary, Exception)
+
+instance Binary AnyException
+instance Exception AnyException
 
 
 packException :: Exception e => e -> PackedException

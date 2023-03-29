@@ -47,14 +47,16 @@ joinNetworkObservable x = x >>= \case
 
 data ObservableProxyException = ObservableProxyException SomeException
   deriving stock (Show)
-  deriving anyclass (Exception)
+
+instance Exception ObservableProxyException
 
 
 data ObservableRequest
   = Start
   | Stop
   deriving stock (Eq, Show, Generic)
-  deriving anyclass Binary
+
+instance Binary ObservableRequest
 
 data ObservableResponse a
   = PackedObservableValue (CData a)
@@ -144,7 +146,7 @@ sendObservableReference observable channel = do
 
 data ObservableProxy a =
   ObservableProxy {
-    channelFuture :: Future (Channel ObservableRequest (ObservableResponse a)),
+    channel :: Channel ObservableRequest (ObservableResponse a),
     observableVar :: ObservableVar (ObservableState a)
   }
 
@@ -153,29 +155,40 @@ data ProxyState
   | Stopped
   deriving stock (Eq, Show)
 
-receiveObservableReference :: NetworkObject a => Future (Channel ObservableRequest (ObservableResponse a)) -> QuasarIO (Observable (ObservableState a))
-receiveObservableReference channelFuture = do
-  observableVar <- newObservableVarIO ObservableLoading
+receiveObservableReference :: forall a. NetworkObject a => Channel ObservableRequest (ObservableResponse a) -> STMc NoRetry '[] (ChannelHandler (ObservableResponse a), Observable (ObservableState a))
+receiveObservableReference channel = do
+  observableVar <- newObservableVar ObservableLoading
   let proxy = ObservableProxy {
-      channelFuture,
+      channel,
       observableVar
     }
-  -- TODO thread should be disposed with the channel, so it should optimally be attached to the channel.
-  -- The current architecture doesn't permit this, which is probably a bug.
-  async_ $ manageObservableProxy proxy
-  pure $ toObservable proxy
+  -- TODO async has to run in STMc and attach the resource to the channel
+  undefined -- async_ $ manageObservableProxy proxy
+  pure (callback proxy, toObservable proxy)
+  where
+    callback :: ObservableProxy a -> ReceivedMessageResources -> ObservableResponse a -> QuasarIO ()
+    callback proxy resources (PackedObservableValue cdata) = do
+      content <- case receiveObject cdata of
+        Left content -> pure content
+        Right createContent ->
+          atomicallyC $ (receiveChannel resources) createContent
+      atomically $ writeObservableVar proxy.observableVar (ObservableValue content)
+    callback proxy _resources PackedObservableLoading = do
+      atomically $ writeObservableVar proxy.observableVar ObservableLoading
+    callback proxy _resources (PackedObservableNotAvailable ex) = do
+      atomically $ writeObservableVar proxy.observableVar (ObservableNotAvailable (unpackException ex))
 
 
 instance NetworkObject a => ToObservable (ObservableState a) (ObservableProxy a) where
   toObservable proxy = toObservable proxy.observableVar
 
 
-manageObservableProxy :: forall a. NetworkObject a => ObservableProxy a -> QuasarIO ()
+manageObservableProxy :: ObservableProxy a -> QuasarIO ()
 manageObservableProxy proxy =
   task `catchAll` \ex ->
     atomically (writeObservableVar proxy.observableVar (ObservableNotAvailable (toException (ObservableProxyException ex))))
   where
-    task = bracket setupChannel dispose \channel -> do
+    task = bracket (pure proxy.channel) dispose \channel -> do
       forever do
         atomically $ check =<< observableVarHasObservers proxy.observableVar
 
@@ -184,25 +197,3 @@ manageObservableProxy proxy =
         atomically $ check . not =<< observableVarHasObservers proxy.observableVar
 
         channelSend channel Stop
-
-    setupChannel = do
-      channel <- await proxy.channelFuture
-      channelSetHandler channel callback
-      pure channel
-
-    callback :: ReceivedMessageResources -> ObservableResponse a -> QuasarIO ()
-    callback resources (PackedObservableValue cdata) = do
-      content <- case receiveObject cdata of
-        Left content -> do
-          [] <- pure resources.createdChannels
-          pure content
-        Right createContent -> do
-          [objectChannel] <- pure resources.createdChannels
-          createContent (pure objectChannel)
-      atomically $ writeObservableVar proxy.observableVar (ObservableValue content)
-    callback resources PackedObservableLoading = do
-      [] <- pure resources.createdChannels
-      atomically $ writeObservableVar proxy.observableVar ObservableLoading
-    callback resources (PackedObservableNotAvailable ex) = do
-      [] <- pure resources.createdChannels
-      atomically $ writeObservableVar proxy.observableVar (ObservableNotAvailable (unpackException ex))

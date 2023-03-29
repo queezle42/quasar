@@ -89,7 +89,9 @@ data MultiplexerMessage
   | ChannelProtocolError String
   | InternalError String
   deriving stock (Generic, Show)
-  deriving anyclass Binary
+
+instance Binary MultiplexerMessage
+
 
 
 -- ** Multiplexer
@@ -288,7 +290,9 @@ verifyChannelIsConnected channel = do
 
 data ChannelException = ChannelNotConnected
   deriving stock Show
-  deriving anyclass Exception
+
+instance Exception ChannelException
+
 
 -- ** Channel message interface
 
@@ -325,7 +329,9 @@ data ReceivedMessageResources = ReceivedMessageResources {
   channel :: RawChannel,
   messageLength :: MessageLength,
   messageId :: MessageId,
-  createdChannels :: [RawChannel]
+  numCreatedChannels :: Int,
+  -- Must be called exactly once for every sent channel.
+  receiveChannel :: forall a. (RawChannel -> STMc NoRetry '[] (RawChannelHandler, a)) -> STMc NoRetry '[] a
   --unixFds :: Undefined
 }
 
@@ -611,11 +617,14 @@ receiveThread multiplexer readFn = do
         -- NOTE blocks until a channel handler is set
         handler <- atomically $ maybe retry (pure . runChannelHandler) =<< readTVar channel.channelHandler
 
+        let receiveChannel = undefined
+
         messageHandler <- handler ReceivedMessageResources {
           channel,
-          createdChannels,
           messageId,
-          messageLength
+          messageLength,
+          numCreatedChannels = length createdChannels,
+          receiveChannel
         }
         runHandler messageHandler messageLength chunk
       where
@@ -651,7 +660,8 @@ receiveThread multiplexer readFn = do
 
 data AbortSend = AbortSend
   deriving stock (Eq, Show)
-  deriving anyclass Exception
+
+instance Exception AbortSend
 
 
 sendRawChannelMessage :: MonadIO m => RawChannel -> ChannelMessage BSL.ByteString -> m SentMessageResources
@@ -758,7 +768,7 @@ rawChannelSetHandler channel handler = liftIO $ atomically $ writeTVar channel.c
 
 simpleByteStringHandler :: (BSL.ByteString -> QuasarIO ()) -> RawChannelHandler
 simpleByteStringHandler fn = byteStringHandler \case
-  ReceivedMessageResources{createdChannels=[]} -> fn
+  ReceivedMessageResources{numCreatedChannels = 0} -> fn
   resources -> const $ throwM $ ChannelProtocolException resources.channel.channelId "Unexpectedly received new channels"
 
 
@@ -813,7 +823,7 @@ rawChannelSetBinaryHandler channel fn = rawChannelSetHandler channel (binaryHand
 
 simpleBinaryHandler :: forall a. Binary a => (a -> QuasarIO ()) -> RawChannelHandler
 simpleBinaryHandler fn = binaryHandler \case
-  ReceivedMessageResources{createdChannels=[]} -> fn
+  ReceivedMessageResources{numCreatedChannels = 0} -> fn
   resources -> const $ throwM $ ChannelProtocolException resources.channel.channelId "Unexpectedly received new channels"
 
 -- | Sets a simple channel message handler, which cannot handle sub-resurces (e.g. new channels). When a resource is received the channel will be terminated with a channel protocol error.
