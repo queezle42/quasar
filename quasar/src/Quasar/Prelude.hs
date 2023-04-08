@@ -8,6 +8,7 @@ module Quasar.Prelude
     (<|>),
     Control.Applicative.liftA2,
     Control.Applicative.Alternative,
+    Data.Foldable.fold,
     Data.Foldable.sequenceA_,
     Data.Foldable.traverse_,
     Data.Foldable.toList,
