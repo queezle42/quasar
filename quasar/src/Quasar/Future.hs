@@ -17,7 +17,6 @@ module Quasar.Future (
   mapFuture,
   cacheFuture,
   IsFuture(..),
-  ToFutureEx,
   Future,
 
   -- * Future helpers
@@ -46,10 +45,13 @@ module Quasar.Future (
   tryFulfillPromiseIO_,
 
   -- * Exception variants
+  awaitEx,
   FutureEx,
+  ToFutureEx,
   toFutureEx,
   limitFutureEx,
   PromiseEx,
+  execToPromiseEx,
 ) where
 
 import Control.Exception (BlockedIndefinitelyOnSTM(..))
@@ -66,6 +68,9 @@ import Quasar.Utils.Fix
 class Monad m => MonadAwait m where
   -- | Wait until a future is completed and then return it's value.
   await :: ToFuture r a => a -> m r
+
+awaitEx :: (MonadAwait m, ThrowEx exceptions m, ToFutureEx exceptions r a) => a -> m r
+awaitEx = await >=> either throwEx pure
 
 data BlockedIndefinitelyOnAwait = BlockedIndefinitelyOnAwait
   deriving stock Show
@@ -475,6 +480,8 @@ tryFulfillPromiseIO var result = atomically $ tryFulfillPromise var result
 tryFulfillPromiseIO_ :: MonadIO m => Promise a -> a -> m ()
 tryFulfillPromiseIO_ var result = void $ tryFulfillPromiseIO var result
 
+execToPromiseEx :: PromiseEx exceptions a -> STMc NoRetry exceptions a -> STMc NoRetry '[] ()
+execToPromiseEx promise fn = tryFulfillPromise_ promise =<< tryExSTMc fn
 
 
 -- * Utility functions
