@@ -286,7 +286,7 @@ instance IsObservableList v (ObservableMapValues v) where
           DeleteAll -> do
             writeTVar var mempty
             pure (Seq.singleton ObservableList.DeleteAll)
-        callback (ObservableListDelta (join listOperations))
+        callback (ObservableListDelta (fold listOperations))
       pure ((disposer, Seq.fromList (Map.elems initial)), initial)
 
 values :: (Ord k, IsObservableMap k v a) => a -> ObservableList v
