@@ -11,7 +11,8 @@ module Control.Exception.Ex (
 
   Throw(..),
   ThrowAny,
-  ThrowEx(..),
+  MonadThrowEx(..),
+  ThrowEx,
   throwEx,
   ThrowForAll,
 
@@ -48,21 +49,10 @@ type (:<) :: Type -> [Type] -> Constraint
 type family a :< b where
   _ :< (SomeException ': _) = ()
   _ :< (Ex _ ': _) = TypeError ('Text "Invalid usage of ‘Ex’ in rhs of type family ‘:<’")
+  Ex xs :< xs = ()
   Ex exceptions :< xs = exceptions :<< xs
   x :< (x ': _) = ()
   x :< (_ ': ns) = (x :< ns)
-
---class a :< b
---
---instance _e :< (SomeException ': _xs)
-----instance {-# INCOHERENT #-} SomeException :< xs => _e :< xs
---
---instance exceptions :<< xs => Ex exceptions :< xs
---
---instance {-# OVERLAPS #-} e :< (e ': _xs)
---
---instance e :< xs => e :< (_x ': xs)
-
 
 -- | Constraint to assert the existence of a list of exceptions in a type-level list.
 --
@@ -183,21 +173,20 @@ type family ThrowForAll xs m where
 -- | Monad support for throwing combined exceptions.
 --
 -- To use this class see `throwEx`.
-class Monad m => ThrowEx m where
+class Monad m => MonadThrowEx m where
   -- | Implementation helper. May only ever be called by `throwEx`.
   unsafeThrowEx :: SomeException -> m a
 
-throwEx ::
-  forall exceptions m a.
-  (ThrowEx m, ThrowForAll exceptions m, Exception (Ex exceptions)) =>
-  Ex exceptions -> m a
+type ThrowEx exceptions m = (MonadThrowEx m, ThrowForAll exceptions m, Exception (Ex exceptions))
+
+throwEx :: ThrowEx exceptions m => Ex exceptions -> m a
 throwEx (Ex ex) = unsafeThrowEx ex
 
-instance ThrowEx IO where
+instance MonadThrowEx IO where
   unsafeThrowEx = throwIO
 
-instance ThrowEx STM where
+instance MonadThrowEx STM where
   unsafeThrowEx = throwSTM
 
-instance (ThrowEx m, Monad (t m), MonadTrans t) => ThrowEx (t m) where
+instance (MonadThrowEx m, Monad (t m), MonadTrans t) => MonadThrowEx (t m) where
   unsafeThrowEx = lift . unsafeThrowEx

@@ -107,7 +107,7 @@ class (MonadFix m, ResourceCollector m) => MonadQuasar m where
 type QuasarT = ReaderT Quasar
 
 newtype QuasarIO a = QuasarIO (QuasarT IO a)
-  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, Throw e, ThrowEx, MonadMask, MonadFail, MonadFix, Alternative, MonadPlus, MonadIO)
+  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch, Throw e, MonadThrowEx, MonadMask, MonadFail, MonadFix, Alternative, MonadPlus, MonadIO)
 
 instance Semigroup a => Semigroup (QuasarIO a) where
   fx <> fy = liftA2 (<>) fx fy
@@ -125,7 +125,7 @@ instance ResourceCollector QuasarIO where
 
 
 newtype QuasarSTM a = QuasarSTM (QuasarT STM a)
-  deriving newtype (Functor, Applicative, Monad, MonadRetry, MonadThrow, MonadCatch, Throw e, ThrowEx, MonadFix, Alternative, MonadPlus, MonadSTMcBase)
+  deriving newtype (Functor, Applicative, Monad, MonadRetry, MonadThrow, MonadCatch, Throw e, MonadThrowEx, MonadFix, Alternative, MonadPlus, MonadSTMcBase)
 
 instance Semigroup a => Semigroup (QuasarSTM a) where
   fx <> fy = liftA2 (<>) fx fy
@@ -150,7 +150,7 @@ newtype QuasarSTMc canRetry exceptions a = QuasarSTMc (QuasarT (STMc canRetry ex
     MonadSTMcBase,
     MonadThrow,
     Throw e,
-    ThrowEx
+    MonadThrowEx
   )
 
 deriving newtype instance MonadRetry (QuasarSTMc Retry exceptions)

@@ -387,7 +387,7 @@ instance MonadAwait (FutureEx exceptions) where
 instance (Exception e, e :< exceptions) => Throw e (FutureEx exceptions) where
   throwC ex = FutureEx $ pure (Left (toEx ex))
 
-instance ThrowEx (FutureEx exceptions) where
+instance MonadThrowEx (FutureEx exceptions) where
   unsafeThrowEx = FutureEx . pure . Left . unsafeToEx @exceptions
 
 instance SomeException :< exceptions => MonadThrow (FutureEx exceptions) where

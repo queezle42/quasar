@@ -450,7 +450,7 @@ instance Monad (ObservableEx exceptions) where
 instance (Exception e, e :< exceptions) => Throw e (ObservableEx exceptions) where
   throwC ex = ObservableEx $ pure (Left (toEx ex))
 
-instance ThrowEx (ObservableEx exceptions) where
+instance MonadThrowEx (ObservableEx exceptions) where
   unsafeThrowEx = ObservableEx . pure . Left . unsafeToEx @exceptions
 
 instance SomeException :< exceptions => MonadThrow (ObservableEx exceptions) where

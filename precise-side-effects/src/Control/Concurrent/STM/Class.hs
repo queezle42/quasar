@@ -205,12 +205,12 @@ deriving newtype instance MonadPlus (STMc Retry exceptions)
 instance (Exception e, e :< exceptions) => Throw e (STMc canRetry exceptions) where
   throwC = STMc . STM.throwSTM
 
-instance ThrowEx (STMc canRetry exceptions) where
+instance MonadThrowEx (STMc canRetry exceptions) where
   unsafeThrowEx = STMc . throwM
 
 
 type MonadSTMcBase :: (Type -> Type) -> Constraint
-class ThrowEx m => MonadSTMcBase m where
+class MonadThrowEx m => MonadSTMcBase m where
   unsafeLiftSTM :: STM a -> m a
 
 instance MonadSTMcBase STM where
