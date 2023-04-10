@@ -16,8 +16,6 @@ module Quasar.Observable (
 
   observeQ,
   observeQ_,
-  observeQIO,
-  observeQIO_,
 
   -- ** Control flow utilities
   observeWith,
@@ -98,7 +96,7 @@ mapObservable f o = mapObservable# f (toObservable o)
 cacheObservable :: (ToObservable r a, MonadSTMc NoRetry '[] m) => a -> m (Observable r)
 cacheObservable o = liftSTMc $ cacheObservable# (toObservable o)
 
--- The implementation of `observeSTM` will call the callback during
+-- | The implementation of `observeSTM` will call the callback during
 -- registration.
 observeSTM :: (ToObservable r a, MonadSTMc NoRetry '[] m) => a -> ObserverCallback r -> m TSimpleDisposer
 observeSTM observable callback = liftSTMc do
@@ -117,7 +115,7 @@ instance IsObservable (Maybe r) (Future r) where
       Left disposer -> pure (disposer, Nothing)
       Right value -> pure (mempty, Just value)
 
-  cacheObservable# future = toObservable <$> (cacheFuture# future)
+  cacheObservable# future = toObservable <$> cacheFuture# future
 
 observe
   :: (ResourceCollector m, MonadSTMc NoRetry '[] m)
@@ -132,37 +130,24 @@ observeQ
   :: (MonadQuasar m, MonadSTMc NoRetry '[SomeException] m)
   => Observable a
   -> (a -> STMc NoRetry '[SomeException] ()) -- ^ callback
-  -> m Disposer
+  -> m TSimpleDisposer
 observeQ observable callbackFn = do
-  -- Each observer needs a dedicated scope to guarantee, that the whole observer is detached when the provided callback (or the observable implementation) fails.
-  scope <- newResourceScope
-  let
-    sink = quasarExceptionSink scope
-    wrappedCallback state = callbackFn state `catchAllSTMc` throwToExceptionSink sink
-  disposer <- observeSTM observable wrappedCallback
-  collectResource disposer
-  pure $ getDisposer (quasarResourceManager scope)
+  sink <- askExceptionSink
+  mfix \disposerFixed -> do
+    let
+      wrappedCallback state = callbackFn state `catchAllSTMc` \e -> do
+        disposeTSimpleDisposer disposerFixed
+        throwToExceptionSink sink e
+    disposer <- observeSTM observable wrappedCallback
+    collectResource disposer
+    pure disposer
 
 observeQ_
-    :: (MonadQuasar m, MonadSTM m)
+    :: (MonadQuasar m, MonadSTMc NoRetry '[SomeException] m)
     => Observable a
     -> (a -> STMc NoRetry '[SomeException] ()) -- ^ callback
     -> m ()
-observeQ_ observable callback = liftQuasarSTM $ void $ observeQ observable callback
-
-observeQIO
-  :: (MonadQuasar m, MonadIO m)
-  => Observable a
-  -> (a -> STMc NoRetry '[SomeException] ()) -- ^ callback
-  -> m Disposer
-observeQIO observable callback = quasarAtomically $ observeQ observable callback
-
-observeQIO_
-  :: (MonadQuasar m, MonadIO m)
-  => Observable a
-  -> (a -> STMc NoRetry '[SomeException] ()) -- ^ callback
-  -> m ()
-observeQIO_ observable callback = quasarAtomically $ observeQ_ observable callback
+observeQ_ observable callback = void $ observeQ observable callback
 
 
 -- | Existential quantification wrapper for the IsObservable type class.
@@ -229,7 +214,7 @@ observeWith observable fn = do
   bracket (aquire var) dispose
     \_ -> fn (takeTMVar var)
   where
-    aquire var = observeQIO observable \msg -> do
+    aquire var = quasarAtomicallyC $ observeQ observable \msg -> do
       writeTMVar var msg
 
 
