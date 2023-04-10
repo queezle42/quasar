@@ -2,6 +2,7 @@ module Quasar.MonadQuasar.Misc (
   -- ** Exec code that belongs to another quasar
   execForeignQuasarIO,
   execForeignQuasarSTM,
+  execForeignQuasarSTMc,
 
   -- ** High-level initialization
   runQuasarAndExit,
@@ -16,6 +17,7 @@ import Control.Monad.Reader
 import Data.List.NonEmpty
 import Quasar.Future
 import Quasar.Async
+import Quasar.Exceptions
 import Quasar.Exceptions.ExceptionSink
 import Quasar.MonadQuasar
 import Quasar.Prelude
@@ -35,6 +37,10 @@ execForeignQuasarIO quasar fn = runQuasarIO quasar $
 execForeignQuasarSTM :: MonadSTM m => Quasar -> QuasarSTM () -> m ()
 execForeignQuasarSTM quasar fn = liftSTM $ runQuasarSTM quasar $ redirectExceptionToSink_ fn
 {-# SPECIALIZE execForeignQuasarSTM :: Quasar -> QuasarSTM () -> QuasarSTM () #-}
+
+execForeignQuasarSTMc :: forall canRetry m. MonadSTMc canRetry '[] m => Quasar -> QuasarSTMc canRetry '[SomeException] () -> m ()
+execForeignQuasarSTMc quasar fn = do
+  redirectExceptionToSinkSTMc_ quasar.exceptionSink (runQuasarSTMc' @canRetry @'[SomeException] quasar fn)
 
 
 -- * High-level entry helpers

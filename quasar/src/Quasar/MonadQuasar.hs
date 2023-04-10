@@ -22,6 +22,7 @@ module Quasar.MonadQuasar (
   runQuasarIO,
   runQuasarSTM,
   runQuasarSTMc,
+  runQuasarSTMc',
   liftQuasarIO,
   liftQuasarSTM,
   liftQuasarSTMc,
@@ -232,6 +233,10 @@ runQuasarSTM quasar (QuasarSTM fn) = liftSTM $ runReaderT fn quasar
 runQuasarSTMc :: forall canRetry exceptions m a. MonadSTMc canRetry exceptions m => Quasar -> QuasarSTMc canRetry exceptions a -> m a
 runQuasarSTMc quasar (QuasarSTMc fn) = liftSTMc $ runReaderT fn quasar
 {-# INLINABLE runQuasarSTMc #-}
+
+runQuasarSTMc' :: forall canRetry exceptions a. Quasar -> QuasarSTMc canRetry exceptions a -> STMc canRetry exceptions a
+runQuasarSTMc' quasar (QuasarSTMc fn) = runReaderT fn quasar
+{-# INLINABLE runQuasarSTMc' #-}
 
 quasarAtomically :: (MonadQuasar m, MonadIO m) => QuasarSTM a -> m a
 quasarAtomically (QuasarSTM fn) = do
