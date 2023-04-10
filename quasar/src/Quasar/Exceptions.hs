@@ -4,6 +4,8 @@ module Quasar.Exceptions (
   throwToExceptionSinkIO,
   catchSink,
   catchAllSink,
+  redirectExceptionToSinkSTMc,
+  redirectExceptionToSinkSTMc_,
 
   -- * Exceptions
   CancelAsync(..),
@@ -52,6 +54,15 @@ catchSink handler parentSink = ExceptionSink \ex ->
 
 catchAllSink :: (SomeException -> STMc NoRetry '[SomeException] ()) -> ExceptionSink -> ExceptionSink
 catchAllSink = catchSink
+
+redirectExceptionToSinkSTMc :: forall canRetry m a. (MonadSTMc canRetry '[] m) => ExceptionSink -> STMc canRetry '[SomeException] a -> m (Maybe a)
+redirectExceptionToSinkSTMc sink fn = do
+  (Just <$> fn)
+    `catchAllSTMc`
+      \ex -> Nothing <$ throwToExceptionSink sink ex
+
+redirectExceptionToSinkSTMc_ :: forall canRetry m a. (MonadSTMc canRetry '[] m) => ExceptionSink -> STMc canRetry '[SomeException] () -> m ()
+redirectExceptionToSinkSTMc_ sink fn = void $ redirectExceptionToSinkSTMc sink fn
 
 
 newtype CancelAsync = CancelAsync Unique
