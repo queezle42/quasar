@@ -8,6 +8,7 @@ module Quasar.MonadQuasar (
   newResourceScope,
   newResourceScopeIO,
   newResourceScopeSTM,
+  newOrClosedResourceScopeSTM,
   withResourceScope,
   catchQuasar,
   replaceExceptionSink,
@@ -76,6 +77,12 @@ newResourceScopeSTM parent = do
   pure $ newQuasar parentExceptionSink rm
   where
     parentExceptionSink = quasarExceptionSink parent
+
+newOrClosedResourceScopeSTM :: MonadSTMc NoRetry '[] m => Quasar -> m Quasar
+newOrClosedResourceScopeSTM parent =
+  catchSTMc @NoRetry @'[FailedToAttachResource]
+    (newResourceScopeSTM parent)
+    \FailedToAttachResource -> pure parent
 
 -- | Construct a quasar, ensuring the Quasar invarinat, i.e. when an exception is thrown to the quasar, the provided resource manager will be disposed.
 newQuasar :: ExceptionSink -> ResourceManager -> Quasar
