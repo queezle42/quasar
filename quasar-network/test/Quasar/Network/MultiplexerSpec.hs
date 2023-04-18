@@ -1,6 +1,5 @@
 module Quasar.Network.MultiplexerSpec (spec) where
 
-import Control.Concurrent.Async (concurrently_)
 import Control.Concurrent.MVar
 import Control.Monad.Catch
 import Data.ByteString.Lazy qualified as BSL
@@ -15,19 +14,26 @@ import Test.Hspec.Expectations.Lifted
 rm :: QuasarIO a -> IO a
 rm = runQuasarCombineExceptions
 
-spec :: Spec
-spec = parallel $ describe "runMultiplexer" $ do
-  it "can be closed from the channelSetupHook" do
-    (x, y) <- newConnectionPair
-    concurrently_
-      do rm (runMultiplexer MultiplexerSideA dispose x)
-      do rm (runMultiplexer MultiplexerSideB dispose y)
+concurrently_ :: QuasarIO () -> QuasarIO () -> QuasarIO ()
+concurrently_ x y = do
+  tx <- async x
+  ty <- async y
+  void (await tx)
+  void (await ty)
 
-  it "closes when the remote is closed" do
+spec :: Spec
+spec = describe "runMultiplexer" $ do
+  it "can be closed from the channelSetupHook" $ rm do
     (x, y) <- newConnectionPair
     concurrently_
-      do rm (runMultiplexer MultiplexerSideA (\rootChannel -> await (isDisposed rootChannel)) x)
-      do rm (runMultiplexer MultiplexerSideB dispose y)
+      (runMultiplexer MultiplexerSideA dispose x)
+      (runMultiplexer MultiplexerSideB dispose y)
+
+  it "closes when the remote is closed" $ rm do
+    (x, y) <- newConnectionPair
+    concurrently_
+      (runMultiplexer MultiplexerSideA (\rootChannel -> await (isDisposed rootChannel)) x)
+      (runMultiplexer MultiplexerSideB dispose y)
 
   it "will dispose an attached resource" $ rm do
     var <- newPromiseIO
@@ -46,9 +52,9 @@ spec = parallel $ describe "runMultiplexer" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
       rawChannelSetSimpleByteStringHandler channel ((liftIO . putMVar recvMVar) :: BSL.ByteString -> QuasarIO ())
-      sendSimpleRawChannelMessage channel "foobar"
+      sendRawChannelMessage channel "foobar"
       liftIO $ takeMVar recvMVar `shouldReturn` "foobar"
-      sendSimpleRawChannelMessage channel "test"
+      sendRawChannelMessage channel "test"
       liftIO $ takeMVar recvMVar `shouldReturn` "test"
 
     tryReadMVar recvMVar `shouldReturn` Nothing
@@ -56,10 +62,10 @@ spec = parallel $ describe "runMultiplexer" $ do
   it "can create sub-channels" $ do
     recvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
-      rawChannelSetByteStringHandler channel ((\_ -> liftIO . putMVar recvMVar) :: ReceivedMessageResources -> BSL.ByteString -> QuasarIO ())
-      SentMessageResources{createdChannels=[_]} <- sendRawChannelMessage channel (channelMessage "create a channel"){createChannels=1}
+      atomically $ rawChannelSetHandler channel ((\_ -> liftIO . putMVar recvMVar) :: ReceiveMessageContext -> BSL.ByteString -> QuasarIO ())
+      [_] <- sendMessage channel "create a channel" [undefined]
       liftIO $ takeMVar recvMVar `shouldReturn` "create a channel"
-      SentMessageResources{createdChannels=[_, _, _]} <- sendRawChannelMessage channel (channelMessage "create more channels"){createChannels=3}
+      [_, _, _] <- sendMessage channel "create more channels" [undefined, undefined, undefined]
       liftIO $ takeMVar recvMVar `shouldReturn` "create more channels"
     tryReadMVar recvMVar `shouldReturn` Nothing
 
@@ -70,30 +76,32 @@ spec = parallel $ describe "runMultiplexer" $ do
     c3RecvMVar <- newEmptyMVar
     withEchoServer $ \channel -> do
       rawChannelSetSimpleByteStringHandler channel $ (liftIO . putMVar recvMVar :: BSL.ByteString -> QuasarIO ())
-      sendSimpleRawChannelMessage channel "foobar"
+      sendRawChannelMessage channel "foobar"
       liftIO $ takeMVar recvMVar `shouldReturn` "foobar"
 
-      SentMessageResources{createdChannels=[c1, c2]} <- sendRawChannelMessage channel (channelMessage "create channels"){createChannels=2}
+      [c1, c2] <- sendMessage channel "create channels" [simpleByteStringHandler (liftIO . putMVar c1RecvMVar), simpleByteStringHandler (liftIO . putMVar c2RecvMVar)]
+      --SentMessageResources{createdChannels=[c1, c2]} <- sendRawChannelMessage channel (channelMessage "create channels"){createChannels=2}
       liftIO $ takeMVar recvMVar `shouldReturn` "create channels"
-      rawChannelSetSimpleByteStringHandler c1 (liftIO . putMVar c1RecvMVar :: BSL.ByteString -> QuasarIO ())
-      rawChannelSetSimpleByteStringHandler c2 (liftIO . putMVar c2RecvMVar :: BSL.ByteString -> QuasarIO ())
+      --rawChannelSetSimpleByteStringHandler c1 (liftIO . putMVar c1RecvMVar :: BSL.ByteString -> QuasarIO ())
+      --rawChannelSetSimpleByteStringHandler c2 (liftIO . putMVar c2RecvMVar :: BSL.ByteString -> QuasarIO ())
 
-      sendSimpleRawChannelMessage c1 "test"
+      sendRawChannelMessage c1 "test"
       liftIO $ takeMVar c1RecvMVar `shouldReturn` "test"
-      sendSimpleRawChannelMessage c2 "test2"
+      sendRawChannelMessage c2 "test2"
       liftIO $ takeMVar c2RecvMVar `shouldReturn` "test2"
-      sendSimpleRawChannelMessage c2 "test3"
+      sendRawChannelMessage c2 "test3"
       liftIO $ takeMVar c2RecvMVar `shouldReturn` "test3"
-      sendSimpleRawChannelMessage c1 "test4"
+      sendRawChannelMessage c1 "test4"
       liftIO $ takeMVar c1RecvMVar `shouldReturn` "test4"
 
-      SentMessageResources{createdChannels=[c3]} <- sendRawChannelMessage channel (channelMessage "create another channel"){createChannels=1}
+      [c3] <- sendMessage channel "create another channel" [simpleByteStringHandler (liftIO . putMVar c3RecvMVar)]
+      --SentMessageResources{createdChannels=[c3]} <- sendRawChannelMessage channel (channelMessage "create another channel"){createChannels=1}
       liftIO $ takeMVar recvMVar `shouldReturn` "create another channel"
-      rawChannelSetSimpleByteStringHandler c3 (liftIO . putMVar c3RecvMVar :: BSL.ByteString -> QuasarIO ())
+      --rawChannelSetSimpleByteStringHandler c3 (liftIO . putMVar c3RecvMVar :: BSL.ByteString -> QuasarIO ())
 
-      sendSimpleRawChannelMessage c3 "test5"
+      sendRawChannelMessage c3 "test5"
       liftIO $ takeMVar c3RecvMVar `shouldReturn` "test5"
-      sendSimpleRawChannelMessage c1 "test6"
+      sendRawChannelMessage c1 "test6"
       liftIO $ takeMVar c1RecvMVar `shouldReturn` "test6"
 
     tryReadMVar recvMVar `shouldReturn` Nothing
@@ -108,9 +116,12 @@ spec = parallel $ describe "runMultiplexer" $ do
         receive = sleepForever,
         close = pure ()
       }
-      testAction :: RawChannel -> IO ()
-      testAction channel = concurrently_ (sendSimpleRawChannelMessage channel "foobar") (void (takeMVar msgSentMVar) >> dispose channel)
-    runMultiplexer MultiplexerSideA (liftIO . testAction) connection
+      testAction :: RawChannel -> QuasarIO ()
+      testAction channel =
+        concurrently_
+          (sendRawChannelMessage channel "foobar")
+          (void (liftIO (takeMVar msgSentMVar)) >> dispose channel)
+    runMultiplexer MultiplexerSideA testAction connection
 
 
 withEchoServer :: (RawChannel -> QuasarIO ()) -> IO ()
@@ -127,10 +138,21 @@ withEchoServer fn = rm $ bracket setup closePair (\(channel, _) -> fn channel)
     closePair :: (RawChannel, RawChannel) -> QuasarIO ()
     closePair (x, y) = dispose x >> dispose y
     configureEchoHandler :: Monad m => RawChannel -> m (RawChannelHandler, ())
-    configureEchoHandler channel = pure (byteStringHandler (echoHandler channel), ())
-    echoHandler :: RawChannel -> ReceivedMessageResources -> BSL.ByteString -> QuasarIO ()
-    echoHandler channel resources msg = do
+    configureEchoHandler channel = pure (echoHandler channel, ())
+    echoHandler :: RawChannel -> ReceiveMessageContext -> BSL.ByteString -> QuasarIO ()
+    echoHandler channel context msg = do
       atomicallyC do
-        replicateM_ resources.numCreatedChannels do
-          acceptReceivedChannel resources configureEchoHandler
-      sendSimpleRawChannelMessage channel msg
+        replicateM_ context.numCreatedChannels do
+          acceptChannelMessagePart context (\_cdata -> (Right (\newChannel newContext -> configureEchoHandler newChannel)))
+      sendRawChannelMessage channel msg
+
+sendMessage :: RawChannel -> BSL.ByteString -> [RawChannelHandler] -> QuasarIO [RawChannel]
+sendMessage channel msg createChannels = do
+  var <- newTVarIO []
+  sendRawChannelMessageDeferred_ channel \context -> do
+    forM_ createChannels \handler ->
+      liftSTMc $ addChannelMessagePart context \newChannel newContext -> do
+        modifyTVar var (<> [newChannel])
+        pure ("", handler)
+    pure msg
+  readTVarIO var

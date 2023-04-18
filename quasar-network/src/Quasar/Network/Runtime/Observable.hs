@@ -6,14 +6,14 @@ module Quasar.Network.Runtime.Observable (
   joinNetworkObservable,
 ) where
 
-import Data.Binary (Binary)
 import Control.Monad.Catch
+import Data.Binary (Binary)
 import Quasar
+import Quasar.Exceptions
 import Quasar.Network.Exception
 import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
 import Quasar.Prelude
-import Quasar.Exceptions
 
 
 data ObservableState a
@@ -60,7 +60,7 @@ data ObservableRequest
 instance Binary ObservableRequest
 
 data ObservableResponse a
-  = PackedObservableValue (CData a)
+  = PackedObservableValue
   | PackedObservableLoading
   | PackedObservableNotAvailable PackedException
   deriving stock Generic
@@ -68,13 +68,13 @@ data ObservableResponse a
 instance NetworkObject a => Binary (ObservableResponse a)
 
 
-instance NetworkObject a => NetworkReference (Observable (ObservableState a)) where
-  type NetworkReferenceChannel (Observable (ObservableState a)) = Channel (ObservableResponse a) ObservableRequest
-  sendReference = sendObservableReference
-  receiveReference = receiveObservableReference
+instance NetworkObject a => NetworkRootReference (Observable (ObservableState a)) where
+  type NetworkRootReferenceChannel (Observable (ObservableState a)) = Channel (ObservableResponse a) ObservableRequest
+  sendRootReference = sendObservableReference
+  receiveRootReference = receiveObservableReference
 
 instance NetworkObject a => NetworkObject (Observable (ObservableState a)) where
-  type NetworkStrategy (Observable (ObservableState a)) = NetworkReference
+  type NetworkStrategy (Observable (ObservableState a)) = NetworkRootReference
 
 
 data ObservableReference a = ObservableReference {
@@ -83,23 +83,23 @@ data ObservableReference a = ObservableReference {
   activeDisposer :: TVar Disposer
 }
 
-sendObservableReference :: forall a. NetworkObject a => Observable (ObservableState a) -> Channel (ObservableResponse a) ObservableRequest -> QuasarIO ()
+sendObservableReference :: forall a. NetworkObject a => Observable (ObservableState a) -> Channel (ObservableResponse a) ObservableRequest -> STMc NoRetry '[] (ChannelHandler ObservableRequest)
 sendObservableReference observable channel = do
   -- Bind resources lifetime to network channel
-  runQuasarIO channel.quasar do
+  execForeignQuasarSTMc @NoRetry channel.quasar do
     -- Initial state is defined as loading
-    isLoading <- newTVarIO True
-    outbox <- newTVarIO Nothing
-    activeDisposer <- newTVarIO trivialDisposer
+    isLoading <- newTVar True
+    outbox <- newTVar Nothing
+    activeDisposer <- newTVar trivialDisposer
     let ref = ObservableReference { isLoading, outbox, activeDisposer }
-    atomically $ channelSetSimpleHandler channel requestCallback
-    async_ $ sendThread ref
-    quasarAtomically $ observeQ_ observable (callback ref)
+    asyncSTM_ $ sendThread ref
+    observeQ_ observable (callback ref)
+  pure requestCallback
   where
-    requestCallback :: ObservableRequest -> QuasarIO ()
+    requestCallback :: ReceiveMessageContext -> ObservableRequest -> QuasarIO ()
     -- TODO: observe based on downstream request
-    requestCallback Start = pure ()
-    requestCallback Stop = pure ()
+    requestCallback _context Start = pure ()
+    requestCallback _context Stop = pure ()
     callback :: ObservableReference a -> ObservableState a -> STMc NoRetry '[SomeException] ()
     callback ref state = do
       unlessM (readTVar ref.isLoading) do
@@ -115,27 +115,19 @@ sendObservableReference observable channel = do
       atomically $ check . isJust =<< readTVar ref.outbox
       dispose =<< atomically (swapTVar ref.activeDisposer trivialDisposer)
       handle (\AbortSend -> pure ()) do
-        sendChannelMessageDeferred channel payloadHook >>= \case
-          (resources, Just bindObjectFn) -> do
-            [objectChannel] <- pure resources.createdChannels
-            bindObjectFn objectChannel
-            atomically $ writeTVar ref.activeDisposer (getDisposer objectChannel)
-            pure ()
-          (resources, Nothing) -> do
-            [] <- pure resources.createdChannels
-            pure ()
+        sendChannelMessageDeferred_ channel payloadHook
       where
-        payloadHook :: STMc NoRetry '[AbortSend] (ChannelMessage (ObservableResponse a), Maybe (RawChannel -> QuasarIO ()))
-        payloadHook = do
+        payloadHook :: SendMessageContext -> STMc NoRetry '[AbortSend] (ObservableResponse a)
+        payloadHook context = do
           writeTVar ref.isLoading False
           swapTVar ref.outbox Nothing >>= \case
             Just (ObservableValue content) -> do
-              let (cdata, mBindObjectFn) = sendObject content
-              let createChannels = maybe 0 (const 1) mBindObjectFn
-              pure ((channelMessage (PackedObservableValue cdata)) { createChannels }, mBindObjectFn)
+              disposer <- liftSTMc $ sendObjectAsDisposableMessagePart context content
+              writeTVar ref.activeDisposer disposer
+              pure PackedObservableValue
 
             Just (ObservableNotAvailable ex) ->
-              pure (channelMessage (PackedObservableNotAvailable (packException ex)), Nothing)
+              pure (PackedObservableNotAvailable (packException ex))
 
             Just ObservableLoading -> throwC AbortSend
             Nothing -> unreachableCodePath
@@ -156,7 +148,7 @@ data ProxyState
   | Stopped
   deriving stock (Eq, Show)
 
-receiveObservableReference :: forall a. NetworkObject a => Channel ObservableRequest (ObservableResponse a) -> STMc NoRetry '[] (ChannelHandler (ObservableResponse a), Observable (ObservableState a))
+receiveObservableReference :: forall a. NetworkObject a => Channel ObservableRequest (ObservableResponse a) -> STMc NoRetry '[MultiplexerException] (ChannelHandler (ObservableResponse a), Observable (ObservableState a))
 receiveObservableReference channel = do
   observableVar <- newObservableVar ObservableLoading
   let proxy = ObservableProxy {
@@ -172,16 +164,13 @@ receiveObservableReference channel = do
 
   pure (callback proxy, toObservable proxy)
   where
-    callback :: ObservableProxy a -> ReceivedMessageResources -> ObservableResponse a -> QuasarIO ()
-    callback proxy resources (PackedObservableValue cdata) = do
-      content <- case receiveObject cdata of
-        Left content -> pure content
-        Right createContent ->
-          atomicallyC $ acceptReceivedChannel resources createContent
-      atomically $ writeObservableVar proxy.observableVar (ObservableValue content)
-    callback proxy _resources PackedObservableLoading = do
+    callback :: ObservableProxy a -> ReceiveMessageContext -> ObservableResponse a -> QuasarIO ()
+    callback proxy context PackedObservableValue = do
+      value <- atomicallyC $ receiveObjectFromMessagePart context
+      atomically $ writeObservableVar proxy.observableVar (ObservableValue value)
+    callback proxy _context PackedObservableLoading = do
       atomically $ writeObservableVar proxy.observableVar ObservableLoading
-    callback proxy _resources (PackedObservableNotAvailable ex) = do
+    callback proxy _context (PackedObservableNotAvailable ex) = do
       atomically $ writeObservableVar proxy.observableVar (ObservableNotAvailable (unpackException ex))
 
 
