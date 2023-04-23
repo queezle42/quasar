@@ -192,7 +192,7 @@ observeBlocking
   -> m a
 observeBlocking observable handler = do
   observeWith observable \fetchNext -> forever do
-    msg <- atomically $ fetchNext
+    msg <- atomicallyC fetchNext
     handler msg
 
 observeAsync
@@ -206,7 +206,7 @@ observeAsync observable handler = async $ observeBlocking observable handler
 observeWith
   :: (MonadQuasar m, MonadIO m, MonadMask m)
   => Observable r
-  -> (STM r -> m a)
+  -> (STMc Retry '[] r -> m a)
   -> m a
 observeWith observable fn = do
   var <- liftIO newEmptyTMVarIO

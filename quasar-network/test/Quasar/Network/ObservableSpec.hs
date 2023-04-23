@@ -19,7 +19,7 @@ spec = parallel $ describe "ObservableProxy" $ do
     var <- newObservableVarIO ("foobar" :: String)
     withStandaloneProxy (pure <$> toObservable var) \proxy -> do
       observeWith proxy \getNextValue -> do
-        ObservableValue "foobar" <- atomically do
+        ObservableValue "foobar" <- atomicallyC do
           getNextValue >>= \case
             ObservableLoading -> retry
             x -> pure x
@@ -31,7 +31,7 @@ spec = parallel $ describe "ObservableProxy" $ do
     withStandaloneProxy (pure <$> toObservable outer :: Observable (ObservableState (Observable (ObservableState String)))) \outerProxy -> do
       let joinedObservable :: Observable (ObservableState String) = joinNetworkObservable outerProxy
       observeWith joinedObservable \getNextValue -> do
-        ObservableValue "foobar" <- atomically do
+        ObservableValue "foobar" <- atomicallyC do
           getNextValue >>= \case
             ObservableLoading -> retry
             x -> pure x
