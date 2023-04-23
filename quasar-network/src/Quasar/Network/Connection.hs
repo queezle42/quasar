@@ -2,6 +2,7 @@ module Quasar.Network.Connection (
   -- * Connection abstraction
   Connection(..),
   connectTCP,
+  connectUnix,
   newConnectionPair,
   traceConnection,
 
@@ -73,6 +74,17 @@ instance Exception ConnectingFailed where
 connectTCP :: MonadIO m => Socket.HostName -> Socket.ServiceName -> m Connection
 connectTCP host port = socketConnection (mconcat [show host, ":", show port]) <$> connectTCPSocket host port
 
+connectUnix :: MonadIO m => FilePath -> m Connection
+connectUnix socketPath = liftIO do
+  bracketOnError
+    do liftIO $ Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol
+    do liftIO . Socket.close
+    \sock -> do
+      liftIO do
+        Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
+        Socket.connect sock $ Socket.SockAddrUnix socketPath
+      pure (socketConnection socketPath sock)
+
 -- | Open a TCP connection to target host and port. Will start multiple connection attempts (i.e. retry quickly and then try other addresses) but only return the first successful connection.
 -- Throws a 'ConnectionFailed' on failure, which contains the exceptions from all failed connection attempts.
 connectTCPSocket :: MonadIO m => Socket.HostName -> Socket.ServiceName -> m Socket.Socket
@@ -108,7 +120,7 @@ connectTCPSocket host port = liftIO do
     collect ((addr, Left ex):xs) = ((addr, ex):) <$> collect xs
     collect [] = Just []
     connectTask :: Socket.AddrInfo -> IO (Async ())
-    connectTask addr = async $ do
+    connectTask addr = async do
       sock <- connect addr
       isFirst <- tryPutMVar sockMVar sock
       unless isFirst $ Socket.close sock

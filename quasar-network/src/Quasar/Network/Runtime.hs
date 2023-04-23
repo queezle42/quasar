@@ -2,15 +2,6 @@
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 module Quasar.Network.Runtime (
-  -- * Client
-  --Client,
-  --withClientTCP,
-  --newClientTCP,
-  --withClientUnix,
-  --newClientUnix,
-  --withClient,
-  --newClient,
-
   -- * Server
   --Server,
   --Listener(..),
@@ -18,8 +9,6 @@ module Quasar.Network.Runtime (
   --runServer,
   --addListener,
   --addListener_,
-  --withLocalClient,
-  --newLocalClient,
   --listenTCP,
   --listenUnix,
   --listenOnBoundSocket,
@@ -40,10 +29,6 @@ module Quasar.Network.Runtime (
 
   unsafeQueueChannelMessage,
   newChannelPair,
-
-  -- * Test implementation
-  --withStandaloneClient,
-  withStandaloneProxy,
 
   -- * Interacting with objects over network
   NetworkObject(..),
@@ -261,48 +246,6 @@ channelSetSimpleHandler (Channel channel) fn = rawChannelSetHandler channel (sim
 
 -- ** Running client and server
 
--- withClientTCP :: (RpcProtocol p, MonadQuasar m, MonadIO m, MonadMask m) => Socket.HostName -> Socket.ServiceName -> (Client p -> m a) -> m a
--- withClientTCP host port = withClientBracket (newClientTCP host port)
---
--- newClientTCP :: (RpcProtocol p, MonadQuasar m, MonadIO m) => Socket.HostName -> Socket.ServiceName -> m (Client p)
--- newClientTCP host port = newClient =<< connectTCP host port
---
---
--- withClientUnix :: (RpcProtocol p, MonadQuasar m, MonadIO m, MonadMask m) => FilePath -> (Client p -> m a) -> m a
--- withClientUnix socketPath = withClientBracket (newClientUnix socketPath)
---
--- newClientUnix :: (RpcProtocol p, MonadQuasar m, MonadIO m) => FilePath -> m (Client p)
--- newClientUnix socketPath = liftQuasarIO do
---   bracketOnError
---     do liftIO $ Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol
---     do liftIO . Socket.close
---     \sock -> do
---       liftIO do
---         Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
---         Socket.connect sock $ Socket.SockAddrUnix socketPath
---       newClient $ socketConnection socketPath sock
---
---
--- withClient :: forall p m a. (RpcProtocol p, MonadQuasar m, MonadIO m, MonadMask m) => Connection -> (Client p -> m a) -> m a
--- withClient connection = withClientBracket (newClient connection)
---
--- newClient :: forall p m. (RpcProtocol p, MonadQuasar m, MonadIO m) => Connection -> m (Client p)
--- newClient connection = liftIO . newChannelClient =<< newMultiplexer MultiplexerSideA connection
---
--- withClientBracket :: (MonadIO m, MonadMask m) => m (Client p) -> (Client p -> m a) -> m a
--- -- No resource scope has to becreated here because a client already is a new scope
--- withClientBracket createClient = bracket createClient (liftIO . dispose)
---
---
--- newChannelClient :: RpcProtocol p => RawChannel -> IO (Client p)
--- newChannelClient channel = do
---   callbacksVar <- liftIO $ newTVarIO mempty
---   let client = Client {
---     channel,
---     callbacksVar
---   }
---   rawChannelSetBinaryHandler channel (clientHandleChannelMessage client)
---   pure client
 
 data Listener =
   TcpPort (Maybe Socket.HostName) Socket.ServiceName |
@@ -414,47 +357,13 @@ data Listener =
 --       mconcat ["Client connection lost (", connection.description, "): ", displayException ex]
 --     formatException ex =
 --       mconcat ["Client exception (", connection.description, "): ", displayException ex]
---
---
--- withLocalClient :: forall p a m. (HasProtocolImpl p, MonadQuasar m, MonadIO m, MonadMask m) => Server p -> (Client p -> m a) -> m a
--- withLocalClient server action =
---   withResourceScope do
---     client <- newLocalClient server
---     action client
---
--- newLocalClient :: forall p m. (HasProtocolImpl p, MonadQuasar m, MonadIO m) => Server p -> m (Client p)
--- newLocalClient server =
---   liftQuasarIO do
---     mask_ do
---       (clientSocket, serverSocket) <- newConnectionPair
---       connectToServer server serverSocket
---       newClient @p clientSocket
 
 newChannelPair :: (IsChannel a, MonadQuasar m, MonadIO m) => m (a, ReverseChannelType a)
 newChannelPair = liftQuasarIO do
-  (clientSocket, serverSocket) <- newConnectionPair
-  clientChannel <- newMultiplexer MultiplexerSideA clientSocket
-  serverChannel <- newMultiplexer MultiplexerSideB serverSocket
+  (clientConnection, serverConnection) <- newConnectionPair
+  clientChannel <- newMultiplexer MultiplexerSideA clientConnection
+  serverChannel <- newMultiplexer MultiplexerSideB serverConnection
   pure (castChannel clientChannel, castChannel serverChannel)
-
--- ** Test implementation
-
--- withStandaloneClient :: forall p a m. (HasProtocolImpl p, MonadQuasar m, MonadIO m, MonadMask m) => ProtocolImpl p -> (Client p -> m a) -> m a
--- withStandaloneClient impl runClientHook = do
---   server <- newServer impl []
---   withLocalClient server runClientHook
-
-withStandaloneProxy :: forall a m b. (NetworkRootReference a, MonadQuasar m, MonadIO m, MonadMask m) => a -> (a -> m b) -> m b
-withStandaloneProxy obj fn = do
-  bracket newChannelPair release \(x, y) -> do
-    handlerX <- atomicallyC $ sendRootReference obj x
-    atomicallyC $ setChannelHandler x handlerX
-    (handlerY, proxy) <- atomicallyC $ receiveRootReference y
-    atomicallyC $ setChannelHandler y handlerY
-    fn proxy
-  where
-    release :: (NetworkRootReferenceChannel a, ReverseChannelType (NetworkRootReferenceChannel a)) -> m ()
-    release (x, y) = dispose (getDisposer x <> getDisposer y)
 
 
 -- * NetworkObject instances

@@ -1,43 +1,22 @@
 module Quasar.Network (
-  -- * Rpc api definition
-  --RpcApi,
-  --RpcFunction,
-  --RpcArgument,
-  --RpcResult,
-  --RpcChannel,
-  --rpcApi,
-  --rpcFunction,
-  --addArgument,
-  --addResult,
-  --addChannel,
-  --setFixedHandler,
-  --rpcObservable,
+  -- * Types
+  NetworkObject(..),
+  NetworkRootReference,
 
-  -- * Runtime
-
-  -- ** Client
-  --Client,
-  --clientSend,
-  --clientReportProtocolError,
-
-  --withClientTCP,
-  --withClientUnix,
-  --withClient,
+  -- * Client
+  Client(..),
+  withClientTCP,
+  withClientUnix,
+  withClient,
 
   -- ** Server
   --Server,
   --Listener(..),
   --runServer,
-  --withLocalClient,
   --listenTCP,
   --listenUnix,
   --listenOnBoundSocket,
-
-  -- ** Channel
-  Channel,
-  channelSend,
-  channelSetHandler,
-  channelSetSimpleHandler,
 ) where
 
+import Quasar.Network.Client
 import Quasar.Network.Runtime

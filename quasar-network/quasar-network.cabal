@@ -55,6 +55,7 @@ library
   import: shared-properties
   exposed-modules:
     Quasar.Network
+    Quasar.Network.Client
     Quasar.Network.Connection
     Quasar.Network.Exception
     Quasar.Network.Multiplexer

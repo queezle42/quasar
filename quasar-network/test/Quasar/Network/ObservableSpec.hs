@@ -3,6 +3,7 @@ module Quasar.Network.ObservableSpec (spec) where
 import Control.Monad.Catch
 import Data.Maybe (fromJust)
 import Quasar
+import Quasar.Network.Client
 import Quasar.Network.Runtime
 import Quasar.Network.Runtime.Observable
 import Quasar.Prelude
