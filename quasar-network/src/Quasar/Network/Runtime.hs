@@ -29,9 +29,15 @@ module Quasar.Network.Runtime (
   channelSend,
   sendChannelMessageDeferred,
   sendChannelMessageDeferred_,
+  addChannelMessagePart,
+  addDataMessagePart,
+
   ChannelHandler,
   channelSetHandler,
   channelSetSimpleHandler,
+  acceptChannelMessagePart,
+  acceptDataMessagePart,
+
   unsafeQueueChannelMessage,
   newChannelPair,
 
@@ -107,6 +113,35 @@ instance (Binary cdata, Binary up, Binary down) => IsChannel (Channel cdata up d
 type ReverseChannelHandlerType a = ChannelHandlerType (ReverseChannelType a)
 
 type ChannelHandler a = ReceiveMessageContext -> a -> QuasarIO ()
+
+addChannelMessagePart :: forall channel m.
+  (IsChannel channel, MonadSTMc NoRetry '[] m) =>
+  SendMessageContext ->
+  (
+    channel ->
+    SendMessageContext ->
+    STMc NoRetry '[] (CData channel, ChannelHandlerType channel)
+  ) ->
+  m ()
+addChannelMessagePart context initChannelFn = liftSTMc do
+  addRawChannelMessagePart context (\rawChannel channelContext -> bimap (encodeCData @channel) (rawChannelHandler @channel) <$> initChannelFn (castChannel rawChannel) channelContext)
+
+acceptChannelMessagePart :: forall channel m a.
+  (IsChannel channel, MonadSTMc NoRetry '[MultiplexerException] m) =>
+  ReceiveMessageContext ->
+  (
+    CData channel ->
+    channel ->
+    ReceiveMessageContext ->
+    STMc NoRetry '[MultiplexerException] (ChannelHandlerType channel, a)
+  ) ->
+  m a
+acceptChannelMessagePart context fn = liftSTMc do
+  acceptRawChannelMessagePart context \cdata ->
+    case decodeCData @channel cdata of
+      Left ex -> Left ex
+      Right parsedCData -> Right \channel channelContext -> do
+        first (rawChannelHandler @channel) <$> fn parsedCData (castChannel channel) channelContext
 
 -- | Describes how a typeclass is used to send- and receive `NetworkObject`s.
 type IsNetworkStrategy :: (Type -> Constraint) -> Type -> Constraint
