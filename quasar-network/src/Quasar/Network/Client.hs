@@ -22,6 +22,7 @@ import Quasar
 import Quasar.Network.Connection
 import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
+import Quasar.Network.Server
 import Quasar.Prelude
 
 

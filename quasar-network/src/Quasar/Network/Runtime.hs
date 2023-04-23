@@ -2,17 +2,6 @@
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 module Quasar.Network.Runtime (
-  -- * Server
-  --Server,
-  --Listener(..),
-  --newServer,
-  --runServer,
-  --addListener,
-  --addListener_,
-  --listenTCP,
-  --listenUnix,
-  --listenOnBoundSocket,
-
   -- * Channel
   Channel,
   channelSend,
@@ -41,19 +30,14 @@ module Quasar.Network.Runtime (
   IsChannel(..),
 ) where
 
-import Control.Monad.Catch
 import Data.Bifunctor (bimap, first)
 import Data.Binary (Binary, encode, decodeOrFail)
 import Data.ByteString.Lazy qualified as BSL
-import Data.HashMap.Strict qualified as HM
 import GHC.Records
-import Network.Socket qualified as Socket
 import Quasar
 import Quasar.Network.Connection
 import Quasar.Network.Multiplexer
 import Quasar.Prelude
-import Quasar.Utils.HashMap qualified as HM
-import System.Posix.Files (getFileStatus, isSocket, fileExist, removeLink)
 import Data.Void (absurd)
 
 -- * Interacting with objects over network
@@ -244,119 +228,6 @@ channelSetHandler (Channel s) fn = rawChannelSetHandler s (binaryHandler fn)
 channelSetSimpleHandler :: (Binary down, MonadSTMc NoRetry '[] m) => Channel cdata up down -> (down -> QuasarIO ()) -> m ()
 channelSetSimpleHandler (Channel channel) fn = rawChannelSetHandler channel (simpleBinaryHandler fn)
 
--- ** Running client and server
-
-
-data Listener =
-  TcpPort (Maybe Socket.HostName) Socket.ServiceName |
-  UnixSocket FilePath |
-  ListenSocket Socket.Socket
-
--- data Server p = Server {
---   quasar :: Quasar,
---   protocolImpl :: ProtocolImpl p
--- }
---
--- instance Disposable (Server p) where
---   getDisposer server = getDisposer server.quasar
---
---
--- newServer :: forall p m. (HasProtocolImpl p, MonadQuasar m, MonadIO m) => ProtocolImpl p -> [Listener] -> m (Server p)
--- newServer protocolImpl listeners = do
---   quasar <- newResourceScopeIO
---   let server = Server { quasar, protocolImpl }
---   mapM_ (addListener_ server) listeners
---   pure server
---
--- addListener :: (HasProtocolImpl p, MonadIO m) => Server p -> Listener -> m Disposer
--- addListener server listener = runQuasarIO server.quasar $ getDisposer <$> async (runListener listener)
---   where
---     runListener :: Listener -> QuasarIO a
---     runListener (TcpPort mhost port) = runTCPListener server mhost port
---     runListener (UnixSocket path) = runUnixSocketListener server path
---     runListener (ListenSocket socket) = runListenerOnBoundSocket server socket
---
--- addListener_ :: (HasProtocolImpl p, MonadIO m) => Server p -> Listener -> m ()
--- addListener_ server listener = void $ addListener server listener
---
--- runServer :: forall p m. (HasProtocolImpl p, MonadQuasar m, MonadIO m) => ProtocolImpl p -> [Listener] -> m ()
--- runServer _ [] = liftIO $ throwM $ userError "Tried to start a server without any listeners"
--- runServer protocolImpl listener = do
---   server <- newServer @p protocolImpl listener
---   liftIO $ await $ isDisposed server
---
--- listenTCP :: forall p m. (HasProtocolImpl p, MonadQuasar m, MonadIO m) => ProtocolImpl p -> Maybe Socket.HostName -> Socket.ServiceName -> m ()
--- listenTCP impl mhost port = runServer @p impl [TcpPort mhost port]
---
--- runTCPListener :: forall p a m. (HasProtocolImpl p, MonadIO m, MonadMask m) => Server p -> Maybe Socket.HostName -> Socket.ServiceName -> m a
--- runTCPListener server mhost port = do
---   addr <- liftIO resolve
---   bracket (liftIO (open addr)) (liftIO . Socket.close) (runListenerOnBoundSocket server)
---   where
---     resolve :: IO Socket.AddrInfo
---     resolve = do
---       let hints = Socket.defaultHints {Socket.addrFlags=[Socket.AI_PASSIVE], Socket.addrSocketType=Socket.Stream}
---       (addr:_) <- Socket.getAddrInfo (Just hints) mhost (Just port)
---       pure addr
---     open :: Socket.AddrInfo -> IO Socket.Socket
---     open addr = bracketOnError (Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol) Socket.close $ \sock -> do
---       Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
---       Socket.bind sock (Socket.addrAddress addr)
---       pure sock
---
--- listenUnix :: forall p m. (HasProtocolImpl p, MonadQuasar m, MonadIO m) => ProtocolImpl p -> FilePath -> m ()
--- listenUnix impl path = runServer @p impl [UnixSocket path]
---
--- runUnixSocketListener :: forall p a m. (HasProtocolImpl p, MonadIO m, MonadMask m) => Server p -> FilePath -> m a
--- runUnixSocketListener server socketPath = do
---   bracket create (liftIO . Socket.close) (runListenerOnBoundSocket server)
---   where
---     create :: m Socket.Socket
---     create = liftIO do
---       fileExistsAtPath <- fileExist socketPath
---       when fileExistsAtPath $ do
---         fileStatus <- getFileStatus socketPath
---         if isSocket fileStatus
---           then removeLink socketPath
---           else fail "Cannot bind socket: Socket path is not empty"
---
---       bracketOnError (Socket.socket Socket.AF_UNIX Socket.Stream Socket.defaultProtocol) Socket.close $ \sock -> do
---         Socket.withFdSocket sock Socket.setCloseOnExecIfNeeded
---         Socket.bind sock (Socket.SockAddrUnix socketPath)
---         pure sock
---
--- -- | Listen and accept connections on an already bound socket.
--- listenOnBoundSocket :: forall p m. (HasProtocolImpl p, MonadQuasar m, MonadIO m) => ProtocolImpl p -> Socket.Socket -> m ()
--- listenOnBoundSocket protocolImpl socket = runServer @p protocolImpl [ListenSocket socket]
---
--- runListenerOnBoundSocket :: forall p a m. (HasProtocolImpl p, MonadIO m, MonadMask m) => Server p -> Socket.Socket -> m a
--- runListenerOnBoundSocket server sock = do
---   liftIO $ Socket.listen sock 1024
---   forever $ mask_ $ do
---     connection <- liftIO $ sockAddrConnection <$> Socket.accept sock
---     connectToServer server connection
---
--- connectToServer :: forall p m. (HasProtocolImpl p, MonadIO m) => Server p -> Connection -> m ()
--- connectToServer server connection =
---   -- Attach to server resource manager: When the server is closed, all listeners should be closed.
---   runQuasarIO server.quasar do
---     catchQuasar (queueLogError . formatException) do
---       async_  do
---         --logInfo $ mconcat ["Client connected (", connection.description, ")"]
---         runMultiplexer MultiplexerSideB registerChannelServerHandler $ connection
---         --logInfo $ mconcat ["Client connection closed (", connection.description, ")"]
---   where
---     registerChannelServerHandler :: RawChannel -> QuasarIO ()
---     registerChannelServerHandler channel = liftIO do
---       rawChannelSetBinaryHandler channel (serverHandleChannelMessage @p server.protocolImpl channel)
---
---     formatException :: SomeException -> String
---     formatException (fromException -> Just (ConnectionLost (ReceiveFailed (fromException -> Just EOF)))) =
---       mconcat ["Client connection lost (", connection.description, ")"]
---     formatException (fromException -> Just (ConnectionLost ex)) =
---       mconcat ["Client connection lost (", connection.description, "): ", displayException ex]
---     formatException ex =
---       mconcat ["Client exception (", connection.description, "): ", displayException ex]
 
 newChannelPair :: (IsChannel a, MonadQuasar m, MonadIO m) => m (a, ReverseChannelType a)
 newChannelPair = liftQuasarIO do

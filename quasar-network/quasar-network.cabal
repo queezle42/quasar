@@ -61,6 +61,7 @@ library
     Quasar.Network.Multiplexer
     Quasar.Network.Runtime
     Quasar.Network.Runtime.Observable
+    Quasar.Network.Server
     Quasar.Network.SocketLocation
   other-modules:
   build-depends:
