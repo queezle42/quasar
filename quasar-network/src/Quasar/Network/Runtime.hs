@@ -455,3 +455,77 @@ withStandaloneProxy obj fn = do
   where
     release :: (NetworkRootReferenceChannel a, ReverseChannelType (NetworkRootReferenceChannel a)) -> m ()
     release (x, y) = dispose (getDisposer x <> getDisposer y)
+
+
+-- * NetworkObject instances
+
+-- ** Function call
+
+data NetworkArgument = forall a. NetworkObject a => NetworkArgument a
+
+data NetworkCallRequest = NetworkCallRequest
+  deriving Generic
+instance Binary NetworkCallRequest
+
+data NetworkCallResponse = NetworkCallSuccess
+  deriving Generic
+instance Binary NetworkCallResponse
+
+class NetworkFunction a where
+  networkFunctionFoobar :: a -> Channel () NetworkCallResponse Void -> ReceiveMessageContext -> STMc NoRetry '[MultiplexerException] (QuasarIO ())
+  networkFunctionProxy :: [NetworkArgument] -> Channel () NetworkCallRequest Void -> a
+
+instance (NetworkObject a, NetworkFunction b) => NetworkFunction (a -> b) where
+  networkFunctionFoobar fn channel context = do
+    arg <- receiveObjectFromMessagePart context
+    networkFunctionFoobar (fn arg) channel context
+  networkFunctionProxy args channel arg = networkFunctionProxy (args <> [NetworkArgument arg]) channel
+
+instance NetworkObject a => NetworkFunction (IO (Future a)) where
+  networkFunctionFoobar fn channel _context = pure do
+    future <- liftIO fn
+    async_ do
+      result <- await future
+      -- TODO FutureEx handling: send exception before closing the channel
+      sendChannelMessageDeferred_ channel \context -> do
+        liftSTMc do
+          sendObjectAsMessagePart context result
+          pure NetworkCallSuccess
+  networkFunctionProxy args channel = do
+    promise <- newPromiseIO
+    sendChannelMessageDeferred_ channel \context -> do
+      addChannelMessagePart context \callChannel callContext -> do
+        forM_ args \(NetworkArgument arg) -> sendObjectAsMessagePart callContext arg
+        pure ((), channelHandler promise callChannel)
+      pure NetworkCallRequest
+    pure (toFuture promise)
+    where
+      channelHandler :: Promise a -> Channel () Void () -> ChannelHandler ()
+      channelHandler promise callChannel context () = do
+        result <- atomicallyC $ receiveObjectFromMessagePart context
+        tryFulfillPromiseIO_ promise result
+        atomicallyC $ disposeEventually_ callChannel
+
+receiveFunction :: NetworkFunction a => Channel () NetworkCallRequest Void -> STMc NoRetry '[MultiplexerException] (ChannelHandler Void, a)
+receiveFunction channel = pure (\_ -> absurd, networkFunctionProxy [] channel)
+
+provideFunction :: NetworkFunction a => a -> Channel () Void NetworkCallRequest -> STMc NoRetry '[] (ChannelHandler NetworkCallRequest)
+provideFunction fn _channel = pure \context NetworkCallRequest -> join $ atomically do
+  acceptChannelMessagePart context \() callChannel callContext ->
+    (\_ -> absurd, ) <$> networkFunctionFoobar fn callChannel callContext
+
+instance (NetworkObject a, NetworkFunction b) => NetworkRootReference (a -> b) where
+  type NetworkRootReferenceChannel (a -> b) = Channel () Void NetworkCallRequest
+  sendRootReference = provideFunction
+  receiveRootReference = receiveFunction
+
+instance NetworkObject a => NetworkRootReference (IO (Future a)) where
+  type NetworkRootReferenceChannel (IO (Future a)) = Channel () Void NetworkCallRequest
+  sendRootReference = provideFunction
+  receiveRootReference = receiveFunction
+
+instance (NetworkObject a, NetworkFunction b) => NetworkObject (a -> b) where
+  type NetworkStrategy (a -> b) = NetworkRootReference
+
+instance NetworkObject a => NetworkObject (IO (Future a)) where
+  type NetworkStrategy (IO (Future a)) = NetworkRootReference
