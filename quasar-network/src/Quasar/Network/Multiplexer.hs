@@ -289,14 +289,6 @@ instance Exception ChannelException
 
 type RawChannelHandler = ReceiveMessageContext -> BSL.ByteString -> QuasarIO ()
 
-runRawChannelHandler :: RawChannelHandler -> ReceiveMessageContext -> BSL.ByteString -> IO ()
-runRawChannelHandler handler context message = do
-  -- When the channel/multiplexer is currently closing, running the
-  -- callback might no longer be possible.
-  handle (\FailedToAttachResource -> pure ()) do
-    execForeignQuasarIO context.channel.quasar do
-      handler context message
-
 newtype SendMessageContext = SendMessageContext {
   addMessagePart ::
     Either BSL.ByteString (RawChannel -> SendMessageContext -> STMc NoRetry '[] (BSL.ByteString, RawChannelHandler)) ->
@@ -636,12 +628,17 @@ receiveThread multiplexer readFn = do
         let context = ReceiveMessageContext {
           channel,
           numCreatedChannels = length receivedParts,
-          acceptMessagePart = acceptMessagePartCallback receivedPartsVar
+          acceptMessagePart = acceptMessagePartCallback channel receivedPartsVar
         }
-        runRawChannelHandler messageHandler context message
 
-        unlessM (null <$> readTVarIO receivedPartsVar) do
-          throwM $ ChannelProtocolException channel.channelId "Received message parts were not handled"
+        -- When the channel/multiplexer is currently closing, running the
+        -- callback might no longer be possible.
+        handle (\FailedToAttachResource -> disposeEventuallyIO_ channel) do
+          execForeignQuasarIO context.channel.quasar do
+            messageHandler context message
+
+          unlessM (null <$> readTVarIO receivedPartsVar) do
+            throwM $ ChannelProtocolException channel.channelId "Received message parts were not handled"
 
       pure Continue
 
