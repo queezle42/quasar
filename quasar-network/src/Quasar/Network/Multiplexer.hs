@@ -650,33 +650,33 @@ receiveThread multiplexer readFn = do
       receivedParts <- mapM (initializeMessagePart channel) parts
       pure (ReceivedChannelMessagePart channel cdata receivedParts)
 
-    acceptMessagePartCallback :: TVar [ReceivedMessagePart] -> (BSL.ByteString -> Either ParseException (Either a (RawChannel -> ReceiveMessageContext -> STMc NoRetry '[MultiplexerException] (RawChannelHandler, a)))) -> STMc NoRetry '[MultiplexerException] a
-    acceptMessagePartCallback parts fn = do
+    acceptMessagePartCallback :: RawChannel -> TVar [ReceivedMessagePart] -> (BSL.ByteString -> Either ParseException (Either a (RawChannel -> ReceiveMessageContext -> STMc NoRetry '[MultiplexerException] (RawChannelHandler, a)))) -> STMc NoRetry '[MultiplexerException] a
+    acceptMessagePartCallback channel parts fn = do
       readTVar parts >>= \case
-        [] -> undefined -- TODO error: Trying to accept a message part but none is available
+        [] -> throwC $ ChannelProtocolException channel.channelId "Trying to accept a message part but none is available"
         c:cs -> do
           writeTVar parts cs
           case c of
             ReceivedDataMessagePart cdata ->
               case fn cdata of
-                Left ex -> undefined
+                Left (ParseException msg) -> throwC $ ChannelProtocolException channel.channelId ("Failed to parse data message part: " <> msg)
                 Right (Left result) -> pure result
-                Right (Right _) -> undefined -- TODO invalid choice
-            ReceivedChannelMessagePart channel cdata subParts ->
+                Right (Right _) -> throwC $ ChannelProtocolException channel.channelId "Tried to accept a data message part, but the message part contains a channel"
+            ReceivedChannelMessagePart receivedChannel cdata subParts ->
               case fn cdata of
-                Left ex -> undefined
-                Right (Left _result) -> undefined -- TODO invalid choice
+                Left (ParseException msg) -> throwC $ ChannelProtocolException channel.channelId ("Failed to parse cdata for channel message part: " <> msg)
+                Right (Left _result) -> throwC $ ChannelProtocolException channel.channelId "Tried to accept a channel message part, but the message part is a data part"
                 Right (Right innerFn) -> do
                   receivedPartsVar <- newTVar subParts
                   let context = ReceiveMessageContext {
-                    channel,
+                    channel = receivedChannel,
                     numCreatedChannels = length subParts,
-                    acceptMessagePart = acceptMessagePartCallback receivedPartsVar
+                    acceptMessagePart = acceptMessagePartCallback receivedChannel receivedPartsVar
                   }
-                  (handler, result) <- innerFn channel context
+                  (handler, result) <- innerFn receivedChannel context
                   unlessM (null <$> readTVar receivedPartsVar) do
-                    throwC $ ChannelProtocolException channel.channelId "Received message parts were not handled"
-                  rawChannelSetHandler channel handler
+                    throwC $ ChannelProtocolException receivedChannel.channelId "Received message parts were not handled"
+                  rawChannelSetHandler receivedChannel handler
                   pure result
 
 
