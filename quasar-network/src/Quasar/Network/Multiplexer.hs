@@ -8,7 +8,7 @@ module Quasar.Network.Multiplexer (
   -- ** Sending messages
   SendMessageContext(..),
   addDataMessagePart,
-  addChannelMessagePart,
+  addRawChannelMessagePart,
   AbortSend(..),
   sendRawChannelMessage,
   sendRawChannelMessageDeferred,
@@ -18,7 +18,7 @@ module Quasar.Network.Multiplexer (
   -- ** Receiving messages
   ReceiveMessageContext(..),
   acceptDataMessagePart,
-  acceptChannelMessagePart,
+  acceptRawChannelMessagePart,
   RawChannelHandler,
   rawChannelSetHandler,
   binaryHandler,
@@ -306,8 +306,8 @@ newtype SendMessageContext = SendMessageContext {
 addDataMessagePart :: SendMessageContext -> BSL.ByteString -> STMc NoRetry '[] ()
 addDataMessagePart context blob = addMessagePart context (Left blob)
 
-addChannelMessagePart :: SendMessageContext -> (RawChannel -> SendMessageContext -> STMc NoRetry '[] (BSL.ByteString, RawChannelHandler)) -> STMc NoRetry '[] ()
-addChannelMessagePart context initChannelFn = addMessagePart context (Right initChannelFn)
+addRawChannelMessagePart :: SendMessageContext -> (RawChannel -> SendMessageContext -> STMc NoRetry '[] (BSL.ByteString, RawChannelHandler)) -> STMc NoRetry '[] ()
+addRawChannelMessagePart context initChannelFn = addMessagePart context (Right initChannelFn)
 
 data ReceiveMessageContext = ReceiveMessageContext {
   channel :: RawChannel,
@@ -339,7 +339,7 @@ acceptDataMessagePart :: forall a.
 acceptDataMessagePart context parseFn =
   acceptMessagePart context \cdata -> Left <$> parseFn cdata
 
-acceptChannelMessagePart :: forall a.
+acceptRawChannelMessagePart :: forall a.
   ReceiveMessageContext ->
   (
     BSL.ByteString ->
@@ -350,7 +350,7 @@ acceptChannelMessagePart :: forall a.
     )
   ) ->
   STMc NoRetry '[MultiplexerException] a
-acceptChannelMessagePart context fn =
+acceptRawChannelMessagePart context fn =
   acceptMessagePart context \cdata -> Right <$> fn cdata
 
 

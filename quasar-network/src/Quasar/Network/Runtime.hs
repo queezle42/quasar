@@ -71,29 +71,37 @@ import Data.Void (absurd)
 type IsChannel :: Type -> Constraint
 class (IsChannel (ReverseChannelType a), a ~ ReverseChannelType (ReverseChannelType a), Disposable a) => IsChannel a where
   type ReverseChannelType a
+  type CData a :: Type
   type ChannelHandlerType a
   castChannel :: RawChannel -> a
+  encodeCData :: CData a -> BSL.ByteString
+  decodeCData :: BSL.ByteString -> Either ParseException (CData a)
   rawChannelHandler :: ChannelHandlerType a -> RawChannelHandler
   setChannelHandler :: a -> ChannelHandlerType a -> STMc NoRetry '[] ()
 
 instance IsChannel RawChannel where
   type ReverseChannelType RawChannel = RawChannel
+  type CData RawChannel = BSL.ByteString
   type ChannelHandlerType RawChannel = RawChannelHandler
-  castChannel :: RawChannel -> RawChannel
   castChannel = id
-  rawChannelHandler :: RawChannelHandler -> RawChannelHandler
+  encodeCData = id
+  decodeCData = Right
   rawChannelHandler = id
   setChannelHandler = rawChannelSetHandler
 
 
-instance (Binary up, Binary down) => IsChannel (Channel up down) where
-  type ReverseChannelType (Channel up down) = (Channel down up)
-  type ChannelHandlerType (Channel up down) = ChannelHandler down
-  castChannel :: RawChannel -> Channel up down
+instance (Binary cdata, Binary up, Binary down) => IsChannel (Channel cdata up down) where
+  type ReverseChannelType (Channel cdata up down) = (Channel cdata down up)
+  type CData (Channel cdata up down) = cdata
+  type ChannelHandlerType (Channel cdata up down) = ChannelHandler down
   castChannel = Channel
-  rawChannelHandler :: ChannelHandler down -> RawChannelHandler
+  encodeCData = encode
+  decodeCData cdata =
+    case decodeOrFail cdata of
+      Right ("", _position, parsedCData) -> Right parsedCData
+      Right (leftovers, _position, _parsedCData) -> Left (ParseException (mconcat ["Failed to parse channel cdata: ", show (BSL.length leftovers), "b leftover data"]))
+      Left (_leftovers, _position, msg) -> Left (ParseException msg)
   rawChannelHandler = binaryHandler
-  setChannelHandler :: Channel up down -> ChannelHandler down -> STMc NoRetry '[] ()
   setChannelHandler (Channel channel) handler = rawChannelSetHandler channel (binaryHandler handler)
 
 type ReverseChannelHandlerType a = ChannelHandlerType (ReverseChannelType a)
@@ -103,6 +111,7 @@ type ChannelHandler a = ReceiveMessageContext -> a -> QuasarIO ()
 -- | Describes how a typeclass is used to send- and receive `NetworkObject`s.
 type IsNetworkStrategy :: (Type -> Constraint) -> Type -> Constraint
 class (s a, NetworkObject a) => IsNetworkStrategy s a where
+  -- TODO rename to provide
   sendObject ::
     NetworkStrategy a ~ s =>
     a ->
@@ -142,20 +151,18 @@ instance (Binary a, NetworkObject a) => IsNetworkStrategy Binary a where
       Right (_leftovers, _position, result) -> Right (Left result)
 
 
-class (IsChannel (NetworkReferenceChannel a), Binary (CData a)) => NetworkReference a where
-  type CData a :: Type
+class IsChannel (NetworkReferenceChannel a) => NetworkReference a where
   type NetworkReferenceChannel a
-  sendReference :: a -> NetworkReferenceChannel a -> SendMessageContext -> STMc NoRetry '[] (CData a, ChannelHandlerType (NetworkReferenceChannel a))
-  receiveReference :: ReceiveMessageContext -> CData a -> ReverseChannelType (NetworkReferenceChannel a) -> STMc NoRetry '[MultiplexerException] (ReverseChannelHandlerType (NetworkReferenceChannel a), a)
+  sendReference :: a -> NetworkReferenceChannel a -> SendMessageContext -> STMc NoRetry '[] (CData (NetworkReferenceChannel a), ChannelHandlerType (NetworkReferenceChannel a))
+  receiveReference :: ReceiveMessageContext -> CData (NetworkReferenceChannel a) -> ReverseChannelType (NetworkReferenceChannel a) -> STMc NoRetry '[MultiplexerException] (ReverseChannelHandlerType (NetworkReferenceChannel a), a)
 
 instance (NetworkReference a, NetworkObject a) => IsNetworkStrategy NetworkReference a where
   -- Send an object by reference with the `NetworkReference` class
-  sendObject x = Right \channel context -> bimap encode undefined <$> sendReference x (castChannel channel) context
+  sendObject x = Right \channel context -> bimap (encodeCData @(NetworkReferenceChannel a)) (rawChannelHandler @(NetworkReferenceChannel a)) <$> sendReference x (castChannel channel) context
   receiveObject cdata =
-    case decodeOrFail cdata of
-      -- TODO verify no leftovers
-      Left (_leftovers, _position, msg) -> Left (ParseException msg)
-      Right (_leftovers, _position, parsedCData) -> Right $ Right \channel context ->
+    case decodeCData @(NetworkReferenceChannel a) cdata of
+      Left ex -> Left ex
+      Right parsedCData -> Right $ Right \channel context ->
         first (rawChannelHandler @(ReverseChannelType (NetworkReferenceChannel a))) <$> receiveReference context parsedCData (castChannel channel)
 
 
@@ -186,35 +193,35 @@ instance NetworkObject Float where
 instance NetworkObject Double where
   type NetworkStrategy Double = Binary
 
-instance NetworkObject String where
-  type NetworkStrategy String = Binary
+instance NetworkObject Char where
+  type NetworkStrategy Char = Binary
 
 
 
-type Channel :: Type -> Type -> Type
-newtype Channel up down = Channel RawChannel
+type Channel :: Type -> Type -> Type -> Type
+newtype Channel cdata up down = Channel RawChannel
   deriving newtype Disposable
 
-instance HasField "quasar" (Channel up down) Quasar where
+instance HasField "quasar" (Channel cdata up down) Quasar where
   getField (Channel rawChannel) = rawChannel.quasar
 
-channelSend :: (Binary up, MonadIO m) => Channel up down -> up -> m ()
+channelSend :: (Binary up, MonadIO m) => Channel cdata up down -> up -> m ()
 channelSend (Channel channel) value = liftIO $ sendRawChannelMessage channel (encode value)
 
-sendChannelMessageDeferred :: (Binary up, MonadIO m) => Channel up down -> (SendMessageContext -> STMc NoRetry '[AbortSend] (up, a)) -> m a
+sendChannelMessageDeferred :: (Binary up, MonadIO m) => Channel cdata up down -> (SendMessageContext -> STMc NoRetry '[AbortSend] (up, a)) -> m a
 sendChannelMessageDeferred (Channel channel) payloadHook = sendRawChannelMessageDeferred channel (first encode <<$>> payloadHook)
 
-sendChannelMessageDeferred_ :: (Binary up, MonadIO m) => Channel up down -> (SendMessageContext -> STMc NoRetry '[AbortSend] up) -> m ()
+sendChannelMessageDeferred_ :: (Binary up, MonadIO m) => Channel cdata up down -> (SendMessageContext -> STMc NoRetry '[AbortSend] up) -> m ()
 sendChannelMessageDeferred_ channel payloadHook = sendChannelMessageDeferred channel ((,()) <<$>> payloadHook)
 
-unsafeQueueChannelMessage :: (Binary up, MonadSTMc NoRetry '[AbortSend, ChannelException, MultiplexerException] m) => Channel up down -> up -> m ()
+unsafeQueueChannelMessage :: (Binary up, MonadSTMc NoRetry '[AbortSend, ChannelException, MultiplexerException] m) => Channel cdata up down -> up -> m ()
 unsafeQueueChannelMessage (Channel channel) value =
   unsafeQueueRawChannelMessage channel (encode value)
 
-channelSetHandler :: (Binary down, MonadSTMc NoRetry '[] m) => Channel up down -> ChannelHandler down -> m ()
+channelSetHandler :: (Binary down, MonadSTMc NoRetry '[] m) => Channel cdata up down -> ChannelHandler down -> m ()
 channelSetHandler (Channel s) fn = rawChannelSetHandler s (binaryHandler fn)
 
-channelSetSimpleHandler :: (Binary down, MonadSTMc NoRetry '[] m) => Channel up down -> (down -> QuasarIO ()) -> m ()
+channelSetSimpleHandler :: (Binary down, MonadSTMc NoRetry '[] m) => Channel cdata up down -> (down -> QuasarIO ()) -> m ()
 channelSetSimpleHandler (Channel channel) fn = rawChannelSetHandler channel (simpleBinaryHandler fn)
 
 -- ** Running client and server

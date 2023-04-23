@@ -7,7 +7,7 @@ import Quasar
 import Quasar.Network.Connection
 import Quasar.Network.Multiplexer
 import Quasar.Prelude
-import Test.Hspec.Core.Spec
+import Test.Hspec.Core.Spec hiding (context)
 import Test.Hspec.Expectations.Lifted
 
 -- Type is pinned to IO, otherwise hspec spec type cannot be inferred
@@ -143,7 +143,8 @@ withEchoServer fn = rm $ bracket setup closePair (\(channel, _) -> fn channel)
     echoHandler channel context msg = do
       atomicallyC do
         replicateM_ context.numCreatedChannels do
-          acceptChannelMessagePart context (\_cdata -> (Right (\newChannel newContext -> configureEchoHandler newChannel)))
+          acceptRawChannelMessagePart context \_cdata ->
+            Right (\newChannel _newContext -> configureEchoHandler newChannel)
       sendRawChannelMessage channel msg
 
 sendMessage :: RawChannel -> BSL.ByteString -> [RawChannelHandler] -> QuasarIO [RawChannel]
@@ -151,7 +152,7 @@ sendMessage channel msg createChannels = do
   var <- newTVarIO []
   sendRawChannelMessageDeferred_ channel \context -> do
     forM_ createChannels \handler ->
-      liftSTMc $ addChannelMessagePart context \newChannel newContext -> do
+      liftSTMc $ addRawChannelMessagePart context \newChannel newContext -> do
         modifyTVar var (<> [newChannel])
         pure ("", handler)
     pure msg

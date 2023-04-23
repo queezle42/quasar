@@ -59,17 +59,17 @@ data ObservableRequest
 
 instance Binary ObservableRequest
 
-data ObservableResponse a
+data ObservableResponse
   = PackedObservableValue
   | PackedObservableLoading
   | PackedObservableNotAvailable PackedException
   deriving stock Generic
 
-instance NetworkObject a => Binary (ObservableResponse a)
+instance Binary ObservableResponse
 
 
 instance NetworkObject a => NetworkRootReference (Observable (ObservableState a)) where
-  type NetworkRootReferenceChannel (Observable (ObservableState a)) = Channel (ObservableResponse a) ObservableRequest
+  type NetworkRootReferenceChannel (Observable (ObservableState a)) = Channel () ObservableResponse ObservableRequest
   sendRootReference = sendObservableReference
   receiveRootReference = receiveObservableReference
 
@@ -83,7 +83,7 @@ data ObservableReference a = ObservableReference {
   activeDisposer :: TVar Disposer
 }
 
-sendObservableReference :: forall a. NetworkObject a => Observable (ObservableState a) -> Channel (ObservableResponse a) ObservableRequest -> STMc NoRetry '[] (ChannelHandler ObservableRequest)
+sendObservableReference :: forall a. NetworkObject a => Observable (ObservableState a) -> Channel () ObservableResponse ObservableRequest -> STMc NoRetry '[] (ChannelHandler ObservableRequest)
 sendObservableReference observable channel = do
   -- Bind resources lifetime to network channel
   execForeignQuasarSTMc @NoRetry channel.quasar do
@@ -117,7 +117,7 @@ sendObservableReference observable channel = do
       handle (\AbortSend -> pure ()) do
         sendChannelMessageDeferred_ channel payloadHook
       where
-        payloadHook :: SendMessageContext -> STMc NoRetry '[AbortSend] (ObservableResponse a)
+        payloadHook :: SendMessageContext -> STMc NoRetry '[AbortSend] ObservableResponse
         payloadHook context = do
           writeTVar ref.isLoading False
           swapTVar ref.outbox Nothing >>= \case
@@ -139,7 +139,7 @@ sendObservableReference observable channel = do
 
 data ObservableProxy a =
   ObservableProxy {
-    channel :: Channel ObservableRequest (ObservableResponse a),
+    channel :: Channel () ObservableRequest ObservableResponse,
     observableVar :: ObservableVar (ObservableState a)
   }
 
@@ -148,7 +148,7 @@ data ProxyState
   | Stopped
   deriving stock (Eq, Show)
 
-receiveObservableReference :: forall a. NetworkObject a => Channel ObservableRequest (ObservableResponse a) -> STMc NoRetry '[MultiplexerException] (ChannelHandler (ObservableResponse a), Observable (ObservableState a))
+receiveObservableReference :: forall a. NetworkObject a => Channel () ObservableRequest ObservableResponse -> STMc NoRetry '[MultiplexerException] (ChannelHandler ObservableResponse, Observable (ObservableState a))
 receiveObservableReference channel = do
   observableVar <- newObservableVar ObservableLoading
   let proxy = ObservableProxy {
@@ -164,7 +164,7 @@ receiveObservableReference channel = do
 
   pure (callback proxy, toObservable proxy)
   where
-    callback :: ObservableProxy a -> ReceiveMessageContext -> ObservableResponse a -> QuasarIO ()
+    callback :: ObservableProxy a -> ReceiveMessageContext -> ObservableResponse -> QuasarIO ()
     callback proxy context PackedObservableValue = do
       value <- atomicallyC $ receiveObjectFromMessagePart context
       atomically $ writeObservableVar proxy.observableVar (ObservableValue value)
