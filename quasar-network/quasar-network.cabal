@@ -104,5 +104,6 @@ test-suite quasar-network-test
   other-modules:
     Quasar.Network.MultiplexerSpec
     Quasar.Network.ObservableSpec
+    Quasar.NetworkSpec
   hs-source-dirs:
     test
