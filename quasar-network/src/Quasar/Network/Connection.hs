@@ -86,7 +86,7 @@ connectTCPSocket host port = liftIO do
   sockMVar <- newEmptyMVar
   let
     spawnConnectTask :: Socket.AddrInfo -> IO ()
-    spawnConnectTask = \addr -> modifyMVar_ connectTasksMVar $ \old -> (:old) . (addr,) <$> connectTask addr
+    spawnConnectTask addr = modifyMVar_ connectTasksMVar $ \old -> (:old) . (addr,) <$> connectTask addr
     -- Race more connections (a missed TCP SYN will result in 3s wait before a retransmission; IPv6 might be broken)
     -- Inspired by a similar implementation in browsers
     raceConnections :: IO ()
@@ -114,12 +114,10 @@ connectTCPSocket host port = liftIO do
       unless isFirst $ Socket.close sock
 
   -- The 'raceConnections'-async is 'link'ed to this thread, so 'readMVar' is interrupted when all connection attempts fail
-  sock <-
-    (withAsync (interruptible raceConnections) (link >=> const (readMVar sockMVar))
-      -- As soon as we have an open connection, stop spawning more connections
-      `finally` (mapM_ (cancel . snd) =<< readMVar connectTasksMVar))
-        `onException` (mapM_ Socket.close =<< tryTakeMVar sockMVar)
-  pure sock
+  (withAsync (interruptible raceConnections) (link >=> const (readMVar sockMVar))
+    -- As soon as we have an open connection, stop spawning more connections
+    `finally` (mapM_ (cancel . snd) =<< readMVar connectTasksMVar))
+      `onException` (mapM_ Socket.close =<< tryTakeMVar sockMVar)
   where
     hints :: Socket.AddrInfo
     hints = Socket.defaultHints { Socket.addrFlags = [Socket.AI_ADDRCONFIG], Socket.addrSocketType = Socket.Stream }
