@@ -71,6 +71,7 @@
 # - ignore: {name: Use const, within: SpecialModule} # Only within certain modules
 
 - ignore: {name: Eta reduce}
+- ignore: {name: Use const}
 
 
 # Define some custom infix operators
