@@ -261,6 +261,7 @@ instance NetworkObject a => NetworkReference (Maybe a) where
 instance NetworkObject a => NetworkObject (Maybe a) where
   type NetworkStrategy (Maybe a) = NetworkReference
 
+
 -- ** List
 
 instance NetworkObject a => NetworkReference [a] where
@@ -278,6 +279,7 @@ instance NetworkObject a => NetworkReference [a] where
 
 instance NetworkObject a => NetworkObject [a] where
   type NetworkStrategy [a] = NetworkReference
+
 
 -- ** Either
 
@@ -299,7 +301,13 @@ instance (NetworkObject a, NetworkObject b) => NetworkReference (Either a b) whe
 instance (NetworkObject a, NetworkObject b) => NetworkObject (Either a b) where
   type NetworkStrategy (Either a b) = NetworkReference
 
+
 -- ** Function call
+
+data NetworkFunctionException = NetworkFunctionException
+  deriving Show
+
+instance Exception NetworkFunctionException
 
 data NetworkArgument = forall a. NetworkObject a => NetworkArgument a
 
@@ -307,7 +315,8 @@ data NetworkCallRequest = NetworkCallRequest
   deriving Generic
 instance Binary NetworkCallRequest
 
-data NetworkCallResponse = NetworkCallSuccess
+data NetworkCallResponse
+  = NetworkCallSuccess
   deriving Generic
 instance Binary NetworkCallResponse
 
@@ -321,30 +330,35 @@ instance (NetworkObject a, NetworkFunction b) => NetworkFunction (a -> b) where
     handleNetworkFunctionCall (fn arg) callChannel callContext
   networkFunctionProxy args functionChannel arg = networkFunctionProxy (args <> [NetworkArgument arg]) functionChannel
 
-instance NetworkObject a => NetworkFunction (IO (Future a)) where
+instance NetworkObject a => NetworkFunction (IO (FutureEx '[SomeException] a)) where
   handleNetworkFunctionCall fn callChannel _callContext = pure do
     future <- liftIO fn
     async_ do
       result <- await future
-      -- TODO FutureEx handling: send exception before closing the channel
-      -- send call response
-      sendChannelMessageDeferred_ callChannel \context -> do
-        liftSTMc do
-          sendObjectAsMessagePart context result
-          pure NetworkCallSuccess
+      case result of
+        Left ex -> do
+          -- TODO send exception before closing channel
+          disposeEventuallyIO_ callChannel
+          throwEx ex
+        Right value ->
+          sendChannelMessageDeferred_ callChannel \context -> do
+            liftSTMc do
+              sendObjectAsMessagePart context value
+              pure NetworkCallSuccess
   networkFunctionProxy args functionChannel = do
     promise <- newPromiseIO
     sendChannelMessageDeferred_ functionChannel \context -> do
       addChannelMessagePart context \callChannel callContext -> do
+        callOnceCompleted_ (isDisposed callChannel) (\() -> tryFulfillPromise_ promise (Left (toEx NetworkFunctionException)))
         forM_ args \(NetworkArgument arg) -> sendObjectAsMessagePart callContext arg
         pure ((), callResponseHandler promise callChannel)
       pure NetworkCallRequest
-    pure (toFuture promise)
+    pure (toFutureEx promise)
     where
-      callResponseHandler :: Promise a -> Channel () Void NetworkCallResponse -> ChannelHandler NetworkCallResponse
+      callResponseHandler :: PromiseEx '[SomeException] a -> Channel () Void NetworkCallResponse -> ChannelHandler NetworkCallResponse
       callResponseHandler promise callChannel responseContext NetworkCallSuccess = do
         result <- atomicallyC $ receiveObjectFromMessagePart responseContext
-        tryFulfillPromiseIO_ promise result
+        tryFulfillPromiseIO_ promise (Right result)
         atomicallyC $ disposeEventually_ callChannel
 
 receiveFunction :: NetworkFunction a => Channel () NetworkCallRequest Void -> STMc NoRetry '[MultiplexerException] (ChannelHandler Void, a)
@@ -361,13 +375,13 @@ instance (NetworkObject a, NetworkFunction b) => NetworkRootReference (a -> b) w
   sendRootReference = provideFunction
   receiveRootReference = receiveFunction
 
-instance NetworkObject a => NetworkRootReference (IO (Future a)) where
-  type NetworkRootReferenceChannel (IO (Future a)) = Channel () Void NetworkCallRequest
+instance NetworkObject a => NetworkRootReference (IO (FutureEx '[SomeException] a)) where
+  type NetworkRootReferenceChannel (IO (FutureEx '[SomeException] a)) = Channel () Void NetworkCallRequest
   sendRootReference = provideFunction
   receiveRootReference = receiveFunction
 
 instance (NetworkObject a, NetworkFunction b) => NetworkObject (a -> b) where
   type NetworkStrategy (a -> b) = NetworkRootReference
 
-instance NetworkObject a => NetworkObject (IO (Future a)) where
-  type NetworkStrategy (IO (Future a)) = NetworkRootReference
+instance NetworkObject a => NetworkObject (IO (FutureEx '[SomeException] a)) where
+  type NetworkStrategy (IO (FutureEx '[SomeException] a)) = NetworkRootReference

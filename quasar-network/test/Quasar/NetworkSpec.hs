@@ -20,22 +20,22 @@ spec :: Spec
 spec = parallel $ describe "NetworkFunction" $ do
   it "can call a proxy function" $ testTimeout 1_000_000 $ rm do
     let
-      theFunction  :: IO (Future Int)
+      theFunction  :: IO (FutureEx '[SomeException] Int)
       theFunction = do
         pure (pure 42)
 
     42 <- withStandaloneProxy theFunction \proxy -> do
-      await =<< liftIO proxy
+      awaitEx =<< liftIO proxy
 
     pure ()
 
   it "can call a proxy function with an argument" $ testTimeout 1_000_000 $ rm do
     let
-      theFunction  :: Int -> IO (Future Int)
+      theFunction  :: Int -> IO (FutureEx '[SomeException] Int)
       theFunction arg = do
         pure (pure (arg * 2))
 
     42 <- withStandaloneProxy theFunction \proxy -> do
-      await =<< liftIO (proxy 21)
+      awaitEx =<< liftIO (proxy 21)
 
     pure ()
