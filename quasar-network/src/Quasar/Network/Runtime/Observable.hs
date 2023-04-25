@@ -47,7 +47,7 @@ joinNetworkObservable x = x >>= \case
 
 
 data ObservableProxyException = ObservableProxyException SomeException
-  deriving stock (Show)
+  deriving stock Show
 
 instance Exception ObservableProxyException
 

@@ -42,6 +42,8 @@ class ToObservableList v a => IsObservableList v a | a -> v where
 attachListDeltaObserver :: (ToObservableList v a, MonadSTMc NoRetry '[] m) => a -> (ObservableListDelta v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Seq v)
 attachListDeltaObserver x callback = liftSTMc $ attachListDeltaObserver# (toObservableList x) callback
 
+-- TODO length, isEmpty
+
 data ObservableList v = forall a. IsObservableList v a => ObservableList a
 
 instance ToObservable (Seq v) (ObservableList v) where
@@ -89,8 +91,7 @@ instance Semigroup (ObservableListDelta v) where
       go :: Seq (ObservableListOperation v) -> Seq (ObservableListOperation v) -> Seq (ObservableListOperation v)
       go _ ys@(DeleteAll :<| _) = ys
       go (xs :|> Insert key1 _) (Delete key2 :<| ys) | key1 == key2 = go xs ys
-      go xs (i :<| ys) = go (xs :|> i) ys
-      go xs Empty = xs
+      go xs ys = xs <> ys
 
 instance Monoid (ObservableListDelta v) where
   mempty = ObservableListDelta mempty
