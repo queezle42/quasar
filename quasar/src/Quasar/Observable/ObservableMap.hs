@@ -1,12 +1,18 @@
 module Quasar.Observable.ObservableMap (
   ToObservableMap(..),
-  observeKey,
   attachMapDeltaObserver,
   IsObservableMap(..),
   ObservableMap,
   mapWithKey,
+  lookup,
+  isEmpty,
+  length,
   values,
   items,
+
+  empty,
+  singleton,
+  fromList,
 
   ObservableMapDelta(..),
   ObservableMapOperation(..),
@@ -16,7 +22,6 @@ module Quasar.Observable.ObservableMap (
   newObservableMapVarIO,
   insert,
   delete,
-  lookup,
   lookupDelete,
 
   filter,
@@ -24,14 +29,15 @@ module Quasar.Observable.ObservableMap (
 ) where
 
 import Data.Foldable (find)
+import Data.Foldable qualified as Foldable
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Sequence (Seq)
+import Data.Sequence (Seq(..))
 import Data.Sequence qualified as Seq
 import Quasar.Observable
 import Quasar.Observable.ObservableList (ObservableList, IsObservableList, ToObservableList(..), ObservableListDelta(..))
 import Quasar.Observable.ObservableList qualified as ObservableList
-import Quasar.Prelude hiding (filter)
+import Quasar.Prelude hiding (filter, length, lookup)
 import Quasar.Resources.Disposer
 import Quasar.Utils.CallbackRegistry
 import Quasar.Utils.Fix
@@ -55,8 +61,14 @@ class ToObservableMap k v a => IsObservableMap k v a where
   -- registering and after that will be invoked for every change to the map.
   attachMapDeltaObserver# :: a -> (ObservableMapDelta k v -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Map k v)
 
-observeKey :: (ToObservableMap k v a, Ord k) => k -> a -> Observable (Maybe v)
-observeKey key x = observeKey# key (toObservableMap x)
+isEmpty :: ToObservableMap k v a => a -> Observable Bool
+isEmpty x = observeIsEmpty# (toObservableMap x)
+
+length :: ToObservableMap k v a => a -> Observable Int
+length x = observeLength# (toObservableMap x)
+
+lookup :: (ToObservableMap k v a, Ord k) => k -> a -> Observable (Maybe v)
+lookup key x = observeKey# key (toObservableMap x)
 
 attachMapDeltaObserver :: (ToObservableMap k v a, MonadSTMc NoRetry '[] m) => a -> (ObservableMapDelta k v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Map k v)
 attachMapDeltaObserver x callback = liftSTMc $ attachMapDeltaObserver# (toObservableMap x) callback
@@ -111,8 +123,27 @@ instance Eq k => Monoid (ObservableMapDelta k v) where
 instance Functor (ObservableMapDelta k) where
   fmap f (ObservableMapDelta ops) = ObservableMapDelta (f <<$>> ops)
 
-singleton :: ObservableMapOperation k v -> ObservableMapDelta k v
-singleton op = ObservableMapDelta (Seq.singleton op)
+empty :: ObservableMap k v
+empty = ObservableMap (ConstObservableMap Map.empty)
+
+singleton :: k -> v -> ObservableMap k v
+singleton k v = ObservableMap (ConstObservableMap (Map.singleton k v))
+
+fromList :: Ord k => [(k, v)] -> ObservableMap k v
+fromList = ObservableMap . ConstObservableMap . Map.fromList
+
+newtype ConstObservableMap k v = ConstObservableMap (Map k v)
+
+instance ToObservable (Map k v) (ConstObservableMap k v) where
+  toObservable (ConstObservableMap x) = pure x
+
+instance ToObservableMap k v (ConstObservableMap k v)
+instance IsObservableMap k v (ConstObservableMap k v) where
+  observeIsEmpty# (ConstObservableMap x) = pure (null x)
+  observeLength# (ConstObservableMap x) = pure (Foldable.length x)
+  observeKey# key (ConstObservableMap x) = pure (Map.lookup key x)
+  attachMapDeltaObserver# (ConstObservableMap x) _callback = pure (mempty, x)
+
 
 
 data MappedObservableMap k v = forall a. MappedObservableMap (k -> a -> v) (ObservableMap k a)
@@ -158,7 +189,7 @@ instance ToObservableMap k v (ObservableMapVar k v)
 
 instance IsObservableMap k v (ObservableMapVar k v) where
   observeIsEmpty# x = deduplicateObservable (Map.null <$> toObservable x)
-  observeLength# x = deduplicateObservable (length <$> toObservable x)
+  observeLength# x = deduplicateObservable (Foldable.length <$> toObservable x)
   observeKey# key x = toObservable (ObservableMapVarKeyObservable key x)
   attachMapDeltaObserver# ObservableMapVar{content, deltaObservers} callback = do
     disposer <- registerCallback deltaObservers callback
@@ -205,7 +236,7 @@ insert :: forall k v m. (Ord k, MonadSTMc NoRetry '[] m) => k -> v -> Observable
 insert key value ObservableMapVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
   state <- stateTVar content (dup . Map.insert key value)
   callCallbacks observers state
-  callCallbacks deltaObservers (singleton (Insert key value))
+  callCallbacks deltaObservers (ObservableMapDelta (Seq.singleton (Insert key value)))
   mkr <- Map.lookup key <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry (Just value)
 
@@ -213,7 +244,7 @@ delete :: forall k v m. (Ord k, MonadSTMc NoRetry '[] m) => k -> ObservableMapVa
 delete key ObservableMapVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
   state <- stateTVar content (dup . Map.delete key)
   callCallbacks observers state
-  callCallbacks deltaObservers (singleton (Delete key))
+  callCallbacks deltaObservers (ObservableMapDelta (Seq.singleton (Delete key)))
   mkr <- Map.lookup key <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
 
@@ -223,7 +254,7 @@ lookupDelete key ObservableMapVar{content, observers, deltaObservers, keyObserve
     let (result, newMap) = Map.lookupDelete key orig
     in ((result, newMap), newMap)
   callCallbacks observers newMap
-  callCallbacks deltaObservers (singleton (Delete key))
+  callCallbacks deltaObservers (ObservableMapDelta (Seq.singleton (Delete key)))
   mkr <- Map.lookup key <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
   pure result
@@ -243,7 +274,7 @@ instance IsObservableMap k v (FilteredObservableMap k v) where
 
   observeLength# x =
     -- NOTE memory footprint could be improved by only tracking the keys (e.g. an (ObservableSet k))
-    deduplicateObservable (length <$> toObservable x)
+    deduplicateObservable (Foldable.length <$> toObservable x)
 
   observeKey# key (FilteredObservableMap predicate upstream) =
     find (predicate key) <$> observeKey# key upstream
