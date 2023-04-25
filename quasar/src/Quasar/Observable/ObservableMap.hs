@@ -8,8 +8,8 @@ module Quasar.Observable.ObservableMap (
   values,
   items,
 
-  ObservableMapDelta,
-  ObservableMapOperation,
+  ObservableMapDelta(..),
+  ObservableMapOperation(..),
 
   ObservableMapVar,
   newObservableMapVar,
@@ -93,6 +93,20 @@ instance Functor (ObservableMapOperation k) where
 
 -- | A list of operations that is applied atomically to an `ObservableMap`.
 newtype ObservableMapDelta k v = ObservableMapDelta (Seq (ObservableMapOperation k v))
+
+instance Eq k => Semigroup (ObservableMapDelta k v) where
+  ObservableMapDelta Empty <> y = y
+  ObservableMapDelta x <> ObservableMapDelta y = ObservableMapDelta (go x y)
+    where
+      go :: Seq (ObservableMapOperation k v) -> Seq (ObservableMapOperation k v) -> Seq (ObservableMapOperation k v)
+      go _ ys@(DeleteAll :<| _) = ys
+      go (xs :|> Insert key1 _) ys@(Delete key2 :<| _) | key1 == key2 = go xs ys
+      go (xs :|> Delete key1) ys@(Delete key2 :<| _) | key1 == key2 = go xs ys
+      go xs ys = xs <> ys
+
+instance Eq k => Monoid (ObservableMapDelta k v) where
+  mempty = ObservableMapDelta mempty
+
 
 instance Functor (ObservableMapDelta k) where
   fmap f (ObservableMapDelta ops) = ObservableMapDelta (f <<$>> ops)
