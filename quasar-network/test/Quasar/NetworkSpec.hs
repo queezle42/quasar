@@ -24,10 +24,9 @@ spec = parallel $ describe "NetworkFunction" $ do
       theFunction = do
         pure (pure 42)
 
-    42 <- withStandaloneProxy theFunction \proxy -> do
-      awaitEx =<< liftIO proxy
-
-    pure ()
+    withStandaloneProxy theFunction \proxy -> do
+      42 <- awaitEx =<< liftIO proxy
+      pure ()
 
   it "can call a proxy function with an argument" $ testTimeout 1_000_000 $ rm do
     let
@@ -35,7 +34,6 @@ spec = parallel $ describe "NetworkFunction" $ do
       theFunction arg = do
         pure (pure (arg * 2))
 
-    42 <- withStandaloneProxy theFunction \proxy -> do
-      awaitEx =<< liftIO (proxy 21)
-
-    pure ()
+    withStandaloneProxy theFunction \proxy -> do
+      42 <- awaitEx =<< liftIO (proxy 21)
+      pure ()
