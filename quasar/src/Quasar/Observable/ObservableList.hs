@@ -4,6 +4,8 @@ module Quasar.Observable.ObservableList (
   attachListDeltaObserver,
   IsObservableList(..),
   ObservableList,
+  length,
+  isEmpty,
 
   -- ** Deltas
   ObservableListDelta(..),
@@ -21,10 +23,11 @@ module Quasar.Observable.ObservableList (
   lookupDelete,
 ) where
 
+import Data.Foldable qualified as Foldable
 import Data.Sequence (Seq(..))
 import Data.Sequence qualified as Seq
 import Quasar.Observable
-import Quasar.Prelude hiding (filter)
+import Quasar.Prelude hiding (filter, length)
 import Quasar.Resources
 import Quasar.Utils.CallbackRegistry
 
@@ -46,6 +49,12 @@ class ToObservableList v a => IsObservableList v a | a -> v where
 
 attachListDeltaObserver :: (ToObservableList v a, MonadSTMc NoRetry '[] m) => a -> (ObservableListDelta v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Seq v)
 attachListDeltaObserver x callback = liftSTMc $ attachListDeltaObserver# (toObservableList x) callback
+
+length :: ToObservableList v a => a -> Observable Int
+length = observeLength# . toObservableList
+
+isEmpty :: ToObservableList v a => a -> Observable Bool
+isEmpty = observeIsEmpty# . toObservableList
 
 -- TODO length, isEmpty
 
@@ -162,12 +171,14 @@ instance ToObservable (Maybe v) (ObservableListVarIndexObservable v)
 instance IsObservable (Maybe v) (ObservableListVarIndexObservable v) where
   attachObserver# (ObservableListVarIndexObservable index ObservableListVar{content, keyObservers}) callback = do
     value <- Seq.lookup index <$> readTVar content
-    registry <- (Seq.lookup index <$> readTVar keyObservers) >>= \case
-      Just registry -> pure registry
-      Nothing -> do
-        registry <- newCallbackRegistryWithEmptyCallback (modifyTVar keyObservers (Seq.deleteAt index))
-        modifyTVar keyObservers (Seq.insertAt index registry)
-        pure registry
+    registry <- do
+      ko <- readTVar keyObservers
+      case Seq.lookup index ko of
+        Just registry -> pure registry
+        Nothing -> do
+          registry <- newCallbackRegistryWithEmptyCallback (modifyTVar keyObservers (Seq.deleteAt index))
+          modifyTVar keyObservers (Seq.insertAt index registry)
+          pure registry
     disposer <- registerCallback registry callback
     pure (disposer, value)
 
@@ -193,7 +204,7 @@ newObservableListVarIO = liftIO do
 insert :: forall v m. (MonadSTMc NoRetry '[] m) => Int -> v -> ObservableListVar v -> m ()
 insert index value ObservableListVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
   initial <- readTVar content
-  let clampedIndex = min (max index 0) (length initial)
+  let clampedIndex = min (max index 0) (Foldable.length initial)
   state <- stateTVar content (dup . Seq.insertAt clampedIndex value)
   callCallbacks observers state
   callCallbacks deltaObservers (singletonDelta (Insert clampedIndex value))
@@ -203,7 +214,7 @@ insert index value ObservableListVar{content, observers, deltaObservers, keyObse
 delete :: forall v m. (MonadSTMc NoRetry '[] m) => Int -> ObservableListVar v -> m ()
 delete index ObservableListVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
   initial <- readTVar content
-  when (index >= 0 && index < length initial) do
+  when (index >= 0 && index < Foldable.length initial) do
     let state = Seq.deleteAt index initial
     callCallbacks observers state
     callCallbacks deltaObservers (singletonDelta (Delete index))
@@ -213,7 +224,7 @@ delete index ObservableListVar{content, observers, deltaObservers, keyObservers}
 lookupDelete :: forall v m. (MonadSTMc NoRetry '[] m) => Int -> ObservableListVar v -> m (Maybe v)
 lookupDelete index ObservableListVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
   initial <- readTVar content
-  if index >= 0 && index < length initial
+  if index >= 0 && index < Foldable.length initial
     then do
       (result, newList) <- stateTVar content \orig ->
         let
