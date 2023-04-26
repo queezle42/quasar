@@ -1,12 +1,17 @@
 module Quasar.Observable.ObservableList (
+  -- * ObservableList interface
   ToObservableList(..),
   attachListDeltaObserver,
   IsObservableList(..),
   ObservableList,
 
+  -- ** Deltas
   ObservableListDelta(..),
   ObservableListOperation(..),
+  singletonDelta,
+  packDelta,
 
+  -- * Mutable ObservableListVar container
   ObservableListVar,
   newObservableListVar,
   newObservableListVarIO,
@@ -85,7 +90,6 @@ instance Functor ObservableListDelta where
   fmap f (ObservableListDelta ops) = ObservableListDelta (f <<$>> ops)
 
 instance Semigroup (ObservableListDelta v) where
-  ObservableListDelta Empty <> y = y
   ObservableListDelta x <> ObservableListDelta y = ObservableListDelta (go x y)
     where
       go :: Seq (ObservableListOperation v) -> Seq (ObservableListOperation v) -> Seq (ObservableListOperation v)
@@ -96,8 +100,18 @@ instance Semigroup (ObservableListDelta v) where
 instance Monoid (ObservableListDelta v) where
   mempty = ObservableListDelta mempty
 
-singleton :: ObservableListOperation v -> ObservableListDelta v
-singleton op = ObservableListDelta (Seq.singleton op)
+singletonDelta :: ObservableListOperation v -> ObservableListDelta v
+singletonDelta x = ObservableListDelta (Seq.singleton x)
+
+-- | Pack a sequence of `ObservableListOperation`s into a `ObservableListDelta`.
+--
+-- Removes unnecessary updates (all updates preceding an `DeleteAll` or an
+-- `Insert` followed by a `Delete` for the same element.
+packDelta :: Foldable t => t (ObservableListOperation v) -> ObservableListDelta v
+packDelta x =
+  -- The list is passed through the semigroup instance so duplicate updates are
+  -- filtered.
+  mconcat $ singletonDelta <$> toList x
 
 
 data MappedObservableList v = forall a. MappedObservableList (a -> v) (ObservableList a)
@@ -182,7 +196,7 @@ insert index value ObservableListVar{content, observers, deltaObservers, keyObse
   let clampedIndex = min (max index 0) (length initial)
   state <- stateTVar content (dup . Seq.insertAt clampedIndex value)
   callCallbacks observers state
-  callCallbacks deltaObservers (singleton (Insert clampedIndex value))
+  callCallbacks deltaObservers (singletonDelta (Insert clampedIndex value))
   mkr <- Seq.lookup index <$> readTVar keyObservers
   forM_ mkr \keyRegistry -> callCallbacks keyRegistry (Just value)
 
@@ -192,7 +206,7 @@ delete index ObservableListVar{content, observers, deltaObservers, keyObservers}
   when (index >= 0 && index < length initial) do
     let state = Seq.deleteAt index initial
     callCallbacks observers state
-    callCallbacks deltaObservers (singleton (Delete index))
+    callCallbacks deltaObservers (singletonDelta (Delete index))
     mkr <- Seq.lookup index <$> readTVar keyObservers
     forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
 
@@ -207,7 +221,7 @@ lookupDelete index ObservableListVar{content, observers, deltaObservers, keyObse
           newList = Seq.deleteAt index orig
         in ((result, newList), newList)
       callCallbacks observers newList
-      callCallbacks deltaObservers (singleton (Delete index))
+      callCallbacks deltaObservers (singletonDelta (Delete index))
       mkr <- Seq.lookup index <$> readTVar keyObservers
       forM_ mkr \keyRegistry -> callCallbacks keyRegistry Nothing
       pure result
