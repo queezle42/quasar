@@ -66,30 +66,33 @@ newTimerFd clockId callback = liftQuasarIO $ mask_ do
       callback
 
 
-setTimer :: TimerFd -> TimerSetTimeMode -> CTimeSpec -> IO ()
-setTimer timer mode timeSpec = setInterval timer mode itspec
+setTimer :: TimerFd -> CTimeSpec -> IO ()
+setTimer timer timeSpec = setInterval timer itspec
   where
     itspec = defaultCITimerSpec {
       it_value = timeSpec
     }
 
-setInterval :: TimerFd -> TimerSetTimeMode -> CITimerSpec -> IO ()
-setInterval timer mode iTimerSpec = do
+setInterval :: TimerFd -> CITimerSpec -> IO ()
+setInterval timer iTimerSpec = do
   alloca \newValue -> do
     poke newValue iTimerSpec
     throwErrnoIfMinus1_ "timer_settime" do
       c_timerfd_settime timer 0 newValue nullPtr
 
 disarm :: TimerFd -> IO ()
-disarm timer = setInterval timer TimeRelative defaultCITimerSpec
+disarm timer = setInterval timer defaultCITimerSpec
 
 
 timerFdRead :: TimerFd -> IO Word64
 timerFdRead timer = do
   alloca \ptr -> do
-    throwErrnoIfMinus1 "timerfd_read" do
+    bytes <- throwErrnoIfMinus1 "timerfd_read" do
       c_timerfd_read timer ptr 8
-    peek ptr
+    case bytes of
+      0 -> pure 0 -- negative time jump between timer expiration and read
+      8 -> peek ptr
+      b -> fail $ mconcat ["timerfd read returned invalid number of bytes (expected 8b or 0b, got ", show b, ")"]
 
 timerFdClose :: TimerFd -> IO ()
 timerFdClose timer = throwErrnoIfMinus1_ "timerfd_close" $ c_timerfd_close timer
