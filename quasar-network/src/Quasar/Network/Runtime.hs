@@ -25,7 +25,7 @@ import Quasar.Prelude
 
 -- | Describes how a typeclass is used to send- and receive `NetworkObject`s.
 type IsNetworkStrategy :: (Type -> Constraint) -> Type -> Constraint
-class (s a, NetworkObject a) => IsNetworkStrategy s a where
+class s a => IsNetworkStrategy s a where
   -- TODO rename to provide
   provideObject ::
     NetworkStrategy a ~ s =>
@@ -57,7 +57,7 @@ class IsNetworkStrategy (NetworkStrategy a) a => NetworkObject a where
   type NetworkStrategy a :: (Type -> Constraint)
 
 
-instance (Binary a, NetworkObject a) => IsNetworkStrategy Binary a where
+instance Binary a => IsNetworkStrategy Binary a where
   provideObject x = Left (encode x)
   receiveObject cdata =
     case decodeOrFail cdata of
@@ -71,7 +71,7 @@ class IsChannel (NetworkReferenceChannel a) => NetworkReference a where
   provideReference :: a -> NetworkReferenceChannel a -> SendMessageContext -> STMc NoRetry '[] (CData (NetworkReferenceChannel a), ChannelHandlerType (NetworkReferenceChannel a))
   receiveReference :: ReceiveMessageContext -> CData (NetworkReferenceChannel a) -> ReverseChannelType (NetworkReferenceChannel a) -> STMc NoRetry '[MultiplexerException] (ReverseChannelHandlerType (NetworkReferenceChannel a), a)
 
-instance (NetworkReference a, NetworkObject a) => IsNetworkStrategy NetworkReference a where
+instance NetworkReference a => IsNetworkStrategy NetworkReference a where
   -- Send an object by reference with the `NetworkReference` class
   provideObject x = Right \channel context -> bimap (encodeCData @(NetworkReferenceChannel a)) (rawChannelHandler @(NetworkReferenceChannel a)) <$> provideReference x (castChannel channel) context
   receiveObject cdata =
@@ -86,7 +86,7 @@ class (IsChannel (NetworkRootReferenceChannel a)) => NetworkRootReference a wher
   provideRootReference :: a -> NetworkRootReferenceChannel a -> STMc NoRetry '[] (ChannelHandlerType (NetworkRootReferenceChannel a))
   receiveRootReference :: ReverseChannelType (NetworkRootReferenceChannel a) -> STMc NoRetry '[MultiplexerException] (ReverseChannelHandlerType (NetworkRootReferenceChannel a), a)
 
-instance (NetworkRootReference a, NetworkObject a) => IsNetworkStrategy NetworkRootReference a where
+instance NetworkRootReference a => IsNetworkStrategy NetworkRootReference a where
   -- Send an object by reference with the `NetworkReference` class
   provideObject x = Right \channel _context -> ("",) . rawChannelHandler @(NetworkRootReferenceChannel a) <$> provideRootReference x (castChannel channel)
   receiveObject "" = Right $ Right \channel _context -> first (rawChannelHandler @(ReverseChannelType (NetworkRootReferenceChannel a))) <$> receiveRootReference (castChannel channel)
@@ -178,6 +178,42 @@ instance (NetworkObject a, NetworkObject b) => NetworkObject (Either a b) where
   type NetworkStrategy (Either a b) = NetworkReference
 
 
+-- ** Tuples
+
+instance (NetworkObject a, NetworkObject b) => NetworkReference (a, b) where
+  type NetworkReferenceChannel (a, b) = Channel () Void Void
+  provideReference (x, y) _channel context = do
+    provideObjectAsMessagePart context x
+    provideObjectAsMessagePart context y
+    pure ((), \_ -> absurd)
+  receiveReference context () _channel = do
+    x <- receiveObjectFromMessagePart context
+    y <- receiveObjectFromMessagePart context
+    pure (\_ -> absurd, (x, y))
+
+instance (NetworkObject a, NetworkObject b) => NetworkObject (a, b) where
+  type NetworkStrategy (a, b) = NetworkReference
+
+
+instance (NetworkObject a, NetworkObject b, NetworkObject c) => NetworkReference (a, b, c) where
+  type NetworkReferenceChannel (a, b, c) = Channel () Void Void
+  provideReference (x, y, z) _channel context = do
+    provideObjectAsMessagePart context x
+    provideObjectAsMessagePart context y
+    provideObjectAsMessagePart context z
+    pure ((), \_ -> absurd)
+  receiveReference context () _channel = do
+    x <- receiveObjectFromMessagePart context
+    y <- receiveObjectFromMessagePart context
+    z <- receiveObjectFromMessagePart context
+    pure (\_ -> absurd, (x, y, z))
+
+instance (NetworkObject a, NetworkObject b, NetworkObject c) => NetworkObject (a, b, c) where
+  type NetworkStrategy (a, b, c) = NetworkReference
+
+-- TODO replace tuple instances with a Generic based implementation
+
+
 -- ** Function call
 
 data NetworkFunctionException = NetworkFunctionException
@@ -261,3 +297,24 @@ instance (NetworkObject a, NetworkFunction b) => NetworkObject (a -> b) where
 
 instance NetworkObject a => NetworkObject (IO (FutureEx '[SomeException] a)) where
   type NetworkStrategy (IO (FutureEx '[SomeException] a)) = NetworkRootReference
+
+
+-- * Generic
+
+
+-- instance (Generic a, GNetworkObject (Rep a)) => IsNetworkStrategy Generic a where
+--   provideObject = gProvideObject
+--   receiveObject = gReceiveObject
+--
+-- class GNetworkObject a where
+--   gProvideObject ::
+--     NetworkStrategy a ~ s =>
+--     a ->
+--     Either BSL.ByteString (RawChannel -> SendMessageContext -> STMc NoRetry '[] (BSL.ByteString, RawChannelHandler))
+--   gReceiveObject ::
+--     NetworkStrategy a ~ s =>
+--     BSL.ByteString ->
+--     Either ParseException (Either a (RawChannel -> ReceiveMessageContext -> STMc NoRetry '[MultiplexerException] (RawChannelHandler, a)))
+--
+-- instance NetworkObject (a, b, c, d) where
+--   type NetworkStrategy (a, b, c, d) = Generic
