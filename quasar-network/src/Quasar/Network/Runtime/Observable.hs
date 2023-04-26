@@ -1,4 +1,3 @@
--- Contains instances for `Observable` (which is also part of the quasar framework)
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Quasar.Network.Runtime.Observable (
@@ -13,7 +12,7 @@ import Quasar.Exceptions
 import Quasar.Network.Channel
 import Quasar.Network.Exception
 import Quasar.Network.Multiplexer
-import Quasar.Network.Runtime
+import Quasar.Network.Runtime.Class
 import Quasar.Prelude
 
 

@@ -61,10 +61,12 @@ library
     Quasar.Network.Exception
     Quasar.Network.Multiplexer
     Quasar.Network.Runtime
-    Quasar.Network.Runtime.Observable
     Quasar.Network.Server
     Quasar.Network.SocketLocation
   other-modules:
+    Quasar.Network.Runtime.Class
+    Quasar.Network.Runtime.Function
+    Quasar.Network.Runtime.Observable
   build-depends:
     base >=4.7 && <5,
     async,
