@@ -90,7 +90,7 @@ withStandaloneClient impl runClientHook = do
 withStandaloneProxy :: forall a m b. (NetworkRootReference a, MonadQuasar m, MonadIO m, MonadMask m) => a -> (a -> m b) -> m b
 withStandaloneProxy obj fn = do
   bracket newChannelPair release \(x, y) -> do
-    handlerX <- atomicallyC $ sendRootReference obj x
+    handlerX <- atomicallyC $ provideRootReference obj x
     atomicallyC $ setChannelHandler x handlerX
     (handlerY, proxy) <- atomicallyC $ receiveRootReference y
     atomicallyC $ setChannelHandler y handlerY

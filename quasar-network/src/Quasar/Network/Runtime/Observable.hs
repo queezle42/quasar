@@ -70,7 +70,7 @@ instance Binary ObservableResponse
 
 instance NetworkObject a => NetworkRootReference (Observable (ObservableState a)) where
   type NetworkRootReferenceChannel (Observable (ObservableState a)) = Channel () ObservableResponse ObservableRequest
-  sendRootReference = sendObservableReference
+  provideRootReference = sendObservableReference
   receiveRootReference = receiveObservableReference
 
 instance NetworkObject a => NetworkObject (Observable (ObservableState a)) where
@@ -122,7 +122,7 @@ sendObservableReference observable channel = do
           writeTVar ref.isLoading False
           swapTVar ref.outbox Nothing >>= \case
             Just (ObservableValue content) -> do
-              disposer <- liftSTMc $ sendObjectAsDisposableMessagePart context content
+              disposer <- liftSTMc $ provideObjectAsDisposableMessagePart context content
               writeTVar ref.activeDisposer disposer
               pure PackedObservableValue
 

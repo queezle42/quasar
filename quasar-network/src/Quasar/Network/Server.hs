@@ -124,7 +124,7 @@ connectToServer server connection =
     registerChannelServerHandler :: RawChannel -> QuasarIO ()
     registerChannelServerHandler rawChannel = atomicallyC do
       let channel = castChannel rawChannel
-      handler <- sendRootReference server.root channel
+      handler <- provideRootReference server.root channel
       setChannelHandler channel handler
 
     formatException :: SomeException -> String

@@ -22,8 +22,8 @@ module Quasar.Network.Runtime (
   -- * Interacting with objects over network
   NetworkObject(..),
   IsNetworkStrategy(..),
-  sendObjectAsMessagePart,
-  sendObjectAsDisposableMessagePart,
+  provideObjectAsMessagePart,
+  provideObjectAsDisposableMessagePart,
   receiveObjectFromMessagePart,
   NetworkReference(..),
   NetworkRootReference(..),
@@ -116,7 +116,7 @@ acceptChannelMessagePart context fn = liftSTMc do
 type IsNetworkStrategy :: (Type -> Constraint) -> Type -> Constraint
 class (s a, NetworkObject a) => IsNetworkStrategy s a where
   -- TODO rename to provide
-  sendObject ::
+  provideObject ::
     NetworkStrategy a ~ s =>
     a ->
     Either BSL.ByteString (RawChannel -> SendMessageContext -> STMc NoRetry '[] (BSL.ByteString, RawChannelHandler))
@@ -125,14 +125,14 @@ class (s a, NetworkObject a) => IsNetworkStrategy s a where
     BSL.ByteString ->
     Either ParseException (Either a (RawChannel -> ReceiveMessageContext -> STMc NoRetry '[MultiplexerException] (RawChannelHandler, a)))
 
-sendObjectAsMessagePart :: NetworkObject a => SendMessageContext -> a -> STMc NoRetry '[] ()
-sendObjectAsMessagePart context = addMessagePart context . sendObject
+provideObjectAsMessagePart :: NetworkObject a => SendMessageContext -> a -> STMc NoRetry '[] ()
+provideObjectAsMessagePart context = addMessagePart context . provideObject
 
-sendObjectAsDisposableMessagePart :: NetworkObject a => SendMessageContext -> a -> STMc NoRetry '[] Disposer
-sendObjectAsDisposableMessagePart context x = do
+provideObjectAsDisposableMessagePart :: NetworkObject a => SendMessageContext -> a -> STMc NoRetry '[] Disposer
+provideObjectAsDisposableMessagePart context x = do
   var <- newTVar mempty
   addMessagePart context do
-    case sendObject x of
+    case provideObject x of
       Left cdata -> Left cdata
       Right fn -> Right \newChannel newContext -> do
         writeTVar var (getDisposer newChannel)
@@ -147,7 +147,7 @@ class IsNetworkStrategy (NetworkStrategy a) a => NetworkObject a where
 
 
 instance (Binary a, NetworkObject a) => IsNetworkStrategy Binary a where
-  sendObject x = Left (encode x)
+  provideObject x = Left (encode x)
   receiveObject cdata =
     case decodeOrFail cdata of
       -- TODO verify no leftovers
@@ -157,12 +157,12 @@ instance (Binary a, NetworkObject a) => IsNetworkStrategy Binary a where
 
 class IsChannel (NetworkReferenceChannel a) => NetworkReference a where
   type NetworkReferenceChannel a
-  sendReference :: a -> NetworkReferenceChannel a -> SendMessageContext -> STMc NoRetry '[] (CData (NetworkReferenceChannel a), ChannelHandlerType (NetworkReferenceChannel a))
+  provideReference :: a -> NetworkReferenceChannel a -> SendMessageContext -> STMc NoRetry '[] (CData (NetworkReferenceChannel a), ChannelHandlerType (NetworkReferenceChannel a))
   receiveReference :: ReceiveMessageContext -> CData (NetworkReferenceChannel a) -> ReverseChannelType (NetworkReferenceChannel a) -> STMc NoRetry '[MultiplexerException] (ReverseChannelHandlerType (NetworkReferenceChannel a), a)
 
 instance (NetworkReference a, NetworkObject a) => IsNetworkStrategy NetworkReference a where
   -- Send an object by reference with the `NetworkReference` class
-  sendObject x = Right \channel context -> bimap (encodeCData @(NetworkReferenceChannel a)) (rawChannelHandler @(NetworkReferenceChannel a)) <$> sendReference x (castChannel channel) context
+  provideObject x = Right \channel context -> bimap (encodeCData @(NetworkReferenceChannel a)) (rawChannelHandler @(NetworkReferenceChannel a)) <$> provideReference x (castChannel channel) context
   receiveObject cdata =
     case decodeCData @(NetworkReferenceChannel a) cdata of
       Left ex -> Left ex
@@ -172,12 +172,12 @@ instance (NetworkReference a, NetworkObject a) => IsNetworkStrategy NetworkRefer
 
 class (IsChannel (NetworkRootReferenceChannel a)) => NetworkRootReference a where
   type NetworkRootReferenceChannel a
-  sendRootReference :: a -> NetworkRootReferenceChannel a -> STMc NoRetry '[] (ChannelHandlerType (NetworkRootReferenceChannel a))
+  provideRootReference :: a -> NetworkRootReferenceChannel a -> STMc NoRetry '[] (ChannelHandlerType (NetworkRootReferenceChannel a))
   receiveRootReference :: ReverseChannelType (NetworkRootReferenceChannel a) -> STMc NoRetry '[MultiplexerException] (ReverseChannelHandlerType (NetworkRootReferenceChannel a), a)
 
 instance (NetworkRootReference a, NetworkObject a) => IsNetworkStrategy NetworkRootReference a where
   -- Send an object by reference with the `NetworkReference` class
-  sendObject x = Right \channel _context -> ("",) . rawChannelHandler @(NetworkRootReferenceChannel a) <$> sendRootReference x (castChannel channel)
+  provideObject x = Right \channel _context -> ("",) . rawChannelHandler @(NetworkRootReferenceChannel a) <$> provideRootReference x (castChannel channel)
   receiveObject "" = Right $ Right \channel _context -> first (rawChannelHandler @(ReverseChannelType (NetworkRootReferenceChannel a))) <$> receiveRootReference (castChannel channel)
   receiveObject cdata = Left (ParseException (mconcat ["Received ", show (BSL.length cdata), " bytes of constructor data (0 bytes expected)"]))
 
@@ -243,11 +243,11 @@ newChannelPair = liftQuasarIO do
 
 instance NetworkObject a => NetworkReference (Maybe a) where
   type NetworkReferenceChannel (Maybe a) = Channel () Void Void
-  sendReference Nothing channel _context = do
+  provideReference Nothing channel _context = do
     disposeEventually_ channel
     pure ((), \_ -> absurd)
-  sendReference (Just value) _channel context = do
-    sendObjectAsMessagePart context value
+  provideReference (Just value) _channel context = do
+    provideObjectAsMessagePart context value
     pure ((), \_ -> absurd)
   receiveReference context () channel = do
     case context.numCreatedChannels of
@@ -266,11 +266,11 @@ instance NetworkObject a => NetworkObject (Maybe a) where
 
 instance NetworkObject a => NetworkReference [a] where
   type NetworkReferenceChannel [a] = Channel () Void Void
-  sendReference [] channel _context = do
+  provideReference [] channel _context = do
     disposeEventually_ channel
     pure ((), \_ -> absurd)
-  sendReference xs _channel context = do
-    mapM_ (sendObjectAsMessagePart context) xs
+  provideReference xs _channel context = do
+    mapM_ (provideObjectAsMessagePart context) xs
     pure ((), \_ -> absurd)
   receiveReference context () channel = do
     when (context.numCreatedChannels < 1) (disposeEventually_ channel)
@@ -285,11 +285,11 @@ instance NetworkObject a => NetworkObject [a] where
 
 instance (NetworkObject a, NetworkObject b) => NetworkReference (Either a b) where
   type NetworkReferenceChannel (Either a b) = Channel (Either () ()) Void Void
-  sendReference (Left value) _channel context = do
-    sendObjectAsMessagePart context value
+  provideReference (Left value) _channel context = do
+    provideObjectAsMessagePart context value
     pure (Left (), \_ -> absurd)
-  sendReference (Right value) _channel context = do
-    sendObjectAsMessagePart context value
+  provideReference (Right value) _channel context = do
+    provideObjectAsMessagePart context value
     pure (Right (), \_ -> absurd)
   receiveReference context (Left ()) _channel = do
     value <- receiveObjectFromMessagePart context
@@ -343,14 +343,14 @@ instance NetworkObject a => NetworkFunction (IO (FutureEx '[SomeException] a)) w
         Right value ->
           sendChannelMessageDeferred_ callChannel \context -> do
             liftSTMc do
-              sendObjectAsMessagePart context value
+              provideObjectAsMessagePart context value
               pure NetworkCallSuccess
   networkFunctionProxy args functionChannel = do
     promise <- newPromiseIO
     sendChannelMessageDeferred_ functionChannel \context -> do
       addChannelMessagePart context \callChannel callContext -> do
         callOnceCompleted_ (isDisposed callChannel) (\() -> tryFulfillPromise_ promise (Left (toEx NetworkFunctionException)))
-        forM_ args \(NetworkArgument arg) -> sendObjectAsMessagePart callContext arg
+        forM_ args \(NetworkArgument arg) -> provideObjectAsMessagePart callContext arg
         pure ((), callResponseHandler promise callChannel)
       pure NetworkCallRequest
     pure (toFutureEx promise)
@@ -372,12 +372,12 @@ provideFunction fn _functionChannel = pure \context NetworkCallRequest -> do
 
 instance (NetworkObject a, NetworkFunction b) => NetworkRootReference (a -> b) where
   type NetworkRootReferenceChannel (a -> b) = Channel () Void NetworkCallRequest
-  sendRootReference = provideFunction
+  provideRootReference = provideFunction
   receiveRootReference = receiveFunction
 
 instance NetworkObject a => NetworkRootReference (IO (FutureEx '[SomeException] a)) where
   type NetworkRootReferenceChannel (IO (FutureEx '[SomeException] a)) = Channel () Void NetworkCallRequest
-  sendRootReference = provideFunction
+  provideRootReference = provideFunction
   receiveRootReference = receiveFunction
 
 instance (NetworkObject a, NetworkFunction b) => NetworkObject (a -> b) where
