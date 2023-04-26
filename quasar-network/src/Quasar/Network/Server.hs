@@ -15,6 +15,7 @@ module Quasar.Network.Server (
 import Control.Monad.Catch
 import Network.Socket qualified as Socket
 import Quasar
+import Quasar.Network.Channel
 import Quasar.Network.Connection
 import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime

@@ -10,6 +10,7 @@ import Control.Monad.Catch
 import Data.Binary (Binary)
 import Quasar
 import Quasar.Exceptions
+import Quasar.Network.Channel
 import Quasar.Network.Exception
 import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime
