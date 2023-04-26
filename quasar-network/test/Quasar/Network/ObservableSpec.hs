@@ -14,6 +14,12 @@ import Test.Hspec.Core.Spec
 rm :: QuasarIO a -> IO a
 rm = runQuasarCombineExceptions
 
+testTimeout :: Int -> IO () -> IO ()
+testTimeout time fn =
+  timeout time fn >>= \case
+    Nothing -> fail $ mconcat ["Test reached timeout (", show time, "ns)"]
+    Just () -> pure ()
+
 spec :: Spec
 spec = parallel $ describe "ObservableProxy" $ do
   it "transfers an initial value" $ fmap fromJust $ timeout 1_000_000 $ rm do
@@ -26,7 +32,7 @@ spec = parallel $ describe "ObservableProxy" $ do
             x -> pure x
         pure ()
 
-  it "transfers layered initial values" $ fmap fromJust $ timeout 1_000_000 $ rm do
+  it "transfers layered initial values" $ testTimeout 1_000_000 $ rm do
     inner <- newObservableVarIO ("foobar" :: String)
     outer <- newObservableVarIO (pure <$> toObservable inner :: Observable (ObservableState String))
     withStandaloneProxy (pure <$> toObservable outer :: Observable (ObservableState (Observable (ObservableState String)))) \outerProxy -> do
