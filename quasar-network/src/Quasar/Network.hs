@@ -10,13 +10,14 @@ module Quasar.Network (
   withClient,
 
   -- ** Server
-  --Server,
-  --Listener(..),
-  --runServer,
-  --listenTCP,
-  --listenUnix,
-  --listenOnBoundSocket,
+  Server,
+  Listener(..),
+  runServer,
+  listenTCP,
+  listenUnix,
+  listenOnBoundSocket,
 ) where
 
 import Quasar.Network.Client
+import Quasar.Network.Server
 import Quasar.Network.Runtime
