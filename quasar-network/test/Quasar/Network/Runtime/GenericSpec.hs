@@ -1,4 +1,4 @@
-module Quasar.Network.GenericSpec (spec) where
+module Quasar.Network.Runtime.GenericSpec (spec) where
 
 import Quasar
 import Quasar.Network

@@ -1,4 +1,4 @@
-module Quasar.Network.ObservableSpec (spec) where
+module Quasar.Network.Runtime.ObservableSpec (spec) where
 
 import Data.Maybe (fromJust)
 import Quasar
