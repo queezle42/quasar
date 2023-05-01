@@ -107,6 +107,7 @@ test-suite quasar-network-test
     stm,
   main-is: Spec.hs
   other-modules:
+    Quasar.Network.GenericSpec
     Quasar.Network.MultiplexerSpec
     Quasar.Network.ObservableSpec
     Quasar.NetworkSpec
