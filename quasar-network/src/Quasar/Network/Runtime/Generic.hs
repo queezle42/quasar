@@ -100,3 +100,33 @@ instance (GNetworkObjectParts a, GNetworkObjectParts b) => GNetworkObjectParts (
 instance NetworkObject a => GNetworkObjectParts (Rec0 a) where
   gProvidePart x context = provideObjectAsMessagePart context (unK1 x)
   gReceivePart = K1 <<$>> receiveObjectFromMessagePart
+
+
+-- * NetworkObject instances based on Generic
+
+instance (NetworkObject a, NetworkObject b) => NetworkObject (a, b) where
+  type NetworkStrategy (a, b) = Generic
+
+instance (NetworkObject a, NetworkObject b, NetworkObject c) => NetworkObject (a, b, c) where
+  type NetworkStrategy (a, b, c) = Generic
+
+instance (NetworkObject a, NetworkObject b, NetworkObject c, NetworkObject d) => NetworkObject (a, b, c, d) where
+  type NetworkStrategy (a, b, c, d) = Generic
+
+instance (NetworkObject a, NetworkObject b, NetworkObject c, NetworkObject d, NetworkObject e) => NetworkObject (a, b, c, d, e) where
+  type NetworkStrategy (a, b, c, d, e) = Generic
+
+instance (NetworkObject a, NetworkObject b, NetworkObject c, NetworkObject d, NetworkObject e, NetworkObject f) => NetworkObject (a, b, c, d, e, f) where
+  type NetworkStrategy (a, b, c, d, e, f) = Generic
+
+instance (NetworkObject a, NetworkObject b, NetworkObject c, NetworkObject d, NetworkObject e, NetworkObject f, NetworkObject g) => NetworkObject (a, b, c, d, e, f, g) where
+  type NetworkStrategy (a, b, c, d, e, f, g) = Generic
+
+instance (NetworkObject a, NetworkObject b, NetworkObject c, NetworkObject d, NetworkObject e, NetworkObject f, NetworkObject g, NetworkObject h) => NetworkObject (a, b, c, d, e, f, g, h) where
+  type NetworkStrategy (a, b, c, d, e, f, g, h) = Generic
+
+instance (NetworkObject a, NetworkObject b, NetworkObject c, NetworkObject d, NetworkObject e, NetworkObject f, NetworkObject g, NetworkObject h, NetworkObject i) => NetworkObject (a, b, c, d, e, f, g, h, i) where
+  type NetworkStrategy (a, b, c, d, e, f, g, h, i) = Generic
+
+instance (NetworkObject a, NetworkObject b, NetworkObject c, NetworkObject d, NetworkObject e, NetworkObject f, NetworkObject g, NetworkObject h, NetworkObject i, NetworkObject j) => NetworkObject (a, b, c, d, e, f, g, h, i, j) where
+  type NetworkStrategy (a, b, c, d, e, f, g, h, i, j) = Generic
