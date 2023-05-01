@@ -66,6 +66,7 @@ library
   other-modules:
     Quasar.Network.Runtime.Class
     Quasar.Network.Runtime.Function
+    Quasar.Network.Runtime.Future
     Quasar.Network.Runtime.Generic
     Quasar.Network.Runtime.Observable
   build-depends:
