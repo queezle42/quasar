@@ -112,3 +112,12 @@ unlessM :: Monad m => m Bool -> m () -> m ()
 unlessM condM acc = do
   cond <- condM
   unless cond acc
+
+fmap2 :: (Functor f, Functor g) => (a -> b) -> f (g a) -> f (g b)
+fmap2 = fmap . fmap
+
+fmap3 :: (Functor f, Functor g, Functor h) => (a -> b) -> f (g (h a)) -> f (g (h b))
+fmap3 = fmap . fmap . fmap
+
+fmap4 :: (Functor f, Functor g, Functor h, Functor i) => (a -> b) -> f (g (h (i a))) -> f (g (h (i b)))
+fmap4 = fmap . fmap . fmap . fmap
