@@ -141,6 +141,12 @@ instance NetworkObject Void where
 instance NetworkObject () where
   type NetworkStrategy () = Generic
 
+instance NetworkObject a => NetworkObject (Maybe a) where
+  type NetworkStrategy (Maybe a) = Generic
+
+instance (NetworkObject a, NetworkObject b) => NetworkObject (Either a b) where
+  type NetworkStrategy (Either a b) = Generic
+
 instance (NetworkObject a, NetworkObject b) => NetworkObject (a, b) where
   type NetworkStrategy (a, b) = Generic
 

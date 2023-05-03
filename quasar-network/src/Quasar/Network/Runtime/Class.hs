@@ -110,29 +110,6 @@ instance NetworkObject Char where
 
 -- * NetworkObject instances
 
--- ** Maybe
-
-instance NetworkObject a => NetworkReference (Maybe a) where
-  type NetworkReferenceChannel (Maybe a) = Channel () Void Void
-  provideReference Nothing channel _context = do
-    disposeEventually_ channel
-    pure ((), \_ -> absurd)
-  provideReference (Just value) _channel context = do
-    provideObjectAsMessagePart context value
-    pure ((), \_ -> absurd)
-  receiveReference context () channel = do
-    case context.numCreatedChannels of
-      1 -> do
-        value <- receiveObjectFromMessagePart context
-        pure (\_ -> absurd, Just value)
-      _ -> do
-        disposeEventually_ channel
-        pure (\_ -> absurd, Nothing)
-
-instance NetworkObject a => NetworkObject (Maybe a) where
-  type NetworkStrategy (Maybe a) = NetworkReference
-
-
 -- ** List
 
 instance NetworkObject a => NetworkReference [a] where
@@ -150,24 +127,3 @@ instance NetworkObject a => NetworkReference [a] where
 
 instance NetworkObject a => NetworkObject [a] where
   type NetworkStrategy [a] = NetworkReference
-
-
--- ** Either
-
-instance (NetworkObject a, NetworkObject b) => NetworkReference (Either a b) where
-  type NetworkReferenceChannel (Either a b) = Channel (Either () ()) Void Void
-  provideReference (Left value) _channel context = do
-    provideObjectAsMessagePart context value
-    pure (Left (), \_ -> absurd)
-  provideReference (Right value) _channel context = do
-    provideObjectAsMessagePart context value
-    pure (Right (), \_ -> absurd)
-  receiveReference context (Left ()) _channel = do
-    value <- receiveObjectFromMessagePart context
-    pure (\_ -> absurd, Left value)
-  receiveReference context (Right ()) _channel = do
-    value <- receiveObjectFromMessagePart context
-    pure (\_ -> absurd, Right value)
-
-instance (NetworkObject a, NetworkObject b) => NetworkObject (Either a b) where
-  type NetworkStrategy (Either a b) = NetworkReference
