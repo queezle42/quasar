@@ -25,7 +25,6 @@ import Quasar.Prelude
 -- | Describes how a typeclass is used to send- and receive `NetworkObject`s.
 type IsNetworkStrategy :: (Type -> Constraint) -> Type -> Constraint
 class s a => IsNetworkStrategy s a where
-  -- TODO rename to provide
   provideObject ::
     NetworkStrategy a ~ s =>
     a ->
