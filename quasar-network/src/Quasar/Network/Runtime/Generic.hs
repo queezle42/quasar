@@ -7,6 +7,7 @@ module Quasar.Network.Runtime.Generic (
 
 import Data.Bifunctor (bimap)
 import Data.Binary
+import Data.Bits ((.|.), shiftL, shiftR)
 import Data.ByteString.Lazy qualified as BSL
 import Data.Void (absurd)
 import GHC.Generics
@@ -23,6 +24,23 @@ instance (Generic a, GNetworkObject (Rep a)) => IsNetworkStrategy Generic a wher
 
 voidHandler :: RawChannelHandler
 voidHandler = rawChannelHandler @(Channel () Void Void) (\_ -> absurd)
+
+encodeCID :: Word64 -> BSL.ByteString
+encodeCID cid = BSL.pack (go cid [])
+  where
+    go :: Word64 -> [Word8] -> [Word8]
+    go 0 xs = xs
+    go i xs = go (shiftR i 8) (fromIntegral i : xs)
+
+decodeCID :: BSL.ByteString -> Either ParseException Word64
+decodeCID cdata =
+  if BSL.length cdata > 8
+    then Left (ParseException "Failed to decode Generic constructor")
+    else Right (go (BSL.unpack cdata) 0)
+  where
+    go :: [Word8] -> Word64 -> Word64
+    go [] i = i
+    go (x : xs) i = go xs (shiftL i 8 .|. fromIntegral x)
 
 class GNetworkObject (t :: Type -> Type) where
   gProvideObject ::
@@ -51,18 +69,16 @@ instance GNetworkObjectContent f => GNetworkObject (C1 c f) where
 -- Multiple ctors
 instance GNetworkConstructor (a :+: b) => GNetworkObject (a :+: b) where
   gProvideObject = gProvideConstructor 0
-  gReceiveObject cdata = case decodeOrFail cdata of
-    Left (_, _, msg) -> Left (ParseException msg)
-    Right (_, _, cid) -> gReceiveConstructor cid
+  gReceiveObject cdata = decodeCID cdata >>= gReceiveConstructor
 
 
 class GNetworkConstructor t where
   gProvideConstructor ::
-    Word32 ->
+    Word64 ->
     t a ->
     Either BSL.ByteString (SendMessageContext -> STMc NoRetry '[] BSL.ByteString)
   gReceiveConstructor ::
-    Word32 ->
+    Word64 ->
     Either ParseException (Either (t a) (ReceiveMessageContext -> STMc NoRetry '[MultiplexerException] (t a)))
 
 -- Seek ctor
@@ -74,7 +90,7 @@ instance (GNetworkConstructor a, GNetworkConstructor b) => GNetworkConstructor (
 
 -- Selected ctor
 instance GNetworkObjectContent f => GNetworkConstructor (C1 c f) where
-  gProvideConstructor cid (M1 x) = maybeToEither "" $ fmap3 (\() -> encode cid) (gProvideContent x)
+  gProvideConstructor cid (M1 x) = maybeToEither "" $ fmap3 (\() -> encodeCID cid) (gProvideContent x)
   gReceiveConstructor 0 = Right $ bimap M1 (fmap2 M1) gReceiveContent
   gReceiveConstructor _ = Left (ParseException "Invalid constructor id")
 
