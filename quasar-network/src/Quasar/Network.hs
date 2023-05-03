@@ -1,7 +1,6 @@
 module Quasar.Network (
   -- * Types
   NetworkObject(..),
-  NetworkRootReference,
 
   -- * Client
   Client(..),
@@ -9,15 +8,23 @@ module Quasar.Network (
   withClientUnix,
   withClient,
 
-  -- ** Server
+  -- * Server
   Server,
   Listener(..),
   runServer,
   listenTCP,
   listenUnix,
   listenOnBoundSocket,
+
+  -- * NetworkObject implementation strategies
+  Binary,
+  Generic,
+  NetworkReference,
+  NetworkRootReference,
 ) where
 
+import Data.Binary (Binary)
+import GHC.Generics (Generic)
 import Quasar.Network.Client
-import Quasar.Network.Server
 import Quasar.Network.Runtime
+import Quasar.Network.Server
