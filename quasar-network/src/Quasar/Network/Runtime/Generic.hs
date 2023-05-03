@@ -37,6 +37,11 @@ instance GNetworkObject f => GNetworkObject (D1 c f) where
   gProvideObject = gProvideObject . unM1
   gReceiveObject = bimap M1 (fmap2 M1) <<$>> gReceiveObject
 
+-- Void datatype
+instance GNetworkObject V1 where
+  gProvideObject = \case {}
+  gReceiveObject _cdata = Left (ParseException "Cannot receive object because it has no constructors")
+
 -- Single ctor datatype
 instance GNetworkObjectContent f => GNetworkObject (C1 c f) where
   gProvideObject (M1 x) = maybeToEither "" $ fmap3 (\() -> "") (gProvideContent x)
@@ -113,6 +118,9 @@ instance NetworkObject a => GNetworkObjectParts (S1 c (Rec0 a)) where
 
 
 -- * NetworkObject instances based on Generic
+
+instance NetworkObject Void where
+  type NetworkStrategy Void = Generic
 
 instance NetworkObject () where
   type NetworkStrategy () = Generic
