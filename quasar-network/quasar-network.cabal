@@ -93,18 +93,13 @@ test-suite quasar-network-test
     -rtsopts "-with-rtsopts=-N"
   build-depends:
     base >=4.7 && <5,
-    QuickCheck,
-    async,
-    binary,
     bytestring,
     exceptions,
     hspec,
     hspec-core,
     hspec-expectations-lifted,
-    mtl,
     quasar,
     quasar-network,
-    stm,
   main-is: Spec.hs
   other-modules:
     Quasar.Network.MultiplexerSpec
