@@ -114,6 +114,9 @@ instance NetworkObject a => GNetworkObjectParts (S1 c (Rec0 a)) where
 
 -- * NetworkObject instances based on Generic
 
+instance NetworkObject () where
+  type NetworkStrategy () = Generic
+
 instance (NetworkObject a, NetworkObject b) => NetworkObject (a, b) where
   type NetworkStrategy (a, b) = Generic
 

@@ -40,7 +40,12 @@ instance NetworkObject a => NetworkObject (Sum a) where
 spec :: Spec
 spec = parallel do
   describe "Unit" do
-    it "can transfer a unit" $ testTimeout 1_000_000 $ rm do
+    it "can transfer ()" $ testTimeout 1_000_000 $ rm do
+      withStandaloneProxy (pure () :: FutureEx '[SomeException] ()) \future -> do
+        () <- awaitEx future
+        pure ()
+
+    it "can transfer a custom unit" $ testTimeout 1_000_000 $ rm do
       withStandaloneProxy (pure Unit :: FutureEx '[SomeException] Unit) \future -> do
         Unit <- awaitEx future
         pure ()

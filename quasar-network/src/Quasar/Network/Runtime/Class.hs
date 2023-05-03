@@ -92,9 +92,6 @@ instance NetworkRootReference a => IsNetworkStrategy NetworkRootReference a wher
   receiveObject cdata = Left (ParseException (mconcat ["Received ", show (BSL.length cdata), " bytes of constructor data (0 bytes expected)"]))
 
 
-instance NetworkObject () where
-  type NetworkStrategy () = Binary
-
 instance NetworkObject Bool where
   type NetworkStrategy Bool = Binary
 
