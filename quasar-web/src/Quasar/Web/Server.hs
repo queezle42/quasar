@@ -7,7 +7,6 @@ import Data.Aeson
 import Data.Binary.Builder qualified as Binary
 import Data.ByteString.Char8 qualified as BS
 import Data.ByteString.Lazy qualified as BSL
-import Data.Foldable (fold)
 import Data.List qualified as List
 import Data.Sequence (Seq(..))
 import Data.Sequence qualified as Seq
@@ -21,7 +20,8 @@ import Network.Wai.Handler.WebSockets qualified as Wai
 import Network.WebSockets qualified as WebSockets
 import Paths_quasar_web (getDataFileName)
 import Quasar
-import Quasar.Observable.ObservableList as ObservableList
+import Quasar.Observable.ObservableList (ObservableList, ObservableListDelta(..), ObservableListOperation(..))
+import Quasar.Observable.ObservableList qualified as ObservableList
 import Quasar.Prelude
 import Quasar.Utils.Fix (mfixExtra)
 import Quasar.Web
@@ -192,7 +192,7 @@ setupClientList client observableList = do
   deltas <- newTVar (mempty :: ObservableListDelta WebUi)
   items <- newTVar (mempty :: Seq (GenerateClientUpdate, TSimpleDisposer))
 
-  (listDisposer, initial) <- attachListDeltaObserver observableList \delta -> modifyTVar deltas (<> delta)
+  (listDisposer, initial) <- ObservableList.attachListDeltaObserver observableList \delta -> modifyTVar deltas (<> delta)
   initialResults <- mapM (foobar client) initial
   let (itemHtmls, initialItems) = Seq.unzipWith (\(html, update, disposer) -> (html, (update, disposer))) initialResults
   writeTVar items initialItems
