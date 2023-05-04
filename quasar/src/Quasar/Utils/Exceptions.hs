@@ -5,7 +5,6 @@ module Quasar.Utils.Exceptions (
 ) where
 
 import Control.Exception
-import Data.Foldable (toList)
 import Data.List.NonEmpty (NonEmpty(..), nonEmpty)
 import Quasar.Prelude
 
