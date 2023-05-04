@@ -19,7 +19,7 @@ module Quasar.Async.Fork (
   forkOnRetry,
 ) where
 
-import Control.Concurrent (ThreadId, forkIOWithUnmask)
+import Control.Concurrent (ThreadId, forkIO, forkIOWithUnmask)
 import Control.Exception.Ex
 import Control.Monad.Catch
 import Quasar.Future
@@ -33,7 +33,7 @@ data Job = Job ((forall a. IO a -> IO a) -> IO ()) (Maybe (Promise ThreadId))
 forkJobQueue :: TQueue Job
 forkJobQueue = unsafePerformIO do
   queue <- newTQueueIO
-  void $ forkIOWithUnmask \unmask -> unmask $ forever do
+  void $ forkIO $ mask_ $ forever do
     items <- atomically do
       items <- flushTQueue queue
       check (not (null items))
