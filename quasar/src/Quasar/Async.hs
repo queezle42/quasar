@@ -32,6 +32,7 @@ module Quasar.Async (
 import Control.Concurrent (ThreadId)
 import Control.Exception (throwTo)
 import Control.Monad.Catch
+import GHC.Stack (withFrozenCallStack)
 import Quasar.Async.Fork
 import Quasar.Exceptions
 import Quasar.Future
@@ -51,13 +52,13 @@ instance ToFuture (Either (Ex '[AsyncException, AsyncDisposed]) a) (Async a) whe
 
 
 async :: (MonadQuasar m, MonadIO m, HasCallStack) => QuasarIO a -> m (Async a)
-async fn = asyncWithUnmask (\unmask -> unmask fn)
+async fn = withFrozenCallStack $ asyncWithUnmask (\unmask -> unmask fn)
 
 async_ :: (MonadQuasar m, MonadIO m, HasCallStack) => QuasarIO () -> m ()
-async_ fn = void $ asyncWithUnmask (\unmask -> unmask fn)
+async_ fn = withFrozenCallStack $ void $ asyncWithUnmask (\unmask -> unmask fn)
 
 asyncWithUnmask :: (MonadQuasar m, MonadIO m, HasCallStack) => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO a) -> m (Async a)
-asyncWithUnmask fn = do
+asyncWithUnmask fn = withFrozenCallStack do
   quasar <- askQuasar
   asyncWithUnmask' (\unmask -> runQuasarIO quasar (fn (liftUnmask unmask)))
   where
@@ -67,27 +68,29 @@ asyncWithUnmask fn = do
       liftIO $ unmask $ runQuasarIO quasar innerAction
 
 asyncWithUnmask_ :: (MonadQuasar m, MonadIO m, HasCallStack) => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO ()) -> m ()
-asyncWithUnmask_ fn = void $ asyncWithUnmask fn
+asyncWithUnmask_ fn = withFrozenCallStack $ void $ asyncWithUnmask fn
 
 
 async' :: (MonadQuasar m, MonadIO m, HasCallStack) => IO a -> m (Async a)
-async' fn = asyncWithUnmask' (\unmask -> unmask fn)
+async' fn = withFrozenCallStack $ asyncWithUnmask' (\unmask -> unmask fn)
 
 asyncWithUnmask' :: forall a m. (MonadQuasar m, MonadIO m, HasCallStack) => ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
-asyncWithUnmask' fn = liftQuasarIO do
+asyncWithUnmask' fn = liftQuasarIO $ withFrozenCallStack do
   exSink <- askExceptionSink
   spawnAsync collectResource exSink fn
 
 
-unmanagedAsync :: forall a m. MonadIO m => ExceptionSink -> IO a -> m (Async a)
-unmanagedAsync exSink fn = liftIO $ unmanagedAsyncWithUnmask exSink (\unmask -> unmask fn)
+unmanagedAsync :: forall a m. (MonadIO m, HasCallStack) => ExceptionSink -> IO a -> m (Async a)
+unmanagedAsync exSink fn = liftIO $ withFrozenCallStack do
+  unmanagedAsyncWithUnmask exSink (\unmask -> unmask fn)
 
-unmanagedAsyncWithUnmask :: forall a m. MonadIO m => ExceptionSink -> ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
-unmanagedAsyncWithUnmask exSink fn = liftIO $ spawnAsync (\_ -> pure ()) exSink fn
+unmanagedAsyncWithUnmask :: forall a m. (MonadIO m, HasCallStack) => ExceptionSink -> ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
+unmanagedAsyncWithUnmask exSink fn = liftIO $ withFrozenCallStack do
+  spawnAsync (\_ -> pure ()) exSink fn
 
 
-spawnAsync :: forall a m. (MonadIO m, MonadMask m) => (Disposer -> m ()) -> ExceptionSink -> ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
-spawnAsync registerDisposerFn exSink fn = mask_ do
+spawnAsync :: forall a m. (MonadIO m, MonadMask m, HasCallStack) => (Disposer -> m ()) -> ExceptionSink -> ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
+spawnAsync registerDisposerFn exSink fn = withFrozenCallStack $ mask_ do
   key <- liftIO newUnique
   resultVar <- newPromiseIO
 
@@ -132,13 +135,14 @@ runAndPut exChan key resultVar disposer fn unmask = do
 
 
 asyncSTM :: (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m, HasCallStack) => QuasarIO a -> m (Async a)
-asyncSTM fn = asyncWithUnmaskSTM (\unmask -> unmask fn)
+asyncSTM fn = withFrozenCallStack $ asyncWithUnmaskSTM (\unmask -> unmask fn)
 
 asyncSTM_ :: (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m, HasCallStack) => QuasarIO () -> m ()
-asyncSTM_ fn = void $ asyncWithUnmaskSTM (\unmask -> unmask fn)
+asyncSTM_ fn = withFrozenCallStack $ void do
+  asyncWithUnmaskSTM (\unmask -> unmask fn)
 
 asyncWithUnmaskSTM :: (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m, HasCallStack) => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO a) -> m (Async a)
-asyncWithUnmaskSTM fn = do
+asyncWithUnmaskSTM fn = withFrozenCallStack do
   quasar <- askQuasar
   asyncWithUnmaskSTM' (\unmask -> runQuasarIO quasar (fn (liftUnmask unmask)))
   where
@@ -148,32 +152,35 @@ asyncWithUnmaskSTM fn = do
       liftIO $ unmask $ runQuasarIO quasar innerAction
 
 asyncWithUnmaskSTM_ :: (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m, HasCallStack) => ((forall b. QuasarIO b -> QuasarIO b) -> QuasarIO ()) -> m ()
-asyncWithUnmaskSTM_ fn = void $ asyncWithUnmaskSTM fn
+asyncWithUnmaskSTM_ fn = withFrozenCallStack $ void $ asyncWithUnmaskSTM fn
 
 asyncSTM' :: (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m, HasCallStack) => IO a -> m (Async a)
-asyncSTM' fn = asyncWithUnmaskSTM' (\unmask -> unmask fn)
+asyncSTM' fn = withFrozenCallStack $ asyncWithUnmaskSTM' (\unmask -> unmask fn)
 
 asyncWithUnmaskSTM' :: forall a m. (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m, HasCallStack) => ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
 asyncWithUnmaskSTM' fn = liftQuasarSTMc @NoRetry @'[FailedToAttachResource] do
-  exSink <- askExceptionSink
-  x <- unmanagedAsyncWithUnmaskSTM exSink fn
-  collectResource x
-  pure x
+  withFrozenCallStack do
+    exSink <- askExceptionSink
+    x <- unmanagedAsyncWithUnmaskSTM exSink fn
+    collectResource x
+    pure x
 
-unmanagedAsyncSTM :: forall a m. MonadSTMc NoRetry '[] m => ExceptionSink -> IO a -> m (Async a)
-unmanagedAsyncSTM exSink fn = unmanagedAsyncWithUnmaskSTM exSink (\unmask -> unmask fn)
+unmanagedAsyncSTM :: forall a m. (MonadSTMc NoRetry '[] m, HasCallStack) => ExceptionSink -> IO a -> m (Async a)
+unmanagedAsyncSTM exSink fn = withFrozenCallStack do
+  unmanagedAsyncWithUnmaskSTM exSink (\unmask -> unmask fn)
 
-unmanagedAsyncWithUnmaskSTM :: forall a m. MonadSTMc NoRetry '[] m => ExceptionSink -> ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
+unmanagedAsyncWithUnmaskSTM :: forall a m. (MonadSTMc NoRetry '[] m, HasCallStack) => ExceptionSink -> ((forall b. IO b -> IO b) -> IO a) -> m (Async a)
 unmanagedAsyncWithUnmaskSTM exSink fn = liftSTMc @NoRetry @'[] do
-  key <- newUniqueSTM
-  resultVar <- newPromise
+  withFrozenCallStack do
+    key <- newUniqueSTM
+    resultVar <- newPromise
 
-  mfixExtra \threadIdFixed -> do
-    disposer <- newUnmanagedIODisposer (disposeFn key resultVar threadIdFixed) exSink
+    mfixExtra \threadIdFixed -> do
+      disposer <- newUnmanagedIODisposer (disposeFn key resultVar threadIdFixed) exSink
 
-    threadId <- forkWithUnmaskSTM (runAndPut exSink key resultVar disposer fn) exSink
+      threadId <- forkWithUnmaskSTM (runAndPut exSink key resultVar disposer fn) exSink
 
-    pure (Async (toFutureEx resultVar) disposer, threadId)
+      pure (Async (toFutureEx resultVar) disposer, threadId)
   where
     disposeFn :: Unique -> PromiseEx '[AsyncException, AsyncDisposed] a -> Future ThreadId -> IO ()
     disposeFn key resultVar threadIdFuture = do
