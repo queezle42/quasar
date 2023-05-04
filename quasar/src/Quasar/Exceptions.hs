@@ -24,7 +24,7 @@ module Quasar.Exceptions (
 
 import Control.Monad.Catch
 import Quasar.Prelude
-import GHC.Stack (callStack)
+import GHC.Stack (CallStack, callStack)
 import GHC.Exception (prettyCallStack)
 
 
@@ -65,11 +65,15 @@ redirectExceptionToSinkSTMc_ :: forall canRetry m a. (MonadSTMc canRetry '[] m) 
 redirectExceptionToSinkSTMc_ sink fn = void $ redirectExceptionToSinkSTMc sink fn
 
 
-newtype CancelAsync = CancelAsync Unique
-  deriving stock Eq
+data CancelAsync = HasCallStack => CancelAsync Unique
+instance Eq CancelAsync where
+  CancelAsync x == CancelAsync y = x == y
 instance Show CancelAsync where
-  show _ = "CancelAsync"
+  showsPrec d (CancelAsync _) = showParen (d > 10) $ showString "CancelAsync Unique " . showsPrec 11 callStack
 instance Exception CancelAsync where
+  displayException (CancelAsync _) =
+    "CancelAsync: The following async should be cancelled:\n" <> prettyCallStack callStack
+
 
 data AsyncDisposed = AsyncDisposed
   deriving stock (Eq, Show)
