@@ -21,6 +21,9 @@ module Quasar.Observable.ObservableMap (
   unionWith,
   unionWithKey,
 
+  lookupMin,
+  lookupMax,
+
   -- ** Deltas
   ObservableMapDelta(..),
   ObservableMapOperation(..),
@@ -434,3 +437,9 @@ unionWith fn = unionWithKey \_ x y -> fn x y
 
 union :: Ord k => ObservableMap k v -> ObservableMap k v -> ObservableMap k v
 union = unionWithKey \_ x _ -> x
+
+lookupMin :: ObservableMap k v -> Observable (Maybe (k, v))
+lookupMin x = Map.lookupMin <$> toObservable x
+
+lookupMax :: ObservableMap k v -> Observable (Maybe (k, v))
+lookupMax x = Map.lookupMax <$> toObservable x
