@@ -541,8 +541,7 @@ instance IsObservableDelta delta value => ToGeneralizedObservable value value (E
 instance IsObservableDelta delta value => IsGeneralizedObservable value value (EvaluatedObservable delta value) where
   readObservable'# (EvaluatedObservable x) = readObservable'# x
   attachObserver'# (EvaluatedObservable x) callback = do
-    mfixExtra \initialFix -> do
-      var <- newTVar initialFix
+    mfixTVar \var -> do
       (disposer, initial) <- attachObserver'# x \delta ->
         callback =<< stateTVar var (dup . applyDelta delta)
       pure ((disposer, initial), initial)
