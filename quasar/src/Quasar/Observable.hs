@@ -487,3 +487,70 @@ instance Exception ObservableLoading
 ---- TODO remove monad `m` from signature after reworking the Future to allow callbacks
 --observableMatches pred observable = do
 --  promise <- newPromiseIO
+
+
+
+-- * Generalized observables
+
+class ToGeneralizedObservable delta value a => IsGeneralizedObservable delta value a | a -> value, a -> delta where
+  readObservable'# :: a -> STMc NoRetry '[] r
+  attachObserver'# :: a -> (delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, value)
+  isCachedObservable# :: a -> Bool
+
+class ToGeneralizedObservable delta value a | a -> value, a -> delta where
+  toGeneralizedObservable :: a -> GeneralizedObservable delta value
+  default toGeneralizedObservable :: IsGeneralizedObservable delta value a => a -> GeneralizedObservable delta value
+  toGeneralizedObservable = GeneralizedObservable
+
+data GeneralizedObservable delta value
+  = forall a. IsGeneralizedObservable delta value a => GeneralizedObservable a
+  | ConstObservable' value
+
+instance ToGeneralizedObservable delta value (GeneralizedObservable delta value) where
+  toGeneralizedObservable = id
+
+class IsObservableDelta delta value where
+  applyDelta :: delta -> value -> value
+  mergeDelta :: delta -> delta -> delta
+
+  toObservable' :: ToGeneralizedObservable delta value a => a -> Observable' value
+  toObservable' x = Observable'
+    case toGeneralizedObservable x of
+      (GeneralizedObservable f) -> GeneralizedObservable (EvaluatedObservable f)
+      (ConstObservable' c) -> ConstObservable' c
+
+instance IsObservableDelta a a where
+  applyDelta new _ = new
+  mergeDelta _ new = new
+  toObservable' x = Observable' (toGeneralizedObservable x)
+
+isCachedObservable :: ToGeneralizedObservable delta value a => a -> Bool
+isCachedObservable x = case toGeneralizedObservable x of
+  GeneralizedObservable notConst -> isCachedObservable# notConst
+  ConstObservable' _value -> True
+
+attachDeltaObserverSimple :: ToGeneralizedObservable delta value a => a -> (delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, value)
+attachDeltaObserverSimple x callback =
+  case toGeneralizedObservable x of
+    GeneralizedObservable f -> attachObserver'# f callback
+    ConstObservable' c -> pure (mempty, c)
+
+data EvaluatedObservable delta value = forall a. IsGeneralizedObservable delta value a => EvaluatedObservable a
+
+instance IsObservableDelta delta value => ToGeneralizedObservable value value (EvaluatedObservable delta value)
+instance IsObservableDelta delta value => IsGeneralizedObservable value value (EvaluatedObservable delta value) where
+  readObservable'# (EvaluatedObservable x) = readObservable'# x
+  attachObserver'# (EvaluatedObservable x) callback = do
+    mfixExtra \initialFix -> do
+      var <- newTVar initialFix
+      (disposer, initial) <- attachObserver'# x \delta ->
+        callback =<< stateTVar var (dup . applyDelta delta)
+      pure ((disposer, initial), initial)
+  isCachedObservable# (EvaluatedObservable _) = False
+
+newtype Observable' a = Observable' (GeneralizedObservable a a)
+type ToObservable' a = ToGeneralizedObservable a a
+type IsObservable' a = IsGeneralizedObservable a a
+
+instance ToGeneralizedObservable value value (Observable' value) where
+  toGeneralizedObservable (Observable' x) = x
