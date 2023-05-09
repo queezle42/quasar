@@ -521,12 +521,18 @@ data GeneralizedObservable delta value
   = forall a. IsGeneralizedObservable delta value a => GeneralizedObservable a
   | ConstObservable' value
 
+data GeneralizedObservableNotConst delta value
+  = forall a. IsGeneralizedObservable delta value a => GeneralizedObservableNotConst a
+
 instance ToGeneralizedObservable delta value (GeneralizedObservable delta value) where
   toGeneralizedObservable = id
 
 class IsObservableDelta delta value where
   applyDelta :: delta -> value -> value
   mergeDelta :: delta -> delta -> delta
+
+  evaluateObservable# :: IsGeneralizedObservable delta value a => a -> GeneralizedObservableNotConst value value
+  evaluateObservable# x = GeneralizedObservableNotConst (EvaluatedObservable x)
 
   toObservable' :: ToGeneralizedObservable delta value a => a -> Observable' value
   toObservable' x = Observable'
@@ -537,6 +543,7 @@ class IsObservableDelta delta value where
 instance IsObservableDelta a a where
   applyDelta new _ = new
   mergeDelta _ new = new
+  evaluateObservable# x = GeneralizedObservableNotConst x
   toObservable' x = Observable' (toGeneralizedObservable x)
 
 attachDeltaObserverSimple :: ToGeneralizedObservable delta value a => a -> (delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, value)
@@ -545,9 +552,11 @@ attachDeltaObserverSimple x callback =
     GeneralizedObservable f -> attachObserver'# f callback
     ConstObservable' c -> pure (mempty, c)
 
+
 data EvaluatedObservable delta value = forall a. IsGeneralizedObservable delta value a => EvaluatedObservable a
 
 instance IsObservableDelta delta value => ToGeneralizedObservable value value (EvaluatedObservable delta value)
+
 instance IsObservableDelta delta value => IsGeneralizedObservable value value (EvaluatedObservable delta value) where
   readObservable'# (EvaluatedObservable x) = readObservable'# x
   attachObserver'# (EvaluatedObservable x) callback = do
@@ -562,3 +571,13 @@ type IsObservable' a = IsGeneralizedObservable a a
 
 instance ToGeneralizedObservable value value (Observable' value) where
   toGeneralizedObservable (Observable' x) = x
+
+
+data MappedObservable' a = forall b c. IsGeneralizedObservable b b c => MappedObservable' (b -> a) c
+
+instance ToGeneralizedObservable value value (MappedObservable' value)
+
+instance IsGeneralizedObservable value value (MappedObservable' value) where
+  attachObserver'# (MappedObservable' fn observable) callback = fn <<$>> attachObserver'# observable (callback . fn)
+  readObservable'# (MappedObservable' fn observable) = fn <$> readObservable'# observable
+  mapObservable'# f1 (MappedObservable' f2 upstream) = toObservable' $ MappedObservable' (f1 . f2) upstream
