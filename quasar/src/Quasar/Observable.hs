@@ -489,18 +489,33 @@ instance Exception ObservableLoading
 --  promise <- newPromiseIO
 
 
-
 -- * Generalized observables
-
-class ToGeneralizedObservable delta value a => IsGeneralizedObservable delta value a | a -> value, a -> delta where
-  readObservable'# :: a -> STMc NoRetry '[] r
-  attachObserver'# :: a -> (delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, value)
-  isCachedObservable# :: a -> Bool
 
 class ToGeneralizedObservable delta value a | a -> value, a -> delta where
   toGeneralizedObservable :: a -> GeneralizedObservable delta value
   default toGeneralizedObservable :: IsGeneralizedObservable delta value a => a -> GeneralizedObservable delta value
   toGeneralizedObservable = GeneralizedObservable
+
+class ToGeneralizedObservable delta value a => IsGeneralizedObservable delta value a | a -> value, a -> delta where
+  readObservable'# :: a -> STMc NoRetry '[] value
+
+  attachObserver'# :: a -> (delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, value)
+
+  isCachedObservable# :: a -> Bool
+  isCachedObservable# _ = False
+
+  mapObservable'# :: IsObservableDelta delta value => (value -> n) -> a -> Observable' n
+  mapObservable'# f (evaluateObservable# -> GeneralizedObservableNotConst x) = Observable' (GeneralizedObservable (MappedObservable' f x))
+
+isCachedObservable :: ToGeneralizedObservable delta value a => a -> Bool
+isCachedObservable x = case toGeneralizedObservable x of
+  GeneralizedObservable notConst -> isCachedObservable# notConst
+  ConstObservable' _value -> True
+
+mapObservable' :: (ToGeneralizedObservable delta value a, IsObservableDelta delta value) => (value -> f) -> a -> Observable' f
+mapObservable' fn x = case toGeneralizedObservable x of
+  (GeneralizedObservable x) -> mapObservable'# fn x
+  (ConstObservable' value) -> Observable' (ConstObservable' (fn value))
 
 data GeneralizedObservable delta value
   = forall a. IsGeneralizedObservable delta value a => GeneralizedObservable a
@@ -524,11 +539,6 @@ instance IsObservableDelta a a where
   mergeDelta _ new = new
   toObservable' x = Observable' (toGeneralizedObservable x)
 
-isCachedObservable :: ToGeneralizedObservable delta value a => a -> Bool
-isCachedObservable x = case toGeneralizedObservable x of
-  GeneralizedObservable notConst -> isCachedObservable# notConst
-  ConstObservable' _value -> True
-
 attachDeltaObserverSimple :: ToGeneralizedObservable delta value a => a -> (delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, value)
 attachDeltaObserverSimple x callback =
   case toGeneralizedObservable x of
@@ -545,7 +555,6 @@ instance IsObservableDelta delta value => IsGeneralizedObservable value value (E
       (disposer, initial) <- attachObserver'# x \delta ->
         callback =<< stateTVar var (dup . applyDelta delta)
       pure ((disposer, initial), initial)
-  isCachedObservable# (EvaluatedObservable _) = False
 
 newtype Observable' a = Observable' (GeneralizedObservable a a)
 type ToObservable' a = ToGeneralizedObservable a a
