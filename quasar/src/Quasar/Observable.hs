@@ -505,7 +505,7 @@ class ToGeneralizedObservable delta value a => IsGeneralizedObservable delta val
   isCachedObservable# _ = False
 
   mapObservable'# :: IsObservableDelta delta value => (value -> n) -> a -> Observable' n
-  mapObservable'# f (evaluateObservable# -> GeneralizedObservableNotConst x) = Observable' (GeneralizedObservable (MappedObservable' f x))
+  mapObservable'# f (evaluateObservable# -> Some x) = Observable' (GeneralizedObservable (MappedObservable' f x))
 
 isCachedObservable :: ToGeneralizedObservable delta value a => a -> Bool
 isCachedObservable x = case toGeneralizedObservable x of
@@ -521,9 +521,6 @@ data GeneralizedObservable delta value
   = forall a. IsGeneralizedObservable delta value a => GeneralizedObservable a
   | ConstObservable' value
 
-data GeneralizedObservableNotConst delta value
-  = forall a. IsGeneralizedObservable delta value a => GeneralizedObservableNotConst a
-
 instance ToGeneralizedObservable delta value (GeneralizedObservable delta value) where
   toGeneralizedObservable = id
 
@@ -531,8 +528,8 @@ class IsObservableDelta delta value where
   applyDelta :: delta -> value -> value
   mergeDelta :: delta -> delta -> delta
 
-  evaluateObservable# :: IsGeneralizedObservable delta value a => a -> GeneralizedObservableNotConst value value
-  evaluateObservable# x = GeneralizedObservableNotConst (EvaluatedObservable x)
+  evaluateObservable# :: IsGeneralizedObservable delta value a => a -> Some (IsGeneralizedObservable value value)
+  evaluateObservable# x = Some (EvaluatedObservable x)
 
   toObservable' :: ToGeneralizedObservable delta value a => a -> Observable' value
   toObservable' x = Observable'
@@ -543,7 +540,7 @@ class IsObservableDelta delta value where
 instance IsObservableDelta a a where
   applyDelta new _ = new
   mergeDelta _ new = new
-  evaluateObservable# x = GeneralizedObservableNotConst x
+  evaluateObservable# x = Some x
   toObservable' x = Observable' (toGeneralizedObservable x)
 
 attachDeltaObserverSimple :: ToGeneralizedObservable delta value a => a -> (delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, value)
@@ -581,3 +578,8 @@ instance IsGeneralizedObservable value value (MappedObservable' value) where
   attachObserver'# (MappedObservable' fn observable) callback = fn <<$>> attachObserver'# observable (callback . fn)
   readObservable'# (MappedObservable' fn observable) = fn <$> readObservable'# observable
   mapObservable'# f1 (MappedObservable' f2 upstream) = toObservable' $ MappedObservable' (f1 . f2) upstream
+
+
+-- * Some
+
+data Some c = forall a. c a => Some a
