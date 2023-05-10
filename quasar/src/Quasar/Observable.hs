@@ -497,15 +497,56 @@ class ToGeneralizedObservable delta value a | a -> value, a -> delta where
   toGeneralizedObservable = GeneralizedObservable
 
 class ToGeneralizedObservable delta value a => IsGeneralizedObservable delta value a | a -> value, a -> delta where
-  readObservable'# :: a -> STMc NoRetry '[] value
+  readObservable'# :: a -> STMc NoRetry '[] (State value)
 
-  attachObserver'# :: a -> (delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, value)
+  attachObserver'# :: a -> (Change delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, State value)
 
   isCachedObservable# :: a -> Bool
   isCachedObservable# _ = False
 
   mapObservable'# :: IsObservableDelta delta value => (value -> n) -> a -> Observable' n
   mapObservable'# f (evaluateObservable# -> Some x) = Observable' (GeneralizedObservable (MappedObservable' f x))
+
+type Content a = Either SomeException a
+type Final = Bool
+
+data Change a where
+  ChangeLoading :: Change a
+  ChangeUpdate :: Maybe (Content a) -> Change a
+
+data State a where
+  StateLoading :: Maybe (Content a) -> State a
+  StateValue :: Content a -> State a
+
+instance Functor Change where
+  fmap _ ChangeLoading = ChangeLoading
+  fmap fn (ChangeUpdate x) = ChangeUpdate (fn <<$>> x)
+
+instance Functor State where
+  fmap fn (StateLoading x) = StateLoading (fn <<$>> x)
+  fmap fn (StateValue x) = StateValue (fn <$> x)
+
+applyChange :: IsObservableDelta delta value => Change delta -> State value -> State value
+-- Set to loading
+applyChange ChangeLoading (StateValue x) = StateLoading (Just x)
+applyChange ChangeLoading x = x
+-- Reactivate old value
+applyChange (ChangeUpdate Nothing) (StateLoading (Just x)) = StateValue x
+-- NOTE: An update is ignored for uncached loading state.
+applyChange (ChangeUpdate Nothing) x = x
+-- Update with exception delta
+applyChange (ChangeUpdate (Just (Left x))) _ = StateValue (Left x)
+-- Update with value delta
+applyChange (ChangeUpdate (Just (Right x))) y =
+  case applyDelta x (getStateValue y) of
+    Just z -> StateValue (Right z)
+    Nothing -> StateLoading Nothing
+  where
+    getStateValue :: State a -> Maybe a
+    getStateValue (StateLoading (Just (Right value))) = Just value
+    getStateValue (StateValue (Right value)) = Just value
+    getStateValue _ = Nothing
+
 
 isCachedObservable :: ToGeneralizedObservable delta value a => a -> Bool
 isCachedObservable x = case toGeneralizedObservable x of
@@ -515,17 +556,17 @@ isCachedObservable x = case toGeneralizedObservable x of
 mapObservable' :: (ToGeneralizedObservable delta value a, IsObservableDelta delta value) => (value -> f) -> a -> Observable' f
 mapObservable' fn x = case toGeneralizedObservable x of
   (GeneralizedObservable x) -> mapObservable'# fn x
-  (ConstObservable' value) -> Observable' (ConstObservable' (fn value))
+  (ConstObservable' state) -> Observable' (ConstObservable' (fn <$> state))
 
 data GeneralizedObservable delta value
   = forall a. IsGeneralizedObservable delta value a => GeneralizedObservable a
-  | ConstObservable' value
+  | ConstObservable' (State value)
 
 instance ToGeneralizedObservable delta value (GeneralizedObservable delta value) where
   toGeneralizedObservable = id
 
 class IsObservableDelta delta value where
-  applyDelta :: delta -> value -> value
+  applyDelta :: delta -> Maybe value -> Maybe value
   mergeDelta :: delta -> delta -> delta
 
   evaluateObservable# :: IsGeneralizedObservable delta value a => a -> Some (IsGeneralizedObservable value value)
@@ -538,12 +579,12 @@ class IsObservableDelta delta value where
       (ConstObservable' c) -> ConstObservable' c
 
 instance IsObservableDelta a a where
-  applyDelta new _ = new
+  applyDelta new _ = Just new
   mergeDelta _ new = new
   evaluateObservable# x = Some x
   toObservable' x = Observable' (toGeneralizedObservable x)
 
-attachDeltaObserverSimple :: ToGeneralizedObservable delta value a => a -> (delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, value)
+attachDeltaObserverSimple :: ToGeneralizedObservable delta value a => a -> (Change delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, State value)
 attachDeltaObserverSimple x callback =
   case toGeneralizedObservable x of
     GeneralizedObservable f -> attachObserver'# f callback
@@ -557,9 +598,12 @@ instance IsObservableDelta delta value => ToGeneralizedObservable value value (E
 instance IsObservableDelta delta value => IsGeneralizedObservable value value (EvaluatedObservable delta value) where
   readObservable'# (EvaluatedObservable x) = readObservable'# x
   attachObserver'# (EvaluatedObservable x) callback = do
-    mfixTVar \var -> do
-      (disposer, initial) <- attachObserver'# x \delta ->
-        callback =<< stateTVar var (dup . applyDelta delta)
+    mfixTVar \(var :: TVar (State value)) -> do
+      (disposer, initial) <- attachObserver'# x \change -> do
+        state <- stateTVar var (dup . applyChange change)
+        case state of
+          StateLoading _ -> callback ChangeLoading
+          StateValue content -> callback (ChangeUpdate (Just content))
       pure ((disposer, initial), initial)
 
 newtype Observable' a = Observable' (GeneralizedObservable a a)
@@ -575,8 +619,8 @@ data MappedObservable' a = forall b c. IsGeneralizedObservable b b c => MappedOb
 instance ToGeneralizedObservable value value (MappedObservable' value)
 
 instance IsGeneralizedObservable value value (MappedObservable' value) where
-  attachObserver'# (MappedObservable' fn observable) callback = fn <<$>> attachObserver'# observable (callback . fn)
-  readObservable'# (MappedObservable' fn observable) = fn <$> readObservable'# observable
+  attachObserver'# (MappedObservable' fn observable) callback = fmap3 fn $ attachObserver'# observable (callback . fmap fn)
+  readObservable'# (MappedObservable' fn observable) = fn <<$>> readObservable'# observable
   mapObservable'# f1 (MappedObservable' f2 upstream) = toObservable' $ MappedObservable' (f1 . f2) upstream
 
 
