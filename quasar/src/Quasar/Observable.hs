@@ -637,10 +637,6 @@ applyObservableChangeMerged (ObservableChangeUpdate delta@(Just (Right x))) y =
     getStateValue (ObservableStateValue (Right value)) = Just value
     getStateValue _ = Nothing
 
-changeWithStateToChange :: ObservableChangeWithState canWait exceptions delta value -> ObservableChange canWait exceptions delta
-changeWithStateToChange (ObservableChangeWithStateWaiting _cached) = ObservableChangeWaiting
-changeWithStateToChange (ObservableChangeWithStateUpdate delta _value) = ObservableChangeUpdate delta
-
 changeWithStateToState :: ObservableChangeWithState canWait exceptions delta value -> ObservableState canWait exceptions value
 changeWithStateToState (ObservableChangeWithStateWaiting cached) = ObservableStateWaiting cached
 changeWithStateToState (ObservableChangeWithStateUpdate _delta value) = ObservableStateValue value
