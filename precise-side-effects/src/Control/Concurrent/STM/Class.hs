@@ -2,6 +2,10 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+#if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
+{-# LANGUAGE TypeData #-}
+#endif
+
 module Control.Concurrent.STM.Class (
   -- * Monad
   -- ** STM
@@ -27,9 +31,13 @@ module Control.Concurrent.STM.Class (
 
   -- ** Retry
   MonadRetry(..),
+#if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
+  CanRetry(..),
+#else
   CanRetry,
   Retry,
   NoRetry,
+#endif
   orElse,
   orElseC,
   orElseNothing,
@@ -165,10 +173,13 @@ instance (MonadRetry m, Monad (t m), MonadTrans t) => MonadRetry (t m) where
   retry = lift retry
 
 
--- TODO use TypeData in a future GHC (currently planned for GHC 9.6.1)
+#if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
+type data CanRetry = Retry | NoRetry
+#else
 data CanRetry = Retry | NoRetry
 type Retry = 'Retry
 type NoRetry = 'NoRetry
+#endif
 
 
 type role STMc phantom phantom _
