@@ -781,6 +781,16 @@ type IsObservable' canWait exceptions a = IsGeneralizedObservable canWait except
 instance ToGeneralizedObservable canWait exceptions value value (Observable' canWait exceptions value) where
   toGeneralizedObservable (Observable' x) = x
 
+instance Functor (Observable' canWait exceptions) where
+  fmap = undefined
+
+instance Applicative (Observable' canWait exceptions) where
+  pure = undefined
+  liftA2 = undefined
+
+instance Monad (Observable' canWait exceptions) where
+  (>>=) = undefined
+
 
 data MappedObservable' canWait exceptions a = forall b c. IsGeneralizedObservable canWait exceptions b b c => MappedObservable' (b -> a) c
 
