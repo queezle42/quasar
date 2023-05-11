@@ -702,6 +702,77 @@ instance IsObservableDelta delta value => IsGeneralizedObservable canWait except
   mapObservableDelta# fd1 fn1 (DeltaMappedObservable fd2 fn2 x) = GeneralizedObservable (DeltaMappedObservable (fd1 . fd2) (fn1 . fn2) x)
 
 
+-- ** Cache
+
+newtype CachedObservable' canWait exceptions delta value = CachedObservable' (TVar (CacheState' canWait exceptions delta value))
+
+data CacheState' canWait exceptions delta value
+  = forall a. IsGeneralizedObservable canWait exceptions delta value a => CacheIdle' a
+  | forall a. IsGeneralizedObservable canWait exceptions delta value a =>
+    CacheAttached'
+      a
+      TSimpleDisposer
+      (CallbackRegistry (Final, ChangeWithState canWait exceptions delta value))
+      (State canWait exceptions value)
+  | CacheFinalized (State canWait exceptions value)
+
+instance IsObservableDelta delta value => ToGeneralizedObservable canWait exceptions delta value (CachedObservable' canWait exceptions delta value)
+
+instance IsObservableDelta delta value => IsGeneralizedObservable canWait exceptions delta value (CachedObservable' canWait exceptions delta value) where
+  readObservable'# (CachedObservable' var) = do
+    readTVar var >>= \case
+      CacheIdle' x -> readObservable'# x
+      CacheAttached' _x _disposer _registry state -> pure (False, state)
+      CacheFinalized state -> pure (True, state)
+  attachStateObserver# (CachedObservable' var) callback = do
+    readTVar var >>= \case
+      CacheIdle' upstream -> do
+        registry <- newCallbackRegistryWithEmptyCallback removeCacheListener
+        (upstreamDisposer, final, value) <- attachStateObserver# upstream updateCache
+        writeTVar var (CacheAttached' upstream upstreamDisposer registry value)
+        disposer <- registerCallback registry (uncurry callback)
+        pure (disposer, final, value)
+      CacheAttached' _ _ registry value -> do
+        disposer <- registerCallback registry (uncurry callback)
+        pure (disposer, False, value)
+      CacheFinalized value -> pure (mempty, True, value)
+    where
+      removeCacheListener :: STMc NoRetry '[] ()
+      removeCacheListener = do
+        readTVar var >>= \case
+          CacheIdle' _ -> unreachableCodePath
+          CacheAttached' upstream upstreamDisposer _ _ -> do
+            writeTVar var (CacheIdle' upstream)
+            disposeTSimpleDisposer upstreamDisposer
+          CacheFinalized _ -> pure ()
+      updateCache :: Final -> ChangeWithState canWait exceptions delta value -> STMc NoRetry '[] ()
+      updateCache final change = do
+        readTVar var >>= \case
+          CacheIdle' _ -> unreachableCodePath
+          CacheAttached' upstream upstreamDisposer registry _ ->
+            if final
+              then do
+                writeTVar var (CacheFinalized (changeWithStateToState change))
+                callCallbacks registry (final, change)
+                clearCallbackRegistry registry
+              else do
+                writeTVar var (CacheAttached' upstream upstreamDisposer registry (changeWithStateToState change))
+                callCallbacks registry (final, change)
+          CacheFinalized _ -> pure () -- Upstream implementation error
+
+  isCachedObservable# _ = True
+
+cacheObservable' :: (ToGeneralizedObservable canWait exceptions delta value a, MonadSTMc NoRetry '[] m) => a -> m (GeneralizedObservable canWait exceptions delta value)
+cacheObservable' x =
+  case toGeneralizedObservable x of
+    c@(ConstObservable' _) -> pure c
+    y@(GeneralizedObservable f) ->
+      if isCachedObservable# f
+        then pure y
+        else GeneralizedObservable . CachedObservable' <$> newTVar (CacheIdle' f)
+
+-- ** Observable
+
 type Observable' :: CanWait -> [Type] -> Type -> Type
 newtype Observable' canWait exceptions a = Observable' (GeneralizedObservable canWait exceptions a a)
 type ToObservable' canWait exceptions a = ToGeneralizedObservable canWait exceptions a a

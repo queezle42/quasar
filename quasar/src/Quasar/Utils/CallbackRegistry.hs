@@ -6,6 +6,7 @@ module Quasar.Utils.CallbackRegistry (
   registerCallback,
   callCallbacks,
   callbackRegistryHasCallbacks,
+  clearCallbackRegistry,
 ) where
 
 import Quasar.Resources.Core

@@ -9,6 +9,7 @@ module Quasar.Resources.Core (
   registerCallback,
   callCallbacks,
   callbackRegistryHasCallbacks,
+  clearCallbackRegistry,
 
   -- * TSimpleDisposer
   TSimpleDisposerState(..),
@@ -58,6 +59,14 @@ callCallbacks (CallbackRegistry var _) value = liftSTMc do
 callbackRegistryHasCallbacks :: MonadSTMc NoRetry '[] m => CallbackRegistry a -> m Bool
 callbackRegistryHasCallbacks (CallbackRegistry var _) =
   not . HM.null <$> readTVar var
+
+clearCallbackRegistry :: CallbackRegistry a -> STMc NoRetry '[] ()
+clearCallbackRegistry (CallbackRegistry var emptyCallback) = do
+  wasEmpty <- HM.null <$> readTVar var
+  writeTVar var HM.empty
+  -- TODO in the future if dropped disposers are detected we would have to
+  -- dispose all disposers belonging to the registry
+  unless wasEmpty emptyCallback
 
 
 data TSimpleDisposerState
