@@ -654,7 +654,7 @@ class IsObservableDelta delta value where
   applyDelta :: delta -> Maybe value -> value
   mergeDelta :: delta -> delta -> delta
 
-  evaluateObservable# :: IsGeneralizedObservable canWait exceptions delta value a => a -> Some (IsGeneralizedObservable canWait exceptions value value)
+  evaluateObservable# :: IsGeneralizedObservable canWait exceptions delta value a => a -> Some (IsObservable' canWait exceptions value)
   evaluateObservable# x = Some (EvaluatedObservable x)
 
   toObservable' :: ToGeneralizedObservable canWait exceptions delta value a => a -> Observable' canWait exceptions value
@@ -812,7 +812,7 @@ instance Monad (Observable' canWait exceptions) where
   (>>=) = undefined
 
 
-data MappedObservable' canWait exceptions value = forall prev a. IsGeneralizedObservable canWait exceptions prev prev a => MappedObservable' (prev -> value) a
+data MappedObservable' canWait exceptions value = forall prev a. IsObservable' canWait exceptions prev a => MappedObservable' (prev -> value) a
 
 instance ToGeneralizedObservable canWait exceptions value value (MappedObservable' canWait exceptions value)
 
