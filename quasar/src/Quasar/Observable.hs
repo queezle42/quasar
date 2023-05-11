@@ -502,9 +502,9 @@ class ToGeneralizedObservable canWait exceptions delta value a | a -> canWait, a
 
 type IsGeneralizedObservable :: CanWait -> [Type] -> Type -> Type -> Type -> Constraint
 class ToGeneralizedObservable canWait exceptions delta value a => IsGeneralizedObservable canWait exceptions delta value a | a -> canWait, a -> exceptions, a -> value, a -> delta where
-  readObservable'# :: a -> STMc NoRetry '[] (State canWait exceptions value)
+  readObservable'# :: a -> STMc NoRetry '[] (Final, State canWait exceptions value)
 
-  attachObserver'# :: a -> (Change canWait exceptions delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, State canWait exceptions value)
+  attachObserver'# :: a -> (Final -> Change canWait exceptions delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Final, State canWait exceptions value)
 
   isCachedObservable# :: a -> Bool
   isCachedObservable# _ = False
@@ -599,11 +599,11 @@ instance IsObservableDelta a a where
   evaluateObservable# x = Some x
   toObservable' x = Observable' (toGeneralizedObservable x)
 
-attachDeltaObserverSimple :: ToGeneralizedObservable canWait exceptions delta value a => a -> (Change canWait exceptions delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, State canWait exceptions value)
-attachDeltaObserverSimple x callback =
+attachDeltaObserver :: ToGeneralizedObservable canWait exceptions delta value a => a -> (Final -> Change canWait exceptions delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Final, State canWait exceptions value)
+attachDeltaObserver x callback =
   case toGeneralizedObservable x of
     GeneralizedObservable f -> attachObserver'# f callback
-    ConstObservable' c -> pure (mempty, c)
+    ConstObservable' c -> pure (mempty, True, c)
 
 
 type EvaluatedObservable :: CanWait -> [Type] -> Type -> Type -> Type
@@ -615,12 +615,12 @@ instance IsObservableDelta delta value => IsGeneralizedObservable canWait except
   readObservable'# (EvaluatedObservable x) = readObservable'# x
   attachObserver'# (EvaluatedObservable x) callback = do
     mfixTVar \var -> do
-      (disposer, initial) <- attachObserver'# x \change -> do
+      (disposer, final, initial) <- attachObserver'# x \final change -> do
         state <- stateTVar var (dup . applyChange change)
         case state of
-          StateWaiting _ -> callback ChangeWaiting
-          StateValue content -> callback (ChangeUpdate (Just content))
-      pure ((disposer, initial), initial)
+          StateWaiting _ -> callback final ChangeWaiting
+          StateValue content -> callback final (ChangeUpdate (Just content))
+      pure ((disposer, final, initial), initial)
 
 
 type Observable' :: CanWait -> [Type] -> Type -> Type
@@ -637,9 +637,13 @@ data MappedObservable' canWait exceptions a = forall b c. IsGeneralizedObservabl
 instance ToGeneralizedObservable canWait exceptions value value (MappedObservable' canWait exceptions value)
 
 instance IsGeneralizedObservable canWait exceptions value value (MappedObservable' canWait exceptions value) where
-  attachObserver'# (MappedObservable' fn observable) callback = fmap3 fn $ attachObserver'# observable (callback . fmap fn)
-  readObservable'# (MappedObservable' fn observable) = fn <<$>> readObservable'# observable
-  mapObservable'# f1 (MappedObservable' f2 upstream) = toObservable' $ MappedObservable' (f1 . f2) upstream
+  attachObserver'# (MappedObservable' fn observable) callback =
+    fmap3 fn $ attachObserver'# observable \final change ->
+      callback final (fn <$> change)
+  readObservable'# (MappedObservable' fn observable) =
+    fmap3 fn $ readObservable'# observable
+  mapObservable'# f1 (MappedObservable' f2 upstream) =
+    toObservable' $ MappedObservable' (f1 . f2) upstream
 
 
 -- * Some
