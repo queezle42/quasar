@@ -806,7 +806,7 @@ instance ToGeneralizedObservable canWait exceptions value value (Observable' can
   toGeneralizedObservable (Observable' x) = x
 
 instance Functor (Observable' canWait exceptions) where
-  fmap = undefined
+  fmap f (Observable' x) = mapObservable' f x
 
 instance Applicative (Observable' canWait exceptions) where
   pure = undefined
