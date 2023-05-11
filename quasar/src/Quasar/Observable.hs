@@ -28,9 +28,6 @@ module Quasar.Observable (
   toObservableEx,
   limitObservableEx,
 
-  -- ** Loading state
-  ObservableLoading,
-
   -- * ObservableVar
   ObservableVar,
   newObservableVar,
@@ -471,14 +468,6 @@ type IsObservableEx exceptions a = IsObservable (Either (Ex exceptions) a)
 
 toObservableEx :: Observable (Either (Ex exceptions) a) -> ObservableEx exceptions a
 toObservableEx = ObservableEx
-
-
--- * ObservableLoading
-
-data ObservableLoading = ObservableLoading
-  deriving stock (Show, Generic)
-
-instance Exception ObservableLoading
 
 
 -- * Convert Observable to Future
