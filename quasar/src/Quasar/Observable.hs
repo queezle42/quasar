@@ -515,6 +515,40 @@ class ToGeneralizedObservable canWait exceptions delta value a => IsGeneralizedO
   mapObservableDelta# :: (IsObservableDelta delta value, IsObservableDelta newDelta newValue) => (delta -> newDelta) -> (value -> newValue) -> a -> GeneralizedObservable canWait exceptions newDelta newValue
   mapObservableDelta# fd fn x = GeneralizedObservable (DeltaMappedObservable fd fn x)
 
+readObservable'
+  :: (ToGeneralizedObservable NoWait exceptions delta value a, MonadSTMc NoRetry exceptions m, ExceptionList exceptions)
+  => a -> m value
+readObservable' x = case toGeneralizedObservable x of
+  (ConstObservable' state) -> extractState state
+  (GeneralizedObservable y) -> do
+    (_final, state) <- liftSTMc $ readObservable'# y
+    extractState state
+  where
+    extractState :: (MonadSTMc NoRetry exceptions m, ExceptionList exceptions) => State NoWait exceptions a -> m a
+    extractState (StateValue z) = either throwEx pure z
+
+attachDeltaObserver' :: (ToGeneralizedObservable canWait exceptions delta value a, MonadSTMc NoRetry '[] m) => a -> (Final -> Change canWait exceptions delta -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, State canWait exceptions value)
+attachDeltaObserver' x callback = liftSTMc
+  case toGeneralizedObservable x of
+    GeneralizedObservable f -> attachObserver'# f callback
+    ConstObservable' c -> pure (mempty, True, c)
+
+attachValueObserver' :: (ToGeneralizedObservable canWait exceptions delta value a, IsObservableDelta delta value, MonadSTMc NoRetry '[] m) => a -> (Final -> Change canWait exceptions value -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, State canWait exceptions value)
+attachValueObserver' x callback = liftSTMc
+  case toGeneralizedObservable x of
+    GeneralizedObservable (evaluateObservable# -> Some f) -> attachObserver'# f callback
+    ConstObservable' c -> pure (mempty, True, c)
+
+isCachedObservable :: ToGeneralizedObservable canWait exceptions delta value a => a -> Bool
+isCachedObservable x = case toGeneralizedObservable x of
+  GeneralizedObservable notConst -> isCachedObservable# notConst
+  ConstObservable' _value -> True
+
+mapObservable' :: (ToGeneralizedObservable canWait exceptions delta value a, IsObservableDelta delta value) => (value -> f) -> a -> Observable' canWait exceptions f
+mapObservable' fn x = case toGeneralizedObservable x of
+  (GeneralizedObservable x) -> mapObservable'# fn x
+  (ConstObservable' state) -> Observable' (ConstObservable' (fn <$> state))
+
 type Final = Bool
 
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
@@ -563,16 +597,6 @@ applyChange (ChangeUpdate (Just (Right x))) y =
     getStateValue _ = Nothing
 
 
-isCachedObservable :: ToGeneralizedObservable canWait exceptions delta value a => a -> Bool
-isCachedObservable x = case toGeneralizedObservable x of
-  GeneralizedObservable notConst -> isCachedObservable# notConst
-  ConstObservable' _value -> True
-
-mapObservable' :: (ToGeneralizedObservable canWait exceptions delta value a, IsObservableDelta delta value) => (value -> f) -> a -> Observable' canWait exceptions f
-mapObservable' fn x = case toGeneralizedObservable x of
-  (GeneralizedObservable x) -> mapObservable'# fn x
-  (ConstObservable' state) -> Observable' (ConstObservable' (fn <$> state))
-
 type GeneralizedObservable :: CanWait -> [Type] -> Type -> Type -> Type
 data GeneralizedObservable canWait exceptions delta value
   = forall a. IsGeneralizedObservable canWait exceptions delta value a => GeneralizedObservable a
@@ -599,12 +623,6 @@ instance IsObservableDelta a a where
   mergeDelta _ new = new
   evaluateObservable# x = Some x
   toObservable' x = Observable' (toGeneralizedObservable x)
-
-attachDeltaObserver :: ToGeneralizedObservable canWait exceptions delta value a => a -> (Final -> Change canWait exceptions delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Final, State canWait exceptions value)
-attachDeltaObserver x callback =
-  case toGeneralizedObservable x of
-    GeneralizedObservable f -> attachObserver'# f callback
-    ConstObservable' c -> pure (mempty, True, c)
 
 
 type EvaluatedObservable :: CanWait -> [Type] -> Type -> Type -> Type
