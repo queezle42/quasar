@@ -500,27 +500,27 @@ type Content a = Either SomeException a
 type Final = Bool
 
 data Change a where
-  ChangeLoading :: Change a
+  ChangeWaiting :: Change a
   ChangeUpdate :: Maybe (Content a) -> Change a
 
 data State a where
-  StateLoading :: Maybe (Content a) -> State a
+  StateWaiting :: Maybe (Content a) -> State a
   StateValue :: Content a -> State a
 
 instance Functor Change where
-  fmap _ ChangeLoading = ChangeLoading
+  fmap _ ChangeWaiting = ChangeWaiting
   fmap fn (ChangeUpdate x) = ChangeUpdate (fn <<$>> x)
 
 instance Functor State where
-  fmap fn (StateLoading x) = StateLoading (fn <<$>> x)
+  fmap fn (StateWaiting x) = StateWaiting (fn <<$>> x)
   fmap fn (StateValue x) = StateValue (fn <$> x)
 
 applyChange :: IsObservableDelta delta value => Change delta -> State value -> State value
 -- Set to loading
-applyChange ChangeLoading (StateValue x) = StateLoading (Just x)
-applyChange ChangeLoading x = x
+applyChange ChangeWaiting (StateValue x) = StateWaiting (Just x)
+applyChange ChangeWaiting x = x
 -- Reactivate old value
-applyChange (ChangeUpdate Nothing) (StateLoading (Just x)) = StateValue x
+applyChange (ChangeUpdate Nothing) (StateWaiting (Just x)) = StateValue x
 -- NOTE: An update is ignored for uncached loading state.
 applyChange (ChangeUpdate Nothing) x = x
 -- Update with exception delta
@@ -529,10 +529,10 @@ applyChange (ChangeUpdate (Just (Left x))) _ = StateValue (Left x)
 applyChange (ChangeUpdate (Just (Right x))) y =
   case applyDelta x (getStateValue y) of
     Just z -> StateValue (Right z)
-    Nothing -> StateLoading Nothing
+    Nothing -> StateWaiting Nothing
   where
     getStateValue :: State a -> Maybe a
-    getStateValue (StateLoading (Just (Right value))) = Just value
+    getStateValue (StateWaiting (Just (Right value))) = Just value
     getStateValue (StateValue (Right value)) = Just value
     getStateValue _ = Nothing
 
@@ -591,7 +591,7 @@ instance IsObservableDelta delta value => IsGeneralizedObservable value value (E
       (disposer, initial) <- attachObserver'# x \change -> do
         state <- stateTVar var (dup . applyChange change)
         case state of
-          StateLoading _ -> callback ChangeLoading
+          StateWaiting _ -> callback ChangeWaiting
           StateValue content -> callback (ChangeUpdate (Just content))
       pure ((disposer, initial), initial)
 
