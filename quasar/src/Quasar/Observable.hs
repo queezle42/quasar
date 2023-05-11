@@ -512,6 +512,9 @@ class ToGeneralizedObservable canWait exceptions delta value a => IsGeneralizedO
   mapObservable'# :: IsObservableDelta delta value => (value -> n) -> a -> Observable' canWait exceptions n
   mapObservable'# f (evaluateObservable# -> Some x) = Observable' (GeneralizedObservable (MappedObservable' f x))
 
+  mapObservableDelta# :: (IsObservableDelta delta value, IsObservableDelta newDelta newValue) => (delta -> newDelta) -> (value -> newValue) -> a -> GeneralizedObservable canWait exceptions newDelta newValue
+  mapObservableDelta# fd fn x = GeneralizedObservable (DeltaMappedObservable fd fn x)
+
 type Final = Bool
 
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
@@ -619,6 +622,19 @@ instance IsObservableDelta delta value => IsGeneralizedObservable canWait except
           StateWaiting _ -> callback final ChangeWaiting
           StateValue content -> callback final (ChangeUpdate (Just content))
       pure ((disposer, final, initial), initial)
+
+
+data DeltaMappedObservable canWait exceptions delta value = forall oldDelta oldValue a. IsGeneralizedObservable canWait exceptions oldDelta oldValue a => DeltaMappedObservable (oldDelta -> delta) (oldValue -> value) a
+
+instance ToGeneralizedObservable canWait exceptions delta value (DeltaMappedObservable canWait exceptions delta value)
+
+instance IsGeneralizedObservable canWait exceptions delta value (DeltaMappedObservable canWait exceptions delta value) where
+  attachObserver'# (DeltaMappedObservable deltaFn valueFn observable) callback =
+    fmap3 valueFn $ attachObserver'# observable \final change ->
+      callback final (deltaFn <$> change)
+  readObservable'# (DeltaMappedObservable _deltaFn valueFn observable) =
+    fmap3 valueFn $ readObservable'# observable
+  mapObservableDelta# fd1 fn1 (DeltaMappedObservable fd2 fn2 x) = GeneralizedObservable (DeltaMappedObservable (fd1 . fd2) (fn1 . fn2) x)
 
 
 type Observable' :: CanWait -> [Type] -> Type -> Type
