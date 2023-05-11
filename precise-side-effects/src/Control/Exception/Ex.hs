@@ -117,6 +117,8 @@ toEx :: forall exceptions e. (Exception e, e :< exceptions) => e -> Ex exception
 toEx = Ex . toException
 {-# INLINABLE toEx #-}
 
+-- | The quantified type of any exception passed to `unsafeToEx` MUST be
+-- contained in @exceptions@.
 unsafeToEx :: SomeException -> Ex exceptions
 unsafeToEx = Ex
 
