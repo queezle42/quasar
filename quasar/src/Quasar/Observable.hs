@@ -542,13 +542,13 @@ readObservable' x = case toGeneralizedObservable x of
     extractState :: (MonadSTMc NoRetry exceptions m, ExceptionList exceptions) => ObservableState NoWait exceptions a -> m a
     extractState (ObservableStateValue z) = either throwEx pure z
 
-attachObserver' :: (ToGeneralizedObservable canWait exceptions delta value a, IsObservableDelta delta value, MonadSTMc NoRetry '[] m) => a -> (Final -> ObservableChange canWait exceptions delta -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, ObservableState canWait exceptions value)
+attachObserver' :: (ToGeneralizedObservable canWait exceptions delta value a, MonadSTMc NoRetry '[] m) => a -> (Final -> ObservableChange canWait exceptions delta -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, ObservableState canWait exceptions value)
 attachObserver' x callback = liftSTMc
   case toGeneralizedObservable x of
     GeneralizedObservable f -> attachObserver'# f callback
     ConstObservable' c -> pure (mempty, True, c)
 
-attachStateObserver' :: (ToGeneralizedObservable canWait exceptions delta value a, IsObservableDelta delta value, MonadSTMc NoRetry '[] m) => a -> (Final -> ObservableChangeWithState canWait exceptions delta value -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, ObservableState canWait exceptions value)
+attachStateObserver' :: (ToGeneralizedObservable canWait exceptions delta value a, MonadSTMc NoRetry '[] m) => a -> (Final -> ObservableChangeWithState canWait exceptions delta value -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, ObservableState canWait exceptions value)
 attachStateObserver' x callback = liftSTMc
   case toGeneralizedObservable x of
     GeneralizedObservable f -> attachStateObserver# f callback
@@ -559,7 +559,7 @@ isCachedObservable x = case toGeneralizedObservable x of
   GeneralizedObservable notConst -> isCachedObservable# notConst
   ConstObservable' _value -> True
 
-mapObservable' :: (ToGeneralizedObservable canWait exceptions delta value a, IsObservableDelta delta value) => (value -> f) -> a -> Observable' canWait exceptions f
+mapObservable' :: ToGeneralizedObservable canWait exceptions delta value a => (value -> f) -> a -> Observable' canWait exceptions f
 mapObservable' fn x = case toGeneralizedObservable x of
   (GeneralizedObservable x) -> mapObservable'# fn x
   (ConstObservable' state) -> Observable' (ConstObservable' (fn <$> state))
