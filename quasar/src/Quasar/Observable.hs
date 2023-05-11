@@ -597,26 +597,6 @@ instance Functor (ObservableState canWait exceptions) where
   fmap fn (ObservableStateWaiting x) = ObservableStateWaiting (fn <<$>> x)
   fmap fn (ObservableStateValue x) = ObservableStateValue (fn <$> x)
 
-applyObservableChange :: IsObservableDelta delta value => ObservableChange canWait exceptions delta -> ObservableState canWait exceptions value -> ObservableState canWait exceptions value
--- Set to loading
-applyObservableChange ObservableChangeWaiting (ObservableStateValue x) = ObservableStateWaiting (Just x)
-applyObservableChange ObservableChangeWaiting x@(ObservableStateWaiting _) = x
--- Reactivate old value
-applyObservableChange (ObservableChangeUpdate Nothing) (ObservableStateWaiting (Just x)) = ObservableStateValue x
--- NOTE: An update is ignored for uncached waiting state.
-applyObservableChange (ObservableChangeUpdate Nothing) x@(ObservableStateWaiting Nothing) = x
-applyObservableChange (ObservableChangeUpdate Nothing) x@(ObservableStateValue _) = x
--- Update with exception delta
-applyObservableChange (ObservableChangeUpdate (Just (Left x))) _ = ObservableStateValue (Left x)
--- Update with value delta
-applyObservableChange (ObservableChangeUpdate (Just (Right x))) y =
-  ObservableStateValue (Right (applyDelta x (getStateValue y)))
-  where
-    getStateValue :: ObservableState canWait exceptions a -> Maybe a
-    getStateValue (ObservableStateWaiting (Just (Right value))) = Just value
-    getStateValue (ObservableStateValue (Right value)) = Just value
-    getStateValue _ = Nothing
-
 applyObservableChangeMerged :: IsObservableDelta delta value => ObservableChange canWait exceptions delta -> ObservableState canWait exceptions value -> ObservableChangeWithState canWait exceptions delta value
 -- Set to loading
 applyObservableChangeMerged ObservableChangeWaiting (ObservableStateValue x) = ObservableChangeWithStateWaiting (Just x)
