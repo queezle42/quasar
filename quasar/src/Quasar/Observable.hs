@@ -495,16 +495,31 @@ toObservableEx = ObservableEx
 -- * Generalized observables
 
 type ToGeneralizedObservable :: CanWait -> [Type] -> Type -> Type -> Type -> Constraint
-class ToGeneralizedObservable canWait exceptions delta value a | a -> canWait, a -> exceptions, a -> value, a -> delta where
+class IsObservableDelta delta value => ToGeneralizedObservable canWait exceptions delta value a | a -> canWait, a -> exceptions, a -> value, a -> delta where
   toGeneralizedObservable :: a -> GeneralizedObservable canWait exceptions delta value
   default toGeneralizedObservable :: IsGeneralizedObservable canWait exceptions delta value a => a -> GeneralizedObservable canWait exceptions delta value
   toGeneralizedObservable = GeneralizedObservable
 
 type IsGeneralizedObservable :: CanWait -> [Type] -> Type -> Type -> Type -> Constraint
 class ToGeneralizedObservable canWait exceptions delta value a => IsGeneralizedObservable canWait exceptions delta value a | a -> canWait, a -> exceptions, a -> value, a -> delta where
+  {-# MINIMAL readObservable'#, (attachObserver'# | attachStateObserver#) #-}
   readObservable'# :: a -> STMc NoRetry '[] (Final, State canWait exceptions value)
 
-  attachObserver'# :: a -> (Final -> Change canWait exceptions delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Final, State canWait exceptions value)
+  attachObserver'# :: IsObservableDelta delta value => a -> (Final -> Change canWait exceptions delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Final, State canWait exceptions value)
+  attachObserver'# x callback = attachStateObserver# x \final changeWithState ->
+    callback final case changeWithState of
+      ChangeWithStateWaiting _ -> ChangeWaiting
+      ChangeWithStateUpdate delta _ -> ChangeUpdate delta
+
+  attachStateObserver# :: IsObservableDelta delta value => a -> (Final -> ChangeWithState canWait exceptions delta value -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Final, State canWait exceptions value)
+  attachStateObserver# x callback =
+    mfixTVar \var -> do
+      (disposer, final, initial) <- attachObserver'# x \final change -> do
+        merged <- stateTVar var \oldState ->
+          let merged = applyChangeMerged change oldState
+          in (merged, changeWithStateToState merged)
+        callback final merged
+      pure ((disposer, final, initial), initial)
 
   isCachedObservable# :: a -> Bool
   isCachedObservable# _ = False
@@ -527,16 +542,16 @@ readObservable' x = case toGeneralizedObservable x of
     extractState :: (MonadSTMc NoRetry exceptions m, ExceptionList exceptions) => State NoWait exceptions a -> m a
     extractState (StateValue z) = either throwEx pure z
 
-attachDeltaObserver' :: (ToGeneralizedObservable canWait exceptions delta value a, MonadSTMc NoRetry '[] m) => a -> (Final -> Change canWait exceptions delta -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, State canWait exceptions value)
-attachDeltaObserver' x callback = liftSTMc
+attachObserver' :: (ToGeneralizedObservable canWait exceptions delta value a, IsObservableDelta delta value, MonadSTMc NoRetry '[] m) => a -> (Final -> Change canWait exceptions delta -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, State canWait exceptions value)
+attachObserver' x callback = liftSTMc
   case toGeneralizedObservable x of
     GeneralizedObservable f -> attachObserver'# f callback
     ConstObservable' c -> pure (mempty, True, c)
 
-attachValueObserver' :: (ToGeneralizedObservable canWait exceptions delta value a, IsObservableDelta delta value, MonadSTMc NoRetry '[] m) => a -> (Final -> Change canWait exceptions value -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, State canWait exceptions value)
-attachValueObserver' x callback = liftSTMc
+attachStateObserver' :: (ToGeneralizedObservable canWait exceptions delta value a, IsObservableDelta delta value, MonadSTMc NoRetry '[] m) => a -> (Final -> ChangeWithState canWait exceptions delta value -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, State canWait exceptions value)
+attachStateObserver' x callback = liftSTMc
   case toGeneralizedObservable x of
-    GeneralizedObservable (evaluateObservable# -> Some f) -> attachObserver'# f callback
+    GeneralizedObservable f -> attachStateObserver# f callback
     ConstObservable' c -> pure (mempty, True, c)
 
 isCachedObservable :: ToGeneralizedObservable canWait exceptions delta value a => a -> Bool
@@ -560,14 +575,19 @@ type NoWait = 'NoWait
 #endif
 
 type Change :: CanWait -> [Type] -> Type -> Type
-data Change canWait exceptions a where
-  ChangeWaiting :: Change Wait exceptions a
-  ChangeUpdate :: Maybe (Either (Ex exceptions) a) -> Change canWait exceptions a
+data Change canWait exceptions delta where
+  ChangeWaiting :: Change Wait exceptions delta
+  ChangeUpdate :: Maybe (Either (Ex exceptions) delta) -> Change canWait exceptions delta
 
 type State :: CanWait -> [Type] -> Type -> Type
-data State canWait exceptions a where
-  StateWaiting :: Maybe (Either (Ex exceptions) a) -> State Wait exceptions a
-  StateValue :: Either (Ex exceptions) a -> State canWait exceptions a
+data State canWait exceptions value where
+  StateWaiting :: Maybe (Either (Ex exceptions) value) -> State Wait exceptions value
+  StateValue :: Either (Ex exceptions) value -> State canWait exceptions value
+
+type ChangeWithState :: CanWait -> [Type] -> Type -> Type -> Type
+data ChangeWithState canWait exceptions delta value where
+  ChangeWithStateWaiting :: Maybe (Either (Ex exceptions) value) -> ChangeWithState Wait exceptions delta value
+  ChangeWithStateUpdate :: Maybe (Either (Ex exceptions) delta) -> Either (Ex exceptions) value -> ChangeWithState canWait exceptions delta value
 
 instance Functor (Change canWait exceptions) where
   fmap _ ChangeWaiting = ChangeWaiting
@@ -580,11 +600,12 @@ instance Functor (State canWait exceptions) where
 applyChange :: IsObservableDelta delta value => Change canWait exceptions delta -> State canWait exceptions value -> State canWait exceptions value
 -- Set to loading
 applyChange ChangeWaiting (StateValue x) = StateWaiting (Just x)
-applyChange ChangeWaiting x = x
+applyChange ChangeWaiting x@(StateWaiting _) = x
 -- Reactivate old value
 applyChange (ChangeUpdate Nothing) (StateWaiting (Just x)) = StateValue x
--- NOTE: An update is ignored for uncached loading state.
-applyChange (ChangeUpdate Nothing) x = x
+-- NOTE: An update is ignored for uncached waiting state.
+applyChange (ChangeUpdate Nothing) x@(StateWaiting Nothing) = x
+applyChange (ChangeUpdate Nothing) x@(StateValue _) = x
 -- Update with exception delta
 applyChange (ChangeUpdate (Just (Left x))) _ = StateValue (Left x)
 -- Update with value delta
@@ -596,13 +617,41 @@ applyChange (ChangeUpdate (Just (Right x))) y =
     getStateValue (StateValue (Right value)) = Just value
     getStateValue _ = Nothing
 
+applyChangeMerged :: IsObservableDelta delta value => Change canWait exceptions delta -> State canWait exceptions value -> ChangeWithState canWait exceptions delta value
+-- Set to loading
+applyChangeMerged ChangeWaiting (StateValue x) = ChangeWithStateWaiting (Just x)
+applyChangeMerged ChangeWaiting (StateWaiting x) = ChangeWithStateWaiting x
+-- Reactivate old value
+applyChangeMerged (ChangeUpdate Nothing) (StateWaiting (Just x)) = ChangeWithStateUpdate Nothing x
+-- NOTE: An update is ignored for uncached waiting state.
+applyChangeMerged (ChangeUpdate Nothing) (StateWaiting Nothing) = ChangeWithStateWaiting Nothing
+applyChangeMerged (ChangeUpdate Nothing) (StateValue x) = ChangeWithStateUpdate Nothing x
+-- Update with exception delta
+applyChangeMerged (ChangeUpdate delta@(Just (Left x))) _ = ChangeWithStateUpdate delta (Left x)
+-- Update with value delta
+applyChangeMerged (ChangeUpdate delta@(Just (Right x))) y =
+  ChangeWithStateUpdate delta (Right (applyDelta x (getStateValue y)))
+  where
+    getStateValue :: State canWait exceptions a -> Maybe a
+    getStateValue (StateWaiting (Just (Right value))) = Just value
+    getStateValue (StateValue (Right value)) = Just value
+    getStateValue _ = Nothing
+
+changeWithStateToChange :: ChangeWithState canWait exceptions delta value -> Change canWait exceptions delta
+changeWithStateToChange (ChangeWithStateWaiting _cached) = ChangeWaiting
+changeWithStateToChange (ChangeWithStateUpdate delta _value) = ChangeUpdate delta
+
+changeWithStateToState :: ChangeWithState canWait exceptions delta value -> State canWait exceptions value
+changeWithStateToState (ChangeWithStateWaiting cached) = StateWaiting cached
+changeWithStateToState (ChangeWithStateUpdate _delta value) = StateValue value
+
 
 type GeneralizedObservable :: CanWait -> [Type] -> Type -> Type -> Type
 data GeneralizedObservable canWait exceptions delta value
   = forall a. IsGeneralizedObservable canWait exceptions delta value a => GeneralizedObservable a
   | ConstObservable' (State canWait exceptions value)
 
-instance ToGeneralizedObservable canWait exceptions delta value (GeneralizedObservable canWait exceptions delta value) where
+instance IsObservableDelta delta value => ToGeneralizedObservable canWait exceptions delta value (GeneralizedObservable canWait exceptions delta value) where
   toGeneralizedObservable = id
 
 class IsObservableDelta delta value where
@@ -628,25 +677,23 @@ instance IsObservableDelta a a where
 type EvaluatedObservable :: CanWait -> [Type] -> Type -> Type -> Type
 data EvaluatedObservable canWait exceptions delta value = forall a. IsGeneralizedObservable canWait exceptions delta value a => EvaluatedObservable a
 
-instance IsObservableDelta delta value => ToGeneralizedObservable canWait exceptions value value (EvaluatedObservable canWait exceptions delta value)
+instance ToGeneralizedObservable canWait exceptions value value (EvaluatedObservable canWait exceptions delta value)
 
-instance IsObservableDelta delta value => IsGeneralizedObservable canWait exceptions value value (EvaluatedObservable canWait exceptions delta value) where
+instance IsGeneralizedObservable canWait exceptions value value (EvaluatedObservable canWait exceptions delta value) where
   readObservable'# (EvaluatedObservable x) = readObservable'# x
-  attachObserver'# (EvaluatedObservable x) callback = do
-    mfixTVar \var -> do
-      (disposer, final, initial) <- attachObserver'# x \final change -> do
-        state <- stateTVar var (dup . applyChange change)
-        case state of
-          StateWaiting _ -> callback final ChangeWaiting
-          StateValue content -> callback final (ChangeUpdate (Just content))
-      pure ((disposer, final, initial), initial)
+  attachStateObserver# (EvaluatedObservable x) callback =
+    attachStateObserver# x \final changeWithState ->
+      callback final case changeWithState of
+        ChangeWithStateWaiting cache -> ChangeWithStateWaiting cache
+        -- Replace delta with evaluated value
+        ChangeWithStateUpdate _delta content -> ChangeWithStateUpdate (Just content) content
 
 
 data DeltaMappedObservable canWait exceptions delta value = forall oldDelta oldValue a. IsGeneralizedObservable canWait exceptions oldDelta oldValue a => DeltaMappedObservable (oldDelta -> delta) (oldValue -> value) a
 
-instance ToGeneralizedObservable canWait exceptions delta value (DeltaMappedObservable canWait exceptions delta value)
+instance IsObservableDelta delta value => ToGeneralizedObservable canWait exceptions delta value (DeltaMappedObservable canWait exceptions delta value)
 
-instance IsGeneralizedObservable canWait exceptions delta value (DeltaMappedObservable canWait exceptions delta value) where
+instance IsObservableDelta delta value => IsGeneralizedObservable canWait exceptions delta value (DeltaMappedObservable canWait exceptions delta value) where
   attachObserver'# (DeltaMappedObservable deltaFn valueFn observable) callback =
     fmap3 valueFn $ attachObserver'# observable \final change ->
       callback final (deltaFn <$> change)
