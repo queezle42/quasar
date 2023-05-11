@@ -480,42 +480,49 @@ toObservableEx = ObservableEx
 
 -- * Generalized observables
 
-class ToGeneralizedObservable delta value a | a -> value, a -> delta where
-  toGeneralizedObservable :: a -> GeneralizedObservable delta value
-  default toGeneralizedObservable :: IsGeneralizedObservable delta value a => a -> GeneralizedObservable delta value
+type ToGeneralizedObservable :: CanWait -> [Type] -> Type -> Type -> Type -> Constraint
+class ToGeneralizedObservable canWait exceptions delta value a | a -> canWait, a -> exceptions, a -> value, a -> delta where
+  toGeneralizedObservable :: a -> GeneralizedObservable canWait exceptions delta value
+  default toGeneralizedObservable :: IsGeneralizedObservable canWait exceptions delta value a => a -> GeneralizedObservable canWait exceptions delta value
   toGeneralizedObservable = GeneralizedObservable
 
-class ToGeneralizedObservable delta value a => IsGeneralizedObservable delta value a | a -> value, a -> delta where
-  readObservable'# :: a -> STMc NoRetry '[] (State value)
+type IsGeneralizedObservable :: CanWait -> [Type] -> Type -> Type -> Type -> Constraint
+class ToGeneralizedObservable canWait exceptions delta value a => IsGeneralizedObservable canWait exceptions delta value a | a -> canWait, a -> exceptions, a -> value, a -> delta where
+  readObservable'# :: a -> STMc NoRetry '[] (State canWait exceptions value)
 
-  attachObserver'# :: a -> (Change delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, State value)
+  attachObserver'# :: a -> (Change canWait exceptions delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, State canWait exceptions value)
 
   isCachedObservable# :: a -> Bool
   isCachedObservable# _ = False
 
-  mapObservable'# :: IsObservableDelta delta value => (value -> n) -> a -> Observable' n
+  mapObservable'# :: IsObservableDelta delta value => (value -> n) -> a -> Observable' canWait exceptions n
   mapObservable'# f (evaluateObservable# -> Some x) = Observable' (GeneralizedObservable (MappedObservable' f x))
 
-type Content a = Either SomeException a
+type Content :: [Type] -> Type -> Type
+type Content exceptions a = Either (Ex exceptions) a
 type Final = Bool
 
-data Change a where
-  ChangeWaiting :: Change a
-  ChangeUpdate :: Maybe (Content a) -> Change a
+data CanWait = Wait | NoWait
 
-data State a where
-  StateWaiting :: Maybe (Content a) -> State a
-  StateValue :: Content a -> State a
+type Change :: CanWait -> [Type] -> Type -> Type
+data Change canWait exceptions a where
+  ChangeWaiting :: Change Wait exceptions a
+  ChangeUpdate :: Maybe (Content exceptions a) -> Change canWait exceptions a
 
-instance Functor Change where
+type State :: CanWait -> [Type] -> Type -> Type
+data State canWait exceptions a where
+  StateWaiting :: Maybe (Content exceptions a) -> State Wait exceptions a
+  StateValue :: Content exceptions a -> State canWait exceptions a
+
+instance Functor (Change canWait exceptions) where
   fmap _ ChangeWaiting = ChangeWaiting
   fmap fn (ChangeUpdate x) = ChangeUpdate (fn <<$>> x)
 
-instance Functor State where
+instance Functor (State canWait exceptions) where
   fmap fn (StateWaiting x) = StateWaiting (fn <<$>> x)
   fmap fn (StateValue x) = StateValue (fn <$> x)
 
-applyChange :: IsObservableDelta delta value => Change delta -> State value -> State value
+applyChange :: IsObservableDelta delta value => Change canWait exceptions delta -> State canWait exceptions value -> State canWait exceptions value
 -- Set to loading
 applyChange ChangeWaiting (StateValue x) = StateWaiting (Just x)
 applyChange ChangeWaiting x = x
@@ -527,67 +534,67 @@ applyChange (ChangeUpdate Nothing) x = x
 applyChange (ChangeUpdate (Just (Left x))) _ = StateValue (Left x)
 -- Update with value delta
 applyChange (ChangeUpdate (Just (Right x))) y =
-  case applyDelta x (getStateValue y) of
-    Just z -> StateValue (Right z)
-    Nothing -> StateWaiting Nothing
+  StateValue (Right (applyDelta x (getStateValue y)))
   where
-    getStateValue :: State a -> Maybe a
+    getStateValue :: State canWait exceptions a -> Maybe a
     getStateValue (StateWaiting (Just (Right value))) = Just value
     getStateValue (StateValue (Right value)) = Just value
     getStateValue _ = Nothing
 
 
-isCachedObservable :: ToGeneralizedObservable delta value a => a -> Bool
+isCachedObservable :: ToGeneralizedObservable canWait exceptions delta value a => a -> Bool
 isCachedObservable x = case toGeneralizedObservable x of
   GeneralizedObservable notConst -> isCachedObservable# notConst
   ConstObservable' _value -> True
 
-mapObservable' :: (ToGeneralizedObservable delta value a, IsObservableDelta delta value) => (value -> f) -> a -> Observable' f
+mapObservable' :: (ToGeneralizedObservable canWait exceptions delta value a, IsObservableDelta delta value) => (value -> f) -> a -> Observable' canWait exceptions f
 mapObservable' fn x = case toGeneralizedObservable x of
   (GeneralizedObservable x) -> mapObservable'# fn x
   (ConstObservable' state) -> Observable' (ConstObservable' (fn <$> state))
 
-data GeneralizedObservable delta value
-  = forall a. IsGeneralizedObservable delta value a => GeneralizedObservable a
-  | ConstObservable' (State value)
+type GeneralizedObservable :: CanWait -> [Type] -> Type -> Type -> Type
+data GeneralizedObservable canWait exceptions delta value
+  = forall a. IsGeneralizedObservable canWait exceptions delta value a => GeneralizedObservable a
+  | ConstObservable' (State canWait exceptions value)
 
-instance ToGeneralizedObservable delta value (GeneralizedObservable delta value) where
+instance ToGeneralizedObservable canWait exceptions delta value (GeneralizedObservable canWait exceptions delta value) where
   toGeneralizedObservable = id
 
 class IsObservableDelta delta value where
-  applyDelta :: delta -> Maybe value -> Maybe value
+  applyDelta :: delta -> Maybe value -> value
   mergeDelta :: delta -> delta -> delta
 
-  evaluateObservable# :: IsGeneralizedObservable delta value a => a -> Some (IsGeneralizedObservable value value)
+  evaluateObservable# :: IsGeneralizedObservable canWait exceptions delta value a => a -> Some (IsGeneralizedObservable canWait exceptions value value)
   evaluateObservable# x = Some (EvaluatedObservable x)
 
-  toObservable' :: ToGeneralizedObservable delta value a => a -> Observable' value
+  toObservable' :: ToGeneralizedObservable canWait exceptions delta value a => a -> Observable' canWait exceptions value
   toObservable' x = Observable'
     case toGeneralizedObservable x of
       (GeneralizedObservable f) -> GeneralizedObservable (EvaluatedObservable f)
       (ConstObservable' c) -> ConstObservable' c
 
 instance IsObservableDelta a a where
-  applyDelta new _ = Just new
+  applyDelta new _ = new
   mergeDelta _ new = new
   evaluateObservable# x = Some x
   toObservable' x = Observable' (toGeneralizedObservable x)
 
-attachDeltaObserverSimple :: ToGeneralizedObservable delta value a => a -> (Change delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, State value)
+attachDeltaObserverSimple :: ToGeneralizedObservable canWait exceptions delta value a => a -> (Change canWait exceptions delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, State canWait exceptions value)
 attachDeltaObserverSimple x callback =
   case toGeneralizedObservable x of
     GeneralizedObservable f -> attachObserver'# f callback
     ConstObservable' c -> pure (mempty, c)
 
 
-data EvaluatedObservable delta value = forall a. IsGeneralizedObservable delta value a => EvaluatedObservable a
+type EvaluatedObservable :: CanWait -> [Type] -> Type -> Type -> Type
+data EvaluatedObservable canWait exceptions delta value = forall a. IsGeneralizedObservable canWait exceptions delta value a => EvaluatedObservable a
 
-instance IsObservableDelta delta value => ToGeneralizedObservable value value (EvaluatedObservable delta value)
+instance IsObservableDelta delta value => ToGeneralizedObservable canWait exceptions value value (EvaluatedObservable canWait exceptions delta value)
 
-instance IsObservableDelta delta value => IsGeneralizedObservable value value (EvaluatedObservable delta value) where
+instance IsObservableDelta delta value => IsGeneralizedObservable canWait exceptions value value (EvaluatedObservable canWait exceptions delta value) where
   readObservable'# (EvaluatedObservable x) = readObservable'# x
   attachObserver'# (EvaluatedObservable x) callback = do
-    mfixTVar \(var :: TVar (State value)) -> do
+    mfixTVar \var -> do
       (disposer, initial) <- attachObserver'# x \change -> do
         state <- stateTVar var (dup . applyChange change)
         case state of
@@ -595,19 +602,21 @@ instance IsObservableDelta delta value => IsGeneralizedObservable value value (E
           StateValue content -> callback (ChangeUpdate (Just content))
       pure ((disposer, initial), initial)
 
-newtype Observable' a = Observable' (GeneralizedObservable a a)
-type ToObservable' a = ToGeneralizedObservable a a
-type IsObservable' a = IsGeneralizedObservable a a
 
-instance ToGeneralizedObservable value value (Observable' value) where
+type Observable' :: CanWait -> [Type] -> Type -> Type
+newtype Observable' canWait exceptions a = Observable' (GeneralizedObservable canWait exceptions a a)
+type ToObservable' canWait exceptions a = ToGeneralizedObservable canWait exceptions a a
+type IsObservable' canWait exceptions a = IsGeneralizedObservable canWait exceptions a a
+
+instance ToGeneralizedObservable canWait exceptions value value (Observable' canWait exceptions value) where
   toGeneralizedObservable (Observable' x) = x
 
 
-data MappedObservable' a = forall b c. IsGeneralizedObservable b b c => MappedObservable' (b -> a) c
+data MappedObservable' canWait exceptions a = forall b c. IsGeneralizedObservable canWait exceptions b b c => MappedObservable' (b -> a) c
 
-instance ToGeneralizedObservable value value (MappedObservable' value)
+instance ToGeneralizedObservable canWait exceptions value value (MappedObservable' canWait exceptions value)
 
-instance IsGeneralizedObservable value value (MappedObservable' value) where
+instance IsGeneralizedObservable canWait exceptions value value (MappedObservable' canWait exceptions value) where
   attachObserver'# (MappedObservable' fn observable) callback = fmap3 fn $ attachObserver'# observable (callback . fmap fn)
   readObservable'# (MappedObservable' fn observable) = fn <<$>> readObservable'# observable
   mapObservable'# f1 (MappedObservable' f2 upstream) = toObservable' $ MappedObservable' (f1 . f2) upstream
