@@ -771,6 +771,30 @@ cacheObservable' x =
         then pure y
         else GeneralizedObservable . CachedObservable' <$> newTVar (CacheIdle' f)
 
+
+-- *** Embedded cache in the Observable monad
+
+data CacheObservableOperation canWait exceptions w e d v = forall a. ToGeneralizedObservable w e d v a => CacheObservableOperation a
+
+instance ToGeneralizedObservable canWait exceptions (GeneralizedObservable w e d v) (GeneralizedObservable w e d v) (CacheObservableOperation canWait exceptions w e d v)
+
+instance IsGeneralizedObservable canWait exceptions (GeneralizedObservable w e d v) (GeneralizedObservable w e d v) (CacheObservableOperation canWait exceptions w e d v) where
+  readObservable'# (CacheObservableOperation x) = do
+    cache <- cacheObservable' x
+    pure (True, StateValue (Right cache))
+  attachObserver'# (CacheObservableOperation x) _callback = do
+    cache <- cacheObservable' x
+    pure (mempty, True, StateValue (Right cache))
+
+-- | Cache an observable in the `Observable` monad. Use with care! A new cache
+-- is recreated whenever the result of this function is reevaluated.
+cacheObservableOperation :: forall canWait exceptions w e d v a. ToGeneralizedObservable w e d v a => a -> Observable' canWait exceptions (GeneralizedObservable w e d v)
+cacheObservableOperation x =
+  case toGeneralizedObservable x of
+    c@(ConstObservable' _) -> pure c
+    (GeneralizedObservable f) -> Observable' (GeneralizedObservable (CacheObservableOperation @canWait @exceptions f))
+
+
 -- ** Observable
 
 type Observable' :: CanWait -> [Type] -> Type -> Type
