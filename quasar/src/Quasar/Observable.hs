@@ -816,7 +816,7 @@ instance Monad (Observable' canWait exceptions) where
   (>>=) = undefined
 
 
-data MappedObservable' canWait exceptions a = forall b c. IsGeneralizedObservable canWait exceptions b b c => MappedObservable' (b -> a) c
+data MappedObservable' canWait exceptions value = forall prev a. IsGeneralizedObservable canWait exceptions prev prev a => MappedObservable' (prev -> value) a
 
 instance ToGeneralizedObservable canWait exceptions value value (MappedObservable' canWait exceptions value)
 
