@@ -1,4 +1,9 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE UndecidableInstances #-}
+
+#if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
+{-# LANGUAGE TypeData #-}
+#endif
 
 module Quasar.Observable (
   -- * Observable core
@@ -36,6 +41,15 @@ module Quasar.Observable (
   modifyObservableVar,
   stateObservableVar,
   observableVarHasObservers,
+
+  -- * Generalized observable
+#if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
+  CanWait(..),
+#else
+  CanWait,
+  Wait,
+  NoWait,
+#endif
 ) where
 
 import Control.Applicative
@@ -502,7 +516,13 @@ type Content :: [Type] -> Type -> Type
 type Content exceptions a = Either (Ex exceptions) a
 type Final = Bool
 
+#if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
+type data CanWait = Wait | NoWait
+#else
 data CanWait = Wait | NoWait
+type Wait = 'Wait
+type NoWait = 'NoWait
+#endif
 
 type Change :: CanWait -> [Type] -> Type -> Type
 data Change canWait exceptions a where
