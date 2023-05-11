@@ -512,8 +512,6 @@ class ToGeneralizedObservable canWait exceptions delta value a => IsGeneralizedO
   mapObservable'# :: IsObservableDelta delta value => (value -> n) -> a -> Observable' canWait exceptions n
   mapObservable'# f (evaluateObservable# -> Some x) = Observable' (GeneralizedObservable (MappedObservable' f x))
 
-type Content :: [Type] -> Type -> Type
-type Content exceptions a = Either (Ex exceptions) a
 type Final = Bool
 
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
@@ -527,12 +525,12 @@ type NoWait = 'NoWait
 type Change :: CanWait -> [Type] -> Type -> Type
 data Change canWait exceptions a where
   ChangeWaiting :: Change Wait exceptions a
-  ChangeUpdate :: Maybe (Content exceptions a) -> Change canWait exceptions a
+  ChangeUpdate :: Maybe (Either (Ex exceptions) a) -> Change canWait exceptions a
 
 type State :: CanWait -> [Type] -> Type -> Type
 data State canWait exceptions a where
-  StateWaiting :: Maybe (Content exceptions a) -> State Wait exceptions a
-  StateValue :: Content exceptions a -> State canWait exceptions a
+  StateWaiting :: Maybe (Either (Ex exceptions) a) -> State Wait exceptions a
+  StateValue :: Either (Ex exceptions) a -> State canWait exceptions a
 
 instance Functor (Change canWait exceptions) where
   fmap _ ChangeWaiting = ChangeWaiting
