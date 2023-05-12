@@ -8,8 +8,9 @@ import Prelude
 
 import Control.Applicative (liftA2)
 import Control.Concurrent (threadDelay)
+import Control.Monad (forever, when, unless)
 import Control.Monad.Catch (MonadThrow, throwM)
-import Control.Monad.State.Lazy as State
+import Control.Monad.IO.Class (MonadIO(..))
 import Data.Char qualified as Char
 import Data.HashSet qualified as HS
 import Data.Hashable qualified as Hashable
