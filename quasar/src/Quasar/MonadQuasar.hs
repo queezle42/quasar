@@ -43,8 +43,10 @@ module Quasar.MonadQuasar (
   askResourceManager,
 ) where
 
-import Control.Monad.Catch
-import Control.Monad.Reader
+import Control.Monad (MonadPlus)
+import Control.Monad.Trans (lift)
+import Control.Monad.Catch (MonadThrow, MonadCatch, MonadMask, bracket, catchAll, mask, finally)
+import Control.Monad.Reader (ReaderT, runReaderT, ask, local)
 import GHC.Records (HasField(..))
 import Quasar.Exceptions
 import Quasar.Future
