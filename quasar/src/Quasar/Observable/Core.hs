@@ -86,6 +86,39 @@ class ToGeneralizedObservable canWait exceptions value a => IsGeneralizedObserva
   mapObservableDelta# :: ObservableContainer newValue => (Delta value -> Delta newValue) -> (value -> newValue) -> a -> GeneralizedObservable canWait exceptions newValue
   mapObservableDelta# fd fn x = GeneralizedObservable (DeltaMappedObservable fd fn x)
 
+  count# :: a -> Observable canRetry exceptions Int64
+  count# = undefined
+
+  isEmpty# :: a -> Observable canRetry exceptions Bool
+  isEmpty# = undefined
+
+  lookupKey# :: Ord (Key value) => a -> Selector value -> Observable canRetry exceptions (Maybe (Key value))
+  lookupKey# = undefined
+
+  lookupItem# :: Ord (Key value) => a -> Selector value -> Observable canRetry exceptions (Maybe (Key value, Value value))
+  lookupItem# = undefined
+
+  lookupValue# :: Ord (Key value) => a -> Selector value -> Observable canRetry exceptions (Maybe (Value value))
+  lookupValue# = undefined
+
+  query# :: a -> ObservableList canWait exceptions (Bounds value) -> GeneralizedObservable canWait exceptions value
+  query# = undefined
+
+query :: ToGeneralizedObservable canWait exceptions value a => a -> ObservableList canWait exceptions (Bounds value) -> GeneralizedObservable canWait exceptions value
+query = undefined
+
+type Bounds value = (Bound value, Bound value)
+
+data Bound value
+  = ExcludingBound (Key value)
+  | IncludingBound (Key value)
+  | NoBound
+
+data Selector value
+  = Min
+  | Max
+  | Key (Key value)
+
 readObservable
   :: (ToGeneralizedObservable NoWait exceptions value a, MonadSTMc NoRetry exceptions m, ExceptionList exceptions)
   => a -> m value
@@ -188,6 +221,8 @@ instance ObservableContainer value => ToGeneralizedObservable canWait exceptions
 
 class ObservableContainer value where
   type Delta value
+  type Key value
+  type Value value
   applyDelta :: Delta value -> Maybe value -> value
   mergeDelta :: Delta value -> Delta value -> Delta value
 
@@ -196,6 +231,8 @@ class ObservableContainer value where
 
 instance ObservableContainer (Identity a) where
   type Delta (Identity a) = a
+  type Key (Identity a) = ()
+  type Value (Identity a) = a
   applyDelta new _ = Identity new
   mergeDelta _ new = new
 
