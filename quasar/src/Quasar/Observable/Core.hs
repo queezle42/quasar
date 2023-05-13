@@ -37,6 +37,7 @@ module Quasar.Observable.Core (
   -- * Identity observable (single value without partial updats)
   Observable(..),
   ToObservable,
+  toObservable,
   IsObservable,
 ) where
 
@@ -193,17 +194,10 @@ class ObservableContainer value where
   evaluateObservable# :: IsGeneralizedObservable canWait exceptions value a => a -> Some (IsObservable canWait exceptions value)
   evaluateObservable# x = Some (EvaluatedObservable x)
 
-  --toObservable :: ToGeneralizedObservable canWait exceptions delta value a => a -> Observable canWait exceptions value
-  --toObservable x = Observable
-  --  case toGeneralizedObservable x of
-  --    (GeneralizedObservable f) -> GeneralizedObservable (EvaluatedObservable f)
-  --    (ConstObservable c) -> ConstObservable c
-
 instance ObservableContainer (Identity a) where
   type Delta (Identity a) = a
   applyDelta new _ = Identity new
   mergeDelta _ new = new
-  --toObservable x = Observable (toGeneralizedObservable x)
 
 
 type EvaluatedObservable :: CanWait -> [Type] -> Type -> Type
@@ -253,6 +247,9 @@ instance Applicative (Observable canWait exceptions) where
 
 instance Monad (Observable canWait exceptions) where
   (>>=) = undefined
+
+toObservable :: ToObservable canWait exceptions value a => a -> Observable canWait exceptions value
+toObservable x = Observable (toGeneralizedObservable x)
 
 
 data MappedObservable canWait exceptions value = forall prev a. IsObservable canWait exceptions prev a => MappedObservable (prev -> value) a
