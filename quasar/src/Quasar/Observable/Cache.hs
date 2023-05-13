@@ -28,9 +28,9 @@ data CacheState canWait exceptions delta value
       (ObservableState canWait exceptions value)
   | CacheFinalized (ObservableState canWait exceptions value)
 
-instance IsObservableDelta delta value => ToGeneralizedObservable canWait exceptions delta value (CachedObservable canWait exceptions delta value)
+instance ObservableContainer delta value => ToGeneralizedObservable canWait exceptions delta value (CachedObservable canWait exceptions delta value)
 
-instance IsObservableDelta delta value => IsGeneralizedObservable canWait exceptions delta value (CachedObservable canWait exceptions delta value) where
+instance ObservableContainer delta value => IsGeneralizedObservable canWait exceptions delta value (CachedObservable canWait exceptions delta value) where
   readObservable# (CachedObservable var) = do
     readTVar var >>= \case
       CacheIdle x -> readObservable# x

@@ -27,7 +27,7 @@ module Quasar.Observable.Core (
   Final,
 
   IsGeneralizedObservable(..),
-  IsObservableDelta(..),
+  ObservableContainer(..),
 
   ObservableChange(..),
   ObservableState(..),
@@ -49,7 +49,7 @@ import Quasar.Utils.Fix
 -- * Generalized observables
 
 type ToGeneralizedObservable :: CanWait -> [Type] -> Type -> Type -> Type -> Constraint
-class IsObservableDelta delta value => ToGeneralizedObservable canWait exceptions delta value a | a -> canWait, a -> exceptions, a -> value, a -> delta where
+class ObservableContainer delta value => ToGeneralizedObservable canWait exceptions delta value a | a -> canWait, a -> exceptions, a -> value, a -> delta where
   toGeneralizedObservable :: a -> GeneralizedObservable canWait exceptions delta value
   default toGeneralizedObservable :: IsGeneralizedObservable canWait exceptions delta value a => a -> GeneralizedObservable canWait exceptions delta value
   toGeneralizedObservable = GeneralizedObservable
@@ -81,7 +81,7 @@ class ToGeneralizedObservable canWait exceptions delta value a => IsGeneralizedO
   mapObservable# :: (value -> n) -> a -> Observable canWait exceptions n
   mapObservable# f (evaluateObservable# -> Some x) = Observable (GeneralizedObservable (MappedObservable f x))
 
-  mapObservableDelta# :: IsObservableDelta newDelta newValue => (delta -> newDelta) -> (value -> newValue) -> a -> GeneralizedObservable canWait exceptions newDelta newValue
+  mapObservableDelta# :: ObservableContainer newDelta newValue => (delta -> newDelta) -> (value -> newValue) -> a -> GeneralizedObservable canWait exceptions newDelta newValue
   mapObservableDelta# fd fn x = GeneralizedObservable (DeltaMappedObservable fd fn x)
 
 readObservable
@@ -151,7 +151,7 @@ instance Functor (ObservableState canWait exceptions) where
   fmap fn (ObservableStateWaiting x) = ObservableStateWaiting (fn <<$>> x)
   fmap fn (ObservableStateValue x) = ObservableStateValue (fn <$> x)
 
-applyObservableChange :: IsObservableDelta delta value => ObservableChange canWait exceptions delta -> ObservableState canWait exceptions value -> ObservableChangeWithState canWait exceptions delta value
+applyObservableChange :: ObservableContainer delta value => ObservableChange canWait exceptions delta -> ObservableState canWait exceptions value -> ObservableChangeWithState canWait exceptions delta value
 -- Set to loading
 applyObservableChange ObservableChangeWaiting (ObservableStateValue x) = ObservableChangeWithStateWaiting (Just x)
 applyObservableChange ObservableChangeWaiting (ObservableStateWaiting x) = ObservableChangeWithStateWaiting x
@@ -181,10 +181,10 @@ data GeneralizedObservable canWait exceptions delta value
   = forall a. IsGeneralizedObservable canWait exceptions delta value a => GeneralizedObservable a
   | ConstObservable (ObservableState canWait exceptions value)
 
-instance IsObservableDelta delta value => ToGeneralizedObservable canWait exceptions delta value (GeneralizedObservable canWait exceptions delta value) where
+instance ObservableContainer delta value => ToGeneralizedObservable canWait exceptions delta value (GeneralizedObservable canWait exceptions delta value) where
   toGeneralizedObservable = id
 
-class IsObservableDelta delta value where
+class ObservableContainer delta value where
   applyDelta :: delta -> Maybe value -> value
   mergeDelta :: delta -> delta -> delta
 
@@ -197,7 +197,7 @@ class IsObservableDelta delta value where
       (GeneralizedObservable f) -> GeneralizedObservable (EvaluatedObservable f)
       (ConstObservable c) -> ConstObservable c
 
-instance IsObservableDelta a a where
+instance ObservableContainer a a where
   applyDelta new _ = new
   mergeDelta _ new = new
   evaluateObservable# x = Some x
@@ -221,9 +221,9 @@ instance IsGeneralizedObservable canWait exceptions value value (EvaluatedObserv
 
 data DeltaMappedObservable canWait exceptions delta value = forall oldDelta oldValue a. IsGeneralizedObservable canWait exceptions oldDelta oldValue a => DeltaMappedObservable (oldDelta -> delta) (oldValue -> value) a
 
-instance IsObservableDelta delta value => ToGeneralizedObservable canWait exceptions delta value (DeltaMappedObservable canWait exceptions delta value)
+instance ObservableContainer delta value => ToGeneralizedObservable canWait exceptions delta value (DeltaMappedObservable canWait exceptions delta value)
 
-instance IsObservableDelta delta value => IsGeneralizedObservable canWait exceptions delta value (DeltaMappedObservable canWait exceptions delta value) where
+instance ObservableContainer delta value => IsGeneralizedObservable canWait exceptions delta value (DeltaMappedObservable canWait exceptions delta value) where
   attachObserver# (DeltaMappedObservable deltaFn valueFn observable) callback =
     fmap3 valueFn $ attachObserver# observable \final change ->
       callback final (deltaFn <$> change)
