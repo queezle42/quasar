@@ -47,7 +47,7 @@ class ToGeneralizedObservable canWait exceptions delta value a => IsGeneralizedO
     mfixTVar \var -> do
       (disposer, final, initial) <- attachObserver# x \final change -> do
         merged <- stateTVar var \oldState ->
-          let merged = applyObservableChangeMerged change oldState
+          let merged = applyObservableChange change oldState
           in (merged, changeWithStateToState merged)
         callback final merged
       pure ((disposer, final, initial), initial)
@@ -128,19 +128,19 @@ instance Functor (ObservableState canWait exceptions) where
   fmap fn (ObservableStateWaiting x) = ObservableStateWaiting (fn <<$>> x)
   fmap fn (ObservableStateValue x) = ObservableStateValue (fn <$> x)
 
-applyObservableChangeMerged :: IsObservableDelta delta value => ObservableChange canWait exceptions delta -> ObservableState canWait exceptions value -> ObservableChangeWithState canWait exceptions delta value
+applyObservableChange :: IsObservableDelta delta value => ObservableChange canWait exceptions delta -> ObservableState canWait exceptions value -> ObservableChangeWithState canWait exceptions delta value
 -- Set to loading
-applyObservableChangeMerged ObservableChangeWaiting (ObservableStateValue x) = ObservableChangeWithStateWaiting (Just x)
-applyObservableChangeMerged ObservableChangeWaiting (ObservableStateWaiting x) = ObservableChangeWithStateWaiting x
+applyObservableChange ObservableChangeWaiting (ObservableStateValue x) = ObservableChangeWithStateWaiting (Just x)
+applyObservableChange ObservableChangeWaiting (ObservableStateWaiting x) = ObservableChangeWithStateWaiting x
 -- Reactivate old value
-applyObservableChangeMerged (ObservableChangeUpdate Nothing) (ObservableStateWaiting (Just x)) = ObservableChangeWithStateUpdate Nothing x
+applyObservableChange (ObservableChangeUpdate Nothing) (ObservableStateWaiting (Just x)) = ObservableChangeWithStateUpdate Nothing x
 -- NOTE: An update is ignored for uncached waiting state.
-applyObservableChangeMerged (ObservableChangeUpdate Nothing) (ObservableStateWaiting Nothing) = ObservableChangeWithStateWaiting Nothing
-applyObservableChangeMerged (ObservableChangeUpdate Nothing) (ObservableStateValue x) = ObservableChangeWithStateUpdate Nothing x
+applyObservableChange (ObservableChangeUpdate Nothing) (ObservableStateWaiting Nothing) = ObservableChangeWithStateWaiting Nothing
+applyObservableChange (ObservableChangeUpdate Nothing) (ObservableStateValue x) = ObservableChangeWithStateUpdate Nothing x
 -- Update with exception delta
-applyObservableChangeMerged (ObservableChangeUpdate delta@(Just (Left x))) _ = ObservableChangeWithStateUpdate delta (Left x)
+applyObservableChange (ObservableChangeUpdate delta@(Just (Left x))) _ = ObservableChangeWithStateUpdate delta (Left x)
 -- Update with value delta
-applyObservableChangeMerged (ObservableChangeUpdate delta@(Just (Right x))) y =
+applyObservableChange (ObservableChangeUpdate delta@(Just (Right x))) y =
   ObservableChangeWithStateUpdate delta (Right (applyDelta x (getStateValue y)))
   where
     getStateValue :: ObservableState canWait exceptions a -> Maybe a
