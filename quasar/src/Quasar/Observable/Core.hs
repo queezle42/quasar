@@ -7,6 +7,15 @@
 
 module Quasar.Observable.Core (
   -- * Generalized observable
+  GeneralizedObservable(..),
+  ToGeneralizedObservable(..),
+
+  readObservable,
+  attachObserver,
+  attachStateObserver,
+  mapObservable,
+  isCachedObservable,
+
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
   CanWait(..),
 #else
@@ -14,6 +23,21 @@ module Quasar.Observable.Core (
   Wait,
   NoWait,
 #endif
+
+  Final,
+
+  IsGeneralizedObservable(..),
+  IsObservableDelta(..),
+
+  ObservableChange(..),
+  ObservableState(..),
+  ObservableChangeWithState(..),
+  changeWithStateToState,
+
+  -- * Identity observable (single value without partial updats)
+  Observable(..),
+  ToObservable,
+  IsObservable,
 ) where
 
 import Control.Applicative
