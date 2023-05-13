@@ -785,7 +785,7 @@ instance Functor (Observable' canWait exceptions) where
   fmap f (Observable' x) = mapObservable' f x
 
 instance Applicative (Observable' canWait exceptions) where
-  pure = undefined
+  pure value = Observable' (ConstObservable' (ObservableStateValue (Right value)))
   liftA2 = undefined
 
 instance Monad (Observable' canWait exceptions) where
