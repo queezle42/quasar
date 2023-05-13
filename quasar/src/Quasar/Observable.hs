@@ -505,13 +505,13 @@ class ToGeneralizedObservable canWait exceptions delta value a => IsGeneralizedO
   {-# MINIMAL readObservable'#, (attachObserver'# | attachStateObserver#) #-}
   readObservable'# :: a -> STMc NoRetry '[] (Final, ObservableState canWait exceptions value)
 
-  attachObserver'# :: IsObservableDelta delta value => a -> (Final -> ObservableChange canWait exceptions delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canWait exceptions value)
+  attachObserver'# :: a -> (Final -> ObservableChange canWait exceptions delta -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canWait exceptions value)
   attachObserver'# x callback = attachStateObserver# x \final changeWithState ->
     callback final case changeWithState of
       ObservableChangeWithStateWaiting _ -> ObservableChangeWaiting
       ObservableChangeWithStateUpdate delta _ -> ObservableChangeUpdate delta
 
-  attachStateObserver# :: IsObservableDelta delta value => a -> (Final -> ObservableChangeWithState canWait exceptions delta value -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canWait exceptions value)
+  attachStateObserver# :: a -> (Final -> ObservableChangeWithState canWait exceptions delta value -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canWait exceptions value)
   attachStateObserver# x callback =
     mfixTVar \var -> do
       (disposer, final, initial) <- attachObserver'# x \final change -> do
@@ -524,10 +524,10 @@ class ToGeneralizedObservable canWait exceptions delta value a => IsGeneralizedO
   isCachedObservable# :: a -> Bool
   isCachedObservable# _ = False
 
-  mapObservable'# :: IsObservableDelta delta value => (value -> n) -> a -> Observable' canWait exceptions n
+  mapObservable'# :: (value -> n) -> a -> Observable' canWait exceptions n
   mapObservable'# f (evaluateObservable# -> Some x) = Observable' (GeneralizedObservable (MappedObservable' f x))
 
-  mapObservableDelta# :: (IsObservableDelta delta value, IsObservableDelta newDelta newValue) => (delta -> newDelta) -> (value -> newValue) -> a -> GeneralizedObservable canWait exceptions newDelta newValue
+  mapObservableDelta# :: IsObservableDelta newDelta newValue => (delta -> newDelta) -> (value -> newValue) -> a -> GeneralizedObservable canWait exceptions newDelta newValue
   mapObservableDelta# fd fn x = GeneralizedObservable (DeltaMappedObservable fd fn x)
 
 readObservable'
