@@ -264,12 +264,12 @@ instance ObservableContainer (Identity a) where
 type EvaluatedObservable :: CanWait -> [Type] -> Type -> Type
 data EvaluatedObservable canWait exceptions value = forall a. IsGeneralizedObservable canWait exceptions value a => EvaluatedObservable a
 
-instance ToGeneralizedObservable canWait exceptions (Identity value) (EvaluatedObservable canWait exceptions value)
+instance ToGeneralizedObservable canWait exceptions (Identity a) (EvaluatedObservable canWait exceptions a)
 
-instance IsGeneralizedObservable canWait exceptions (Identity value) (EvaluatedObservable canWait exceptions value) where
+instance IsGeneralizedObservable canWait exceptions (Identity a) (EvaluatedObservable canWait exceptions a) where
   readObservable# (EvaluatedObservable x) = fmap3 Identity $ readObservable# x
-  attachStateObserver# (EvaluatedObservable @a x) callback =
-    fmap3 Identity $ attachStateObserver# @a x \final changeWithState ->
+  attachStateObserver# (EvaluatedObservable x) callback =
+    fmap3 Identity $ attachStateObserver# x \final changeWithState ->
       callback final case changeWithState of
         ObservableChangeWithStateClear -> ObservableChangeWithStateClear
         ObservableChangeWithState wstate NoChangeOperation ->
