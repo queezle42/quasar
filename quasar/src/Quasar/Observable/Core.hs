@@ -84,9 +84,6 @@ class ToGeneralizedObservable canWait exceptions c v a => IsGeneralizedObservabl
   mapObservable# :: (v -> n) -> a -> GeneralizedObservable canWait exceptions c n
   mapObservable# f x = GeneralizedObservable (MappedObservable f x)
 
-  --mapObservableDelta# :: ObservableContainer newValue => (Delta value -> Delta newValue) -> (value -> newValue) -> a -> GeneralizedObservable canWait exceptions newValue
-  --mapObservableDelta# fd fn x = GeneralizedObservable (DeltaMappedObservable fd fn x)
-
   count# :: a -> Observable canRetry exceptions Int64
   count# = undefined
 
@@ -310,17 +307,19 @@ wrapWaitingState
 wrapWaitingState (WaitingWithState mstate) = WaitingWithState (Identity <<$>> mstate)
 wrapWaitingState (NotWaitingWithState state) = NotWaitingWithState (Identity <$> state)
 
---data DeltaMappedObservable canWait exceptions value = forall oldValue a. IsGeneralizedObservable canWait exceptions oldValue a => DeltaMappedObservable (Delta oldValue -> Delta value) (oldValue -> value) a
---
---instance ObservableContainer value => ToGeneralizedObservable canWait exceptions value (DeltaMappedObservable canWait exceptions value)
---
---instance ObservableContainer value => IsGeneralizedObservable canWait exceptions value (DeltaMappedObservable canWait exceptions value) where
---  attachObserver# (DeltaMappedObservable deltaFn valueFn observable) callback =
---    fmap3 valueFn $ attachObserver# observable \final change ->
---      callback final (deltaFn <$> change)
---  readObservable# (DeltaMappedObservable _deltaFn valueFn observable) =
---    fmap3 valueFn $ readObservable# observable
---  mapObservableDelta# fd1 fn1 (DeltaMappedObservable fd2 fn2 x) = GeneralizedObservable (DeltaMappedObservable (fd1 . fd2) (fn1 . fn2) x)
+
+data MappedObservable canWait exceptions c v = forall prev a. IsGeneralizedObservable canWait exceptions c prev a => MappedObservable (prev -> v) a
+
+instance ObservableContainer c => ToGeneralizedObservable canWait exceptions c v (MappedObservable canWait exceptions c v)
+
+instance ObservableContainer c => IsGeneralizedObservable canWait exceptions c v (MappedObservable canWait exceptions c v) where
+  attachObserver# (MappedObservable fn observable) callback =
+    fmap3 fn $ attachObserver# observable \final change ->
+      callback final (fn <$> change)
+  readObservable# (MappedObservable fn observable) =
+    fmap3 fn $ readObservable# observable
+  mapObservable# f1 (MappedObservable f2 upstream) =
+    toGeneralizedObservable $ MappedObservable (f1 . f2) upstream
 
 
 -- ** Observable
@@ -349,18 +348,7 @@ toObservable :: ToObservable canWait exceptions v a => a -> Observable canWait e
 toObservable x = Observable (toGeneralizedObservable x)
 
 
-data MappedObservable canWait exceptions c v = forall prev a. IsGeneralizedObservable canWait exceptions c prev a => MappedObservable (prev -> v) a
 
-instance ObservableContainer c => ToGeneralizedObservable canWait exceptions c v (MappedObservable canWait exceptions c v)
-
-instance ObservableContainer c => IsGeneralizedObservable canWait exceptions c v (MappedObservable canWait exceptions c v) where
-  attachObserver# (MappedObservable fn observable) callback =
-    fmap3 fn $ attachObserver# observable \final change ->
-      callback final (fn <$> change)
-  readObservable# (MappedObservable fn observable) =
-    fmap3 fn $ readObservable# observable
-  mapObservable# f1 (MappedObservable f2 upstream) =
-    toGeneralizedObservable $ MappedObservable (f1 . f2) upstream
 
 
 -- * Some
