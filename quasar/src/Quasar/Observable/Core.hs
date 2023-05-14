@@ -81,8 +81,8 @@ class ToGeneralizedObservable canWait exceptions c v a => IsGeneralizedObservabl
   isCachedObservable# :: a -> Bool
   isCachedObservable# _ = False
 
-  mapObservable# :: c ~ Identity => (v -> f) -> a -> Observable canWait exceptions f
-  mapObservable# f x = Observable (GeneralizedObservable (MappedObservable f x))
+  mapObservable# :: (v -> n) -> a -> GeneralizedObservable canWait exceptions c n
+  mapObservable# f x = GeneralizedObservable (MappedObservable f x)
 
   --mapObservableDelta# :: ObservableContainer newValue => (Delta value -> Delta newValue) -> (value -> newValue) -> a -> GeneralizedObservable canWait exceptions newValue
   --mapObservableDelta# fd fn x = GeneralizedObservable (DeltaMappedObservable fd fn x)
@@ -149,10 +149,10 @@ isCachedObservable x = case toGeneralizedObservable x of
   GeneralizedObservable f -> isCachedObservable# f
   ConstObservable _value -> True
 
-mapObservable :: ToObservable canWait exceptions v a => (v -> f) -> a -> Observable canWait exceptions f
+mapObservable :: ToGeneralizedObservable canWait exceptions c v a => (v -> f) -> a -> GeneralizedObservable canWait exceptions c f
 mapObservable fn x = case toGeneralizedObservable x of
   (GeneralizedObservable f) -> mapObservable# fn f
-  (ConstObservable state) -> Observable (ConstObservable (fn <$> state))
+  (ConstObservable state) -> ConstObservable (fn <$> state)
 
 type Final = Bool
 
@@ -252,6 +252,10 @@ data GeneralizedObservable canWait exceptions c v
 instance ObservableContainer c => ToGeneralizedObservable canWait exceptions c v (GeneralizedObservable canWait exceptions c v) where
   toGeneralizedObservable = id
 
+instance ObservableContainer c => Functor (GeneralizedObservable canWait exceptions c) where
+  fmap = mapObservable
+
+
 type ObservableContainer :: (Type -> Type) -> Constraint
 class (Functor c, Functor (Delta c)) => ObservableContainer c where
   type Delta c :: Type -> Type
@@ -325,11 +329,11 @@ type ToObservable canWait exceptions a = ToGeneralizedObservable canWait excepti
 type IsObservable :: CanWait -> [Type] -> Type -> Type -> Constraint
 type IsObservable canWait exceptions a = IsGeneralizedObservable canWait exceptions Identity a
 
+instance Functor (Observable canWait exceptions) where
+  fmap fn (Observable x) = Observable (fn <$> x)
+
 instance ToGeneralizedObservable canWait exceptions Identity v (Observable canWait exceptions v) where
   toGeneralizedObservable (Observable x) = x
-
-instance Functor (Observable canWait exceptions) where
-  fmap f (Observable x) = mapObservable f x
 
 instance Applicative (Observable canWait exceptions) where
   pure x = Observable (ConstObservable (NotWaitingWithState (Right (Identity x))))
@@ -342,18 +346,18 @@ toObservable :: ToObservable canWait exceptions v a => a -> Observable canWait e
 toObservable x = Observable (toGeneralizedObservable x)
 
 
-data MappedObservable canWait exceptions value = forall prev a. IsObservable canWait exceptions prev a => MappedObservable (prev -> value) a
+data MappedObservable canWait exceptions c v = forall prev a. IsGeneralizedObservable canWait exceptions c prev a => MappedObservable (prev -> v) a
 
-instance ToGeneralizedObservable canWait exceptions Identity value (MappedObservable canWait exceptions value)
+instance ObservableContainer c => ToGeneralizedObservable canWait exceptions c v (MappedObservable canWait exceptions c v)
 
-instance IsGeneralizedObservable canWait exceptions Identity value (MappedObservable canWait exceptions value) where
+instance ObservableContainer c => IsGeneralizedObservable canWait exceptions c v (MappedObservable canWait exceptions c v) where
   attachObserver# (MappedObservable fn observable) callback =
     fmap3 fn $ attachObserver# observable \final change ->
       callback final (fn <$> change)
   readObservable# (MappedObservable fn observable) =
     fmap3 fn $ readObservable# observable
   mapObservable# f1 (MappedObservable f2 upstream) =
-    toObservable $ MappedObservable (f1 . f2) upstream
+    toGeneralizedObservable $ MappedObservable (f1 . f2) upstream
 
 
 -- * Some
