@@ -263,10 +263,15 @@ class (Functor c, Functor (Delta c)) => ObservableContainer c where
   evaluateObservable# x = Some (EvaluatedObservable x)
 
 instance ObservableContainer Identity where
-  type Delta Identity = Identity
+  type Delta Identity = Void1
   type Key Identity = ()
-  applyDelta new _ = new
+  applyDelta new _ = case new of {}
   mergeDelta _ new = new
+
+data Void1 a
+
+instance Functor Void1 where
+  fmap _ = \case {}
 
 
 type EvaluatedObservable :: CanWait -> [Type] -> Type -> Type
