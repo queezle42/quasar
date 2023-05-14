@@ -13,7 +13,6 @@ import Quasar.Observable.Core
 import Quasar.Prelude
 import Quasar.Resources.Disposer
 import Quasar.Utils.CallbackRegistry
-import Quasar.Utils.Fix
 
 -- * Cache
 
@@ -26,8 +25,8 @@ data CacheState canWait exceptions value
       a
       TSimpleDisposer
       (CallbackRegistry (Final, ObservableChangeWithState canWait exceptions value))
-      (ObservableState canWait exceptions value)
-  | CacheFinalized (ObservableState canWait exceptions value)
+      (WaitingWithState canWait exceptions value)
+  | CacheFinalized (WaitingWithState canWait exceptions value)
 
 instance ObservableContainer value => ToGeneralizedObservable canWait exceptions value (CachedObservable canWait exceptions value)
 
@@ -65,11 +64,11 @@ instance ObservableContainer value => IsGeneralizedObservable canWait exceptions
           CacheAttached upstream upstreamDisposer registry _ ->
             if final
               then do
-                writeTVar var (CacheFinalized (changeWithStateToState change))
+                writeTVar var (CacheFinalized (withoutChange change))
                 callCallbacks registry (final, change)
                 clearCallbackRegistry registry
               else do
-                writeTVar var (CacheAttached upstream upstreamDisposer registry (changeWithStateToState change))
+                writeTVar var (CacheAttached upstream upstreamDisposer registry (withoutChange change))
                 callCallbacks registry (final, change)
           CacheFinalized _ -> pure () -- Upstream implementation error
 
@@ -94,10 +93,10 @@ instance ToGeneralizedObservable canWait exceptions (Identity (GeneralizedObserv
 instance IsGeneralizedObservable canWait exceptions (Identity (GeneralizedObservable w e v)) (CacheObservableOperation canWait exceptions w e v) where
   readObservable# (CacheObservableOperation x) = do
     cache <- cacheObservable x
-    pure (True, ObservableStateValue (Right (Identity cache)))
+    pure (True, NotWaitingWithState (Right (Identity cache)))
   attachObserver# (CacheObservableOperation x) _callback = do
     cache <- cacheObservable x
-    pure (mempty, True, ObservableStateValue (Right (Identity cache)))
+    pure (mempty, True, NotWaitingWithState (Right (Identity cache)))
 
 -- | Cache an observable in the `Observable` monad. Use with care! A new cache
 -- is recreated whenever the result of this function is reevaluated.
