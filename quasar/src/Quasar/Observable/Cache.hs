@@ -16,21 +16,21 @@ import Quasar.Utils.CallbackRegistry
 
 -- * Cache
 
-newtype CachedObservable canWait exceptions value = CachedObservable (TVar (CacheState canWait exceptions value))
+newtype CachedObservable canWait exceptions c v = CachedObservable (TVar (CacheState canWait exceptions c v))
 
-data CacheState canWait exceptions value
-  = forall a. IsGeneralizedObservable canWait exceptions value a => CacheIdle a
-  | forall a. IsGeneralizedObservable canWait exceptions value a =>
+data CacheState canWait exceptions c v
+  = forall a. IsGeneralizedObservable canWait exceptions c v a => CacheIdle a
+  | forall a. IsGeneralizedObservable canWait exceptions c v a =>
     CacheAttached
       a
       TSimpleDisposer
-      (CallbackRegistry (Final, ObservableChangeWithState canWait exceptions value))
-      (WaitingWithState canWait exceptions value)
-  | CacheFinalized (WaitingWithState canWait exceptions value)
+      (CallbackRegistry (Final, ObservableChangeWithState canWait exceptions c v))
+      (WaitingWithState canWait exceptions c v)
+  | CacheFinalized (WaitingWithState canWait exceptions c v)
 
-instance ObservableContainer value => ToGeneralizedObservable canWait exceptions value (CachedObservable canWait exceptions value)
+instance ObservableContainer c => ToGeneralizedObservable canWait exceptions c v (CachedObservable canWait exceptions c v)
 
-instance ObservableContainer value => IsGeneralizedObservable canWait exceptions value (CachedObservable canWait exceptions value) where
+instance ObservableContainer c => IsGeneralizedObservable canWait exceptions c v (CachedObservable canWait exceptions c v) where
   readObservable# (CachedObservable var) = do
     readTVar var >>= \case
       CacheIdle x -> readObservable# x
@@ -57,7 +57,7 @@ instance ObservableContainer value => IsGeneralizedObservable canWait exceptions
             writeTVar var (CacheIdle upstream)
             disposeTSimpleDisposer upstreamDisposer
           CacheFinalized _ -> pure ()
-      updateCache :: Final -> ObservableChangeWithState canWait exceptions value -> STMc NoRetry '[] ()
+      updateCache :: Final -> ObservableChangeWithState canWait exceptions c v -> STMc NoRetry '[] ()
       updateCache final change = do
         readTVar var >>= \case
           CacheIdle _ -> unreachableCodePath
@@ -74,7 +74,7 @@ instance ObservableContainer value => IsGeneralizedObservable canWait exceptions
 
   isCachedObservable# _ = True
 
-cacheObservable :: (ToGeneralizedObservable canWait exceptions value a, MonadSTMc NoRetry '[] m) => a -> m (GeneralizedObservable canWait exceptions value)
+cacheObservable :: (ToGeneralizedObservable canWait exceptions c v a, MonadSTMc NoRetry '[] m) => a -> m (GeneralizedObservable canWait exceptions c v)
 cacheObservable x =
   case toGeneralizedObservable x of
     c@(ConstObservable _) -> pure c
@@ -86,11 +86,11 @@ cacheObservable x =
 
 -- ** Embedded cache in the Observable monad
 
-data CacheObservableOperation canWait exceptions w e v = forall a. ToGeneralizedObservable w e v a => CacheObservableOperation a
+data CacheObservableOperation canWait exceptions w e c v = forall a. ToGeneralizedObservable w e c v a => CacheObservableOperation a
 
-instance ToGeneralizedObservable canWait exceptions (Identity (GeneralizedObservable w e v)) (CacheObservableOperation canWait exceptions w e v)
+instance ToGeneralizedObservable canWait exceptions Identity (GeneralizedObservable w e c v) (CacheObservableOperation canWait exceptions w e c v)
 
-instance IsGeneralizedObservable canWait exceptions (Identity (GeneralizedObservable w e v)) (CacheObservableOperation canWait exceptions w e v) where
+instance IsGeneralizedObservable canWait exceptions Identity (GeneralizedObservable w e c v) (CacheObservableOperation canWait exceptions w e c v) where
   readObservable# (CacheObservableOperation x) = do
     cache <- cacheObservable x
     pure (True, NotWaitingWithState (Right (Identity cache)))
@@ -100,7 +100,7 @@ instance IsGeneralizedObservable canWait exceptions (Identity (GeneralizedObserv
 
 -- | Cache an observable in the `Observable` monad. Use with care! A new cache
 -- is recreated whenever the result of this function is reevaluated.
-cacheObservableOperation :: forall canWait exceptions w e v a. ToGeneralizedObservable w e v a => a -> Observable canWait exceptions (GeneralizedObservable w e v)
+cacheObservableOperation :: forall canWait exceptions w e c v a. ToGeneralizedObservable w e c v a => a -> Observable canWait exceptions (GeneralizedObservable w e c v)
 cacheObservableOperation x =
   case toGeneralizedObservable x of
     c@(ConstObservable _) -> pure c
