@@ -301,9 +301,9 @@ instance ToGeneralizedObservable canWait exceptions Identity a (EvaluatedObserva
 
 instance IsGeneralizedObservable canWait exceptions Identity a (EvaluatedObservable canWait exceptions a) where
   readObservable# (EvaluatedObservable x) =
-    wrapWaitingState <<$>> readObservable# x
+    addIdentityWrapper <<$>> readObservable# x
   attachStateObserver# (EvaluatedObservable x) callback =
-    wrapWaitingState <<$>> attachStateObserver# x \final changeWithState ->
+    addIdentityWrapper <<$>> attachStateObserver# x \final changeWithState ->
       callback final case changeWithState of
         ObservableChangeWithStateClear -> ObservableChangeWithStateClear
         ObservableChangeWithState waiting NoChangeOperation state ->
@@ -311,13 +311,13 @@ instance IsGeneralizedObservable canWait exceptions Identity a (EvaluatedObserva
         ObservableChangeWithState waiting _op state ->
           ObservableChangeWithState waiting (ReplaceOperation (Identity <$> state)) (Identity <$> state)
 
--- Helper for EvaluatedObservable. Can't use fmap since that maps into the
--- container.
-wrapWaitingState
+-- Helper for EvaluatedObservable. Can't use fmap since that maps the container
+-- elements.
+addIdentityWrapper
   :: WaitingWithState canRetry exceptions c a
   -> WaitingWithState canRetry exceptions Identity (c a)
-wrapWaitingState (WaitingWithState mstate) = WaitingWithState (Identity <<$>> mstate)
-wrapWaitingState (NotWaitingWithState state) = NotWaitingWithState (Identity <$> state)
+addIdentityWrapper (WaitingWithState mstate) = WaitingWithState (Identity <<$>> mstate)
+addIdentityWrapper (NotWaitingWithState state) = NotWaitingWithState (Identity <$> state)
 
 
 data MappedObservable canWait exceptions c v = forall prev a. IsGeneralizedObservable canWait exceptions c prev a => MappedObservable (prev -> v) a
