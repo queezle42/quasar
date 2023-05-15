@@ -290,9 +290,6 @@ class (Functor c, Functor (Delta c)) => ObservableContainer c where
   applyDelta :: Delta c v -> c v -> c v
   mergeDelta :: Delta c v -> Delta c v -> Delta c v
 
-  evaluateObservable# :: IsGeneralizedObservable canWait exceptions c v a => a -> Some (IsObservable canWait exceptions (c v))
-  evaluateObservable# x = Some (EvaluatedObservable x)
-
 instance ObservableContainer Identity where
   type Delta Identity = Void1
   type Key Identity = ()
@@ -308,30 +305,8 @@ instance Functor Void1 where
   fmap _ = absurd1
 
 
-type EvaluatedObservable :: CanWait -> [Type] -> Type -> Type
-data EvaluatedObservable canWait exceptions i = forall c v a. (i ~ c v, IsGeneralizedObservable canWait exceptions c v a) => EvaluatedObservable a
-
-instance ToGeneralizedObservable canWait exceptions Identity a (EvaluatedObservable canWait exceptions a)
-
-instance IsGeneralizedObservable canWait exceptions Identity a (EvaluatedObservable canWait exceptions a) where
-  readObservable# (EvaluatedObservable x) =
-    addIdentityWrapper <<$>> readObservable# x
-  attachStateObserver# (EvaluatedObservable x) callback =
-    addIdentityWrapper <<$>> attachStateObserver# x \final changeWithState ->
-      callback final case changeWithState of
-        ObservableChangeWithStateClear -> ObservableChangeWithStateClear
-        ObservableChangeWithState waiting NoChangeOperation state ->
-          ObservableChangeWithState waiting NoChangeOperation (Identity <$> state)
-        ObservableChangeWithState waiting _op state ->
-          ObservableChangeWithState waiting (ReplaceOperation (Identity <$> state)) (Identity <$> state)
-
--- Helper for EvaluatedObservable. Can't use fmap since that maps the container
--- elements.
-addIdentityWrapper
-  :: WaitingWithState canRetry exceptions c a
-  -> WaitingWithState canRetry exceptions Identity (c a)
-addIdentityWrapper (WaitingWithState mstate) = WaitingWithState (Identity <<$>> mstate)
-addIdentityWrapper (NotWaitingWithState state) = NotWaitingWithState (Identity <$> state)
+evaluateObservable :: ToGeneralizedObservable canWait exceptions c v a => a -> GeneralizedObservable canWait exceptions Identity (c v)
+evaluateObservable x = mapObservableState (fmap Identity) x
 
 
 data MappedObservable canWait exceptions c v = forall prev a. IsGeneralizedObservable canWait exceptions c prev a => MappedObservable (prev -> v) a
@@ -346,6 +321,35 @@ instance ObservableContainer c => IsGeneralizedObservable canWait exceptions c v
     fmap3 fn $ readObservable# observable
   mapObservable# f1 (MappedObservable f2 upstream) =
     toGeneralizedObservable $ MappedObservable (f1 . f2) upstream
+
+
+data MappedStateObservable canWait exceptions c v = forall d p a. IsGeneralizedObservable canWait exceptions d p a => MappedStateObservable (State exceptions d p -> State exceptions c v) a
+
+instance ObservableContainer c => ToGeneralizedObservable canWait exceptions c v (MappedStateObservable canWait exceptions c v)
+
+instance ObservableContainer c => IsGeneralizedObservable canWait exceptions c v (MappedStateObservable canWait exceptions c v) where
+  attachStateObserver# (MappedStateObservable fn observable) callback =
+    fmap2 (mapWaitingWithStateContainer fn) $ attachStateObserver# observable \final changeWithState ->
+      callback final case changeWithState of
+        ObservableChangeWithStateClear -> ObservableChangeWithStateClear
+        ObservableChangeWithState waiting NoChangeOperation state ->
+          ObservableChangeWithState waiting NoChangeOperation (fn state)
+        ObservableChangeWithState waiting _op state ->
+          let newState = fn state
+          in ObservableChangeWithState waiting (ReplaceOperation newState) newState
+  readObservable# (MappedStateObservable fn observable) =
+    fmap2 (mapWaitingWithStateContainer fn) $ readObservable# observable
+
+-- | Apply a function to an observable that can replace the whole state. The
+-- mapped observable is always fully evaluated.
+mapObservableState :: (ToGeneralizedObservable canWait exceptions d p a, ObservableContainer c) => (State exceptions d p -> State exceptions c v) -> a -> GeneralizedObservable canWait exceptions c v
+mapObservableState fn x = case toGeneralizedObservable x of
+  (ConstObservable wstate) -> ConstObservable (mapWaitingWithStateContainer fn wstate)
+  (GeneralizedObservable f) -> GeneralizedObservable (MappedStateObservable fn f)
+
+mapWaitingWithStateContainer :: (State exceptions d p -> State exceptions c v) -> WaitingWithState canWait exceptions d p -> WaitingWithState canWait exceptions c v
+mapWaitingWithStateContainer fn (WaitingWithState mstate) = WaitingWithState (fn <$> mstate)
+mapWaitingWithStateContainer fn (NotWaitingWithState state) = NotWaitingWithState (fn state)
 
 
 -- ** Observable
