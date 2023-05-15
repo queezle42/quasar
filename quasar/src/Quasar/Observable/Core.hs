@@ -65,8 +65,7 @@ class ToGeneralizedObservable canWait exceptions c v a => IsGeneralizedObservabl
   attachObserver# x callback = attachStateObserver# x \final changeWithState ->
     callback final case changeWithState of
       ObservableChangeWithStateClear -> ObservableChangeClear
-      ObservableChangeWithState (WaitingWithState _) op -> ObservableChange Waiting op
-      ObservableChangeWithState (NotWaitingWithState _) op -> ObservableChange NotWaiting op
+      ObservableChangeWithState waiting op _state -> ObservableChange waiting op
 
   attachStateObserver# :: a -> (Final -> ObservableChangeWithState canWait exceptions c v -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Final, WaitingWithState canWait exceptions c v)
   attachStateObserver# x callback =
@@ -210,7 +209,7 @@ instance ObservableContainer c => Functor (ObservableChange canWait exceptions c
 type ObservableChangeWithState :: CanWait -> [Type] -> (Type -> Type) -> Type -> Type
 data ObservableChangeWithState canWait exceptions c v where
   ObservableChangeWithStateClear :: ObservableChangeWithState Wait exceptions c v
-  ObservableChangeWithState :: WaitingWithState canWait exceptions c v -> ObservableChangeOperation exceptions c v -> ObservableChangeWithState canWait exceptions c v
+  ObservableChangeWithState :: Waiting canWait -> ObservableChangeOperation exceptions c v -> State exceptions c v -> ObservableChangeWithState canWait exceptions c v
 
 
 toState :: WaitingWithState canWait exceptions c v -> Maybe (State exceptions c v)
@@ -224,11 +223,11 @@ toWaitingWithState NotWaiting state = NotWaitingWithState state
 applyObservableChange :: ObservableContainer c => ObservableChange canWait exceptions c v -> WaitingWithState canWait exceptions c v -> ObservableChangeWithState canWait exceptions c v
 applyObservableChange ObservableChangeClear _ = ObservableChangeWithStateClear
 applyObservableChange (ObservableChange waiting op@(ReplaceOperation state)) _ =
-  ObservableChangeWithState (toWaitingWithState waiting state) op
+  ObservableChangeWithState waiting op state
 applyObservableChange (ObservableChange waiting op) (NotWaitingWithState state) =
-  ObservableChangeWithState (toWaitingWithState waiting (applyOperation op state)) op
+  ObservableChangeWithState waiting op (applyOperation op state)
 applyObservableChange (ObservableChange waiting op) (WaitingWithState (Just state)) =
-  ObservableChangeWithState (toWaitingWithState waiting (applyOperation op state)) op
+  ObservableChangeWithState waiting op (applyOperation op state)
 applyObservableChange (ObservableChange _ _) (WaitingWithState Nothing) = ObservableChangeWithStateClear
 
 applyOperation :: ObservableContainer c => ObservableChangeOperation exceptions c v -> State exceptions c v -> State exceptions c v
@@ -238,7 +237,7 @@ applyOperation (ReplaceOperation state) _ = state
 
 withoutChange :: ObservableChangeWithState canWait exceptions c v -> WaitingWithState canWait exceptions c v
 withoutChange ObservableChangeWithStateClear = WaitingWithState Nothing
-withoutChange (ObservableChangeWithState waitingWithState op) = waitingWithState
+withoutChange (ObservableChangeWithState waiting op state) = toWaitingWithState waiting state
 
 
 type GeneralizedObservable :: CanWait -> [Type] -> (Type -> Type) -> Type -> Type
@@ -290,14 +289,10 @@ instance IsGeneralizedObservable canWait exceptions Identity a (EvaluatedObserva
     wrapWaitingState <<$>> attachStateObserver# x \final changeWithState ->
       callback final case changeWithState of
         ObservableChangeWithStateClear -> ObservableChangeWithStateClear
-        ObservableChangeWithState wstate NoChangeOperation ->
-          ObservableChangeWithState (wrapWaitingState wstate) NoChangeOperation
-        ObservableChangeWithState (WaitingWithState Nothing) _op ->
-          ObservableChangeWithStateClear
-        ObservableChangeWithState (WaitingWithState (Just state)) _op ->
-          ObservableChangeWithState (WaitingWithState (Just (Identity <$> state))) (ReplaceOperation (Identity <$> state))
-        ObservableChangeWithState (NotWaitingWithState state) _op ->
-            ObservableChangeWithState (NotWaitingWithState (Identity <$> state)) (ReplaceOperation (Identity <$> state))
+        ObservableChangeWithState waiting NoChangeOperation state ->
+          ObservableChangeWithState waiting NoChangeOperation (Identity <$> state)
+        ObservableChangeWithState waiting _op state ->
+          ObservableChangeWithState waiting (ReplaceOperation (Identity <$> state)) (Identity <$> state)
 
 -- Helper for EvaluatedObservable. Can't use fmap since that maps into the
 -- container.
