@@ -179,6 +179,11 @@ data Waiting canWait where
   NotWaiting :: Waiting canWait
   Waiting :: Waiting Wait
 
+instance Semigroup (Waiting canWait) where
+  NotWaiting <> NotWaiting = NotWaiting
+  Waiting <> _ = Waiting
+  _ <> Waiting = Waiting
+
 type MaybeState :: CanWait -> [Type] -> (Type -> Type) -> Type -> Type
 data MaybeState canWait exceptions c a where
   JustState :: State exceptions c a -> MaybeState canWait exceptions c a
