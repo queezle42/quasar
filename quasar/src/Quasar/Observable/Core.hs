@@ -194,6 +194,12 @@ instance Functor c => Functor (MaybeState canWait exceptions c) where
   fmap fn (JustState state) = JustState (fn <<$>> state)
   fmap _fn NothingState = NothingState
 
+instance Applicative c => Applicative (MaybeState canWait exceptions c) where
+  pure x = JustState (Right (pure x))
+  liftA2 f (JustState x) (JustState y) = JustState (liftA2 (liftA2 f) x y)
+  liftA2 _ NothingState _ = NothingState
+  liftA2 _ _ NothingState = NothingState
+
 type WaitingWithState :: CanWait -> [Type] -> (Type -> Type) -> Type -> Type
 data WaitingWithState canWait exceptions c a where
   NotWaitingWithState :: State exceptions c a -> WaitingWithState canWait exceptions c a
@@ -213,6 +219,14 @@ waitingWithStatePatternImpl (NotWaitingWithState state) = (NotWaiting, JustState
 instance Functor c => Functor (WaitingWithState canWait exceptions c) where
   fmap fn (NotWaitingWithState x) = NotWaitingWithState (fn <<$>> x)
   fmap fn (WaitingWithState x) = WaitingWithState (fmap3 fn x)
+
+instance Applicative c => Applicative (WaitingWithState canWait exceptions c) where
+  pure x = NotWaitingWithState (Right (pure x))
+  liftA2 fn (WaitingWithStatePattern xWaiting xState) (WaitingWithStatePattern yWaiting yState) =
+    let
+      waiting = xWaiting <> yWaiting
+      state = liftA2 fn xState yState
+    in WaitingWithStatePattern waiting state
 
 type ObservableChange :: CanWait -> [Type] -> (Type -> Type) -> Type -> Type
 data ObservableChange canWait exceptions c v where
@@ -254,7 +268,7 @@ applyOperation (ReplaceOperation state) _ = state
 
 withoutChange :: ObservableChangeWithState canWait exceptions c v -> WaitingWithState canWait exceptions c v
 withoutChange ObservableChangeWithStateClear = WaitingWithState Nothing
-withoutChange (ObservableChangeWithState waiting op state) = toWaitingWithState waiting state
+withoutChange (ObservableChangeWithState waiting _op state) = toWaitingWithState waiting state
 
 
 type GeneralizedObservable :: CanWait -> [Type] -> (Type -> Type) -> Type -> Type
