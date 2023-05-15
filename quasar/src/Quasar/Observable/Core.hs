@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
@@ -197,6 +198,17 @@ type WaitingWithState :: CanWait -> [Type] -> (Type -> Type) -> Type -> Type
 data WaitingWithState canWait exceptions c a where
   NotWaitingWithState :: State exceptions c a -> WaitingWithState canWait exceptions c a
   WaitingWithState :: Maybe (State exceptions c a) -> WaitingWithState Wait exceptions c a
+
+pattern WaitingWithStatePattern :: Waiting canWait -> MaybeState canWait exceptions c a -> WaitingWithState canWait exceptions c a
+pattern WaitingWithStatePattern waiting state <- (waitingWithStatePatternImpl -> (waiting, state)) where
+  WaitingWithStatePattern _waiting NothingState = WaitingWithState Nothing -- Not having a state overrides to waiting
+  WaitingWithStatePattern waiting (JustState state) = toWaitingWithState waiting state
+{-# COMPLETE WaitingWithStatePattern #-}
+
+waitingWithStatePatternImpl :: WaitingWithState canWait exceptions c a -> (Waiting canWait, MaybeState canWait exceptions c a)
+waitingWithStatePatternImpl (WaitingWithState (Just state)) = (Waiting, JustState state)
+waitingWithStatePatternImpl (WaitingWithState Nothing) = (Waiting, NothingState)
+waitingWithStatePatternImpl (NotWaitingWithState state) = (NotWaiting, JustState state)
 
 instance Functor c => Functor (WaitingWithState canWait exceptions c) where
   fmap fn (NotWaitingWithState x) = NotWaitingWithState (fn <<$>> x)
