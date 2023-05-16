@@ -84,6 +84,13 @@ class ToGeneralizedObservable canWait exceptions c v a => IsGeneralizedObservabl
   mapObservable# :: (v -> n) -> a -> GeneralizedObservable canWait exceptions c n
   mapObservable# f x = GeneralizedObservable (MappedObservable f x)
 
+  mapObservableState#
+    :: ObservableContainer d
+    => (State exceptions c v -> State exceptions d n)
+    -> a
+    -> GeneralizedObservable canWait exceptions d n
+  mapObservableState# f x = GeneralizedObservable (MappedStateObservable f x)
+
   count# :: a -> Observable canRetry exceptions Int64
   count# = undefined
 
@@ -337,15 +344,22 @@ instance ObservableContainer c => IsGeneralizedObservable canWait exceptions c v
         ObservableChangeWithState waiting _op state ->
           let newState = fn state
           in ObservableChangeWithState waiting (ReplaceOperation newState) newState
+
   readObservable# (MappedStateObservable fn observable) =
     fmap2 (mapWaitingWithStateContainer fn) $ readObservable# observable
+
+  mapObservable# f1 (MappedStateObservable f2 observable) =
+    toGeneralizedObservable (MappedStateObservable (fmap2 f1 . f2) observable)
+
+  mapObservableState# f1 (MappedStateObservable f2 observable) =
+    toGeneralizedObservable (MappedStateObservable (f1 . f2) observable)
 
 -- | Apply a function to an observable that can replace the whole state. The
 -- mapped observable is always fully evaluated.
 mapObservableState :: (ToGeneralizedObservable canWait exceptions d p a, ObservableContainer c) => (State exceptions d p -> State exceptions c v) -> a -> GeneralizedObservable canWait exceptions c v
 mapObservableState fn x = case toGeneralizedObservable x of
   (ConstObservable wstate) -> ConstObservable (mapWaitingWithStateContainer fn wstate)
-  (GeneralizedObservable f) -> GeneralizedObservable (MappedStateObservable fn f)
+  (GeneralizedObservable f) -> mapObservableState# fn f
 
 mapWaitingWithStateContainer :: (State exceptions d p -> State exceptions c v) -> WaitingWithState canWait exceptions d p -> WaitingWithState canWait exceptions c v
 mapWaitingWithStateContainer fn (WaitingWithState mstate) = WaitingWithState (fn <$> mstate)
