@@ -106,11 +106,11 @@ class ToGeneralizedObservable canWait exceptions c v a => IsGeneralizedObservabl
   lookupValue# :: Ord (Key value) => a -> Selector value -> Observable canRetry exceptions (Maybe v)
   lookupValue# = undefined
 
-  query# :: a -> ObservableList canWait exceptions (Bounds value) -> GeneralizedObservable canWait exceptions c v
-  query# = undefined
+  --query# :: a -> ObservableList canWait exceptions (Bounds value) -> GeneralizedObservable canWait exceptions c v
+  --query# = undefined
 
-query :: ToGeneralizedObservable canWait exceptions c v a => a -> ObservableList canWait exceptions (Bounds c) -> GeneralizedObservable canWait exceptions c v
-query = undefined
+--query :: ToGeneralizedObservable canWait exceptions c v a => a -> ObservableList canWait exceptions (Bounds c) -> GeneralizedObservable canWait exceptions c v
+--query = undefined
 
 type Bounds value = (Bound value, Bound value)
 
