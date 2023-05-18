@@ -91,19 +91,19 @@ class ToGeneralizedObservable canWait exceptions c v a => IsGeneralizedObservabl
     -> GeneralizedObservable canWait exceptions d n
   mapObservableState# f x = GeneralizedObservable (MappedStateObservable f x)
 
-  count# :: a -> Observable canRetry exceptions Int64
+  count# :: a -> Observable canWait exceptions Int64
   count# = undefined
 
-  isEmpty# :: a -> Observable canRetry exceptions Bool
+  isEmpty# :: a -> Observable canWait exceptions Bool
   isEmpty# = undefined
 
-  lookupKey# :: Ord (Key c) => a -> Selector c -> Observable canRetry exceptions (Maybe (Key c))
+  lookupKey# :: Ord (Key c) => a -> Selector c -> Observable canWait exceptions (Maybe (Key c))
   lookupKey# = undefined
 
-  lookupItem# :: Ord (Key c) => a -> Selector c -> Observable canRetry exceptions (Maybe (Key c, v))
+  lookupItem# :: Ord (Key c) => a -> Selector c -> Observable canWait exceptions (Maybe (Key c, v))
   lookupItem# = undefined
 
-  lookupValue# :: Ord (Key value) => a -> Selector value -> Observable canRetry exceptions (Maybe v)
+  lookupValue# :: Ord (Key value) => a -> Selector value -> Observable canWait exceptions (Maybe v)
   lookupValue# = undefined
 
   --query# :: a -> ObservableList canWait exceptions (Bounds value) -> GeneralizedObservable canWait exceptions c v
