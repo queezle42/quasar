@@ -271,11 +271,11 @@ applyObservableChange (ObservableChange waiting op) (NotWaitingWithState state) 
 applyObservableChange (ObservableChange waiting op) (WaitingWithState (Just state)) =
   ObservableChangeWithState waiting op (applyOperation op state)
 applyObservableChange (ObservableChange _waiting NoChangeOperation) (WaitingWithState Nothing) = ObservableChangeWithStateClear -- cannot change an uncached observable to NotWaiting
-applyObservableChange (ObservableChange waiting op@(DeltaOperation delta)) (WaitingWithState Nothing) = ObservableChangeWithState waiting op (Right (fromDelta delta))
+applyObservableChange (ObservableChange waiting op@(DeltaOperation delta)) (WaitingWithState Nothing) = ObservableChangeWithState waiting op (Right (fromInitialDelta delta))
 
 applyOperation :: ObservableContainer c => ObservableChangeOperation exceptions c v -> State exceptions c v -> State exceptions c v
 applyOperation NoChangeOperation x = x
-applyOperation (DeltaOperation delta) (Left _) = Right (fromDelta delta)
+applyOperation (DeltaOperation delta) (Left _) = Right (fromInitialDelta delta)
 applyOperation (DeltaOperation delta) (Right x) = Right (applyDelta delta x)
 applyOperation (ThrowOperation ex) _ = Left ex
 
@@ -312,16 +312,16 @@ class (Functor c, Functor (Delta c)) => ObservableContainer c where
   mergeDelta :: Delta c v -> Delta c v -> Delta c v
   -- | Produce a delta from a state. The delta replaces any previous state when
   -- applied.
-  toDelta :: c v -> Delta c v
-  fromDelta :: Delta c v -> c v
+  toInitialDelta :: c v -> Delta c v
+  fromInitialDelta :: Delta c v -> c v
 
 instance ObservableContainer Identity where
   type Delta Identity = Identity
   type Key Identity = ()
   applyDelta new _ = new
   mergeDelta _ new = new
-  toDelta = id
-  fromDelta = id
+  toInitialDelta = id
+  fromInitialDelta = id
 
 
 evaluateObservable :: ToGeneralizedObservable canWait exceptions c v a => a -> GeneralizedObservable canWait exceptions Identity (c v)
@@ -358,7 +358,7 @@ instance ObservableContainer c => IsGeneralizedObservable canWait exceptions c v
             newState = fn state
             op = case newState of
               (Left ex) -> ThrowOperation ex
-              (Right x) -> DeltaOperation (toDelta x)
+              (Right x) -> DeltaOperation (toInitialDelta x)
           in ObservableChangeWithState waiting op newState
 
   readObservable# (MappedStateObservable fn observable) =
