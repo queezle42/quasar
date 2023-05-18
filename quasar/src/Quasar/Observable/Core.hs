@@ -175,12 +175,12 @@ type ObservableChangeOperation :: [Type] -> (Type -> Type) -> Type -> Type
 data ObservableChangeOperation exceptions c v
   = NoChangeOperation
   | DeltaOperation (Delta c v)
-  | ReplaceOperation (State exceptions c v)
+  | ThrowOperation (Ex exceptions)
 
 instance ObservableContainer c => Functor (ObservableChangeOperation exceptions c) where
   fmap _fn NoChangeOperation = NoChangeOperation
   fmap fn (DeltaOperation delta) = DeltaOperation (fn <$> delta)
-  fmap fn (ReplaceOperation state) = ReplaceOperation (fn <<$>> state)
+  fmap _fn (ThrowOperation ex) = ThrowOperation ex
 
 type Waiting :: CanWait -> Type
 data Waiting canWait where
@@ -213,15 +213,18 @@ data WaitingWithState canWait exceptions c a where
   WaitingWithState :: Maybe (State exceptions c a) -> WaitingWithState Wait exceptions c a
 
 pattern WaitingWithStatePattern :: Waiting canWait -> MaybeState canWait exceptions c a -> WaitingWithState canWait exceptions c a
-pattern WaitingWithStatePattern waiting state <- (waitingWithStatePatternImpl -> (waiting, state)) where
-  WaitingWithStatePattern _waiting NothingState = WaitingWithState Nothing -- Not having a state overrides to waiting
-  WaitingWithStatePattern waiting (JustState state) = toWaitingWithState waiting state
+pattern WaitingWithStatePattern waiting state <- (deconstructWaitingWithState -> (waiting, state)) where
+  WaitingWithStatePattern = mkWaitingWithState
 {-# COMPLETE WaitingWithStatePattern #-}
 
-waitingWithStatePatternImpl :: WaitingWithState canWait exceptions c a -> (Waiting canWait, MaybeState canWait exceptions c a)
-waitingWithStatePatternImpl (WaitingWithState (Just state)) = (Waiting, JustState state)
-waitingWithStatePatternImpl (WaitingWithState Nothing) = (Waiting, NothingState)
-waitingWithStatePatternImpl (NotWaitingWithState state) = (NotWaiting, JustState state)
+deconstructWaitingWithState :: WaitingWithState canWait exceptions c a -> (Waiting canWait, MaybeState canWait exceptions c a)
+deconstructWaitingWithState (WaitingWithState (Just state)) = (Waiting, JustState state)
+deconstructWaitingWithState (WaitingWithState Nothing) = (Waiting, NothingState)
+deconstructWaitingWithState (NotWaitingWithState state) = (NotWaiting, JustState state)
+
+mkWaitingWithState :: Waiting canWait -> MaybeState canWait exceptions c a -> WaitingWithState canWait exceptions c a
+mkWaitingWithState _waiting NothingState = WaitingWithState Nothing -- Not having a state overrides to waiting
+mkWaitingWithState waiting (JustState state) = toWaitingWithState waiting state
 
 instance Functor c => Functor (WaitingWithState canWait exceptions c) where
   fmap fn (NotWaitingWithState x) = NotWaitingWithState (fn <<$>> x)
@@ -250,9 +253,10 @@ data ObservableChangeWithState canWait exceptions c v where
   ObservableChangeWithState :: Waiting canWait -> ObservableChangeOperation exceptions c v -> State exceptions c v -> ObservableChangeWithState canWait exceptions c v
 
 
-toState :: WaitingWithState canWait exceptions c v -> Maybe (State exceptions c v)
-toState (WaitingWithState x) = x
-toState (NotWaitingWithState x) = Just x
+toState :: WaitingWithState canWait exceptions c v -> MaybeState canWait exceptions c v
+toState (WaitingWithState (Just x)) = JustState x
+toState (WaitingWithState Nothing) = NothingState
+toState (NotWaitingWithState x) = JustState x
 
 toWaitingWithState :: Waiting canWait -> State exceptions c v -> WaitingWithState canWait exceptions c v
 toWaitingWithState Waiting state = WaitingWithState (Just state)
@@ -260,22 +264,32 @@ toWaitingWithState NotWaiting state = NotWaitingWithState state
 
 applyObservableChange :: ObservableContainer c => ObservableChange canWait exceptions c v -> WaitingWithState canWait exceptions c v -> ObservableChangeWithState canWait exceptions c v
 applyObservableChange ObservableChangeClear _ = ObservableChangeWithStateClear
-applyObservableChange (ObservableChange waiting op@(ReplaceOperation state)) _ =
-  ObservableChangeWithState waiting op state
+applyObservableChange (ObservableChange waiting op@(ThrowOperation ex)) _ =
+  ObservableChangeWithState waiting op (Left ex)
 applyObservableChange (ObservableChange waiting op) (NotWaitingWithState state) =
   ObservableChangeWithState waiting op (applyOperation op state)
 applyObservableChange (ObservableChange waiting op) (WaitingWithState (Just state)) =
   ObservableChangeWithState waiting op (applyOperation op state)
-applyObservableChange (ObservableChange _ _) (WaitingWithState Nothing) = ObservableChangeWithStateClear
+applyObservableChange (ObservableChange _waiting NoChangeOperation) (WaitingWithState Nothing) = ObservableChangeWithStateClear -- cannot change an uncached observable to NotWaiting
+applyObservableChange (ObservableChange waiting op@(DeltaOperation delta)) (WaitingWithState Nothing) = ObservableChangeWithState waiting op (Right (fromDelta delta))
 
 applyOperation :: ObservableContainer c => ObservableChangeOperation exceptions c v -> State exceptions c v -> State exceptions c v
 applyOperation NoChangeOperation x = x
-applyOperation (DeltaOperation delta) state = applyDelta delta <$> state
-applyOperation (ReplaceOperation state) _ = state
+applyOperation (DeltaOperation delta) (Left _) = Right (fromDelta delta)
+applyOperation (DeltaOperation delta) (Right x) = Right (applyDelta delta x)
+applyOperation (ThrowOperation ex) _ = Left ex
+
+applyOperationMaybe :: ObservableContainer c => ObservableChangeOperation exceptions c v -> MaybeState canWait exceptions c v -> MaybeState canWait exceptions c v
+applyOperationMaybe op (JustState state) = JustState (applyOperation op state)
+applyOperationMaybe _op NothingState = NothingState
 
 withoutChange :: ObservableChangeWithState canWait exceptions c v -> WaitingWithState canWait exceptions c v
 withoutChange ObservableChangeWithStateClear = WaitingWithState Nothing
 withoutChange (ObservableChangeWithState waiting _op state) = toWaitingWithState waiting state
+
+deconstructChangeWithState :: ObservableChangeWithState canWait exceptions c v -> (ObservableChange canWait exceptions c v, WaitingWithState canWait exceptions c v)
+deconstructChangeWithState ObservableChangeWithStateClear = (ObservableChangeClear, WaitingWithState Nothing)
+deconstructChangeWithState (ObservableChangeWithState waiting op state) = (ObservableChange waiting op, WaitingWithStatePattern waiting (JustState state))
 
 
 type GeneralizedObservable :: CanWait -> [Type] -> (Type -> Type) -> Type -> Type
@@ -296,20 +310,18 @@ class (Functor c, Functor (Delta c)) => ObservableContainer c where
   type Key c
   applyDelta :: Delta c v -> c v -> c v
   mergeDelta :: Delta c v -> Delta c v -> Delta c v
+  -- | Produce a delta from a state. The delta replaces any previous state when
+  -- applied.
+  toDelta :: c v -> Delta c v
+  fromDelta :: Delta c v -> c v
 
 instance ObservableContainer Identity where
-  type Delta Identity = Void1
+  type Delta Identity = Identity
   type Key Identity = ()
-  applyDelta = absurd1
-  mergeDelta = absurd1
-
-data Void1 a
-
-absurd1 :: Void1 a -> b
-absurd1 = \case {}
-
-instance Functor Void1 where
-  fmap _ = absurd1
+  applyDelta new _ = new
+  mergeDelta _ new = new
+  toDelta = id
+  fromDelta = id
 
 
 evaluateObservable :: ToGeneralizedObservable canWait exceptions c v a => a -> GeneralizedObservable canWait exceptions Identity (c v)
@@ -336,17 +348,21 @@ instance ObservableContainer c => ToGeneralizedObservable canWait exceptions c v
 
 instance ObservableContainer c => IsGeneralizedObservable canWait exceptions c v (MappedStateObservable canWait exceptions c v) where
   attachStateObserver# (MappedStateObservable fn observable) callback =
-    fmap2 (mapWaitingWithStateContainer fn) $ attachStateObserver# observable \final changeWithState ->
+    fmap2 (mapWaitingWithState fn) $ attachStateObserver# observable \final changeWithState ->
       callback final case changeWithState of
         ObservableChangeWithStateClear -> ObservableChangeWithStateClear
         ObservableChangeWithState waiting NoChangeOperation state ->
           ObservableChangeWithState waiting NoChangeOperation (fn state)
         ObservableChangeWithState waiting _op state ->
-          let newState = fn state
-          in ObservableChangeWithState waiting (ReplaceOperation newState) newState
+          let
+            newState = fn state
+            op = case newState of
+              (Left ex) -> ThrowOperation ex
+              (Right x) -> DeltaOperation (toDelta x)
+          in ObservableChangeWithState waiting op newState
 
   readObservable# (MappedStateObservable fn observable) =
-    fmap2 (mapWaitingWithStateContainer fn) $ readObservable# observable
+    fmap2 (mapWaitingWithState fn) $ readObservable# observable
 
   mapObservable# f1 (MappedStateObservable f2 observable) =
     toGeneralizedObservable (MappedStateObservable (fmap2 f1 . f2) observable)
@@ -358,12 +374,12 @@ instance ObservableContainer c => IsGeneralizedObservable canWait exceptions c v
 -- mapped observable is always fully evaluated.
 mapObservableState :: (ToGeneralizedObservable canWait exceptions d p a, ObservableContainer c) => (State exceptions d p -> State exceptions c v) -> a -> GeneralizedObservable canWait exceptions c v
 mapObservableState fn x = case toGeneralizedObservable x of
-  (ConstObservable wstate) -> ConstObservable (mapWaitingWithStateContainer fn wstate)
+  (ConstObservable wstate) -> ConstObservable (mapWaitingWithState fn wstate)
   (GeneralizedObservable f) -> mapObservableState# fn f
 
-mapWaitingWithStateContainer :: (State exceptions d p -> State exceptions c v) -> WaitingWithState canWait exceptions d p -> WaitingWithState canWait exceptions c v
-mapWaitingWithStateContainer fn (WaitingWithState mstate) = WaitingWithState (fn <$> mstate)
-mapWaitingWithStateContainer fn (NotWaitingWithState state) = NotWaitingWithState (fn state)
+mapWaitingWithState :: (State exceptions cp vp -> State exceptions c v) -> WaitingWithState canWait exceptions cp vp -> WaitingWithState canWait exceptions c v
+mapWaitingWithState fn (WaitingWithState mstate) = WaitingWithState (fn <$> mstate)
+mapWaitingWithState fn (NotWaitingWithState state) = NotWaitingWithState (fn state)
 
 
 -- ** Observable
