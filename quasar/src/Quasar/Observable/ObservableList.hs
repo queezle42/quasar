@@ -17,6 +17,8 @@ module Quasar.Observable.ObservableList (
   ObservableListVar,
   newObservableListVar,
   newObservableListVarIO,
+  newEmptyObservableListVar,
+  newEmptyObservableListVarIO,
   insert,
   delete,
   lookup,
@@ -185,21 +187,27 @@ instance IsObservable (Maybe v) (ObservableListVarIndexObservable v) where
   readObservable# (ObservableListVarIndexObservable index ObservableListVar{content}) =
     Seq.lookup index <$> readTVar content
 
-newObservableListVar :: MonadSTMc NoRetry '[] m => m (ObservableListVar v)
-newObservableListVar = liftSTMc @NoRetry @'[] do
-  content <- newTVar Seq.empty
+newObservableListVar :: MonadSTMc NoRetry '[] m => [v] -> m (ObservableListVar v)
+newObservableListVar values = liftSTMc @NoRetry @'[] do
+  content <- newTVar (Seq.fromList values)
   observers <- newCallbackRegistry
   deltaObservers <- newCallbackRegistry
   keyObservers <- newTVar Seq.empty
   pure ObservableListVar {content, observers, deltaObservers, keyObservers}
 
-newObservableListVarIO :: MonadIO m => m (ObservableListVar v)
-newObservableListVarIO = liftIO do
-  content <- newTVarIO Seq.empty
+newEmptyObservableListVar :: MonadSTMc NoRetry '[] m => m (ObservableListVar v)
+newEmptyObservableListVar = newObservableListVar []
+
+newObservableListVarIO :: MonadIO m => [v] -> m (ObservableListVar v)
+newObservableListVarIO values = liftIO do
+  content <- newTVarIO (Seq.fromList values)
   observers <- newCallbackRegistryIO
   deltaObservers <- newCallbackRegistryIO
   keyObservers <- newTVarIO Seq.empty
   pure ObservableListVar {content, observers, deltaObservers, keyObservers}
+
+newEmptyObservableListVarIO :: MonadIO m => m (ObservableListVar v)
+newEmptyObservableListVarIO = newObservableListVarIO []
 
 insert :: forall v m. (MonadSTMc NoRetry '[] m) => Int -> v -> ObservableListVar v -> m ()
 insert index value ObservableListVar{content, observers, deltaObservers, keyObservers} = liftSTMc @NoRetry @'[] do
