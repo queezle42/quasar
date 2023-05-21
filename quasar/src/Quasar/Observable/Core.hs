@@ -17,6 +17,8 @@ module Quasar.Observable.Core (
   mapObservable,
   isCachedObservable,
 
+  mapObservableState,
+  evaluateObservable,
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
   CanWait(..),
 #else
