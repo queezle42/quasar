@@ -39,15 +39,24 @@ module Quasar.Observable.Core (
   withoutChange,
   ObservableChangeWithState(..),
 
-  -- * Identity observable (single value without partial updats)
+  -- * Identity observable (single value without partial updates)
   ObservableI,
   ToObservableI,
   toObservableI,
+
+  -- * ObservableMap
+  ObservableMap,
+  ToObservableMap,
+  toObservableMap,
+  ObservableMapDelta(..),
+  ObservableMapOperation(..),
 ) where
 
 import Control.Applicative
 import Control.Monad.Except
 import Data.Functor.Identity (Identity(..))
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.String (IsString(..))
 import Quasar.Prelude
 import Quasar.Resources.Disposer
@@ -587,7 +596,36 @@ instance Applicative (GeneralizedObservable canWait exceptions Identity) where
 toObservableI :: ToObservableI canWait exceptions v a => a -> ObservableI canWait exceptions v
 toObservableI = toGeneralizedObservable
 
+-- ** ObservableMap
 
+type ObservableMap canWait exceptions k v = GeneralizedObservable canWait exceptions (Map k) v
+
+type ToObservableMap canWait exceptions k v = ToGeneralizedObservable canWait exceptions (Map k) v
+
+data ObservableMapDelta k v
+  = ObservableMapUpdate (Map k (ObservableMapOperation v))
+  | ObservableMapReplace (Map k v)
+
+instance Functor (ObservableMapDelta k) where
+  fmap f (ObservableMapUpdate x) = ObservableMapUpdate (f <<$>> x)
+  fmap f (ObservableMapReplace x) = ObservableMapReplace (f <$> x)
+
+data ObservableMapOperation v = ObservableMapInsert v | ObservableMapDelete
+
+instance Functor ObservableMapOperation where
+  fmap f (ObservableMapInsert x) = ObservableMapInsert (f x)
+  fmap _f ObservableMapDelete = ObservableMapDelete
+
+instance ObservableContainer (Map k) where
+  type Delta (Map k) = (ObservableMapDelta k)
+  type Key (Map k) = k
+  applyDelta = undefined
+  mergeDelta = undefined
+  toInitialDelta = undefined
+  initializeFromDelta = undefined
+
+toObservableMap :: ToGeneralizedObservable canWait exceptions (Map k) v a => a -> ObservableMap canWait exceptions k v
+toObservableMap = toGeneralizedObservable
 
 
 
