@@ -3,7 +3,7 @@
 
 module Quasar.Observable.Cache (
   cacheObservable,
-  cacheObservableOperation,
+  observeCachedObservable,
 ) where
 
 import Control.Applicative
@@ -100,8 +100,8 @@ instance IsGeneralizedObservable canWait exceptions Identity (GeneralizedObserva
 
 -- | Cache an observable in the `ObservableI` monad. Use with care! A new cache
 -- is recreated whenever the result of this function is reevaluated.
-cacheObservableOperation :: forall canWait exceptions w e c v a. ToGeneralizedObservable w e c v a => a -> ObservableI canWait exceptions (GeneralizedObservable w e c v)
-cacheObservableOperation x =
+observeCachedObservable :: forall canWait exceptions w e c v a. ToGeneralizedObservable w e c v a => a -> ObservableI canWait exceptions (GeneralizedObservable w e c v)
+observeCachedObservable x =
   case toGeneralizedObservable x of
     c@(ConstObservable _) -> pure c
     (GeneralizedObservable f) -> GeneralizedObservable (CacheObservableOperation @canWait @exceptions f)
