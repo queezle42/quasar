@@ -45,6 +45,7 @@ module Quasar.Observable.Core (
 import Control.Applicative
 import Control.Monad.Except
 import Data.Functor.Identity (Identity(..))
+import Data.String (IsString(..))
 import Quasar.Prelude
 import Quasar.Resources.Disposer
 import Quasar.Utils.Fix
@@ -293,6 +294,9 @@ instance ObservableContainer c => ToGeneralizedObservable canWait exceptions c v
 
 instance ObservableContainer c => Functor (GeneralizedObservable canWait exceptions c) where
   fmap = mapObservable
+
+instance (IsString v, Applicative c) => IsString (GeneralizedObservable canWait exceptions c v) where
+  fromString x = ConstObservable (pure (fromString x))
 
 
 type ObservableContainer :: (Type -> Type) -> Constraint

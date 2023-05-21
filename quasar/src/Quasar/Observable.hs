@@ -43,6 +43,7 @@ import Control.Applicative
 import Control.Monad.Catch
 import Control.Monad.Except
 import Data.Coerce (coerce)
+import Data.String (IsString(..))
 import Quasar.Async
 import Quasar.Exceptions
 import Quasar.Future
@@ -175,6 +176,9 @@ instance Semigroup a => Semigroup (Observable a) where
 
 instance Monoid a => Monoid (Observable a) where
   mempty = pure mempty
+
+instance IsString a => IsString (Observable a) where
+  fromString = pure . fromString
 
 
 -- | Observe an observable by handling updates on the current thread.
