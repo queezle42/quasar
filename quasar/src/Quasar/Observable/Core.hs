@@ -382,6 +382,32 @@ mapWaitingWithState fn (WaitingWithState mstate) = WaitingWithState (fn <$> msta
 mapWaitingWithState fn (NotWaitingWithState state) = NotWaitingWithState (fn state)
 
 
+data LiftA2Observable w e c v = forall va vb a b. (IsGeneralizedObservable w e c va a, IsGeneralizedObservable w e c vb b) => LiftA2Observable (va -> vb -> v) a b
+
+instance (Applicative c, ObservableContainer c) => ToGeneralizedObservable canWait exceptions c v (LiftA2Observable canWait exceptions c v)
+
+instance (Applicative c, ObservableContainer c) => IsGeneralizedObservable canWait exceptions c v (LiftA2Observable canWait exceptions c v) where
+  readObservable# (LiftA2Observable fn fx fy) = do
+    (finalX, x) <- readObservable# fx
+    (finalY, y) <- readObservable# fy
+    pure (finalX && finalY, liftA2 fn x y)
+
+  attachObserver# (LiftA2Observable fn fx fy) =
+    attachEvaluatedMergeObserver (liftA2 fn) fx fy
+
+
+attachEvaluatedMergeObserver
+  :: (IsGeneralizedObservable canWait exceptions ca va a, IsGeneralizedObservable canWait exceptions cb vb b, ObservableContainer c)
+  => (ca va -> cb vb -> c v)
+  -> a
+  -> b
+  -> (Final -> ObservableChange canWait exceptions c v -> STMc NoRetry '[] ())
+  -> STMc NoRetry '[] (TSimpleDisposer, Final, WaitingWithState canWait exceptions c v)
+attachEvaluatedMergeObserver mergeState =
+  attachMergeObserver mergeState (fn mergeState) (fn (flip mergeState))
+  where
+    fn :: ObservableContainer c => (ca va -> cb vb -> c v) -> Delta ca va -> ca va -> cb vb -> Maybe (Delta c v)
+    fn mergeState' _ x y = Just $ toInitialDelta $ mergeState' x y
 
 data MergeState a canWait where
   MergeStateValid :: a canWait -> MergeState a canWait
@@ -552,12 +578,20 @@ type IsObservable canWait exceptions a = IsGeneralizedObservable canWait excepti
 instance Functor (Observable canWait exceptions) where
   fmap fn (Observable x) = Observable (fn <$> x)
 
+instance Applicative (GeneralizedObservable canWait exceptions Identity) where
+  pure x = ConstObservable (pure x)
+  liftA2 f (GeneralizedObservable x) (GeneralizedObservable y) = GeneralizedObservable (LiftA2Observable f x y)
+  liftA2 _f (ConstObservable (WaitingWithState _)) _ = ConstObservable (WaitingWithState Nothing)
+  liftA2 f (ConstObservable (NotWaitingWithState x)) y = mapObservableState (liftA2 (liftA2 f) x) y
+  liftA2 _ _ (ConstObservable (WaitingWithState _)) = ConstObservable (WaitingWithState Nothing)
+  liftA2 f x (ConstObservable (NotWaitingWithState y)) = mapObservableState (\l -> liftA2 (liftA2 f) l y) x
+
 instance ToGeneralizedObservable canWait exceptions Identity v (Observable canWait exceptions v) where
   toGeneralizedObservable (Observable x) = x
 
 instance Applicative (Observable canWait exceptions) where
-  pure x = Observable (ConstObservable (NotWaitingWithState (Right (Identity x))))
-  liftA2 = undefined
+  pure x = Observable (pure x)
+  liftA2 f (Observable x) (Observable y) = Observable (liftA2 f x y)
 
 instance Monad (Observable canWait exceptions) where
   (>>=) = undefined
