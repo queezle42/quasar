@@ -102,6 +102,12 @@ instance IsObservableMap k v (ObservableMap k v) where
 instance Functor (ObservableMap k) where
   fmap f x = toObservableMap (MappedObservableMap (const f) x)
 
+instance Ord k => Semigroup (ObservableMap k v) where
+  (<>) = union
+
+instance Ord k => Monoid (ObservableMap k v) where
+  mempty = toObservableMap (ConstObservableMap mempty)
+
 
 -- | A single operation that can be applied to an `ObservableMap`. Part of a
 -- `ObservableMapDelta`.
