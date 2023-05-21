@@ -253,11 +253,6 @@ data ObservableChangeWithState canWait exceptions c v where
   ObservableChangeWithState :: Waiting canWait -> ObservableChangeOperation exceptions c v -> State exceptions c v -> ObservableChangeWithState canWait exceptions c v
 
 
-toState :: WaitingWithState canWait exceptions c v -> MaybeState canWait exceptions c v
-toState (WaitingWithState (Just x)) = JustState x
-toState (WaitingWithState Nothing) = NothingState
-toState (NotWaitingWithState x) = JustState x
-
 toWaitingWithState :: Waiting canWait -> State exceptions c v -> WaitingWithState canWait exceptions c v
 toWaitingWithState Waiting state = WaitingWithState (Just state)
 toWaitingWithState NotWaiting state = NotWaitingWithState state
@@ -278,10 +273,6 @@ applyOperation NoChangeOperation x = x
 applyOperation (DeltaOperation delta) (Left _) = Right (fromInitialDelta delta)
 applyOperation (DeltaOperation delta) (Right x) = Right (applyDelta delta x)
 applyOperation (ThrowOperation ex) _ = Left ex
-
-applyOperationMaybe :: ObservableContainer c => ObservableChangeOperation exceptions c v -> MaybeState canWait exceptions c v -> MaybeState canWait exceptions c v
-applyOperationMaybe op (JustState state) = JustState (applyOperation op state)
-applyOperationMaybe _op NothingState = NothingState
 
 withoutChange :: ObservableChangeWithState canWait exceptions c v -> WaitingWithState canWait exceptions c v
 withoutChange ObservableChangeWithStateClear = WaitingWithState Nothing
