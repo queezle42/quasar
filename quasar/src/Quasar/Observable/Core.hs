@@ -18,7 +18,9 @@ module Quasar.Observable.Core (
   isCachedObservable,
 
   mapObservableState,
+  mapObservableContent,
   evaluateObservable,
+
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
   CanWait(..),
 #else
@@ -372,6 +374,11 @@ mapObservableState :: (ToGeneralizedObservable canWait exceptions d p a, Observa
 mapObservableState fn x = case toGeneralizedObservable x of
   (ConstObservable wstate) -> ConstObservable (mapWaitingWithState fn wstate)
   (GeneralizedObservable f) -> mapObservableState# fn f
+
+-- | Apply a function to an observable that can replace the whole content. The
+-- mapped observable is always fully evaluated.
+mapObservableContent :: (ToGeneralizedObservable canWait exceptions d p a, ObservableContainer c) => (d p -> c v) -> a -> GeneralizedObservable canWait exceptions c v
+mapObservableContent fn = mapObservableState (fmap fn)
 
 mapWaitingWithState :: (State exceptions cp vp -> State exceptions c v) -> WaitingWithState canWait exceptions cp vp -> WaitingWithState canWait exceptions c v
 mapWaitingWithState fn (WaitingWithState mstate) = WaitingWithState (fn <$> mstate)
