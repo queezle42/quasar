@@ -36,10 +36,9 @@ module Quasar.Observable.Core (
   ObservableChangeWithState(..),
 
   -- * Identity observable (single value without partial updats)
-  Observable(..),
-  ToObservable,
-  toObservable,
-  IsObservable,
+  ObservableI,
+  ToObservableI,
+  toObservableI,
 ) where
 
 import Control.Applicative
@@ -92,19 +91,19 @@ class ToGeneralizedObservable canWait exceptions c v a => IsGeneralizedObservabl
     -> GeneralizedObservable canWait exceptions d n
   mapObservableState# f x = GeneralizedObservable (MappedStateObservable f x)
 
-  count# :: a -> Observable canWait exceptions Int64
+  count# :: a -> ObservableI canWait exceptions Int64
   count# = undefined
 
-  isEmpty# :: a -> Observable canWait exceptions Bool
+  isEmpty# :: a -> ObservableI canWait exceptions Bool
   isEmpty# = undefined
 
-  lookupKey# :: Ord (Key c) => a -> Selector c -> Observable canWait exceptions (Maybe (Key c))
+  lookupKey# :: Ord (Key c) => a -> Selector c -> ObservableI canWait exceptions (Maybe (Key c))
   lookupKey# = undefined
 
-  lookupItem# :: Ord (Key c) => a -> Selector c -> Observable canWait exceptions (Maybe (Key c, v))
+  lookupItem# :: Ord (Key c) => a -> Selector c -> ObservableI canWait exceptions (Maybe (Key c, v))
   lookupItem# = undefined
 
-  lookupValue# :: Ord (Key value) => a -> Selector value -> Observable canWait exceptions (Maybe v)
+  lookupValue# :: Ord (Key value) => a -> Selector value -> ObservableI canWait exceptions (Maybe v)
   lookupValue# = undefined
 
   --query# :: a -> ObservableList canWait exceptions (Bounds value) -> GeneralizedObservable canWait exceptions c v
@@ -561,17 +560,12 @@ applyMergeFn mergeFn change wx wy mergeState  =
 
   in (Just mergedChange, newMergeStateResult)
 
--- ** Observable
+-- ** Observable Identity
 
-type Observable :: CanWait -> [Type] -> Type -> Type
-newtype Observable canWait exceptions a = Observable (GeneralizedObservable canWait exceptions Identity a)
-type ToObservable :: CanWait -> [Type] -> Type -> Type -> Constraint
-type ToObservable canWait exceptions a = ToGeneralizedObservable canWait exceptions Identity a
-type IsObservable :: CanWait -> [Type] -> Type -> Type -> Constraint
-type IsObservable canWait exceptions a = IsGeneralizedObservable canWait exceptions Identity a
-
-instance Functor (Observable canWait exceptions) where
-  fmap fn (Observable x) = Observable (fn <$> x)
+type ObservableI :: CanWait -> [Type] -> Type -> Type
+type ObservableI canWait exceptions a = GeneralizedObservable canWait exceptions Identity a
+type ToObservableI :: CanWait -> [Type] -> Type -> Type -> Constraint
+type ToObservableI canWait exceptions a = ToGeneralizedObservable canWait exceptions Identity a
 
 instance Applicative (GeneralizedObservable canWait exceptions Identity) where
   pure x = ConstObservable (pure x)
@@ -581,18 +575,11 @@ instance Applicative (GeneralizedObservable canWait exceptions Identity) where
   liftA2 _ _ (ConstObservable (WaitingWithState _)) = ConstObservable (WaitingWithState Nothing)
   liftA2 f x (ConstObservable (NotWaitingWithState y)) = mapObservableState (\l -> liftA2 (liftA2 f) l y) x
 
-instance ToGeneralizedObservable canWait exceptions Identity v (Observable canWait exceptions v) where
-  toGeneralizedObservable (Observable x) = x
+toObservableI :: ToObservableI canWait exceptions v a => a -> ObservableI canWait exceptions v
+toObservableI = toGeneralizedObservable
 
-instance Applicative (Observable canWait exceptions) where
-  pure x = Observable (pure x)
-  liftA2 f (Observable x) (Observable y) = Observable (liftA2 f x y)
 
-instance Monad (Observable canWait exceptions) where
-  (>>=) = undefined
 
-toObservable :: ToObservable canWait exceptions v a => a -> Observable canWait exceptions v
-toObservable x = Observable (toGeneralizedObservable x)
 
 
 

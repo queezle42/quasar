@@ -98,10 +98,10 @@ instance IsGeneralizedObservable canWait exceptions Identity (GeneralizedObserva
     cache <- cacheObservable x
     pure (mempty, True, NotWaitingWithState (Right (Identity cache)))
 
--- | Cache an observable in the `Observable` monad. Use with care! A new cache
+-- | Cache an observable in the `ObservableI` monad. Use with care! A new cache
 -- is recreated whenever the result of this function is reevaluated.
-cacheObservableOperation :: forall canWait exceptions w e c v a. ToGeneralizedObservable w e c v a => a -> Observable canWait exceptions (GeneralizedObservable w e c v)
+cacheObservableOperation :: forall canWait exceptions w e c v a. ToGeneralizedObservable w e c v a => a -> ObservableI canWait exceptions (GeneralizedObservable w e c v)
 cacheObservableOperation x =
   case toGeneralizedObservable x of
     c@(ConstObservable _) -> pure c
-    (GeneralizedObservable f) -> Observable (GeneralizedObservable (CacheObservableOperation @canWait @exceptions f))
+    (GeneralizedObservable f) -> GeneralizedObservable (CacheObservableOperation @canWait @exceptions f)
