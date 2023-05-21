@@ -266,11 +266,11 @@ applyObservableChange (ObservableChange waiting op) (NotWaitingWithState state) 
 applyObservableChange (ObservableChange waiting op) (WaitingWithState (Just state)) =
   ObservableChangeWithState waiting op (applyOperation op state)
 applyObservableChange (ObservableChange _waiting NoChangeOperation) (WaitingWithState Nothing) = ObservableChangeWithStateClear -- cannot change an uncached observable to NotWaiting
-applyObservableChange (ObservableChange waiting op@(DeltaOperation delta)) (WaitingWithState Nothing) = ObservableChangeWithState waiting op (Right (fromInitialDelta delta))
+applyObservableChange (ObservableChange waiting op@(DeltaOperation delta)) (WaitingWithState Nothing) = ObservableChangeWithState waiting op (Right (initializeFromDelta delta))
 
 applyOperation :: ObservableContainer c => ObservableChangeOperation exceptions c v -> State exceptions c v -> State exceptions c v
 applyOperation NoChangeOperation x = x
-applyOperation (DeltaOperation delta) (Left _) = Right (fromInitialDelta delta)
+applyOperation (DeltaOperation delta) (Left _) = Right (initializeFromDelta delta)
 applyOperation (DeltaOperation delta) (Right x) = Right (applyDelta delta x)
 applyOperation (ThrowOperation ex) _ = Left ex
 
@@ -304,7 +304,7 @@ class (Functor c, Functor (Delta c)) => ObservableContainer c where
   -- | Produce a delta from a state. The delta replaces any previous state when
   -- applied.
   toInitialDelta :: c v -> Delta c v
-  fromInitialDelta :: Delta c v -> c v
+  initializeFromDelta :: Delta c v -> c v
 
 instance ObservableContainer Identity where
   type Delta Identity = Identity
@@ -312,7 +312,7 @@ instance ObservableContainer Identity where
   applyDelta new _ = new
   mergeDelta _ new = new
   toInitialDelta = id
-  fromInitialDelta = id
+  initializeFromDelta = id
 
 
 evaluateObservable :: ToGeneralizedObservable canWait exceptions c v a => a -> GeneralizedObservable canWait exceptions Identity (c v)
