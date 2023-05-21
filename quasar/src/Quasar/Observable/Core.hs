@@ -626,12 +626,3 @@ instance ObservableContainer (Map k) where
 
 toObservableMap :: ToGeneralizedObservable canWait exceptions (Map k) v a => a -> ObservableMap canWait exceptions k v
 toObservableMap = toGeneralizedObservable
-
-
-
-
-
-
--- * Some
-
-data Some c = forall a. c a => Some a
