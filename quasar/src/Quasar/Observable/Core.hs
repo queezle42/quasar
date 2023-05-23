@@ -578,6 +578,41 @@ applyMergeFn mergeFn change wx wy mergeState  =
 
   in (Just mergedChange, newMergeStateResult)
 
+
+data BindObservable canWait exceptions c v = forall p a. IsObservable canWait exceptions Identity p a => BindObservable a (p -> Observable canWait exceptions c v)
+
+instance ObservableContainer c => ToObservable canWait exceptions c v (BindObservable canWait exceptions c v)
+
+instance ObservableContainer c => IsObservable canWait exceptions c v (BindObservable canWait exceptions c v) where
+  readObservable# (BindObservable fx fn) = do
+    (finalX, wx) <- readObservable# fx
+    case wx of
+      WaitingWithState _ -> pure (finalX, WaitingWithState Nothing)
+      NotWaitingWithState (Left ex) -> pure (finalX, NotWaitingWithState (Left ex))
+      NotWaitingWithState (Right (Identity x)) ->
+        case fn x of
+          ConstObservable wy -> pure (finalX, wy)
+          Observable fy -> do
+            (finalY, wy) <- readObservable# fy
+            pure (finalX && finalY, wy)
+
+  attachObserver# (BindObservable fx fn) callback = do
+    undefined
+
+bindObservable
+  :: ObservableContainer c
+  => Observable canWait exceptions Identity a
+  -> (a -> Observable canWait exceptions c v)
+  -> Observable canWait exceptions c v
+bindObservable (ConstObservable (WaitingWithState _)) _fn =
+  ConstObservable (WaitingWithState Nothing)
+bindObservable (ConstObservable (NotWaitingWithState (Left ex))) _fn =
+  ConstObservable (NotWaitingWithState (Left ex))
+bindObservable (ConstObservable (NotWaitingWithState (Right (Identity x)))) fn =
+  fn x
+bindObservable (Observable fx) fn = Observable (BindObservable fx fn)
+
+
 -- ** Observable Identity
 
 type ObservableI :: CanWait -> [Type] -> Type -> Type
