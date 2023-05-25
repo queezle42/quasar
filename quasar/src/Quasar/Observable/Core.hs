@@ -22,22 +22,24 @@ module Quasar.Observable.Core (
   evaluateObservable,
 
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
-  CanWait(..),
+  CanLoad(..),
 #else
-  CanWait,
-  Wait,
-  NoWait,
+  CanLoad,
+  Load,
+  NoLoad,
 #endif
 
-  Final,
 
   IsObservable(..),
   ObservableContainer(..),
 
+  -- ** Additional types
+  Final,
+  ObservableContent,
   ObservableChange(..),
-  WaitingWithState(..),
-  withoutChange,
-  ObservableChangeWithState(..),
+  EvaluatedObservableChange(..),
+  ObservableState(..),
+  ObserverState(..),
 
   -- * Identity observable (single value without partial updates)
   ObservableI,
@@ -174,134 +176,136 @@ mapObservable fn x = case toObservable x of
 type Final = Bool
 
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
-type data CanWait = Wait | NoWait
+type data CanLoad = Load | NoLoad
 #else
-data CanWait = Wait | NoWait
-type Wait = 'Wait
-type NoWait = 'NoWait
+data CanLoad = Load | NoLoad
+type Load = 'Load
+type NoLoad = 'NoLoad
 #endif
 
 
-type State exceptions c a = Either (Ex exceptions) (c a)
+type ObservableContent exceptions c a = Either (Ex exceptions) (c a)
 
-type ObservableChangeOperation :: [Type] -> (Type -> Type) -> Type -> Type
-data ObservableChangeOperation exceptions c v
-  = NoChangeOperation
-  | DeltaOperation (Delta c v)
-  | ThrowOperation (Ex exceptions)
+type ObservableChange :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type
+data ObservableChange canLoad exceptions c v where
+  ObservableChangeLoading :: ObservableChange Load exceptions c v
+  ObservableChangeLoadingClear :: ObservableChange Load exceptions c v
+  ObservableChangeLive :: ObservableChange canLoad exceptions c v
+  ObservableChangeLiveThrow :: Ex exceptions -> ObservableChange canLoad exceptions c v
+  ObservableChangeLiveDelta :: Delta c v -> ObservableChange canLoad exceptions c v
 
-instance ObservableContainer c => Functor (ObservableChangeOperation exceptions c) where
-  fmap _fn NoChangeOperation = NoChangeOperation
-  fmap fn (DeltaOperation delta) = DeltaOperation (fn <$> delta)
-  fmap _fn (ThrowOperation ex) = ThrowOperation ex
+instance ObservableContainer c => Functor (ObservableChange canLoad exceptions c) where
+  fmap _fn ObservableChangeLoading = ObservableChangeLoading
+  fmap _fn ObservableChangeLoadingClear = ObservableChangeLoadingClear
+  fmap _fn ObservableChangeLive = ObservableChangeLive
+  fmap _fn (ObservableChangeLiveThrow ex) = ObservableChangeLiveThrow ex
+  fmap fn (ObservableChangeLiveDelta delta) = ObservableChangeLiveDelta (fn <$> delta)
 
-type Waiting :: CanWait -> Type
-data Waiting canWait where
-  NotWaiting :: Waiting canWait
-  Waiting :: Waiting Wait
+type EvaluatedObservableChange :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type
+data EvaluatedObservableChange canLoad exceptions c v where
+  EvaluatedObservableChangeLoading :: EvaluatedObservableChange Load exceptions c v
+  EvaluatedObservableChangeLoadingClear :: EvaluatedObservableChange Load exceptions c v
+  EvaluatedObservableChangeLive :: EvaluatedObservableChange canLoad exceptions c v
+  EvaluatedObservableChangeLiveThrow :: Ex exceptions -> EvaluatedObservableChange canLoad exceptions c v
+  EvaluatedObservableChangeLiveDelta :: Delta c v -> c v -> EvaluatedObservableChange canLoad exceptions c v
 
-instance Semigroup (Waiting canWait) where
-  NotWaiting <> NotWaiting = NotWaiting
-  Waiting <> _ = Waiting
-  _ <> Waiting = Waiting
+instance ObservableContainer c => Functor (EvaluatedObservableChange canLoad exceptions c) where
+  fmap _fn EvaluatedObservableChangeLoading =
+    EvaluatedObservableChangeLoading
+  fmap _fn EvaluatedObservableChangeLoadingClear =
+    EvaluatedObservableChangeLoadingClear
+  fmap _fn EvaluatedObservableChangeLive =
+    EvaluatedObservableChangeLive
+  fmap _fn (EvaluatedObservableChangeLiveThrow ex) =
+    EvaluatedObservableChangeLiveThrow ex
+  fmap fn (EvaluatedObservableChangeLiveDelta delta evaluated) =
+    EvaluatedObservableChangeLiveDelta (fn <$> delta) (fn <$> evaluated)
 
-type MaybeState :: CanWait -> [Type] -> (Type -> Type) -> Type -> Type
-data MaybeState canWait exceptions c a where
-  JustState :: State exceptions c a -> MaybeState canWait exceptions c a
-  NothingState :: MaybeState Wait exceptions c a
+type ObservableState :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type
+data ObservableState canLoad exceptions c v where
+  ObservableStateLoading :: ObservableState Load exceptions c v
+  ObservableStateLive :: ObservableContent exceptions c v -> ObservableState canLoad exceptions c v
 
-instance Functor c => Functor (MaybeState canWait exceptions c) where
-  fmap fn (JustState state) = JustState (fn <<$>> state)
-  fmap _fn NothingState = NothingState
+instance Functor c => Functor (ObservableState canLoad exceptions c) where
+  fmap _fn ObservableStateLoading = ObservableStateLoading
+  fmap fn (ObservableStateLive content) = ObservableStateLive (fn <<$>> content)
 
-instance Applicative c => Applicative (MaybeState canWait exceptions c) where
-  pure x = JustState (Right (pure x))
-  liftA2 f (JustState x) (JustState y) = JustState (liftA2 (liftA2 f) x y)
-  liftA2 _ NothingState _ = NothingState
-  liftA2 _ _ NothingState = NothingState
+instance Applicative c => Applicative (ObservableState canLoad exceptions c) where
+  pure x = ObservableStateLive (Right (pure x))
+  liftA2 fn (ObservableStateLive fx) (ObservableStateLive fy) =
+    ObservableStateLive (liftA2 (liftA2 fn) fx fy)
+  liftA2 _fn ObservableStateLoading _ = ObservableStateLoading
+  liftA2 _fn _ ObservableStateLoading = ObservableStateLoading
 
-type WaitingWithState :: CanWait -> [Type] -> (Type -> Type) -> Type -> Type
-data WaitingWithState canWait exceptions c a where
-  NotWaitingWithState :: State exceptions c a -> WaitingWithState canWait exceptions c a
-  WaitingWithState :: Maybe (State exceptions c a) -> WaitingWithState Wait exceptions c a
+type ObserverState :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type
+data ObserverState canLoad exceptions c v where
+  ObserverStateLoadingCleared :: ObserverState Load exceptions c v
+  ObserverStateLoadingCached :: ObservableContent exceptions c v -> ObserverState Load exceptions c v
+  ObserverStateLive :: ObservableContent exceptions c v -> ObserverState canLoad exceptions c v
 
-pattern WaitingWithStatePattern :: Waiting canWait -> MaybeState canWait exceptions c a -> WaitingWithState canWait exceptions c a
-pattern WaitingWithStatePattern waiting state <- (deconstructWaitingWithState -> (waiting, state)) where
-  WaitingWithStatePattern = mkWaitingWithState
-{-# COMPLETE WaitingWithStatePattern #-}
+type Loading :: CanLoad -> Type
+data Loading canLoad where
+  Live :: Loading canLoad
+  Loading :: Loading Load
 
-deconstructWaitingWithState :: WaitingWithState canWait exceptions c a -> (Waiting canWait, MaybeState canWait exceptions c a)
-deconstructWaitingWithState (WaitingWithState (Just state)) = (Waiting, JustState state)
-deconstructWaitingWithState (WaitingWithState Nothing) = (Waiting, NothingState)
-deconstructWaitingWithState (NotWaitingWithState state) = (NotWaiting, JustState state)
+instance Semigroup (Loading canLoad) where
+  Live <> Live = Live
+  Loading <> _ = Loading
+  _ <> Loading = Loading
 
-mkWaitingWithState :: Waiting canWait -> MaybeState canWait exceptions c a -> WaitingWithState canWait exceptions c a
-mkWaitingWithState _waiting NothingState = WaitingWithState Nothing -- Not having a state overrides to waiting
-mkWaitingWithState waiting (JustState state) = toWaitingWithState waiting state
-
-instance Functor c => Functor (WaitingWithState canWait exceptions c) where
-  fmap fn (NotWaitingWithState x) = NotWaitingWithState (fn <<$>> x)
-  fmap fn (WaitingWithState x) = WaitingWithState (fmap3 fn x)
-
-instance Applicative c => Applicative (WaitingWithState canWait exceptions c) where
-  pure x = NotWaitingWithState (Right (pure x))
-  liftA2 fn (WaitingWithStatePattern xWaiting xState) (WaitingWithStatePattern yWaiting yState) =
-    let
-      waiting = xWaiting <> yWaiting
-      state = liftA2 fn xState yState
-    in WaitingWithStatePattern waiting state
-
-type ObservableChange :: CanWait -> [Type] -> (Type -> Type) -> Type -> Type
-data ObservableChange canWait exceptions c v where
-  ObservableChangeClear :: ObservableChange Wait exceptions c v
-  ObservableChange :: Waiting canWait -> ObservableChangeOperation exceptions c v -> ObservableChange canWait exceptions c v
-
-instance ObservableContainer c => Functor (ObservableChange canWait exceptions c) where
-  fmap _fn ObservableChangeClear = ObservableChangeClear
-  fmap fn (ObservableChange waiting op) = ObservableChange waiting (fn <$> op)
-
-type ObservableChangeWithState :: CanWait -> [Type] -> (Type -> Type) -> Type -> Type
-data ObservableChangeWithState canWait exceptions c v where
-  ObservableChangeWithStateClear :: ObservableChangeWithState Wait exceptions c v
-  ObservableChangeWithState :: Waiting canWait -> ObservableChangeOperation exceptions c v -> State exceptions c v -> ObservableChangeWithState canWait exceptions c v
-
-
-toWaitingWithState :: Waiting canWait -> State exceptions c v -> WaitingWithState canWait exceptions c v
-toWaitingWithState Waiting state = WaitingWithState (Just state)
-toWaitingWithState NotWaiting state = NotWaitingWithState state
-
-applyObservableChange :: ObservableContainer c => ObservableChange canWait exceptions c v -> WaitingWithState canWait exceptions c v -> ObservableChangeWithState canWait exceptions c v
-applyObservableChange ObservableChangeClear _ = ObservableChangeWithStateClear
-applyObservableChange (ObservableChange waiting op@(ThrowOperation ex)) _ =
-  ObservableChangeWithState waiting op (Left ex)
-applyObservableChange (ObservableChange waiting op) (NotWaitingWithState state) =
-  ObservableChangeWithState waiting op (applyOperation op state)
-applyObservableChange (ObservableChange waiting op) (WaitingWithState (Just state)) =
-  ObservableChangeWithState waiting op (applyOperation op state)
-applyObservableChange (ObservableChange _waiting NoChangeOperation) (WaitingWithState Nothing) = ObservableChangeWithStateClear -- cannot change an uncached observable to NotWaiting
-applyObservableChange (ObservableChange waiting op@(DeltaOperation delta)) (WaitingWithState Nothing) = ObservableChangeWithState waiting op (Right (initializeFromDelta delta))
-
-applyOperation :: ObservableContainer c => ObservableChangeOperation exceptions c v -> State exceptions c v -> State exceptions c v
-applyOperation NoChangeOperation x = x
-applyOperation (DeltaOperation delta) (Left _) = Right (initializeFromDelta delta)
-applyOperation (DeltaOperation delta) (Right x) = Right (applyDelta delta x)
-applyOperation (ThrowOperation ex) _ = Left ex
-
-withoutChange :: ObservableChangeWithState canWait exceptions c v -> WaitingWithState canWait exceptions c v
-withoutChange ObservableChangeWithStateClear = WaitingWithState Nothing
-withoutChange (ObservableChangeWithState waiting _op state) = toWaitingWithState waiting state
-
-deconstructChangeWithState :: ObservableChangeWithState canWait exceptions c v -> (ObservableChange canWait exceptions c v, WaitingWithState canWait exceptions c v)
-deconstructChangeWithState ObservableChangeWithStateClear = (ObservableChangeClear, WaitingWithState Nothing)
-deconstructChangeWithState (ObservableChangeWithState waiting op state) = (ObservableChange waiting op, WaitingWithStatePattern waiting (JustState state))
+applyObservableChange
+  :: ObservableContainer c
+  => ObservableChange canLoad exceptions c v
+  -> ObserverState canLoad exceptions c v
+  -> Maybe (EvaluatedObservableChange canLoad exceptions c v, ObserverState canLoad exceptions c v)
+applyObservableChange ObservableChangeLoadingClear ObserverStateLoadingCleared =
+  Nothing
+applyObservableChange ObservableChangeLoadingClear _ =
+  Just (EvaluatedObservableChangeLoadingClear, ObserverStateLoadingCleared)
+applyObservableChange ObservableChangeLoading ObserverStateLoadingCleared =
+  Nothing
+applyObservableChange ObservableChangeLoading (ObserverStateLoadingCached _) =
+  Nothing
+applyObservableChange ObservableChangeLoading (ObserverStateLive state) =
+  Just (EvaluatedObservableChangeLoading, ObserverStateLoadingCached state)
+applyObservableChange ObservableChangeLive ObserverStateLoadingCleared =
+  Nothing
+applyObservableChange ObservableChangeLive (ObserverStateLoadingCached state) =
+  Just (EvaluatedObservableChangeLive, ObserverStateLive state)
+applyObservableChange ObservableChangeLive (ObserverStateLive _) =
+  Nothing
+applyObservableChange (ObservableChangeLiveThrow ex) _ =
+  Just (EvaluatedObservableChangeLiveThrow ex, ObserverStateLive (Left ex))
+applyObservableChange (ObservableChangeLiveDelta delta) (ObserverStateCached _ (Right old)) =
+  let new = applyDelta delta old
+  in Just (EvaluatedObservableChangeLiveDelta delta new, ObserverStateLive (Right new))
+applyObservableChange (ObservableChangeLiveDelta delta) _ =
+  let evaluated = initializeFromDelta delta
+  in Just (EvaluatedObservableChangeLiveDelta delta evaluated, ObserverStateLive (Right evaluated))
 
 
-type Observable :: CanWait -> [Type] -> (Type -> Type) -> Type -> Type
-data Observable canWait exceptions c v
-  = forall a. IsObservable canWait exceptions c v a => Observable a
-  | ConstObservable (WaitingWithState canWait exceptions c v)
+createObserverState
+  :: ObservableState canLoad exceptions c v
+  -> ObserverState canLoad exceptions c v
+createObserverState ObservableStateLoading = ObserverStateLoadingCleared
+createObserverState (ObservableStateLive content) = ObserverStateLive content
 
-instance ObservableContainer c => ToObservable canWait exceptions c v (Observable canWait exceptions c v) where
+
+pattern ObserverStateCached :: Loading canLoad -> ObservableContent exceptions c v -> ObserverState canLoad exceptions c v
+pattern ObserverStateCached loading state <- (deconstructObserverStateCached -> Just (loading, state)) where
+  ObserverStateCached = constructObserverStateCached
+{-# COMPLETE ObserverStateCached, ObserverStateLoadingCleared #-}
+
+deconstructObserverStateCached :: ObserverState canLoad exceptions c v -> Maybe (Loading canLoad, ObservableContent exceptions c v)
+deconstructObserverStateCached ObserverStateLoadingCleared = Nothing
+deconstructObserverStateCached (ObserverStateLoadingCached content) = Just (Loading, content)
+deconstructObserverStateCached (ObserverStateLive content) = Just (Live, content)
+
+constructObserverStateCached :: Loading canLoad -> ObservableContent exceptions c v -> ObserverState canLoad exceptions c v
+constructObserverStateCached Live content = ObserverStateLive content
+constructObserverStateCached Loading content = ObserverStateLoadingCached content
+
+
   toObservable = id
 
 instance ObservableContainer c => Functor (Observable canWait exceptions c) where
