@@ -13,12 +13,12 @@ module Quasar.Observable.Core (
 
   readObservable,
   attachObserver,
-  attachStateObserver,
+  attachEvaluatedObserver,
   mapObservable,
   isCachedObservable,
 
-  mapObservableState,
   mapObservableContent,
+  mapEvaluatedObservable,
   evaluateObservable,
 
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
@@ -40,6 +40,9 @@ module Quasar.Observable.Core (
   EvaluatedObservableChange(..),
   ObservableState(..),
   ObserverState(..),
+  createObserverState,
+  applyObservableChange,
+  applyEvaluatedObservableChange,
 
   -- * Identity observable (single value without partial updates)
   ObservableI,
@@ -66,65 +69,76 @@ import Quasar.Utils.Fix
 
 -- * Generalized observables
 
-type ToObservable :: CanWait -> [Type] -> (Type -> Type) -> Type -> Type -> Constraint
-class ObservableContainer c => ToObservable canWait exceptions c v a | a -> canWait, a -> exceptions, a -> c, a -> v where
-  toObservable :: a -> Observable canWait exceptions c v
-  default toObservable :: IsObservable canWait exceptions c v a => a -> Observable canWait exceptions c v
+type ToObservable :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type -> Constraint
+class ObservableContainer c => ToObservable canLoad exceptions c v a | a -> canLoad, a -> exceptions, a -> c, a -> v where
+  toObservable :: a -> Observable canLoad exceptions c v
+  default toObservable :: IsObservable canLoad exceptions c v a => a -> Observable canLoad exceptions c v
   toObservable = Observable
 
-type IsObservable :: CanWait -> [Type] -> (Type -> Type) -> Type -> Type -> Constraint
-class ToObservable canWait exceptions c v a => IsObservable canWait exceptions c v a | a -> canWait, a -> exceptions, a -> c, a -> v where
-  {-# MINIMAL readObservable#, (attachObserver# | attachStateObserver#) #-}
-  readObservable# :: a -> STMc NoRetry '[] (Final, WaitingWithState canWait exceptions c v)
+type IsObservable :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type -> Constraint
+class ToObservable canLoad exceptions c v a => IsObservable canLoad exceptions c v a | a -> canLoad, a -> exceptions, a -> c, a -> v where
+  {-# MINIMAL readObservable#, (attachObserver# | attachEvaluatedObserver#) #-}
 
-  attachObserver# :: a -> (Final -> ObservableChange canWait exceptions c v -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Final, WaitingWithState canWait exceptions c v)
-  attachObserver# x callback = attachStateObserver# x \final changeWithState ->
-    callback final case changeWithState of
-      ObservableChangeWithStateClear -> ObservableChangeClear
-      ObservableChangeWithState waiting op _state -> ObservableChange waiting op
+  readObservable# :: a -> STMc NoRetry '[] (Final, ObservableState canLoad exceptions c v)
 
-  attachStateObserver# :: a -> (Final -> ObservableChangeWithState canWait exceptions c v -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Final, WaitingWithState canWait exceptions c v)
-  attachStateObserver# x callback =
+  attachObserver#
+    :: a
+    -> (Final -> ObservableChange canLoad exceptions c v -> STMc NoRetry '[] ())
+    -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canLoad exceptions c v)
+  attachObserver# x callback = attachEvaluatedObserver# x \final evaluatedChange ->
+    callback final case evaluatedChange of
+      EvaluatedObservableChangeLoadingClear -> ObservableChangeLoadingClear
+      EvaluatedObservableChangeLoading -> ObservableChangeLoading
+      EvaluatedObservableChangeLive -> ObservableChangeLive
+      EvaluatedObservableChangeLiveThrow ex -> ObservableChangeLiveThrow ex
+      EvaluatedObservableChangeLiveDelta delta _ -> ObservableChangeLiveDelta delta
+
+  attachEvaluatedObserver#
+    :: a
+    -> (Final -> EvaluatedObservableChange canLoad exceptions c v -> STMc NoRetry '[] ())
+    -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canLoad exceptions c v)
+  attachEvaluatedObserver# x callback =
     mfixTVar \var -> do
       (disposer, final, initial) <- attachObserver# x \final change -> do
-        merged <- stateTVar var \oldState ->
-          let merged = applyObservableChange change oldState
-          in (merged, withoutChange merged)
-        callback final merged
-      pure ((disposer, final, initial), initial)
+        cached <- readTVar var
+        forM_ (applyObservableChange change cached) \(evaluatedChange, newCached) -> do
+          writeTVar var newCached
+          callback final evaluatedChange
+
+      pure ((disposer, final, initial), createObserverState initial)
 
   isCachedObservable# :: a -> Bool
   isCachedObservable# _ = False
 
-  mapObservable# :: (v -> n) -> a -> Observable canWait exceptions c n
+  mapObservable# :: (v -> n) -> a -> Observable canLoad exceptions c n
   mapObservable# f x = Observable (MappedObservable f x)
 
-  mapObservableState#
+  mapObservableContent#
     :: ObservableContainer d
-    => (State exceptions c v -> State exceptions d n)
+    => (ObservableContent exceptions c v -> ObservableContent exceptions d n)
     -> a
-    -> Observable canWait exceptions d n
-  mapObservableState# f x = Observable (MappedStateObservable f x)
+    -> Observable canLoad exceptions d n
+  mapObservableContent# f x = Observable (MappedStateObservable f x)
 
-  count# :: a -> ObservableI canWait exceptions Int64
+  count# :: a -> ObservableI canLoad exceptions Int64
   count# = undefined
 
-  isEmpty# :: a -> ObservableI canWait exceptions Bool
+  isEmpty# :: a -> ObservableI canLoad exceptions Bool
   isEmpty# = undefined
 
-  lookupKey# :: Ord (Key c) => a -> Selector c -> ObservableI canWait exceptions (Maybe (Key c))
+  lookupKey# :: Ord (Key c) => a -> Selector c -> ObservableI canLoad exceptions (Maybe (Key c))
   lookupKey# = undefined
 
-  lookupItem# :: Ord (Key c) => a -> Selector c -> ObservableI canWait exceptions (Maybe (Key c, v))
+  lookupItem# :: Ord (Key c) => a -> Selector c -> ObservableI canLoad exceptions (Maybe (Key c, v))
   lookupItem# = undefined
 
-  lookupValue# :: Ord (Key value) => a -> Selector value -> ObservableI canWait exceptions (Maybe v)
+  lookupValue# :: Ord (Key value) => a -> Selector value -> ObservableI canLoad exceptions (Maybe v)
   lookupValue# = undefined
 
-  --query# :: a -> ObservableList canWait exceptions (Bounds value) -> Observable canWait exceptions c v
+  --query# :: a -> ObservableList canLoad exceptions (Bounds value) -> Observable canLoad exceptions c v
   --query# = undefined
 
---query :: ToObservable canWait exceptions c v a => a -> ObservableList canWait exceptions (Bounds c) -> Observable canWait exceptions c v
+--query :: ToObservable canLoad exceptions c v a => a -> ObservableList canLoad exceptions (Bounds c) -> Observable canLoad exceptions c v
 --query = undefined
 
 type Bounds value = (Bound value, Bound value)
@@ -140,38 +154,38 @@ data Selector c
   | Key (Key c)
 
 readObservable
-  :: (ToObservable NoWait exceptions c v a, MonadSTMc NoRetry exceptions m, ExceptionList exceptions)
+  :: (ToObservable NoLoad exceptions c v a, MonadSTMc NoRetry exceptions m, ExceptionList exceptions)
   => a -> m (c v)
 readObservable x = case toObservable x of
-  (ConstObservable state) -> extractState state
+  (ConstObservable content) -> extractState content
   (Observable y) -> do
-    (_final, state) <- liftSTMc $ readObservable# y
-    extractState state
+    (_final, content) <- liftSTMc $ readObservable# y
+    extractState content
   where
-    extractState :: (MonadSTMc NoRetry exceptions m, ExceptionList exceptions) => WaitingWithState NoWait exceptions c v -> m (c v)
-    extractState (NotWaitingWithState z) = either throwEx pure z
+    extractState :: (MonadSTMc NoRetry exceptions m, ExceptionList exceptions) => ObservableState NoLoad exceptions c v -> m (c v)
+    extractState (ObservableStateLive content) = either throwEx pure content
 
-attachObserver :: (ToObservable canWait exceptions c v a, MonadSTMc NoRetry '[] m) => a -> (Final -> ObservableChange canWait exceptions c v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, WaitingWithState canWait exceptions c v)
+attachObserver :: (ToObservable canLoad exceptions c v a, MonadSTMc NoRetry '[] m) => a -> (Final -> ObservableChange canLoad exceptions c v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, ObservableState canLoad exceptions c v)
 attachObserver x callback = liftSTMc
   case toObservable x of
     Observable f -> attachObserver# f callback
     ConstObservable c -> pure (mempty, True, c)
 
-attachStateObserver :: (ToObservable canWait exceptions c v a, MonadSTMc NoRetry '[] m) => a -> (Final -> ObservableChangeWithState canWait exceptions c v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, WaitingWithState canWait exceptions c v)
-attachStateObserver x callback = liftSTMc
+attachEvaluatedObserver :: (ToObservable canLoad exceptions c v a, MonadSTMc NoRetry '[] m) => a -> (Final -> EvaluatedObservableChange canLoad exceptions c v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, ObservableState canLoad exceptions c v)
+attachEvaluatedObserver x callback = liftSTMc
   case toObservable x of
-    Observable f -> attachStateObserver# f callback
+    Observable f -> attachEvaluatedObserver# f callback
     ConstObservable c -> pure (mempty, True, c)
 
-isCachedObservable :: ToObservable canWait exceptions c v a => a -> Bool
+isCachedObservable :: ToObservable canLoad exceptions c v a => a -> Bool
 isCachedObservable x = case toObservable x of
   Observable f -> isCachedObservable# f
   ConstObservable _value -> True
 
-mapObservable :: ToObservable canWait exceptions c v a => (v -> f) -> a -> Observable canWait exceptions c f
+mapObservable :: ToObservable canLoad exceptions c v a => (v -> f) -> a -> Observable canLoad exceptions c f
 mapObservable fn x = case toObservable x of
   (Observable f) -> mapObservable# fn f
-  (ConstObservable state) -> ConstObservable (fn <$> state)
+  (ConstObservable content) -> ConstObservable (fn <$> content)
 
 type Final = Bool
 
@@ -306,12 +320,18 @@ constructObserverStateCached Live content = ObserverStateLive content
 constructObserverStateCached Loading content = ObserverStateLoadingCached content
 
 
+type Observable :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type
+data Observable canLoad exceptions c v
+  = forall a. IsObservable canLoad exceptions c v a => Observable a
+  | ConstObservable (ObservableState canLoad exceptions c v)
+
+instance ObservableContainer c => ToObservable canLoad exceptions c v (Observable canLoad exceptions c v) where
   toObservable = id
 
-instance ObservableContainer c => Functor (Observable canWait exceptions c) where
+instance ObservableContainer c => Functor (Observable canLoad exceptions c) where
   fmap = mapObservable
 
-instance (IsString v, Applicative c) => IsString (Observable canWait exceptions c v) where
+instance (IsString v, Applicative c) => IsString (Observable canLoad exceptions c v) where
   fromString x = ConstObservable (pure (fromString x))
 
 
@@ -321,7 +341,7 @@ class (Functor c, Functor (Delta c)) => ObservableContainer c where
   type Key c
   applyDelta :: Delta c v -> c v -> c v
   mergeDelta :: Delta c v -> Delta c v -> Delta c v
-  -- | Produce a delta from a state. The delta replaces any previous state when
+  -- | Produce a delta from a content. The delta replaces any previous content when
   -- applied.
   toInitialDelta :: c v -> Delta c v
   initializeFromDelta :: Delta c v -> c v
@@ -335,15 +355,15 @@ instance ObservableContainer Identity where
   initializeFromDelta = id
 
 
-evaluateObservable :: ToObservable canWait exceptions c v a => a -> Observable canWait exceptions Identity (c v)
-evaluateObservable x = mapObservableState (fmap Identity) x
+evaluateObservable :: ToObservable canLoad exceptions c v a => a -> Observable canLoad exceptions Identity (c v)
+evaluateObservable x = mapObservableContent (fmap Identity) x
 
 
-data MappedObservable canWait exceptions c v = forall prev a. IsObservable canWait exceptions c prev a => MappedObservable (prev -> v) a
+data MappedObservable canLoad exceptions c v = forall prev a. IsObservable canLoad exceptions c prev a => MappedObservable (prev -> v) a
 
-instance ObservableContainer c => ToObservable canWait exceptions c v (MappedObservable canWait exceptions c v)
+instance ObservableContainer c => ToObservable canLoad exceptions c v (MappedObservable canLoad exceptions c v)
 
-instance ObservableContainer c => IsObservable canWait exceptions c v (MappedObservable canWait exceptions c v) where
+instance ObservableContainer c => IsObservable canLoad exceptions c v (MappedObservable canLoad exceptions c v) where
   attachObserver# (MappedObservable fn observable) callback =
     fmap3 fn $ attachObserver# observable \final change ->
       callback final (fn <$> change)
@@ -353,56 +373,57 @@ instance ObservableContainer c => IsObservable canWait exceptions c v (MappedObs
     toObservable $ MappedObservable (f1 . f2) upstream
 
 
-data MappedStateObservable canWait exceptions c v = forall d p a. IsObservable canWait exceptions d p a => MappedStateObservable (State exceptions d p -> State exceptions c v) a
+data MappedStateObservable canLoad exceptions c v = forall d p a. IsObservable canLoad exceptions d p a => MappedStateObservable (ObservableContent exceptions d p -> ObservableContent exceptions c v) a
 
-instance ObservableContainer c => ToObservable canWait exceptions c v (MappedStateObservable canWait exceptions c v)
+instance ObservableContainer c => ToObservable canLoad exceptions c v (MappedStateObservable canLoad exceptions c v)
 
-instance ObservableContainer c => IsObservable canWait exceptions c v (MappedStateObservable canWait exceptions c v) where
-  attachStateObserver# (MappedStateObservable fn observable) callback =
-    fmap2 (mapWaitingWithState fn) $ attachStateObserver# observable \final changeWithState ->
-      callback final case changeWithState of
-        ObservableChangeWithStateClear -> ObservableChangeWithStateClear
-        ObservableChangeWithState waiting NoChangeOperation state ->
-          ObservableChangeWithState waiting NoChangeOperation (fn state)
-        ObservableChangeWithState waiting _op state ->
-          let
-            newState = fn state
-            op = case newState of
-              (Left ex) -> ThrowOperation ex
-              (Right x) -> DeltaOperation (toInitialDelta x)
-          in ObservableChangeWithState waiting op newState
+instance ObservableContainer c => IsObservable canLoad exceptions c v (MappedStateObservable canLoad exceptions c v) where
+  attachEvaluatedObserver# (MappedStateObservable fn observable) callback =
+    fmap2 (mapObservableState fn) $ attachEvaluatedObserver# observable \final evaluatedChange ->
+      callback final case evaluatedChange of
+        EvaluatedObservableChangeLoadingClear -> EvaluatedObservableChangeLoadingClear
+        EvaluatedObservableChangeLoading -> EvaluatedObservableChangeLoading
+        EvaluatedObservableChangeLive -> EvaluatedObservableChangeLive
+        EvaluatedObservableChangeLiveThrow ex ->
+          case fn (Left ex) of
+            Left ex -> EvaluatedObservableChangeLiveThrow ex
+            Right new -> EvaluatedObservableChangeLiveDelta (toInitialDelta new) new
+        EvaluatedObservableChangeLiveDelta _delta evaluated ->
+          case fn (Right evaluated) of
+            Left ex -> EvaluatedObservableChangeLiveThrow ex
+            Right new -> EvaluatedObservableChangeLiveDelta (toInitialDelta new) new
 
   readObservable# (MappedStateObservable fn observable) =
-    fmap2 (mapWaitingWithState fn) $ readObservable# observable
+    fmap2 (mapObservableState fn) $ readObservable# observable
 
   mapObservable# f1 (MappedStateObservable f2 observable) =
     toObservable (MappedStateObservable (fmap2 f1 . f2) observable)
 
-  mapObservableState# f1 (MappedStateObservable f2 observable) =
+  mapObservableContent# f1 (MappedStateObservable f2 observable) =
     toObservable (MappedStateObservable (f1 . f2) observable)
-
--- | Apply a function to an observable that can replace the whole state. The
--- mapped observable is always fully evaluated.
-mapObservableState :: (ToObservable canWait exceptions d p a, ObservableContainer c) => (State exceptions d p -> State exceptions c v) -> a -> Observable canWait exceptions c v
-mapObservableState fn x = case toObservable x of
-  (ConstObservable wstate) -> ConstObservable (mapWaitingWithState fn wstate)
-  (Observable f) -> mapObservableState# fn f
 
 -- | Apply a function to an observable that can replace the whole content. The
 -- mapped observable is always fully evaluated.
-mapObservableContent :: (ToObservable canWait exceptions d p a, ObservableContainer c) => (d p -> c v) -> a -> Observable canWait exceptions c v
-mapObservableContent fn = mapObservableState (fmap fn)
+mapObservableContent :: (ToObservable canLoad exceptions d p a, ObservableContainer c) => (ObservableContent exceptions d p -> ObservableContent exceptions c v) -> a -> Observable canLoad exceptions c v
+mapObservableContent fn x = case toObservable x of
+  (ConstObservable wstate) -> ConstObservable (mapObservableState fn wstate)
+  (Observable f) -> mapObservableContent# fn f
 
-mapWaitingWithState :: (State exceptions cp vp -> State exceptions c v) -> WaitingWithState canWait exceptions cp vp -> WaitingWithState canWait exceptions c v
-mapWaitingWithState fn (WaitingWithState mstate) = WaitingWithState (fn <$> mstate)
-mapWaitingWithState fn (NotWaitingWithState state) = NotWaitingWithState (fn state)
+-- | Apply a function to an observable that can replace the whole content. The
+-- mapped observable is always fully evaluated.
+mapEvaluatedObservable :: (ToObservable canLoad exceptions d p a, ObservableContainer c) => (d p -> c v) -> a -> Observable canLoad exceptions c v
+mapEvaluatedObservable fn = mapObservableContent (fmap fn)
+
+mapObservableState :: (ObservableContent exceptions cp vp -> ObservableContent exceptions c v) -> ObservableState canLoad exceptions cp vp -> ObservableState canLoad exceptions c v
+mapObservableState fn ObservableStateLoading = ObservableStateLoading
+mapObservableState fn (ObservableStateLive content) = ObservableStateLive (fn content)
 
 
 data LiftA2Observable w e c v = forall va vb a b. (IsObservable w e c va a, IsObservable w e c vb b) => LiftA2Observable (va -> vb -> v) a b
 
-instance (Applicative c, ObservableContainer c) => ToObservable canWait exceptions c v (LiftA2Observable canWait exceptions c v)
+instance (Applicative c, ObservableContainer c) => ToObservable canLoad exceptions c v (LiftA2Observable canLoad exceptions c v)
 
-instance (Applicative c, ObservableContainer c) => IsObservable canWait exceptions c v (LiftA2Observable canWait exceptions c v) where
+instance (Applicative c, ObservableContainer c) => IsObservable canLoad exceptions c v (LiftA2Observable canLoad exceptions c v) where
   readObservable# (LiftA2Observable fn fx fy) = do
     (finalX, x) <- readObservable# fx
     (finalY, y) <- readObservable# fy
@@ -583,17 +604,23 @@ applyMergeFn mergeFn change wx wy mergeState  =
   in (Just mergedChange, newMergeStateResult)
 
 
-data BindObservable canWait exceptions c v = forall p a. IsObservable canWait exceptions Identity p a => BindObservable a (p -> Observable canWait exceptions c v)
+data BindObservable canLoad exceptions c v = forall p a. IsObservable canLoad exceptions Identity p a => BindObservable a (p -> Observable canLoad exceptions c v)
 
-instance ObservableContainer c => ToObservable canWait exceptions c v (BindObservable canWait exceptions c v)
+data BindState
+  = BindStateDone
+  | BindStateWaiting
+  | BindStateWaitingAttached TSimpleDisposer
+  | BindStateLeftException
 
-instance ObservableContainer c => IsObservable canWait exceptions c v (BindObservable canWait exceptions c v) where
+instance ObservableContainer c => ToObservable canLoad exceptions c v (BindObservable canLoad exceptions c v)
+
+instance ObservableContainer c => IsObservable canLoad exceptions c v (BindObservable canLoad exceptions c v) where
   readObservable# (BindObservable fx fn) = do
     (finalX, wx) <- readObservable# fx
     case wx of
-      WaitingWithState _ -> pure (finalX, WaitingWithState Nothing)
-      NotWaitingWithState (Left ex) -> pure (finalX, NotWaitingWithState (Left ex))
-      NotWaitingWithState (Right (Identity x)) ->
+      ObservableStateLoading -> pure (finalX, ObservableStateLoading)
+      ObservableStateLive (Left ex) -> pure (finalX, ObservableStateLive (Left ex))
+      ObservableStateLive (Right (Identity x)) ->
         case fn x of
           ConstObservable wy -> pure (finalX, wy)
           Observable fy -> do
@@ -605,48 +632,51 @@ instance ObservableContainer c => IsObservable canWait exceptions c v (BindObser
 
 bindObservable
   :: ObservableContainer c
-  => Observable canWait exceptions Identity a
-  -> (a -> Observable canWait exceptions c v)
-  -> Observable canWait exceptions c v
-bindObservable (ConstObservable (WaitingWithState _)) _fn =
-  ConstObservable (WaitingWithState Nothing)
-bindObservable (ConstObservable (NotWaitingWithState (Left ex))) _fn =
-  ConstObservable (NotWaitingWithState (Left ex))
-bindObservable (ConstObservable (NotWaitingWithState (Right (Identity x)))) fn =
+  => Observable canLoad exceptions Identity a
+  -> (a -> Observable canLoad exceptions c v)
+  -> Observable canLoad exceptions c v
+bindObservable (ConstObservable ObservableStateLoading) _fn =
+  ConstObservable ObservableStateLoading
+bindObservable (ConstObservable (ObservableStateLive (Left ex))) _fn =
+  ConstObservable (ObservableStateLive (Left ex))
+bindObservable (ConstObservable (ObservableStateLive (Right (Identity x)))) fn =
   fn x
 bindObservable (Observable fx) fn = Observable (BindObservable fx fn)
 
 
 -- ** Observable Identity
 
-type ObservableI :: CanWait -> [Type] -> Type -> Type
-type ObservableI canWait exceptions a = Observable canWait exceptions Identity a
-type ToObservableI :: CanWait -> [Type] -> Type -> Type -> Constraint
-type ToObservableI canWait exceptions a = ToObservable canWait exceptions Identity a
+type ObservableI :: CanLoad -> [Type] -> Type -> Type
+type ObservableI canLoad exceptions a = Observable canLoad exceptions Identity a
+type ToObservableI :: CanLoad -> [Type] -> Type -> Type -> Constraint
+type ToObservableI canLoad exceptions a = ToObservable canLoad exceptions Identity a
 
-instance Applicative (Observable canWait exceptions Identity) where
+instance Applicative (Observable canLoad exceptions Identity) where
   pure x = ConstObservable (pure x)
   liftA2 f (Observable x) (Observable y) = Observable (LiftA2Observable f x y)
-  liftA2 _f (ConstObservable (WaitingWithState _)) _ = ConstObservable (WaitingWithState Nothing)
-  liftA2 f (ConstObservable (NotWaitingWithState x)) y = mapObservableState (liftA2 (liftA2 f) x) y
-  liftA2 _ _ (ConstObservable (WaitingWithState _)) = ConstObservable (WaitingWithState Nothing)
-  liftA2 f x (ConstObservable (NotWaitingWithState y)) = mapObservableState (\l -> liftA2 (liftA2 f) l y) x
+  liftA2 _f (ConstObservable ObservableStateLoading) _ = ConstObservable ObservableStateLoading
+  liftA2 f (ConstObservable (ObservableStateLive x)) y = mapObservableContent (liftA2 (liftA2 f) x) y
+  liftA2 _ _ (ConstObservable ObservableStateLoading) = ConstObservable ObservableStateLoading
+  liftA2 f x (ConstObservable (ObservableStateLive y)) = mapObservableContent (\l -> liftA2 (liftA2 f) l y) x
 
-toObservableI :: ToObservableI canWait exceptions v a => a -> ObservableI canWait exceptions v
+instance Monad (Observable canLoad exceptions Identity) where
+  (>>=) = bindObservable
+
+toObservableI :: ToObservableI canLoad exceptions v a => a -> ObservableI canLoad exceptions v
 toObservableI = toObservable
 
---readObservableI# :: IsObservable canWait exceptions v a => a -> STMc NoRetry '[] (Final, WaitingWithState canWait exceptions Identity v)
+--readObservableI# :: IsObservable canLoad exceptions v a => a -> STMc NoRetry '[] (Final, WaitingWithState canLoad exceptions Identity v)
 --readObservableI# x = fmap2 runIdentity $ readObservable# x
 --
---attachObserverI# :: IsObservable canWait exceptions v a => a -> (Final -> ObservableChange canWait exceptions Identity v -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Final, WaitingWithState canWait exceptions Identity v)
+--attachObserverI# :: IsObservable canLoad exceptions v a => a -> (Final -> ObservableChange canLoad exceptions Identity v -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Final, WaitingWithState canLoad exceptions Identity v)
 --attachObserverI# x callback = undefined -- fmap3 runIdentity $ attachObserver# x (\final change -> callback final (runIdentity <$> change))
 
 
 -- ** ObservableMap
 
-type ObservableMap canWait exceptions k v = Observable canWait exceptions (Map k) v
+type ObservableMap canLoad exceptions k v = Observable canLoad exceptions (Map k) v
 
-type ToObservableMap canWait exceptions k v = ToObservable canWait exceptions (Map k) v
+type ToObservableMap canLoad exceptions k v = ToObservable canLoad exceptions (Map k) v
 
 data ObservableMapDelta k v
   = ObservableMapUpdate (Map k (ObservableMapOperation v))
@@ -670,5 +700,5 @@ instance ObservableContainer (Map k) where
   toInitialDelta = undefined
   initializeFromDelta = undefined
 
-toObservableMap :: ToObservable canWait exceptions (Map k) v a => a -> ObservableMap canWait exceptions k v
+toObservableMap :: ToObservable canLoad exceptions (Map k) v a => a -> ObservableMap canLoad exceptions k v
 toObservableMap = toObservable
