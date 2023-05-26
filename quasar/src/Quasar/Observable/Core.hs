@@ -41,6 +41,7 @@ module Quasar.Observable.Core (
   ObservableState(..),
   ObserverState(..),
   createObserverState,
+  toObservableState,
   applyObservableChange,
   applyEvaluatedObservableChange,
 
@@ -297,12 +298,42 @@ applyObservableChange (ObservableChangeLiveDelta delta) _ =
   let evaluated = initializeFromDelta delta
   in Just (EvaluatedObservableChangeLiveDelta delta evaluated, ObserverStateLive (Right evaluated))
 
+applyEvaluatedObservableChange
+  :: EvaluatedObservableChange canLoad exceptions c v
+  -> ObserverState canLoad exceptions c v
+  -> Maybe (ObserverState canLoad exceptions c v)
+applyEvaluatedObservableChange EvaluatedObservableChangeLoadingClear _ =
+  Just ObserverStateLoadingCleared
+applyEvaluatedObservableChange EvaluatedObservableChangeLoading ObserverStateLoadingCleared =
+  Nothing
+applyEvaluatedObservableChange EvaluatedObservableChangeLoading (ObserverStateLoadingCached _) =
+  Nothing
+applyEvaluatedObservableChange EvaluatedObservableChangeLoading (ObserverStateLive state) =
+  Just (ObserverStateLoadingCached state)
+applyEvaluatedObservableChange EvaluatedObservableChangeLive ObserverStateLoadingCleared =
+  Nothing
+applyEvaluatedObservableChange EvaluatedObservableChangeLive (ObserverStateLoadingCached state) =
+  Just (ObserverStateLive state)
+applyEvaluatedObservableChange EvaluatedObservableChangeLive (ObserverStateLive _) =
+  Nothing
+applyEvaluatedObservableChange (EvaluatedObservableChangeLiveThrow ex) _ =
+  Just (ObserverStateLive (Left ex))
+applyEvaluatedObservableChange (EvaluatedObservableChangeLiveDelta _delta evaluated) _ =
+  Just (ObserverStateLive (Right evaluated))
+
 
 createObserverState
   :: ObservableState canLoad exceptions c v
   -> ObserverState canLoad exceptions c v
 createObserverState ObservableStateLoading = ObserverStateLoadingCleared
 createObserverState (ObservableStateLive content) = ObserverStateLive content
+
+toObservableState
+  :: ObserverState canLoad exceptions c v
+  -> ObservableState canLoad exceptions c v
+toObservableState ObserverStateLoadingCleared = ObservableStateLoading
+toObservableState (ObserverStateLoadingCached _) = ObservableStateLoading
+toObservableState (ObserverStateLive content) = ObservableStateLive content
 
 
 pattern ObserverStateCached :: Loading canLoad -> ObservableContent exceptions c v -> ObserverState canLoad exceptions c v
