@@ -89,8 +89,8 @@ class ToObservable canLoad exceptions c v a => IsObservable canLoad exceptions c
   attachObserver# x callback = attachEvaluatedObserver# x \final evaluatedChange ->
     callback final case evaluatedChange of
       EvaluatedObservableChangeLoadingClear -> ObservableChangeLoadingClear
-      EvaluatedObservableChangeLoading -> ObservableChangeLoading
-      EvaluatedObservableChangeLive -> ObservableChangeLive
+      EvaluatedObservableChangeLoadingUnchanged -> ObservableChangeLoadingUnchanged
+      EvaluatedObservableChangeLiveUnchanged -> ObservableChangeLiveUnchanged
       EvaluatedObservableChangeLiveThrow ex -> ObservableChangeLiveThrow ex
       EvaluatedObservableChangeLiveDelta delta _ -> ObservableChangeLiveDelta delta
 
@@ -203,34 +203,34 @@ type ObservableContent exceptions c a = Either (Ex exceptions) (c a)
 
 type ObservableChange :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type
 data ObservableChange canLoad exceptions c v where
-  ObservableChangeLoading :: ObservableChange Load exceptions c v
+  ObservableChangeLoadingUnchanged :: ObservableChange Load exceptions c v
   ObservableChangeLoadingClear :: ObservableChange Load exceptions c v
-  ObservableChangeLive :: ObservableChange canLoad exceptions c v
+  ObservableChangeLiveUnchanged :: ObservableChange canLoad exceptions c v
   ObservableChangeLiveThrow :: Ex exceptions -> ObservableChange canLoad exceptions c v
   ObservableChangeLiveDelta :: Delta c v -> ObservableChange canLoad exceptions c v
 
 instance ObservableContainer c => Functor (ObservableChange canLoad exceptions c) where
-  fmap _fn ObservableChangeLoading = ObservableChangeLoading
+  fmap _fn ObservableChangeLoadingUnchanged = ObservableChangeLoadingUnchanged
   fmap _fn ObservableChangeLoadingClear = ObservableChangeLoadingClear
-  fmap _fn ObservableChangeLive = ObservableChangeLive
+  fmap _fn ObservableChangeLiveUnchanged = ObservableChangeLiveUnchanged
   fmap _fn (ObservableChangeLiveThrow ex) = ObservableChangeLiveThrow ex
   fmap fn (ObservableChangeLiveDelta delta) = ObservableChangeLiveDelta (fn <$> delta)
 
 type EvaluatedObservableChange :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type
 data EvaluatedObservableChange canLoad exceptions c v where
-  EvaluatedObservableChangeLoading :: EvaluatedObservableChange Load exceptions c v
+  EvaluatedObservableChangeLoadingUnchanged :: EvaluatedObservableChange Load exceptions c v
   EvaluatedObservableChangeLoadingClear :: EvaluatedObservableChange Load exceptions c v
-  EvaluatedObservableChangeLive :: EvaluatedObservableChange canLoad exceptions c v
+  EvaluatedObservableChangeLiveUnchanged :: EvaluatedObservableChange canLoad exceptions c v
   EvaluatedObservableChangeLiveThrow :: Ex exceptions -> EvaluatedObservableChange canLoad exceptions c v
   EvaluatedObservableChangeLiveDelta :: Delta c v -> c v -> EvaluatedObservableChange canLoad exceptions c v
 
 instance ObservableContainer c => Functor (EvaluatedObservableChange canLoad exceptions c) where
-  fmap _fn EvaluatedObservableChangeLoading =
-    EvaluatedObservableChangeLoading
+  fmap _fn EvaluatedObservableChangeLoadingUnchanged =
+    EvaluatedObservableChangeLoadingUnchanged
   fmap _fn EvaluatedObservableChangeLoadingClear =
     EvaluatedObservableChangeLoadingClear
-  fmap _fn EvaluatedObservableChangeLive =
-    EvaluatedObservableChangeLive
+  fmap _fn EvaluatedObservableChangeLiveUnchanged =
+    EvaluatedObservableChangeLiveUnchanged
   fmap _fn (EvaluatedObservableChangeLiveThrow ex) =
     EvaluatedObservableChangeLiveThrow ex
   fmap fn (EvaluatedObservableChangeLiveDelta delta evaluated) =
@@ -257,6 +257,16 @@ data ObserverState canLoad exceptions c v where
   ObserverStateLoadingCleared :: ObserverState Load exceptions c v
   ObserverStateLoadingCached :: ObservableContent exceptions c v -> ObserverState Load exceptions c v
   ObserverStateLive :: ObservableContent exceptions c v -> ObserverState canLoad exceptions c v
+
+{-# COMPLETE ObserverStateLoading, ObserverStateLive #-}
+
+pattern ObserverStateLoading :: () => (canLoad ~ Load) => ObserverState canLoad exceptions c v
+pattern ObserverStateLoading <- (observerStateIsLoading -> Loading)
+
+observerStateIsLoading :: ObserverState canLoad exceptions c v -> Loading canLoad
+observerStateIsLoading ObserverStateLoadingCleared = Loading
+observerStateIsLoading (ObserverStateLoadingCached _) = Loading
+observerStateIsLoading (ObserverStateLive _) = Live
 
 type Loading :: CanLoad -> Type
 data Loading canLoad where
@@ -413,8 +423,8 @@ instance ObservableContainer c => IsObservable canLoad exceptions c v (MappedSta
     fmap2 (mapObservableState fn) $ attachEvaluatedObserver# observable \final evaluatedChange ->
       callback final case evaluatedChange of
         EvaluatedObservableChangeLoadingClear -> EvaluatedObservableChangeLoadingClear
-        EvaluatedObservableChangeLoading -> EvaluatedObservableChangeLoading
-        EvaluatedObservableChangeLive -> EvaluatedObservableChangeLive
+        EvaluatedObservableChangeLoadingUnchanged -> EvaluatedObservableChangeLoadingUnchanged
+        EvaluatedObservableChangeLiveUnchanged -> EvaluatedObservableChangeLiveUnchanged
         EvaluatedObservableChangeLiveThrow ex ->
           case fn (Left ex) of
             Left ex -> EvaluatedObservableChangeLiveThrow ex
@@ -465,174 +475,154 @@ instance (Applicative c, ObservableContainer c) => IsObservable canLoad exceptio
 
 
 attachEvaluatedMergeObserver
-  :: (IsObservable canWait exceptions ca va a, IsObservable canWait exceptions cb vb b, ObservableContainer c)
+  :: (IsObservable canLoad exceptions ca va a, IsObservable canLoad exceptions cb vb b, ObservableContainer c)
   => (ca va -> cb vb -> c v)
   -> a
   -> b
-  -> (Final -> ObservableChange canWait exceptions c v -> STMc NoRetry '[] ())
-  -> STMc NoRetry '[] (TSimpleDisposer, Final, WaitingWithState canWait exceptions c v)
+  -> (Final -> ObservableChange canLoad exceptions c v -> STMc NoRetry '[] ())
+  -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canLoad exceptions c v)
 attachEvaluatedMergeObserver mergeState =
   attachMergeObserver mergeState (fn mergeState) (fn (flip mergeState))
   where
     fn :: ObservableContainer c => (ca va -> cb vb -> c v) -> Delta ca va -> ca va -> cb vb -> Maybe (Delta c v)
     fn mergeState' _ x y = Just $ toInitialDelta $ mergeState' x y
 
-data MergeState a canWait where
-  MergeStateValid :: a canWait -> MergeState a canWait
-  MergeStateException :: a canWait -> Either () () -> MergeState a canWait
-  MergeStateCleared :: MergeState a Wait
+data MergeState canLoad where
+  MergeStateLoadingCleared :: MergeState Load
+  MergeStateValid :: Loading canLoad -> MergeState canLoad
+  MergeStateException :: Loading canLoad -> MergeState canLoad
 
-data Unit1 a = Unit1
+{-# COMPLETE MergeStateLoading, MergeStateLive #-}
 
-mapMergeState :: (a canWait -> b canWait) -> MergeState a canWait -> MergeState b canWait
-mapMergeState f (MergeStateValid x) = MergeStateValid (f x)
-mapMergeState f (MergeStateException x side) = MergeStateException (f x) side
-mapMergeState _f MergeStateCleared = MergeStateCleared
+pattern MergeStateLoading :: () => (canLoad ~ Load) => MergeState canLoad
+pattern MergeStateLoading <- (mergeStateIsLoading -> Loading)
 
-type MergeFn canWait exceptions ca va cb vb c v
-  = ObservableChangeOperation exceptions ca va
-  -> State exceptions ca va
-  -> State exceptions cb vb
-  -> MergeState Unit1 canWait
-  -> (ObservableChangeOperation exceptions c v, MergeState Unit1 canWait)
+pattern MergeStateLive :: MergeState canLoad
+pattern MergeStateLive <- (mergeStateIsLoading -> Live)
 
-deltaToOperation :: Maybe (Delta c v) -> ObservableChangeOperation exceptions c v
-deltaToOperation Nothing = NoChangeOperation
-deltaToOperation (Just delta) = DeltaOperation delta
+mergeStateIsLoading :: MergeState canLoad -> Loading canLoad
+mergeStateIsLoading MergeStateLoadingCleared = Loading
+mergeStateIsLoading (MergeStateValid loading) = loading
+mergeStateIsLoading (MergeStateException loading) = loading
+
+changeMergeState :: Loading canLoad -> MergeState canLoad -> MergeState canLoad
+changeMergeState _loading MergeStateLoadingCleared = MergeStateLoadingCleared
+changeMergeState loading (MergeStateValid _) = MergeStateValid loading
+changeMergeState loading (MergeStateException _) = MergeStateException loading
 
 attachMergeObserver
-  :: forall canWait exceptions ca va cb vb c v a b.
-  (IsObservable canWait exceptions ca va a, IsObservable canWait exceptions cb vb b, ObservableContainer c)
+  :: forall canLoad exceptions ca va cb vb c v a b.
+  (IsObservable canLoad exceptions ca va a, IsObservable canLoad exceptions cb vb b, ObservableContainer c)
   => (ca va -> cb vb -> c v)
   -> (Delta ca va -> ca va -> cb vb -> Maybe (Delta c v))
   -> (Delta cb vb -> cb vb -> ca va -> Maybe (Delta c v))
   -> a
   -> b
-  -> (Final -> ObservableChange canWait exceptions c v -> STMc NoRetry '[] ())
-  -> STMc NoRetry '[] (TSimpleDisposer, Final, WaitingWithState canWait exceptions c v)
+  -> (Final -> ObservableChange canLoad exceptions c v -> STMc NoRetry '[] ())
+  -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canLoad exceptions c v)
 attachMergeObserver mergeFn applyDeltaLeft applyDeltaRight fx fy callback = do
   mfixTVar \var -> do
-    (disposerX, initialFinalX, initialX) <- attachStateObserver# fx \finalX changeWithStateX -> do
-      (_, _, finalY, y, oldMerged) <- readTVar var
+    (disposerX, initialFinalX, initialX) <- attachEvaluatedObserver# fx \finalX evaluatedChangeX -> do
+      (_, oldStateX, finalY, stateY, oldMerged) <- readTVar var
       let
         final = finalX && finalY
-        (changeX, stateX) = deconstructChangeWithState changeWithStateX
-        (change, merged) = applyMergeFn mergeLeft changeX stateX y oldMerged
-      writeTVar var (finalX, stateX, finalY, y, merged)
-      mapM_ (callback final) change
+        mresult = do
+          stateX <- applyEvaluatedObservableChange evaluatedChangeX oldStateX
+          (change, merged) <- mergeLeft evaluatedChangeX stateX stateY oldMerged
+          pure (stateX, change, merged)
+      case mresult of
+        Nothing -> do
+          when final do
+            callback final case mergeStateIsLoading oldMerged of
+              Loading -> ObservableChangeLoadingClear
+              Live -> ObservableChangeLiveUnchanged
+        Just (stateX, change, merged) -> do
+          writeTVar var (finalX, stateX, finalY, stateY, merged)
+          callback final change
 
-    (disposerY, initialFinalY, initialY) <- attachStateObserver# fy \finalY changeWithStateY -> do
-      (finalX, x, _, _, oldMerged) <- readTVar var
+    (disposerY, initialFinalY, initialY) <- attachEvaluatedObserver# fy \finalY evaluatedChangeY -> do
+      (finalX, stateX, _, oldStateY, oldMerged) <- readTVar var
       let
         final = finalX && finalY
-        (changeY, stateY) = deconstructChangeWithState changeWithStateY
-        (change, merged) = applyMergeFn mergeRight changeY stateY x oldMerged
-      writeTVar var (finalX, x, finalY, stateY, merged)
-      mapM_ (callback final) change
+        mresult = do
+          stateY <- applyEvaluatedObservableChange evaluatedChangeY oldStateY
+          (change, merged) <- mergeRight evaluatedChangeY stateX stateY oldMerged
+          pure (stateY, change, merged)
+      case mresult of
+        Nothing -> do
+          when final do
+            callback final case mergeStateIsLoading oldMerged of
+              Loading -> ObservableChangeLoadingClear
+              Live -> ObservableChangeLiveUnchanged
+        Just (stateY, change, merged) -> do
+          writeTVar var (finalX, stateX, finalY, stateY, merged)
+          callback final change
 
     let
       disposer = disposerX <> disposerY
       final = initialFinalX && initialFinalY
-      (initialWaitingX, initialStateX) = deconstructWaitingWithState initialX
-      (initialWaitingY, initialStateY) = deconstructWaitingWithState initialY
-      initialWaiting = initialWaitingX <> initialWaitingY
-      (initialMState, initialMergeState) = case (initialStateX, initialStateY) of
-        (JustState (Left exX), JustState (Left _)) ->
-          (JustState (Left exX), MergeStateException initialWaiting (Left ()))
-        (JustState (Left exX), _) ->
-          (JustState (Left exX), MergeStateException initialWaiting (Left ()))
-        (_, JustState (Left exY)) ->
-          (JustState (Left exY), MergeStateException initialWaiting (Right ()))
-        (JustState (Right x), JustState (Right y)) ->
-          (JustState (Right (mergeFn x y)), MergeStateValid initialWaiting)
-        (NothingState, _) -> (NothingState, MergeStateCleared)
-        (_, NothingState) -> (NothingState, MergeStateCleared)
-      initialMerged = mkWaitingWithState initialWaiting initialMState
-    pure ((disposer, final, initialMerged), (initialFinalX, initialX, initialFinalY, initialY, initialMergeState))
+      (initialState, initialMergeState) = case (initialX, initialY) of
+        (ObservableStateLive (Right x), ObservableStateLive (Right y)) -> (ObservableStateLive (Right (mergeFn x y)), MergeStateValid Live)
+        (ObservableStateLive (Left ex), ObservableStateLive _) -> (ObservableStateLive (Left ex), MergeStateException Live)
+        (ObservableStateLive _, ObservableStateLive (Left ex)) -> (ObservableStateLive (Left ex), MergeStateException Live)
+        (ObservableStateLoading, _) -> (ObservableStateLoading, MergeStateLoadingCleared)
+        (_, ObservableStateLoading) -> (ObservableStateLoading, MergeStateLoadingCleared)
+    pure ((disposer, final, initialState), (initialFinalX, createObserverState initialX, initialFinalY, createObserverState initialY, initialMergeState))
   where
     mergeLeft
-      :: ObservableChangeOperation exceptions ca va
-      -> State exceptions ca va
-      -> State exceptions cb vb
-      -> MergeState Unit1 canWait
-      -> (ObservableChangeOperation exceptions c v, MergeState Unit1 canWait)
-    mergeLeft NoChangeOperation _x _y mergeState = (NoChangeOperation, mergeState)
-    mergeLeft (ThrowOperation exX) _x _y _ =
-      (ThrowOperation exX, MergeStateException Unit1 (Left ()))
-    mergeLeft (DeltaOperation delta) (Right x) (Right y) (MergeStateValid _) =
-      (deltaToOperation (applyDeltaLeft delta x y), MergeStateValid Unit1)
-    mergeLeft (DeltaOperation _delta) (Right x) (Right y) _ =
-      (DeltaOperation (toInitialDelta (mergeFn x y)), MergeStateValid Unit1)
-    mergeLeft (DeltaOperation _delta) (Right _) (Left _) mergeState@(MergeStateException _ (Right ())) =
-      (NoChangeOperation, mergeState)
-    mergeLeft (DeltaOperation _delta) (Right _) (Left exY) (MergeStateException _ (Left ())) =
-      (ThrowOperation exY, MergeStateException Unit1 (Right ()))
-    mergeLeft (DeltaOperation _delta) (Right _) (Left exY) _ =
-      -- Unreachable code path
-      (ThrowOperation exY, MergeStateException Unit1 (Right ()))
-    mergeLeft (DeltaOperation _delta) (Left exX) _ _ =
-      -- Law violating combination of delta and exception
-      (ThrowOperation exX, MergeStateException Unit1 (Left ()))
+      :: EvaluatedObservableChange canLoad exceptions ca va
+      -> ObserverState canLoad exceptions ca va
+      -> ObserverState canLoad exceptions cb vb
+      -> MergeState canLoad
+      -> Maybe (ObservableChange canLoad exceptions c v, MergeState canLoad)
+    mergeLeft EvaluatedObservableChangeLoadingClear _ _ MergeStateLoadingCleared = Nothing
+    mergeLeft EvaluatedObservableChangeLoadingClear _ _ _ = Just (ObservableChangeLoadingClear, MergeStateLoadingCleared)
+
+    mergeLeft EvaluatedObservableChangeLoadingUnchanged _ _ MergeStateLoading = Nothing
+    mergeLeft EvaluatedObservableChangeLoadingUnchanged _ _ merged = Just (ObservableChangeLoadingUnchanged, changeMergeState Loading merged)
+
+    mergeLeft _changeLive _ ObserverStateLoading _ = Nothing
+
+    mergeLeft EvaluatedObservableChangeLiveUnchanged _ _ MergeStateLive = Nothing
+    mergeLeft EvaluatedObservableChangeLiveUnchanged (ObserverStateLive (Left ex)) _ _ = Just (ObservableChangeLiveThrow ex, MergeStateException Live)
+    mergeLeft EvaluatedObservableChangeLiveUnchanged _ (ObserverStateLive (Left _)) _ = Nothing
+    mergeLeft EvaluatedObservableChangeLiveUnchanged _ _ merged = Just (ObservableChangeLiveUnchanged, changeMergeState Live merged)
+
+    mergeLeft (EvaluatedObservableChangeLiveThrow ex) _ _ _ = Just (ObservableChangeLiveThrow ex, MergeStateException Live)
+
+    mergeLeft (EvaluatedObservableChangeLiveDelta _ _) _ (ObserverStateLive (Left _)) _ = Nothing
+    mergeLeft (EvaluatedObservableChangeLiveDelta delta x) _ (ObserverStateLive (Right y)) (MergeStateValid _) = do
+      mergedDelta <- applyDeltaLeft delta x y
+      pure (ObservableChangeLiveDelta mergedDelta, MergeStateValid Live)
+    mergeLeft (EvaluatedObservableChangeLiveDelta _delta x) _ (ObserverStateLive (Right y)) _ =
+      Just (ObservableChangeLiveDelta (toInitialDelta (mergeFn x y)), MergeStateValid Live)
 
     mergeRight
-      :: ObservableChangeOperation exceptions cb vb
-      -> State exceptions cb vb
-      -> State exceptions ca va
-      -> MergeState Unit1 canWait
-      -> (ObservableChangeOperation exceptions c v, MergeState Unit1 canWait)
-    mergeRight NoChangeOperation _x _y mergeState = (NoChangeOperation, mergeState)
-    -- TODO right
-    mergeRight (ThrowOperation exX) _x (Right _) _ =
-      (ThrowOperation exX, MergeStateException Unit1 (Right ()))
-    mergeRight (ThrowOperation _) _x (Left _) mergeState@(MergeStateException Unit1 (Left ())) =
-      (NoChangeOperation, mergeState)
-    mergeRight (ThrowOperation _exX) _x (Left exY) _ =
-      -- Previous law violation
-      (ThrowOperation exY, MergeStateException Unit1 (Left ()))
+      :: EvaluatedObservableChange canLoad exceptions cb vb
+      -> ObserverState canLoad exceptions ca va
+      -> ObserverState canLoad exceptions cb vb
+      -> MergeState canLoad
+      -> Maybe (ObservableChange canLoad exceptions c v, MergeState canLoad)
+    mergeRight EvaluatedObservableChangeLoadingClear _ _ MergeStateLoadingCleared = Nothing
+    mergeRight EvaluatedObservableChangeLoadingClear _ _ _ = Just (ObservableChangeLoadingClear, MergeStateLoadingCleared)
 
-    mergeRight (DeltaOperation delta) (Right x) (Right y) (MergeStateValid _) =
-      (deltaToOperation (applyDeltaRight delta x y), MergeStateValid Unit1)
-    mergeRight (DeltaOperation _delta) (Right x) (Right y) _ =
-      (DeltaOperation (toInitialDelta (mergeFn y x)), MergeStateValid Unit1)
-    mergeRight (DeltaOperation _delta) (Right _) (Left _) mergeState@(MergeStateException _ (Left ())) =
-      (NoChangeOperation, mergeState)
-    mergeRight (DeltaOperation _delta) (Right _) (Left exY) (MergeStateException _ (Right ())) =
-      (ThrowOperation exY, MergeStateException Unit1 (Left ()))
-    mergeRight (DeltaOperation _delta) (Right _) (Left exY) _ =
-      -- Unreachable code path
-      (ThrowOperation exY, MergeStateException Unit1 (Left ()))
-    mergeRight (DeltaOperation _delta) (Left exX) _ _ =
-      -- Law violating combination of delta and exception
-      (ThrowOperation exX, MergeStateException Unit1 (Right ()))
+    mergeRight EvaluatedObservableChangeLoadingUnchanged _ _ MergeStateLoading = Nothing
+    mergeRight EvaluatedObservableChangeLoadingUnchanged _ _ merged = Just (ObservableChangeLoadingUnchanged, changeMergeState Loading merged)
 
-applyMergeFn
-  :: forall canWait exceptions ca va cb vb c v.
-  MergeFn canWait exceptions ca va cb vb c v
-  -> ObservableChange canWait exceptions ca va
-  -> WaitingWithState canWait exceptions ca va
-  -> WaitingWithState canWait exceptions cb vb
-  -> MergeState Waiting canWait
-  -> (Maybe (ObservableChange canWait exceptions c v), MergeState Waiting canWait)
-applyMergeFn mergeFn change wx wy mergeState  =
-  let
-    (_, stateX) = deconstructWaitingWithState wx
-    (waitingY, stateY) = deconstructWaitingWithState wy
-    (mergedChange, newMergeStateResult) =
-      case change of
-        ObservableChangeClear -> (ObservableChangeClear, MergeStateCleared)
-        (ObservableChange waitingX op) ->
-          case (stateX, stateY) of
-            (JustState x, JustState y) ->
-              let
-                (newOp, newMergeState) = mergeFn op x y (mapMergeState (const Unit1) mergeState)
-                waiting = (waitingX <> waitingY)
-              in (ObservableChange waiting newOp, mapMergeState (const waiting) newMergeState)
-            (NothingState, _) -> (ObservableChangeClear, MergeStateCleared)
-            (_, NothingState) -> (ObservableChangeClear, MergeStateCleared)
+    mergeRight _changeLive ObserverStateLoading _ _ = Nothing
+    mergeRight _changeLive (ObserverStateLive (Left _ex)) _ _ = Nothing
 
-    -- TODO deduplicate Clear
+    mergeRight EvaluatedObservableChangeLiveUnchanged _ _ MergeStateLive = Nothing
+    mergeRight EvaluatedObservableChangeLiveUnchanged _ (ObserverStateLive (Left ex)) _ = Just (ObservableChangeLiveThrow ex, MergeStateException Live)
+    mergeRight EvaluatedObservableChangeLiveUnchanged _ _ merged = Just (ObservableChangeLiveUnchanged, changeMergeState Live merged)
 
-  in (Just mergedChange, newMergeStateResult)
+    mergeRight (EvaluatedObservableChangeLiveThrow ex) _ _ _ = Just (ObservableChangeLiveThrow ex, MergeStateException Live)
+
+    mergeRight (EvaluatedObservableChangeLiveDelta delta y) (ObserverStateLive (Right x)) _ (MergeStateValid _) = do
+      mergedDelta <- applyDeltaRight delta y x
+      pure (ObservableChangeLiveDelta mergedDelta, MergeStateValid Live)
+    mergeRight (EvaluatedObservableChangeLiveDelta _delta y) (ObserverStateLive (Right x)) _ _ =
+      Just (ObservableChangeLiveDelta (toInitialDelta (mergeFn x y)), MergeStateValid Live)
 
 
 data BindObservable canLoad exceptions c v = forall p a. IsObservable canLoad exceptions Identity p a => BindObservable a (p -> Observable canLoad exceptions c v)
