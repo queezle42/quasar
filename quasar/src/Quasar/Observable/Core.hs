@@ -283,24 +283,15 @@ applyObservableChange
   => ObservableChange canLoad exceptions c v
   -> ObserverState canLoad exceptions c v
   -> Maybe (EvaluatedObservableChange canLoad exceptions c v, ObserverState canLoad exceptions c v)
-applyObservableChange ObservableChangeLoadingClear ObserverStateLoadingCleared =
-  Nothing
-applyObservableChange ObservableChangeLoadingClear _ =
-  Just (EvaluatedObservableChangeLoadingClear, ObserverStateLoadingCleared)
-applyObservableChange ObservableChangeLoading ObserverStateLoadingCleared =
-  Nothing
-applyObservableChange ObservableChangeLoading (ObserverStateLoadingCached _) =
-  Nothing
-applyObservableChange ObservableChangeLoading (ObserverStateLive state) =
-  Just (EvaluatedObservableChangeLoading, ObserverStateLoadingCached state)
-applyObservableChange ObservableChangeLive ObserverStateLoadingCleared =
-  Nothing
-applyObservableChange ObservableChangeLive (ObserverStateLoadingCached state) =
-  Just (EvaluatedObservableChangeLive, ObserverStateLive state)
-applyObservableChange ObservableChangeLive (ObserverStateLive _) =
-  Nothing
-applyObservableChange (ObservableChangeLiveThrow ex) _ =
-  Just (EvaluatedObservableChangeLiveThrow ex, ObserverStateLive (Left ex))
+applyObservableChange ObservableChangeLoadingClear ObserverStateLoadingCleared = Nothing
+applyObservableChange ObservableChangeLoadingClear _ = Just (EvaluatedObservableChangeLoadingClear, ObserverStateLoadingCleared)
+applyObservableChange ObservableChangeLoadingUnchanged ObserverStateLoadingCleared = Nothing
+applyObservableChange ObservableChangeLoadingUnchanged (ObserverStateLoadingCached _) = Nothing
+applyObservableChange ObservableChangeLoadingUnchanged (ObserverStateLive state) = Just (EvaluatedObservableChangeLoadingUnchanged, ObserverStateLoadingCached state)
+applyObservableChange ObservableChangeLiveUnchanged ObserverStateLoadingCleared = Nothing
+applyObservableChange ObservableChangeLiveUnchanged (ObserverStateLoadingCached state) = Just (EvaluatedObservableChangeLiveUnchanged, ObserverStateLive state)
+applyObservableChange ObservableChangeLiveUnchanged (ObserverStateLive _) = Nothing
+applyObservableChange (ObservableChangeLiveThrow ex) _ = Just (EvaluatedObservableChangeLiveThrow ex, ObserverStateLive (Left ex))
 applyObservableChange (ObservableChangeLiveDelta delta) (ObserverStateCached _ (Right old)) =
   let new = applyDelta delta old
   in Just (EvaluatedObservableChangeLiveDelta delta new, ObserverStateLive (Right new))
@@ -312,24 +303,15 @@ applyEvaluatedObservableChange
   :: EvaluatedObservableChange canLoad exceptions c v
   -> ObserverState canLoad exceptions c v
   -> Maybe (ObserverState canLoad exceptions c v)
-applyEvaluatedObservableChange EvaluatedObservableChangeLoadingClear _ =
-  Just ObserverStateLoadingCleared
-applyEvaluatedObservableChange EvaluatedObservableChangeLoading ObserverStateLoadingCleared =
-  Nothing
-applyEvaluatedObservableChange EvaluatedObservableChangeLoading (ObserverStateLoadingCached _) =
-  Nothing
-applyEvaluatedObservableChange EvaluatedObservableChangeLoading (ObserverStateLive state) =
-  Just (ObserverStateLoadingCached state)
-applyEvaluatedObservableChange EvaluatedObservableChangeLive ObserverStateLoadingCleared =
-  Nothing
-applyEvaluatedObservableChange EvaluatedObservableChangeLive (ObserverStateLoadingCached state) =
-  Just (ObserverStateLive state)
-applyEvaluatedObservableChange EvaluatedObservableChangeLive (ObserverStateLive _) =
-  Nothing
-applyEvaluatedObservableChange (EvaluatedObservableChangeLiveThrow ex) _ =
-  Just (ObserverStateLive (Left ex))
-applyEvaluatedObservableChange (EvaluatedObservableChangeLiveDelta _delta evaluated) _ =
-  Just (ObserverStateLive (Right evaluated))
+applyEvaluatedObservableChange EvaluatedObservableChangeLoadingClear _ = Just ObserverStateLoadingCleared
+applyEvaluatedObservableChange EvaluatedObservableChangeLoadingUnchanged ObserverStateLoadingCleared = Nothing
+applyEvaluatedObservableChange EvaluatedObservableChangeLoadingUnchanged (ObserverStateLoadingCached _) = Nothing
+applyEvaluatedObservableChange EvaluatedObservableChangeLoadingUnchanged (ObserverStateLive state) = Just (ObserverStateLoadingCached state)
+applyEvaluatedObservableChange EvaluatedObservableChangeLiveUnchanged ObserverStateLoadingCleared = Nothing
+applyEvaluatedObservableChange EvaluatedObservableChangeLiveUnchanged (ObserverStateLoadingCached state) = Just (ObserverStateLive state)
+applyEvaluatedObservableChange EvaluatedObservableChangeLiveUnchanged (ObserverStateLive _) = Nothing
+applyEvaluatedObservableChange (EvaluatedObservableChangeLiveThrow ex) _ = Just (ObserverStateLive (Left ex))
+applyEvaluatedObservableChange (EvaluatedObservableChangeLiveDelta _delta evaluated) _ = Just (ObserverStateLive (Right evaluated))
 
 
 createObserverState
