@@ -563,15 +563,15 @@ attachMergeObserver mergeFn applyDeltaLeft applyDeltaRight fx fy callback = do
     mergeLeft EvaluatedObservableChangeLoadingUnchanged _ _ MergeStateLoading = Nothing
     mergeLeft EvaluatedObservableChangeLoadingUnchanged _ _ merged = Just (ObservableChangeLoadingUnchanged, changeMergeState Loading merged)
 
-    mergeLeft _changeLive _ ObserverStateLoading _ = Nothing
-
     mergeLeft EvaluatedObservableChangeLiveUnchanged _ _ MergeStateLive = Nothing
     mergeLeft EvaluatedObservableChangeLiveUnchanged (ObserverStateLive (Left ex)) _ _ = Just (ObservableChangeLiveThrow ex, MergeStateException Live)
+    mergeLeft EvaluatedObservableChangeLiveUnchanged _ ObserverStateLoading _ = Nothing
     mergeLeft EvaluatedObservableChangeLiveUnchanged _ (ObserverStateLive (Left _)) _ = Nothing
     mergeLeft EvaluatedObservableChangeLiveUnchanged _ _ merged = Just (ObservableChangeLiveUnchanged, changeMergeState Live merged)
 
     mergeLeft (EvaluatedObservableChangeLiveThrow ex) _ _ _ = Just (ObservableChangeLiveThrow ex, MergeStateException Live)
 
+    mergeLeft (EvaluatedObservableChangeLiveDelta _ _) _ ObserverStateLoading _ = Nothing
     mergeLeft (EvaluatedObservableChangeLiveDelta _ _) _ (ObserverStateLive (Left _)) _ = Nothing
     mergeLeft (EvaluatedObservableChangeLiveDelta delta x) _ (ObserverStateLive (Right y)) (MergeStateValid _) = do
       mergedDelta <- applyDeltaLeft delta x y
@@ -589,6 +589,7 @@ attachMergeObserver mergeFn applyDeltaLeft applyDeltaRight fx fy callback = do
     mergeRight EvaluatedObservableChangeLoadingClear _ _ _ = Just (ObservableChangeLoadingClear, MergeStateLoadingCleared)
 
     mergeRight EvaluatedObservableChangeLoadingUnchanged _ _ MergeStateLoading = Nothing
+    mergeRight EvaluatedObservableChangeLoadingUnchanged (ObserverStateLive (Left _)) _ _ = Nothing
     mergeRight EvaluatedObservableChangeLoadingUnchanged _ _ merged = Just (ObservableChangeLoadingUnchanged, changeMergeState Loading merged)
 
     mergeRight _changeLive ObserverStateLoading _ _ = Nothing
