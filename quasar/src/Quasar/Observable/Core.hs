@@ -413,7 +413,7 @@ instance ObservableContainer c => IsObservable canLoad exceptions c v (MappedSta
         EvaluatedObservableChangeLiveUnchanged -> EvaluatedObservableChangeLiveUnchanged
         EvaluatedObservableChangeLiveThrow ex ->
           case fn (Left ex) of
-            Left ex -> EvaluatedObservableChangeLiveThrow ex
+            Left newEx -> EvaluatedObservableChangeLiveThrow newEx
             Right new -> EvaluatedObservableChangeLiveDelta (toInitialDelta new) new
         EvaluatedObservableChangeLiveDelta _delta evaluated ->
           case fn (Right evaluated) of
@@ -442,7 +442,7 @@ mapEvaluatedObservable :: (ToObservable canLoad exceptions d p a, ObservableCont
 mapEvaluatedObservable fn = mapObservableContent (fmap fn)
 
 mapObservableState :: (ObservableContent exceptions cp vp -> ObservableContent exceptions c v) -> ObservableState canLoad exceptions cp vp -> ObservableState canLoad exceptions c v
-mapObservableState fn ObservableStateLoading = ObservableStateLoading
+mapObservableState _fn ObservableStateLoading = ObservableStateLoading
 mapObservableState fn (ObservableStateLive content) = ObservableStateLive (fn content)
 
 
