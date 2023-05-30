@@ -56,6 +56,13 @@ module Quasar.Observable.Core (
   toObservableMap,
   ObservableMapDelta(..),
   ObservableMapOperation(..),
+
+  -- * ObservableSet
+  ObservableSet,
+  ToObservableSet,
+  toObservableSet,
+  ObservableSetDelta(..),
+  ObservableSetOperation(..),
 ) where
 
 import Control.Applicative
@@ -63,6 +70,7 @@ import Control.Monad.Except
 import Data.Functor.Identity (Identity(..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Set (Set)
 import Data.String (IsString(..))
 import Quasar.Prelude
 import Quasar.Resources.Disposer
@@ -838,3 +846,27 @@ instance ObservableContainer (Map k) where
 
 toObservableMap :: ToObservable canLoad exceptions (Map k) v a => a -> ObservableMap canLoad exceptions k v
 toObservableMap = toObservable
+
+
+-- ** ObservableSet
+
+type ObservableSet canLoad exceptions v = Observable canLoad exceptions Set v
+
+type ToObservableSet canLoad exceptions v = ToObservable canLoad exceptions Set v
+
+data ObservableSetDelta v
+  = ObservableSetUpdate (Set (ObservableSetOperation v))
+  | ObservableSetReplace (Set v)
+
+data ObservableSetOperation v = ObservableSetInsert v | ObservableSetDelete v
+
+instance ObservableContainer Set where
+  type Delta Set = ObservableSetDelta
+  type Key Set v = v
+  applyDelta = undefined
+  mergeDelta = undefined
+  toInitialDelta = undefined
+  initializeFromDelta = undefined
+
+toObservableSet :: ToObservable canLoad exceptions Set v a => a -> ObservableSet canLoad exceptions v
+toObservableSet = toObservable
