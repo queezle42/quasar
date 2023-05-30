@@ -111,7 +111,7 @@ class ToObservable canLoad exceptions c v a => IsObservable canLoad exceptions c
   isCachedObservable# :: a -> Bool
   isCachedObservable# _ = False
 
-  mapObservable# :: (v -> n) -> a -> Observable canLoad exceptions c n
+  mapObservable# :: (Functor c, Functor (Delta c)) => (v -> n) -> a -> Observable canLoad exceptions c n
   mapObservable# f x = Observable (MappedObservable f x)
 
   mapObservableContent#
@@ -183,7 +183,7 @@ isCachedObservable x = case toObservable x of
   Observable f -> isCachedObservable# f
   ConstObservable _value -> True
 
-mapObservable :: ToObservable canLoad exceptions c v a => (v -> f) -> a -> Observable canLoad exceptions c f
+mapObservable :: (Functor c, Functor (Delta c), ToObservable canLoad exceptions c v a) => (v -> f) -> a -> Observable canLoad exceptions c f
 mapObservable fn x = case toObservable x of
   (Observable f) -> mapObservable# fn f
   (ConstObservable content) -> ConstObservable (fn <$> content)
@@ -209,7 +209,7 @@ data ObservableChange canLoad exceptions c v where
   ObservableChangeLiveThrow :: Ex exceptions -> ObservableChange canLoad exceptions c v
   ObservableChangeLiveDelta :: Delta c v -> ObservableChange canLoad exceptions c v
 
-instance ObservableContainer c => Functor (ObservableChange canLoad exceptions c) where
+instance (Functor (Delta c), ObservableContainer c) => Functor (ObservableChange canLoad exceptions c) where
   fmap _fn ObservableChangeLoadingUnchanged = ObservableChangeLoadingUnchanged
   fmap _fn ObservableChangeLoadingClear = ObservableChangeLoadingClear
   fmap _fn ObservableChangeLiveUnchanged = ObservableChangeLiveUnchanged
@@ -224,7 +224,7 @@ data EvaluatedObservableChange canLoad exceptions c v where
   EvaluatedObservableChangeLiveThrow :: Ex exceptions -> EvaluatedObservableChange canLoad exceptions c v
   EvaluatedObservableChangeLiveDelta :: Delta c v -> c v -> EvaluatedObservableChange canLoad exceptions c v
 
-instance ObservableContainer c => Functor (EvaluatedObservableChange canLoad exceptions c) where
+instance (Functor c, Functor (Delta c), ObservableContainer c) => Functor (EvaluatedObservableChange canLoad exceptions c) where
   fmap _fn EvaluatedObservableChangeLoadingUnchanged =
     EvaluatedObservableChangeLoadingUnchanged
   fmap _fn EvaluatedObservableChangeLoadingClear =
@@ -355,7 +355,7 @@ data Observable canLoad exceptions c v
 instance ObservableContainer c => ToObservable canLoad exceptions c v (Observable canLoad exceptions c v) where
   toObservable = id
 
-instance ObservableContainer c => Functor (Observable canLoad exceptions c) where
+instance (Functor c, Functor (Delta c), ObservableContainer c) => Functor (Observable canLoad exceptions c) where
   fmap = mapObservable
 
 instance (IsString v, Applicative c) => IsString (Observable canLoad exceptions c v) where
@@ -363,7 +363,7 @@ instance (IsString v, Applicative c) => IsString (Observable canLoad exceptions 
 
 
 type ObservableContainer :: (Type -> Type) -> Constraint
-class (Functor c, Functor (Delta c)) => ObservableContainer c where
+class ObservableContainer c where
   type Delta c :: Type -> Type
   type Key c
   applyDelta :: Delta c v -> c v -> c v
@@ -388,9 +388,9 @@ evaluateObservable x = mapObservableContent (fmap Identity) x
 
 data MappedObservable canLoad exceptions c v = forall prev a. IsObservable canLoad exceptions c prev a => MappedObservable (prev -> v) a
 
-instance ObservableContainer c => ToObservable canLoad exceptions c v (MappedObservable canLoad exceptions c v)
+instance (Functor c, Functor (Delta c), ObservableContainer c) => ToObservable canLoad exceptions c v (MappedObservable canLoad exceptions c v)
 
-instance ObservableContainer c => IsObservable canLoad exceptions c v (MappedObservable canLoad exceptions c v) where
+instance (Functor c, Functor (Delta c), ObservableContainer c) => IsObservable canLoad exceptions c v (MappedObservable canLoad exceptions c v) where
   attachObserver# (MappedObservable fn observable) callback =
     fmap3 fn $ attachObserver# observable \final change ->
       callback final (fn <$> change)
