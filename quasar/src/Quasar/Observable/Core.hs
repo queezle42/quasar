@@ -807,12 +807,6 @@ instance Monad (Observable canLoad exceptions Identity) where
 toObservableI :: ToObservableI canLoad exceptions v a => a -> ObservableI canLoad exceptions v
 toObservableI = toObservable
 
---readObservableI# :: IsObservable canLoad exceptions v a => a -> STMc NoRetry '[] (Final, WaitingWithState canLoad exceptions Identity v)
---readObservableI# x = fmap2 runIdentity $ readObservable# x
---
---attachObserverI# :: IsObservable canLoad exceptions v a => a -> (Final -> ObservableChange canLoad exceptions Identity v -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Final, WaitingWithState canLoad exceptions Identity v)
---attachObserverI# x callback = undefined -- fmap3 runIdentity $ attachObserver# x (\final change -> callback final (runIdentity <$> change))
-
 
 -- ** ObservableMap
 
