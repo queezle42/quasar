@@ -127,13 +127,13 @@ class ToObservable canLoad exceptions c v a => IsObservable canLoad exceptions c
   isEmpty# :: a -> ObservableI canLoad exceptions Bool
   isEmpty# = undefined
 
-  lookupKey# :: Ord (Key c) => a -> Selector c -> ObservableI canLoad exceptions (Maybe (Key c))
+  lookupKey# :: Ord (Key c v) => a -> Selector c v -> ObservableI canLoad exceptions (Maybe (Key c v))
   lookupKey# = undefined
 
-  lookupItem# :: Ord (Key c) => a -> Selector c -> ObservableI canLoad exceptions (Maybe (Key c, v))
+  lookupItem# :: Ord (Key c v) => a -> Selector c v -> ObservableI canLoad exceptions (Maybe (Key c v, v))
   lookupItem# = undefined
 
-  lookupValue# :: Ord (Key value) => a -> Selector value -> ObservableI canLoad exceptions (Maybe v)
+  lookupValue# :: Ord (Key c v) => a -> Selector c v -> ObservableI canLoad exceptions (Maybe v)
   lookupValue# = undefined
 
   --query# :: a -> ObservableList canLoad exceptions (Bounds value) -> Observable canLoad exceptions c v
@@ -142,17 +142,17 @@ class ToObservable canLoad exceptions c v a => IsObservable canLoad exceptions c
 --query :: ToObservable canLoad exceptions c v a => a -> ObservableList canLoad exceptions (Bounds c) -> Observable canLoad exceptions c v
 --query = undefined
 
-type Bounds value = (Bound value, Bound value)
+type Bounds c v = (Bound c v, Bound c v)
 
-data Bound c
-  = ExcludingBound (Key c)
-  | IncludingBound (Key c)
+data Bound c v
+  = ExcludingBound (Key c v)
+  | IncludingBound (Key c v)
   | NoBound
 
-data Selector c
+data Selector c v
   = Min
   | Max
-  | Key (Key c)
+  | Key (Key c v)
 
 readObservable
   :: (ToObservable NoLoad exceptions c v a, MonadSTMc NoRetry exceptions m, ExceptionList exceptions)
@@ -365,7 +365,7 @@ instance (IsString v, Applicative c) => IsString (Observable canLoad exceptions 
 type ObservableContainer :: (Type -> Type) -> Constraint
 class ObservableContainer c where
   type Delta c :: Type -> Type
-  type Key c
+  type Key c v
   applyDelta :: Delta c v -> c v -> c v
   mergeDelta :: Delta c v -> Delta c v -> Delta c v
   -- | Produce a delta from a content. The delta replaces any previous content when
@@ -375,7 +375,7 @@ class ObservableContainer c where
 
 instance ObservableContainer Identity where
   type Delta Identity = Identity
-  type Key Identity = ()
+  type Key Identity _v = ()
   applyDelta new _ = new
   mergeDelta _ new = new
   toInitialDelta = id
@@ -830,7 +830,7 @@ instance Functor ObservableMapOperation where
 
 instance ObservableContainer (Map k) where
   type Delta (Map k) = (ObservableMapDelta k)
-  type Key (Map k) = k
+  type Key (Map k) _v = k
   applyDelta = undefined
   mergeDelta = undefined
   toInitialDelta = undefined
