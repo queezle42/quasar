@@ -658,29 +658,15 @@ updateActiveBindRHS
   :: forall canLoad exceptions c v. ObservableContainer c
   => ObservableChange canLoad exceptions c v
   -> BindRHS canLoad exceptions c v
-  -> Maybe (ObservableChange canLoad exceptions c v, BindRHS canLoad exceptions c v)
-updateActiveBindRHS ObservableChangeLoadingClear BindRHSCleared = Nothing
-updateActiveBindRHS ObservableChangeLoadingClear _ = Just (ObservableChangeLoadingClear, BindRHSCleared)
-
-updateActiveBindRHS ObservableChangeLoadingUnchanged BindRHSCleared = Nothing
-updateActiveBindRHS ObservableChangeLoadingUnchanged (BindRHSPendingException Loading _ex) = Nothing
-updateActiveBindRHS ObservableChangeLoadingUnchanged (BindRHSPendingException Live _ex) = unreachableCodePath
-updateActiveBindRHS ObservableChangeLoadingUnchanged (BindRHSPendingDelta Loading _delta) = Nothing
-updateActiveBindRHS ObservableChangeLoadingUnchanged (BindRHSPendingDelta Live _delta) = unreachableCodePath
-updateActiveBindRHS ObservableChangeLoadingUnchanged (BindRHSValid Live) = Just (ObservableChangeLoadingUnchanged, BindRHSValid Loading)
-updateActiveBindRHS ObservableChangeLoadingUnchanged (BindRHSValid Loading) = Nothing
-
-updateActiveBindRHS ObservableChangeLiveUnchanged BindRHSCleared = Nothing
-updateActiveBindRHS ObservableChangeLiveUnchanged (BindRHSPendingException _ ex) = Just (ObservableChangeLiveThrow ex, BindRHSValid Live)
-updateActiveBindRHS ObservableChangeLiveUnchanged (BindRHSPendingDelta _ delta) = Just (ObservableChangeLiveDelta delta, BindRHSValid Live)
-updateActiveBindRHS ObservableChangeLiveUnchanged (BindRHSValid Loading) = Just (ObservableChangeLiveUnchanged, BindRHSValid Live)
-updateActiveBindRHS ObservableChangeLiveUnchanged (BindRHSValid Live) = Nothing
-
-updateActiveBindRHS (ObservableChangeLiveThrow ex) _ = Just (ObservableChangeLiveThrow ex, BindRHSValid Live)
-
-updateActiveBindRHS (ObservableChangeLiveDelta delta) (BindRHSPendingDelta _ prevDelta) = Just (ObservableChangeLiveDelta (mergeDelta @c prevDelta delta), BindRHSValid Live)
-updateActiveBindRHS (ObservableChangeLiveDelta delta) _ = Just (ObservableChangeLiveDelta delta, BindRHSValid Live)
-
+  -> (ObservableChange canLoad exceptions c v, BindRHS canLoad exceptions c v)
+updateActiveBindRHS ObservableChangeLoadingClear _ = (ObservableChangeLoadingClear, BindRHSCleared)
+updateActiveBindRHS ObservableChangeLoadingUnchanged rhs = (ObservableChangeLoadingUnchanged, bindRHSSetLoading Loading rhs)
+updateActiveBindRHS ObservableChangeLiveUnchanged (BindRHSPendingException _ ex) = (ObservableChangeLiveThrow ex, BindRHSValid Live)
+updateActiveBindRHS ObservableChangeLiveUnchanged (BindRHSPendingDelta _ delta) = (ObservableChangeLiveDelta delta, BindRHSValid Live)
+updateActiveBindRHS ObservableChangeLiveUnchanged rhs = (ObservableChangeLiveUnchanged, bindRHSSetLoading Live rhs)
+updateActiveBindRHS (ObservableChangeLiveThrow ex) _ = (ObservableChangeLiveThrow ex, BindRHSValid Live)
+updateActiveBindRHS (ObservableChangeLiveDelta delta) (BindRHSPendingDelta _ prevDelta) = (ObservableChangeLiveDelta (mergeDelta @c prevDelta delta), BindRHSValid Live)
+updateActiveBindRHS (ObservableChangeLiveDelta delta) _ = (ObservableChangeLiveDelta delta, BindRHSValid Live)
 
 
 instance ObservableContainer c => ToObservable canLoad exceptions c v (BindObservable canLoad exceptions c v)
@@ -772,11 +758,9 @@ instance ObservableContainer c => IsObservable canLoad exceptions c v (BindObser
                 BindStateAttachedLoading disposer _ rhs ->
                   writeTVar var (finalX, BindStateAttachedLoading disposer finalY (updateSuspendedBindRHS changeY rhs))
                 BindStateAttachedLive disposer _ rhs -> do
-                  case updateActiveBindRHS changeY rhs of
-                    Nothing -> pure ()
-                    Just (change, newRHS) -> do
-                      writeTVar var (finalX, BindStateAttachedLive disposer finalY newRHS)
-                      callback (finalX && finalY) change
+                  let !(change, newRHS) = updateActiveBindRHS changeY rhs
+                  writeTVar var (finalX, BindStateAttachedLive disposer finalY newRHS)
+                  callback (finalX && finalY) change
                 _ -> pure () -- error: no RHS should be attached in this state
             pure (initialFinalY, initialY, BindStateAttachedLive disposerY initialFinalY (BindRHSValid (observableStateIsLoading initialY)))
 
