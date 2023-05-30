@@ -252,6 +252,10 @@ instance Applicative c => Applicative (ObservableState canLoad exceptions c) whe
   liftA2 _fn ObservableStateLoading _ = ObservableStateLoading
   liftA2 _fn _ ObservableStateLoading = ObservableStateLoading
 
+observableStateIsLoading :: ObservableState canLoad exceptions c v -> Loading canLoad
+observableStateIsLoading ObservableStateLoading = Loading
+observableStateIsLoading (ObservableStateLive _) = Live
+
 type ObserverState :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type
 data ObserverState canLoad exceptions c v where
   ObserverStateLoadingCleared :: ObserverState Load exceptions c v
@@ -610,11 +614,74 @@ attachMergeObserver mergeFn applyDeltaLeft applyDeltaRight fx fy callback = do
 
 data BindObservable canLoad exceptions c v = forall p a. IsObservable canLoad exceptions Identity p a => BindObservable a (p -> Observable canLoad exceptions c v)
 
-data BindState
-  = BindStateDone
-  | BindStateWaiting
-  | BindStateWaitingAttached TSimpleDisposer
-  | BindStateLeftException
+data BindState canLoad exceptions c v where
+  -- LHS cleared
+  BindStateCleared :: BindState Load exceptions c v
+  -- LHS exception
+  BindStateException :: Loading canLoad -> BindState canLoad exceptions c v
+  -- RHS attached
+  BindStateAttachedLoading :: TSimpleDisposer -> Final -> BindRHS canLoad exceptions c v -> BindState canLoad exceptions c v
+  BindStateAttachedLive :: TSimpleDisposer -> Final -> BindRHS canLoad exceptions c v -> BindState canLoad exceptions c v
+
+data BindRHS canLoad exceptions c v where
+  BindRHSCleared :: BindRHS Load exceptions c v
+  BindRHSPendingException :: Loading canLoad -> Ex exceptions -> BindRHS canLoad exceptions c v
+  BindRHSPendingDelta :: Loading canLoad -> Delta c v -> BindRHS canLoad exceptions c v
+  -- Downstream observer has valid content
+  BindRHSValid :: Loading canLoad -> BindRHS canLoad exceptions c v
+
+reactivateBindRHS :: BindRHS canLoad exceptions c v -> Maybe (ObservableChange canLoad exceptions c v, BindRHS canLoad exceptions c v)
+reactivateBindRHS (BindRHSPendingException Live ex) = Just (ObservableChangeLiveThrow ex, BindRHSValid Live)
+reactivateBindRHS (BindRHSPendingDelta Live delta) = Just (ObservableChangeLiveDelta delta, BindRHSValid Live)
+reactivateBindRHS (BindRHSValid Live) = Just (ObservableChangeLiveUnchanged, BindRHSValid Live)
+reactivateBindRHS _ = Nothing
+
+bindRHSSetLoading :: Loading canLoad -> BindRHS canLoad exceptions c v -> BindRHS canLoad exceptions c v
+bindRHSSetLoading _loading BindRHSCleared = BindRHSCleared
+bindRHSSetLoading loading (BindRHSPendingException _ ex) = BindRHSPendingException loading ex
+bindRHSSetLoading loading (BindRHSPendingDelta _ delta) = BindRHSPendingDelta loading delta
+bindRHSSetLoading loading (BindRHSValid _) = BindRHSValid loading
+
+updateSuspendedBindRHS
+  :: forall canLoad exceptions c v. ObservableContainer c
+  => ObservableChange canLoad exceptions c v
+  -> BindRHS canLoad exceptions c v
+  -> BindRHS canLoad exceptions c v
+updateSuspendedBindRHS ObservableChangeLoadingClear _ = BindRHSCleared
+updateSuspendedBindRHS ObservableChangeLoadingUnchanged rhs = bindRHSSetLoading Loading rhs
+updateSuspendedBindRHS ObservableChangeLiveUnchanged rhs = bindRHSSetLoading Live rhs
+updateSuspendedBindRHS (ObservableChangeLiveThrow ex) _ = BindRHSPendingException Live ex
+updateSuspendedBindRHS (ObservableChangeLiveDelta delta) (BindRHSPendingDelta _ prevDelta) = BindRHSPendingDelta Live (mergeDelta @c prevDelta delta)
+updateSuspendedBindRHS (ObservableChangeLiveDelta delta) _ = BindRHSPendingDelta Live delta
+
+updateActiveBindRHS
+  :: forall canLoad exceptions c v. ObservableContainer c
+  => ObservableChange canLoad exceptions c v
+  -> BindRHS canLoad exceptions c v
+  -> Maybe (ObservableChange canLoad exceptions c v, BindRHS canLoad exceptions c v)
+updateActiveBindRHS ObservableChangeLoadingClear BindRHSCleared = Nothing
+updateActiveBindRHS ObservableChangeLoadingClear _ = Just (ObservableChangeLoadingClear, BindRHSCleared)
+
+updateActiveBindRHS ObservableChangeLoadingUnchanged BindRHSCleared = Nothing
+updateActiveBindRHS ObservableChangeLoadingUnchanged (BindRHSPendingException Loading _ex) = Nothing
+updateActiveBindRHS ObservableChangeLoadingUnchanged (BindRHSPendingException Live _ex) = unreachableCodePath
+updateActiveBindRHS ObservableChangeLoadingUnchanged (BindRHSPendingDelta Loading _delta) = Nothing
+updateActiveBindRHS ObservableChangeLoadingUnchanged (BindRHSPendingDelta Live _delta) = unreachableCodePath
+updateActiveBindRHS ObservableChangeLoadingUnchanged (BindRHSValid Live) = Just (ObservableChangeLoadingUnchanged, BindRHSValid Loading)
+updateActiveBindRHS ObservableChangeLoadingUnchanged (BindRHSValid Loading) = Nothing
+
+updateActiveBindRHS ObservableChangeLiveUnchanged BindRHSCleared = Nothing
+updateActiveBindRHS ObservableChangeLiveUnchanged (BindRHSPendingException _ ex) = Just (ObservableChangeLiveThrow ex, BindRHSValid Live)
+updateActiveBindRHS ObservableChangeLiveUnchanged (BindRHSPendingDelta _ delta) = Just (ObservableChangeLiveDelta delta, BindRHSValid Live)
+updateActiveBindRHS ObservableChangeLiveUnchanged (BindRHSValid Loading) = Just (ObservableChangeLiveUnchanged, BindRHSValid Live)
+updateActiveBindRHS ObservableChangeLiveUnchanged (BindRHSValid Live) = Nothing
+
+updateActiveBindRHS (ObservableChangeLiveThrow ex) _ = Just (ObservableChangeLiveThrow ex, BindRHSValid Live)
+
+updateActiveBindRHS (ObservableChangeLiveDelta delta) (BindRHSPendingDelta _ prevDelta) = Just (ObservableChangeLiveDelta (mergeDelta @c prevDelta delta), BindRHSValid Live)
+updateActiveBindRHS (ObservableChangeLiveDelta delta) _ = Just (ObservableChangeLiveDelta delta, BindRHSValid Live)
+
+
 
 instance ObservableContainer c => ToObservable canLoad exceptions c v (BindObservable canLoad exceptions c v)
 
@@ -632,7 +699,94 @@ instance ObservableContainer c => IsObservable canLoad exceptions c v (BindObser
             pure (finalX && finalY, wy)
 
   attachObserver# (BindObservable fx fn) callback = do
-    undefined
+    mfixTVar \var -> do
+      (disposerX, initialFinalX, initialX) <- attachObserver# fx \finalX changeX -> do
+        case changeX of
+          ObservableChangeLoadingClear -> do
+            detach var
+            writeTVar var (finalX, BindStateCleared)
+          ObservableChangeLoadingUnchanged -> do
+            (_, bindState) <- readTVar var
+            case bindState of
+              BindStateCleared -> pure ()
+              BindStateException Loading -> pure ()
+              BindStateException Live -> do
+                writeTVar var (finalX, BindStateException Loading)
+                callback finalX ObservableChangeLoadingUnchanged
+              BindStateAttachedLive disposer finalY rhs@(BindRHSValid Live) -> do
+                writeTVar var (finalX, BindStateAttachedLoading disposer finalY rhs)
+                callback finalX ObservableChangeLoadingUnchanged
+              BindStateAttachedLive disposer finalY rhs -> do
+                writeTVar var (finalX, BindStateAttachedLoading disposer finalY rhs)
+              BindStateAttachedLoading{} -> pure ()
+          ObservableChangeLiveUnchanged -> do
+            (_, bindState) <- readTVar var
+            case bindState of
+              BindStateCleared -> pure ()
+              BindStateException Live -> pure ()
+              BindStateException Loading -> do
+                writeTVar var (finalX, BindStateException Live)
+                callback finalX ObservableChangeLiveUnchanged
+              BindStateAttachedLoading disposer finalY rhs -> do
+                case reactivateBindRHS rhs of
+                  Nothing -> writeTVar var (finalX, BindStateAttachedLive disposer finalY rhs)
+                  Just (change, newRhs) -> do
+                    writeTVar var (finalX, BindStateAttachedLive disposer finalY newRhs)
+                    callback (finalX && finalY) change
+              BindStateAttachedLive{} -> pure ()
+          ObservableChangeLiveThrow ex -> do
+            detach var
+            writeTVar var (finalX, BindStateException Live)
+            callback finalX (ObservableChangeLiveThrow ex)
+          ObservableChangeLiveDelta (Identity x) -> do
+            detach var
+            (finalY, stateY, bindState) <- attach var (fn x)
+            writeTVar var (finalX, bindState)
+            callback (finalX && finalY) case stateY of
+              ObservableStateLoading -> ObservableChangeLoadingClear
+              ObservableStateLive (Left ex) -> ObservableChangeLiveThrow ex
+              ObservableStateLive (Right evaluatedY) ->
+                ObservableChangeLiveDelta (toInitialDelta evaluatedY)
+
+      (initialFinalY, initial, bindState) <- case initialX of
+        ObservableStateLoading -> pure (initialFinalX, ObservableStateLoading, BindStateCleared)
+        ObservableStateLive (Left ex) -> pure (False, ObservableStateLive (Left ex), BindStateException Live)
+        ObservableStateLive (Right (Identity x)) -> attach var (fn x)
+
+      -- TODO should be disposed when sending final callback
+      disposer <- newUnmanagedTSimpleDisposer (detach var)
+
+      pure ((disposerX <> disposer, initialFinalX && initialFinalY, initial), (initialFinalX, bindState))
+    where
+      attach
+        :: TVar (Final, BindState canLoad exceptions c v)
+        -> Observable canLoad exceptions c v
+        -> STMc NoRetry '[] (Final, ObservableState canLoad exceptions c v, BindState canLoad exceptions c v)
+      attach var y = do
+        case y of
+          ConstObservable stateY -> pure (True, stateY, BindStateAttachedLive mempty True (BindRHSValid (observableStateIsLoading stateY)))
+          Observable fy -> do
+            (disposerY, initialFinalY, initialY) <- attachObserver# fy \finalY changeY -> do
+              (finalX, bindState) <- readTVar var
+              case bindState of
+                BindStateAttachedLoading disposer _ rhs ->
+                  writeTVar var (finalX, BindStateAttachedLoading disposer finalY (updateSuspendedBindRHS changeY rhs))
+                BindStateAttachedLive disposer _ rhs -> do
+                  case updateActiveBindRHS changeY rhs of
+                    Nothing -> pure ()
+                    Just (change, newRHS) -> do
+                      writeTVar var (finalX, BindStateAttachedLive disposer finalY newRHS)
+                      callback (finalX && finalY) change
+                _ -> pure () -- error: no RHS should be attached in this state
+            pure (initialFinalY, initialY, BindStateAttachedLive disposerY initialFinalY (BindRHSValid (observableStateIsLoading initialY)))
+
+      detach :: TVar (Final, BindState canLoad exceptions c v) -> STMc NoRetry '[] ()
+      detach var = detach' . snd =<< readTVar var
+
+      detach' :: BindState canLoad exceptions c v -> STMc NoRetry '[] ()
+      detach' (BindStateAttachedLoading disposer _ _) = disposeTSimpleDisposer disposer
+      detach' (BindStateAttachedLive disposer _ _) = disposeTSimpleDisposer disposer
+      detach' _ = pure ()
 
 bindObservable
   :: ObservableContainer c
