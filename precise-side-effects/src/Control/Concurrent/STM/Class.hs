@@ -235,7 +235,7 @@ instance (Monad (t m), MonadTrans t, MonadSTMcBase m) => MonadSTMcBase (t m) whe
 
 
 type MonadSTMc :: CanRetry -> [Type] -> (Type -> Type) -> Constraint
-type MonadSTMc canRetry exceptions m = (If (canRetry == Retry) (MonadRetry m) (() :: Constraint), MonadSTMcBase m, ThrowForAll exceptions m)
+type MonadSTMc canRetry exceptions m = (If (canRetry == Retry) (MonadRetry m) (() :: Constraint), MonadSTMcBase m, ThrowForAll exceptions m, ThrowForAll exceptions (STMc canRetry exceptions))
 
 
 liftSTMc ::
