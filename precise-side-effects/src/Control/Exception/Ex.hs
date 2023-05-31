@@ -179,7 +179,7 @@ class Monad m => MonadThrowEx m where
   -- | Implementation helper. May only ever be called by `throwEx`.
   unsafeThrowEx :: SomeException -> m a
 
-type ThrowEx exceptions m = (MonadThrowEx m, ThrowForAll exceptions m, Exception (Ex exceptions))
+type ThrowEx exceptions m = (MonadThrowEx m, ThrowForAll exceptions m)
 
 throwEx :: ThrowEx exceptions m => Ex exceptions -> m a
 throwEx (Ex ex) = unsafeThrowEx ex
