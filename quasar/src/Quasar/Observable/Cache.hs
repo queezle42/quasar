@@ -28,9 +28,9 @@ data CacheState canWait exceptions c v
       (ObserverState canWait exceptions c v)
   | CacheFinalized (ObservableState canWait exceptions c v)
 
-instance ObservableContainer c => ToObservable canWait exceptions c v (CachedObservable canWait exceptions c v)
+instance ObservableContainer c v => ToObservable canWait exceptions c v (CachedObservable canWait exceptions c v)
 
-instance ObservableContainer c => IsObservable canWait exceptions c v (CachedObservable canWait exceptions c v) where
+instance ObservableContainer c v => IsObservable canWait exceptions c v (CachedObservable canWait exceptions c v) where
   readObservable# (CachedObservable var) = do
     readTVar var >>= \case
       CacheIdle x -> readObservable# x
