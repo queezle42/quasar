@@ -882,14 +882,27 @@ data ObservableSetDelta v
   | ObservableSetReplace (Set v)
 
 data ObservableSetOperation v = ObservableSetInsert v | ObservableSetDelete v
+  deriving (Eq, Ord)
 
-instance ObservableContainer Set where
+applyObservableSetOperation :: Ord v => ObservableSetOperation v -> Set v -> Set v
+applyObservableSetOperation (ObservableSetInsert x) = Set.insert x
+applyObservableSetOperation (ObservableSetDelete x) = Set.delete x
+
+applyObservableSetOperations :: Ord v => Set (ObservableSetOperation v) -> Set v -> Set v
+applyObservableSetOperations ops old = Set.foldr applyObservableSetOperation old ops
+
+instance Ord v => ObservableContainer Set v where
   type Delta Set = ObservableSetDelta
   type Key Set v = v
-  applyDelta = undefined
-  mergeDelta = undefined
-  toInitialDelta = undefined
-  initializeFromDelta = undefined
+  applyDelta (ObservableSetReplace new) _ = new
+  applyDelta (ObservableSetUpdate ops) old = applyObservableSetOperations ops old
+  mergeDelta _ new@ObservableSetReplace{} = new
+  mergeDelta (ObservableSetUpdate old) (ObservableSetUpdate new) = ObservableSetUpdate (Set.union new old)
+  mergeDelta (ObservableSetReplace old) (ObservableSetUpdate new) = ObservableSetReplace (applyObservableSetOperations new old)
+  toInitialDelta = ObservableSetReplace
+  initializeFromDelta (ObservableSetReplace new) = new
+  -- TODO replace with safe implementation once the module is tested
+  initializeFromDelta _ = error "ObservableSet.initializeFromDelta: expected ObservableSetReplace"
 
 toObservableSet :: ToObservable canLoad exceptions Set v a => a -> ObservableSet canLoad exceptions v
 toObservableSet = toObservable
