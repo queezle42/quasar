@@ -841,13 +841,31 @@ instance Functor ObservableMapOperation where
   fmap f (ObservableMapInsert x) = ObservableMapInsert (f x)
   fmap _f ObservableMapDelete = ObservableMapDelete
 
-instance ObservableContainer (Map k) where
+observableMapOperationToMaybe :: ObservableMapOperation v -> Maybe v
+observableMapOperationToMaybe (ObservableMapInsert x) = Just x
+observableMapOperationToMaybe ObservableMapDelete = Nothing
+
+applyObservableMapOperations :: Ord k => Map k (ObservableMapOperation v) -> Map k v -> Map k v
+applyObservableMapOperations ops old =
+  Map.merge
+    Map.preserveMissing'
+    (Map.mapMaybeMissing \_ -> observableMapOperationToMaybe)
+    (Map.zipWithMaybeMatched \_ _ -> observableMapOperationToMaybe)
+    old
+    ops
+
+instance Ord k => ObservableContainer (Map k) v where
   type Delta (Map k) = (ObservableMapDelta k)
-  type Key (Map k) _v = k
-  applyDelta = undefined
-  mergeDelta = undefined
-  toInitialDelta = undefined
-  initializeFromDelta = undefined
+  type Key (Map k) v = k
+  applyDelta (ObservableMapReplace new) _ = new
+  applyDelta (ObservableMapUpdate ops) old = applyObservableMapOperations ops old
+  mergeDelta _ new@ObservableMapReplace{} = new
+  mergeDelta (ObservableMapUpdate old) (ObservableMapUpdate new) = ObservableMapUpdate (Map.union new old)
+  mergeDelta (ObservableMapReplace old) (ObservableMapUpdate new) = ObservableMapReplace (applyObservableMapOperations new old)
+  toInitialDelta = ObservableMapReplace
+  initializeFromDelta (ObservableMapReplace new) = new
+  -- TODO replace with safe implementation once the module is tested
+  initializeFromDelta (ObservableMapUpdate _) = error "ObservableMap.initializeFromDelta: expected ObservableMapReplace"
 
 toObservableMap :: ToObservable canLoad exceptions (Map k) v a => a -> ObservableMap canLoad exceptions k v
 toObservableMap = toObservable
