@@ -18,8 +18,6 @@ import Quasar.Resources.Core
 
 data ObservableVar canLoad c v = ObservableVar (TVar (ObservableState canLoad c v)) (CallbackRegistry (ObservableChange canLoad c v))
 
-instance ObservableContainer c v => ToObservable canLoad c v (ObservableVar canLoad c v)
-
 instance ObservableContainer c v => IsObservable canLoad c v (ObservableVar canLoad c v) where
   attachObserver# (ObservableVar var registry) callback = do
     disposer <- registerCallback registry (callback False)

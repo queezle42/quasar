@@ -28,8 +28,6 @@ data CacheState canWait c v
       (ObserverState canWait c v)
   | CacheFinalized (ObservableState canWait c v)
 
-instance ObservableContainer c v => ToObservable canWait c v (CachedObservable canWait c v)
-
 instance ObservableContainer c v => IsObservable canWait c v (CachedObservable canWait c v) where
   readObservable# (CachedObservable var) = do
     readTVar var >>= \case
@@ -92,8 +90,6 @@ cacheObservable# f =
 -- ** Embedded cache in the Observable monad
 
 data CacheObservableOperation canWait w c v = forall a. IsObservable w c v a => CacheObservableOperation a
-
-instance ToObservable canWait Identity (Observable w c v) (CacheObservableOperation canWait w c v)
 
 instance IsObservable canWait Identity (Observable w c v) (CacheObservableOperation canWait w c v) where
   readObservable# (CacheObservableOperation x) = do

@@ -84,8 +84,6 @@ import Quasar.Utils.Fix
 type ToObservable :: CanLoad -> (Type -> Type) -> Type -> Type -> Constraint
 class ObservableContainer c v => ToObservable canLoad c v a | a -> canLoad, a -> c, a -> v where
   toObservable :: a -> Observable canLoad c v
-  default toObservable :: IsObservable canLoad c v a => a -> Observable canLoad c v
-  toObservable = Observable
 
 type IsObservable :: CanLoad -> (Type -> Type) -> Type -> Type -> Constraint
 class ObservableContainer c v => IsObservable canLoad c v a | a -> canLoad, a -> c, a -> v where
@@ -390,8 +388,6 @@ evaluateObservable x = mapObservableContent Identity x
 
 data MappedObservable canLoad c v = forall prev a. IsObservable canLoad c prev a => MappedObservable (prev -> v) a
 
-instance ObservableFunctor c => ToObservable canLoad c v (MappedObservable canLoad c v)
-
 instance ObservableFunctor c => IsObservable canLoad c v (MappedObservable canLoad c v) where
   attachObserver# (MappedObservable fn observable) callback =
     fmap3 fn $ attachObserver# observable \final change ->
@@ -399,12 +395,10 @@ instance ObservableFunctor c => IsObservable canLoad c v (MappedObservable canLo
   readObservable# (MappedObservable fn observable) =
     fmap3 fn $ readObservable# observable
   mapObservable# f1 (MappedObservable f2 upstream) =
-    toObservable $ MappedObservable (f1 . f2) upstream
+    Observable $ MappedObservable (f1 . f2) upstream
 
 
 data MappedStateObservable canLoad c v = forall d p a. IsObservable canLoad d p a => MappedStateObservable (ObservableContent d p -> ObservableContent c v) a
-
-instance ObservableContainer c v => ToObservable canLoad c v (MappedStateObservable canLoad c v)
 
 instance ObservableContainer c v => IsObservable canLoad c v (MappedStateObservable canLoad c v) where
   attachEvaluatedObserver# (MappedStateObservable fn observable) callback =
@@ -421,10 +415,10 @@ instance ObservableContainer c v => IsObservable canLoad c v (MappedStateObserva
     fmap2 (mapObservableState fn) $ readObservable# observable
 
   mapObservable# f1 (MappedStateObservable f2 observable) =
-    toObservable (MappedStateObservable (fmap f1 . f2) observable)
+    Observable (MappedStateObservable (fmap f1 . f2) observable)
 
   mapObservableContent# f1 (MappedStateObservable f2 observable) =
-    toObservable (MappedStateObservable (f1 . f2) observable)
+    Observable (MappedStateObservable (f1 . f2) observable)
 
 -- | Apply a function to an observable that can replace the whole content. The
 -- mapped observable is always fully evaluated.
@@ -444,8 +438,6 @@ mapObservableState fn (ObservableStateLive content) = ObservableStateLive (fn co
 
 
 data LiftA2Observable w c v = forall va vb a b. (IsObservable w c va a, IsObservable w c vb b) => LiftA2Observable (va -> vb -> v) a b
-
-instance (Applicative c, ObservableContainer c v) => ToObservable canLoad c v (LiftA2Observable canLoad c v)
 
 instance (Applicative c, ObservableContainer c v) => IsObservable canLoad c v (LiftA2Observable canLoad c v) where
   readObservable# (LiftA2Observable fn fx fy) = do
@@ -642,8 +634,6 @@ updateActiveBindRHS ObservableChangeLiveUnchanged rhs = (ObservableChangeLiveUnc
 updateActiveBindRHS (ObservableChangeLiveDelta delta) (BindRHSPendingDelta _ prevDelta) = (ObservableChangeLiveDelta (mergeDelta @c prevDelta delta), BindRHSValid Live)
 updateActiveBindRHS (ObservableChangeLiveDelta delta) _ = (ObservableChangeLiveDelta delta, BindRHSValid Live)
 
-
-instance ObservableContainer c v => ToObservable canLoad c v (BindObservable canLoad c v)
 
 instance ObservableContainer c v => IsObservable canLoad c v (BindObservable canLoad c v) where
   readObservable# (BindObservable fx fn) = do
