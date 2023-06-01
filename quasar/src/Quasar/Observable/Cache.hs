@@ -16,21 +16,21 @@ import Quasar.Utils.CallbackRegistry
 
 -- * Cache
 
-newtype CachedObservable canWait exceptions c v = CachedObservable (TVar (CacheState canWait exceptions c v))
+newtype CachedObservable canWait c v = CachedObservable (TVar (CacheState canWait c v))
 
-data CacheState canWait exceptions c v
-  = forall a. IsObservable canWait exceptions c v a => CacheIdle a
-  | forall a. IsObservable canWait exceptions c v a =>
+data CacheState canWait c v
+  = forall a. IsObservable canWait c v a => CacheIdle a
+  | forall a. IsObservable canWait c v a =>
     CacheAttached
       a
       TSimpleDisposer
-      (CallbackRegistry (Final, EvaluatedObservableChange canWait exceptions c v))
-      (ObserverState canWait exceptions c v)
-  | CacheFinalized (ObservableState canWait exceptions c v)
+      (CallbackRegistry (Final, EvaluatedObservableChange canWait c v))
+      (ObserverState canWait c v)
+  | CacheFinalized (ObservableState canWait c v)
 
-instance ObservableContainer c v => ToObservable canWait exceptions c v (CachedObservable canWait exceptions c v)
+instance ObservableContainer c v => ToObservable canWait c v (CachedObservable canWait c v)
 
-instance ObservableContainer c v => IsObservable canWait exceptions c v (CachedObservable canWait exceptions c v) where
+instance ObservableContainer c v => IsObservable canWait c v (CachedObservable canWait c v) where
   readObservable# (CachedObservable var) = do
     readTVar var >>= \case
       CacheIdle x -> readObservable# x
@@ -57,7 +57,7 @@ instance ObservableContainer c v => IsObservable canWait exceptions c v (CachedO
             writeTVar var (CacheIdle upstream)
             disposeTSimpleDisposer upstreamDisposer
           CacheFinalized _ -> pure ()
-      updateCache :: Final -> EvaluatedObservableChange canWait exceptions c v -> STMc NoRetry '[] ()
+      updateCache :: Final -> EvaluatedObservableChange canWait c v -> STMc NoRetry '[] ()
       updateCache final change = do
         readTVar var >>= \case
           CacheIdle _ -> unreachableCodePath
@@ -76,7 +76,7 @@ instance ObservableContainer c v => IsObservable canWait exceptions c v (CachedO
 
   isCachedObservable# _ = True
 
-cacheObservable :: (ToObservable canWait exceptions c v a, MonadSTMc NoRetry '[] m) => a -> m (Observable canWait exceptions c v)
+cacheObservable :: (ToObservable canWait c v a, MonadSTMc NoRetry '[] m) => a -> m (Observable canWait c v)
 cacheObservable x =
   case toObservable x of
     c@(ConstObservable _) -> pure c
@@ -88,22 +88,22 @@ cacheObservable x =
 
 -- ** Embedded cache in the Observable monad
 
-data CacheObservableOperation canWait exceptions w e c v = forall a. ToObservable w e c v a => CacheObservableOperation a
+data CacheObservableOperation canWait w c v = forall a. ToObservable w c v a => CacheObservableOperation a
 
-instance ToObservable canWait exceptions Identity (Observable w e c v) (CacheObservableOperation canWait exceptions w e c v)
+instance ToObservable canWait Identity (Observable w c v) (CacheObservableOperation canWait w c v)
 
-instance IsObservable canWait exceptions Identity (Observable w e c v) (CacheObservableOperation canWait exceptions w e c v) where
+instance IsObservable canWait Identity (Observable w c v) (CacheObservableOperation canWait w c v) where
   readObservable# (CacheObservableOperation x) = do
     cache <- cacheObservable x
-    pure (True, ObservableStateLive (Right (Identity cache)))
+    pure (True, ObservableStateLive (Identity cache))
   attachObserver# (CacheObservableOperation x) _callback = do
     cache <- cacheObservable x
-    pure (mempty, True, ObservableStateLive (Right (Identity cache)))
+    pure (mempty, True, ObservableStateLive (Identity cache))
 
 -- | Cache an observable in the `ObservableI` monad. Use with care! A new cache
 -- is recreated whenever the result of this function is reevaluated.
-observeCachedObservable :: forall canWait exceptions w e c v a. ToObservable w e c v a => a -> ObservableI canWait exceptions (Observable w e c v)
+observeCachedObservable :: forall canWait w c v a. ToObservable w c v a => a -> ObservableI canWait (Observable w c v)
 observeCachedObservable x =
   case toObservable x of
     c@(ConstObservable _) -> pure c
-    (Observable f) -> Observable (CacheObservableOperation @canWait @exceptions f)
+    (Observable f) -> Observable (CacheObservableOperation @canWait f)
