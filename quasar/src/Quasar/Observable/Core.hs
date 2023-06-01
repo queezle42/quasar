@@ -906,3 +906,27 @@ instance Ord v => ObservableContainer Set v where
 
 toObservableSet :: ToObservable canLoad exceptions Set v a => a -> ObservableSet canLoad exceptions v
 toObservableSet = toObservable
+
+
+-- ** Exception wrapper
+
+data ObservableEx exceptions c v
+  = ObservableExOk (c v)
+  | ObservableExFailed (Ex exceptions)
+
+data ObservableExDelta exceptions c v
+  = ObservableExDeltaOk (Delta c v)
+  | ObservableExDeltaThrow (Ex exceptions)
+
+instance ObservableContainer c v => ObservableContainer (ObservableEx exceptions c) v where
+  type Delta (ObservableEx exceptions c) = ObservableExDelta exceptions c
+  type Key (ObservableEx exceptions c) v = Key c v
+  applyDelta (ObservableExDeltaThrow ex) _ = ObservableExFailed ex
+  applyDelta (ObservableExDeltaOk delta) (ObservableExOk old) = ObservableExOk (applyDelta delta old)
+  applyDelta (ObservableExDeltaOk delta) _ = ObservableExOk (initializeFromDelta delta)
+  mergeDelta (ObservableExDeltaOk old) (ObservableExDeltaOk new) = ObservableExDeltaOk (mergeDelta @c old new)
+  mergeDelta _ new = new
+  toInitialDelta (ObservableExOk initial) = ObservableExDeltaOk (toInitialDelta initial)
+  toInitialDelta (ObservableExFailed ex) = ObservableExDeltaThrow ex
+  initializeFromDelta (ObservableExDeltaOk initial) = ObservableExOk (initializeFromDelta initial)
+  initializeFromDelta (ObservableExDeltaThrow ex) = ObservableExFailed ex
