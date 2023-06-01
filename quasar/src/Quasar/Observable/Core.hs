@@ -844,23 +844,23 @@ toObservableSet = toObservable
 
 -- ** Exception wrapper
 
-data ObservableEx exceptions c v
-  = ObservableExOk (c v)
-  | ObservableExFailed (Ex exceptions)
+data ObservableResult exceptions c v
+  = ObservableResultOk (c v)
+  | ObservableResultEx (Ex exceptions)
 
-data ObservableExDelta exceptions c v
-  = ObservableExDeltaOk (Delta c v)
-  | ObservableExDeltaThrow (Ex exceptions)
+data ObservableResultDelta exceptions c v
+  = ObservableResultDeltaOk (Delta c v)
+  | ObservableResultDeltaThrow (Ex exceptions)
 
-instance ObservableContainer c v => ObservableContainer (ObservableEx exceptions c) v where
-  type Delta (ObservableEx exceptions c) = ObservableExDelta exceptions c
-  type Key (ObservableEx exceptions c) v = Key c v
-  applyDelta (ObservableExDeltaThrow ex) _ = ObservableExFailed ex
-  applyDelta (ObservableExDeltaOk delta) (ObservableExOk old) = ObservableExOk (applyDelta delta old)
-  applyDelta (ObservableExDeltaOk delta) _ = ObservableExOk (initializeFromDelta delta)
-  mergeDelta (ObservableExDeltaOk old) (ObservableExDeltaOk new) = ObservableExDeltaOk (mergeDelta @c old new)
+instance ObservableContainer c v => ObservableContainer (ObservableResult exceptions c) v where
+  type Delta (ObservableResult exceptions c) = ObservableResultDelta exceptions c
+  type Key (ObservableResult exceptions c) v = Key c v
+  applyDelta (ObservableResultDeltaThrow ex) _ = ObservableResultEx ex
+  applyDelta (ObservableResultDeltaOk delta) (ObservableResultOk old) = ObservableResultOk (applyDelta delta old)
+  applyDelta (ObservableResultDeltaOk delta) _ = ObservableResultOk (initializeFromDelta delta)
+  mergeDelta (ObservableResultDeltaOk old) (ObservableResultDeltaOk new) = ObservableResultDeltaOk (mergeDelta @c old new)
   mergeDelta _ new = new
-  toInitialDelta (ObservableExOk initial) = ObservableExDeltaOk (toInitialDelta initial)
-  toInitialDelta (ObservableExFailed ex) = ObservableExDeltaThrow ex
-  initializeFromDelta (ObservableExDeltaOk initial) = ObservableExOk (initializeFromDelta initial)
-  initializeFromDelta (ObservableExDeltaThrow ex) = ObservableExFailed ex
+  toInitialDelta (ObservableResultOk initial) = ObservableResultDeltaOk (toInitialDelta initial)
+  toInitialDelta (ObservableResultEx ex) = ObservableResultDeltaThrow ex
+  initializeFromDelta (ObservableResultDeltaOk initial) = ObservableResultOk (initializeFromDelta initial)
+  initializeFromDelta (ObservableResultDeltaThrow ex) = ObservableResultEx ex
