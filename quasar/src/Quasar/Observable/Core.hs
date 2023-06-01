@@ -88,7 +88,7 @@ class ObservableContainer c v => ToObservable canLoad c v a | a -> canLoad, a ->
   toObservable = Observable
 
 type IsObservable :: CanLoad -> (Type -> Type) -> Type -> Type -> Constraint
-class ToObservable canLoad c v a => IsObservable canLoad c v a | a -> canLoad, a -> c, a -> v where
+class ObservableContainer c v => IsObservable canLoad c v a | a -> canLoad, a -> c, a -> v where
   {-# MINIMAL readObservable#, (attachObserver# | attachEvaluatedObserver#) #-}
 
   readObservable# :: a -> STMc NoRetry '[] (Final, ObservableState canLoad c v)

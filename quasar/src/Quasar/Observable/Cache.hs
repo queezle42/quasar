@@ -80,24 +80,27 @@ cacheObservable :: (ToObservable canWait c v a, MonadSTMc NoRetry '[] m) => a ->
 cacheObservable x =
   case toObservable x of
     c@(ConstObservable _) -> pure c
-    y@(Observable f) ->
-      if isCachedObservable# f
-        then pure y
-        else Observable . CachedObservable <$> newTVar (CacheIdle f)
+    (Observable f) -> cacheObservable# f
+
+cacheObservable# :: (IsObservable canWait c v a, MonadSTMc NoRetry '[] m) => a -> m (Observable canWait c v)
+cacheObservable# f =
+  if isCachedObservable# f
+    then pure (Observable f)
+    else Observable . CachedObservable <$> newTVar (CacheIdle f)
 
 
 -- ** Embedded cache in the Observable monad
 
-data CacheObservableOperation canWait w c v = forall a. ToObservable w c v a => CacheObservableOperation a
+data CacheObservableOperation canWait w c v = forall a. IsObservable w c v a => CacheObservableOperation a
 
 instance ToObservable canWait Identity (Observable w c v) (CacheObservableOperation canWait w c v)
 
 instance IsObservable canWait Identity (Observable w c v) (CacheObservableOperation canWait w c v) where
   readObservable# (CacheObservableOperation x) = do
-    cache <- cacheObservable x
+    cache <- cacheObservable# x
     pure (True, ObservableStateLive (Identity cache))
   attachObserver# (CacheObservableOperation x) _callback = do
-    cache <- cacheObservable x
+    cache <- cacheObservable# x
     pure (mempty, True, ObservableStateLive (Identity cache))
 
 -- | Cache an observable in the `ObservableI` monad. Use with care! A new cache
