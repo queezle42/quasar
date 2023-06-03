@@ -131,25 +131,25 @@ class ObservableContainer c v => IsObservableCore canLoad c v a | a -> canLoad, 
     -> ObservableCore canLoad ca va
   mapObservableContent# f x = DynObservableCore (MappedStateObservable f x)
 
-  count# :: a -> ObservableI canLoad exceptions Int64
+  count# :: a -> ObservableCore canLoad (SelectorResult c) Int64
   count# = undefined
 
-  isEmpty# :: a -> ObservableI canLoad exceptions Bool
+  isEmpty# :: a -> ObservableCore canLoad (SelectorResult c) Bool
   isEmpty# = undefined
 
-  lookupKey# :: Ord (Key c v) => a -> Selector c v -> ObservableI canLoad exceptions (Maybe (Key c v))
+  lookupKey# :: Ord (Key c v) => a -> Selector c v -> ObservableCore canLoad (SelectorResult c) (Maybe (Key c v))
   lookupKey# = undefined
 
-  lookupItem# :: Ord (Key c v) => a -> Selector c v -> ObservableI canLoad exceptions (Maybe (Key c v, v))
+  lookupItem# :: Ord (Key c v) => a -> Selector c v -> ObservableCore canLoad (SelectorResult c) (Maybe (Key c v, v))
   lookupItem# = undefined
 
-  lookupValue# :: Ord (Key c v) => a -> Selector c v -> ObservableI canLoad exceptions (Maybe v)
+  lookupValue# :: Ord (Key c v) => a -> Selector c v -> ObservableCore canLoad (SelectorResult c) (Maybe v)
   lookupValue# = undefined
 
-  --query# :: a -> ObservableList canLoad (Bounds value) -> Observable canLoad c v
+  --query# :: a -> ObservableList canLoad (Bounds c v) -> ObservableCore canLoad c v
   --query# = undefined
 
---query :: ToObservable canLoad c v a => a -> ObservableList canLoad (Bounds c) -> Observable canLoad c v
+--query :: ToObservable canLoad exceptions c v a => a -> ObservableList canLoad (Bounds c v) -> Observable canLoad exceptions c v
 --query = undefined
 
 type Bounds c v = (Bound c v, Bound c v)
@@ -402,6 +402,7 @@ type ObservableContainer :: (Type -> Type) -> Type -> Constraint
 class ObservableContainer c v where
   type Delta c :: Type -> Type
   type Key c v
+  type SelectorResult c :: Type -> Type
   applyDelta :: Delta c v -> c v -> c v
   mergeDelta :: Delta c v -> Delta c v -> Delta c v
   -- | Produce a delta from a content. The delta replaces any previous content when
@@ -414,6 +415,7 @@ type ObservableFunctor c = (Functor c, Functor (Delta c), forall v. ObservableCo
 instance ObservableContainer Identity v where
   type Delta Identity = Identity
   type Key Identity v = ()
+  type SelectorResult Identity = Identity
   applyDelta new _ = new
   mergeDelta _ new = new
   toInitialDelta = id
@@ -831,6 +833,7 @@ applyObservableMapOperations ops old =
 instance Ord k => ObservableContainer (Map k) v where
   type Delta (Map k) = (ObservableMapDelta k)
   type Key (Map k) v = k
+  type SelectorResult (Map k) = Identity
   applyDelta (ObservableMapReplace new) _ = new
   applyDelta (ObservableMapUpdate ops) old = applyObservableMapOperations ops old
   mergeDelta _ new@ObservableMapReplace{} = new
@@ -868,6 +871,7 @@ applyObservableSetOperations ops old = Set.foldr applyObservableSetOperation old
 instance Ord v => ObservableContainer Set v where
   type Delta Set = ObservableSetDelta
   type Key Set v = v
+  type SelectorResult Set = Identity
   applyDelta (ObservableSetReplace new) _ = new
   applyDelta (ObservableSetUpdate ops) old = applyObservableSetOperations ops old
   mergeDelta _ new@ObservableSetReplace{} = new
@@ -918,6 +922,7 @@ instance Functor (Delta c) => Functor (ObservableResultDelta exceptions c) where
 instance ObservableContainer c v => ObservableContainer (ObservableResult exceptions c) v where
   type Delta (ObservableResult exceptions c) = ObservableResultDelta exceptions c
   type Key (ObservableResult exceptions c) v = Key c v
+  type SelectorResult (ObservableResult exceptions c) = (ObservableResult exceptions Identity)
   applyDelta (ObservableResultDeltaThrow ex) _ = ObservableResultEx ex
   applyDelta (ObservableResultDeltaOk delta) (ObservableResultOk old) = ObservableResultOk (applyDelta delta old)
   applyDelta (ObservableResultDeltaOk delta) _ = ObservableResultOk (initializeFromDelta delta)
