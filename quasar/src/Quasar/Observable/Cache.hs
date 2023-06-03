@@ -32,8 +32,8 @@ instance ObservableContainer c v => IsObservableCore canLoad c v (CachedObservab
   readObservable# (CachedObservable var) = do
     readTVar var >>= \case
       CacheIdle x -> readObservable# x
-      CacheAttached _x _disposer _registry state -> pure (False, toObservableState state)
-      CacheFinalized state -> pure (True, state)
+      CacheAttached _x _disposer _registry (ObserverStateLive state) -> pure (False, state)
+      CacheFinalized (ObservableStateLive state) -> pure (True, state)
   attachEvaluatedObserver# (CachedObservable var) callback = do
     readTVar var >>= \case
       CacheIdle upstream -> do
@@ -94,7 +94,7 @@ data CacheObservableOperation canLoad exceptions l e c v = forall a. ToObservabl
 instance IsObservableCore canLoad (ObservableResult exceptions Identity) (Observable l e c v) (CacheObservableOperation canLoad exceptions l e c v) where
   readObservable# (CacheObservableOperation x) = do
     cache <- cacheObservable x
-    pure (True, ObservableStateLive (pure cache))
+    pure (True, pure cache)
   attachObserver# (CacheObservableOperation x) _callback = do
     cache <- cacheObservable x
     pure (mempty, True, ObservableStateLive (pure cache))

@@ -91,7 +91,10 @@ type IsObservableCore :: CanLoad -> (Type -> Type) -> Type -> Type -> Constraint
 class ObservableContainer c v => IsObservableCore canLoad c v a | a -> canLoad, a -> c, a -> v where
   {-# MINIMAL readObservable#, (attachObserver# | attachEvaluatedObserver#) #-}
 
-  readObservable# :: a -> STMc NoRetry '[] (Final, ObservableState canLoad c v)
+  readObservable#
+    :: canLoad ~ NoLoad
+    => a
+    -> STMc NoRetry '[] (Final, c v)
 
   attachObserver#
     :: a
@@ -172,7 +175,7 @@ readObservable x = liftSTMc @NoRetry @exceptions case toObservable x of
   (ConstObservable (ObservableStateLive (ObservableResultOk result))) -> pure result
   (ConstObservable (ObservableStateLive (ObservableResultEx ex))) -> throwEx ex
   (DynObservable y) -> liftSTMc @NoRetry @'[] (readObservable# y) >>= \case
-    (_final, ObservableStateLive result) -> unwrapObservableResult result
+    (_final, result) -> unwrapObservableResult result
 
 attachObserver :: (ToObservable canLoad exceptions c v a, MonadSTMc NoRetry '[] m) => a -> (Final -> ObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, ObservableState canLoad (ObservableResult exceptions c) v)
 attachObserver x callback = liftSTMc
@@ -452,7 +455,7 @@ instance ObservableContainer c v => IsObservableCore canLoad c v (MappedStateObs
           in EvaluatedObservableChangeLiveDelta (toInitialDelta new) new
 
   readObservable# (MappedStateObservable fn observable) =
-    fmap2 (mapObservableState fn) $ readObservable# observable
+    fn <<$>> readObservable# observable
 
   mapObservable# f1 (MappedStateObservable f2 observable) =
     DynObservableCore (MappedStateObservable (fmap f1 . f2) observable)
@@ -673,15 +676,12 @@ updateActiveBindRHS (ObservableChangeLiveDelta delta) _ = (ObservableChangeLiveD
 
 instance ObservableContainer c v => IsObservableCore canLoad c v (EvaluatedBindObservable canLoad c v) where
   readObservable# (EvaluatedBindObservable fx fn) = do
-    (finalX, wx) <- readObservable# fx
-    case wx of
-      ObservableStateLoading -> pure (finalX, ObservableStateLoading)
-      ObservableStateLive x ->
-        case fn x of
-          ConstObservableCore wy -> pure (finalX, wy)
-          DynObservableCore fy -> do
-            (finalY, wy) <- readObservable# fy
-            pure (finalX && finalY, wy)
+    (finalX, x) <- readObservable# fx
+    case fn x of
+      ConstObservableCore (ObservableStateLive wy) -> pure (finalX, wy)
+      DynObservableCore fy -> do
+        (finalY, wy) <- readObservable# fy
+        pure (finalX && finalY, wy)
 
   attachObserver# (EvaluatedBindObservable fx fn) callback = do
     mfixTVar \var -> do

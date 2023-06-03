@@ -24,7 +24,9 @@ instance ObservableContainer c v => IsObservableCore canLoad c v (ObservableVar 
     value <- readTVar var
     pure (disposer, False, value)
 
-  readObservable# (ObservableVar var _registry) = (False,) <$> readTVar var
+  readObservable# (ObservableVar var _registry) =
+    (\case ObservableStateLive state -> (False, state)) <$> readTVar var
+
 
 newObservableVar :: MonadSTMc NoRetry '[] m => c v -> m (ObservableVar canLoad c v)
 newObservableVar x = liftSTMc $ ObservableVar <$> newTVar (ObservableStateLive x) <*> newCallbackRegistry
