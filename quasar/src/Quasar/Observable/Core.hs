@@ -39,7 +39,7 @@ module Quasar.Observable.Core (
   ObservableChange(..),
   EvaluatedObservableChange(..),
   ObservableState(.., ObservableStateLiveOk, ObservableStateLiveEx),
-  ObserverState(..),
+  ObserverState(.., ObserverStateLoading, ObserverStateLiveOk, ObserverStateLiveEx),
   createObserverState,
   toObservableState,
   applyObservableChange,
@@ -246,10 +246,10 @@ instance (Functor c, Functor (Delta c)) => Functor (EvaluatedObservableChange ca
 
 {-# COMPLETE ObservableStateLiveOk, ObservableStateLiveEx, ObservableStateLoading #-}
 
-pattern ObservableStateLiveOk :: c v -> ObservableState canLoad (ObservableResult exceptions c) v
+pattern ObservableStateLiveOk :: forall canLoad exceptions c v. c v -> ObservableState canLoad (ObservableResult exceptions c) v
 pattern ObservableStateLiveOk content = ObservableStateLive (ObservableResultOk content)
 
-pattern ObservableStateLiveEx :: Ex exceptions -> ObservableState canLoad (ObservableResult exceptions c) v
+pattern ObservableStateLiveEx :: forall canLoad exceptions c v. Ex exceptions -> ObservableState canLoad (ObservableResult exceptions c) v
 pattern ObservableStateLiveEx ex = ObservableStateLive (ObservableResultEx ex)
 
 type ObservableState :: CanLoad -> (Type -> Type) -> Type -> Type
@@ -286,6 +286,15 @@ data ObserverState canLoad c v where
 
 pattern ObserverStateLoading :: () => (canLoad ~ Load) => ObserverState canLoad c v
 pattern ObserverStateLoading <- (observerStateIsLoading -> Loading)
+
+{-# COMPLETE ObserverStateLiveOk, ObserverStateLiveEx, ObserverStateLoading #-}
+{-# COMPLETE ObserverStateLiveOk, ObserverStateLiveEx, ObserverStateLoadingCached, ObserverStateLoadingCleared #-}
+
+pattern ObserverStateLiveOk :: forall canLoad exceptions c v. c v -> ObserverState canLoad (ObservableResult exceptions c) v
+pattern ObserverStateLiveOk content = ObserverStateLive (ObservableResultOk content)
+
+pattern ObserverStateLiveEx :: forall canLoad exceptions c v. Ex exceptions -> ObserverState canLoad (ObservableResult exceptions c) v
+pattern ObserverStateLiveEx ex = ObserverStateLive (ObservableResultEx ex)
 
 observerStateIsLoading :: ObserverState canLoad c v -> Loading canLoad
 observerStateIsLoading ObserverStateLoadingCleared = Loading
