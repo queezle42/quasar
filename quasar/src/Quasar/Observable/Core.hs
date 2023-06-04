@@ -45,8 +45,11 @@ module Quasar.Observable.Core (
   applyObservableChange,
   applyEvaluatedObservableChange,
 
+  -- *** Exception handling types
   ObservableResult(..),
   ObservableResultDelta(..),
+  unwrapObservableResult,
+  mapObservableResultContent,
 
   -- * Identity observable (single value without partial updates)
   ObservableI,
