@@ -820,11 +820,27 @@ instance Functor (ObservableMapDelta k) where
   fmap f (ObservableMapUpdate x) = ObservableMapUpdate (f <<$>> x)
   fmap f (ObservableMapReplace x) = ObservableMapReplace (f <$> x)
 
+instance Foldable (ObservableMapDelta k) where
+  foldMap f (ObservableMapUpdate x) = foldMap (foldMap f) x
+  foldMap f (ObservableMapReplace x) = foldMap f x
+
+instance Traversable (ObservableMapDelta k) where
+  traverse f (ObservableMapUpdate ops) = ObservableMapUpdate <$> traverse (traverse f) ops
+  traverse f (ObservableMapReplace new) = ObservableMapReplace <$> traverse f new
+
 data ObservableMapOperation v = ObservableMapInsert v | ObservableMapDelete
 
 instance Functor ObservableMapOperation where
   fmap f (ObservableMapInsert x) = ObservableMapInsert (f x)
   fmap _f ObservableMapDelete = ObservableMapDelete
+
+instance Foldable ObservableMapOperation where
+  foldMap f (ObservableMapInsert x) = f x
+  foldMap _f ObservableMapDelete = mempty
+
+instance Traversable ObservableMapOperation where
+  traverse f (ObservableMapInsert x) = ObservableMapInsert <$> f x
+  traverse _f ObservableMapDelete = pure ObservableMapDelete
 
 observableMapOperationToMaybe :: ObservableMapOperation v -> Maybe v
 observableMapOperationToMaybe (ObservableMapInsert x) = Just x
@@ -912,6 +928,14 @@ instance Applicative c => Applicative (ObservableResult exceptions c) where
   liftA2 _fn _fx (ObservableResultEx ex) = ObservableResultEx ex
   liftA2 fn (ObservableResultOk fx) (ObservableResultOk fy) = ObservableResultOk (liftA2 fn fx fy)
 
+instance Foldable c => Foldable (ObservableResult exceptions c) where
+  foldMap f (ObservableResultOk x) = foldMap f x
+  foldMap _f (ObservableResultEx _ex) = mempty
+
+instance Traversable c => Traversable (ObservableResult exceptions c) where
+  traverse f (ObservableResultOk x) = ObservableResultOk <$> traverse f x
+  traverse _f (ObservableResultEx ex) = pure (ObservableResultEx ex)
+
 unwrapObservableResult :: MonadSTMc NoRetry exceptions m => ObservableResult exceptions c v -> m (c v)
 unwrapObservableResult (ObservableResultOk result) = pure result
 unwrapObservableResult (ObservableResultEx ex) = throwEx ex
@@ -927,6 +951,14 @@ data ObservableResultDelta exceptions c v
 instance Functor (Delta c) => Functor (ObservableResultDelta exceptions c) where
   fmap fn (ObservableResultDeltaOk fx) = ObservableResultDeltaOk (fn <$> fx)
   fmap _fn (ObservableResultDeltaThrow ex) = ObservableResultDeltaThrow ex
+
+instance Foldable (Delta c) => Foldable (ObservableResultDelta exceptions c) where
+  foldMap f (ObservableResultDeltaOk delta) = foldMap f delta
+  foldMap _f (ObservableResultDeltaThrow _ex) = mempty
+
+instance Traversable (Delta c) => Traversable (ObservableResultDelta exceptions c) where
+  traverse f (ObservableResultDeltaOk delta) = ObservableResultDeltaOk <$> traverse f delta
+  traverse _f (ObservableResultDeltaThrow ex) = pure (ObservableResultDeltaThrow ex)
 
 instance ObservableContainer c v => ObservableContainer (ObservableResult exceptions c) v where
   type Delta (ObservableResult exceptions c) = ObservableResultDelta exceptions c
