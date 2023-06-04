@@ -36,7 +36,7 @@ module Quasar.Observable.Core (
 
   -- ** Additional types
   Final,
-  ObservableChange(..),
+  ObservableChange(.., ObservableChangeLiveDeltaOk, ObservableChangeLiveDeltaThrow),
   EvaluatedObservableChange(..),
   ObservableState(.., ObservableStateLiveOk, ObservableStateLiveEx),
   ObserverState(.., ObserverStateLoading, ObserverStateLiveOk, ObserverStateLiveEx),
@@ -229,6 +229,20 @@ instance (Functor (Delta c)) => Functor (ObservableChange canLoad c) where
   fmap _fn ObservableChangeLoadingClear = ObservableChangeLoadingClear
   fmap _fn ObservableChangeLiveUnchanged = ObservableChangeLiveUnchanged
   fmap fn (ObservableChangeLiveDelta delta) = ObservableChangeLiveDelta (fn <$> delta)
+
+{-# COMPLETE
+  ObservableChangeLoadingUnchanged,
+  ObservableChangeLoadingClear,
+  ObservableChangeLiveUnchanged,
+  ObservableChangeLiveDeltaOk,
+  ObservableChangeLiveDeltaThrow
+  #-}
+
+pattern ObservableChangeLiveDeltaOk :: forall canLoad exceptions c v. Delta c v -> ObservableChange canLoad (ObservableResult exceptions c) v
+pattern ObservableChangeLiveDeltaOk content = ObservableChangeLiveDelta (ObservableResultDeltaOk content)
+
+pattern ObservableChangeLiveDeltaThrow :: forall canLoad exceptions c v. Ex exceptions -> ObservableChange canLoad (ObservableResult exceptions c) v
+pattern ObservableChangeLiveDeltaThrow ex = ObservableChangeLiveDelta (ObservableResultDeltaThrow ex)
 
 type EvaluatedObservableChange :: CanLoad -> (Type -> Type) -> Type -> Type
 data EvaluatedObservableChange canLoad c v where
