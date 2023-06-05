@@ -73,10 +73,11 @@ module Quasar.Observable.Core (
 
 import Control.Applicative
 import Control.Monad.Except
+import Data.Binary (Binary)
 import Data.Functor.Identity (Identity(..))
+import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Map.Merge.Strict qualified as Map
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.String (IsString(..))
@@ -832,6 +833,9 @@ type ToObservableMap canLoad exceptions k v = ToObservable canLoad exceptions (M
 data ObservableMapDelta k v
   = ObservableMapUpdate (Map k (ObservableMapOperation v))
   | ObservableMapReplace (Map k v)
+  deriving Generic
+
+instance (Binary k, Binary v) => Binary (ObservableMapDelta k v)
 
 instance Functor (ObservableMapDelta k) where
   fmap f (ObservableMapUpdate x) = ObservableMapUpdate (f <<$>> x)
@@ -846,6 +850,9 @@ instance Traversable (ObservableMapDelta k) where
   traverse f (ObservableMapReplace new) = ObservableMapReplace <$> traverse f new
 
 data ObservableMapOperation v = ObservableMapInsert v | ObservableMapDelete
+  deriving Generic
+
+instance Binary v => Binary (ObservableMapOperation v)
 
 instance Functor ObservableMapOperation where
   fmap f (ObservableMapInsert x) = ObservableMapInsert (f x)

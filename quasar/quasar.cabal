@@ -50,6 +50,7 @@ library
   import: shared-properties
   build-depends:
     base <5,
+    binary,
     containers,
     exceptions,
     ghc-prim,
