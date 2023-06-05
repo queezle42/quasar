@@ -231,6 +231,16 @@ instance (Functor (Delta c)) => Functor (ObservableChange canLoad c) where
   fmap _fn ObservableChangeLiveUnchanged = ObservableChangeLiveUnchanged
   fmap fn (ObservableChangeLiveDelta delta) = ObservableChangeLiveDelta (fn <$> delta)
 
+instance (Foldable (Delta c)) => Foldable (ObservableChange canLoad c) where
+  foldMap f (ObservableChangeLiveDelta delta) = foldMap f delta
+  foldMap _ _ = mempty
+
+instance (Traversable (Delta c)) => Traversable (ObservableChange canLoad c) where
+  traverse _fn ObservableChangeLoadingUnchanged = pure ObservableChangeLoadingUnchanged
+  traverse _fn ObservableChangeLoadingClear = pure ObservableChangeLoadingClear
+  traverse _fn ObservableChangeLiveUnchanged = pure ObservableChangeLiveUnchanged
+  traverse f (ObservableChangeLiveDelta delta) = ObservableChangeLiveDelta <$> traverse f delta
+
 {-# COMPLETE
   ObservableChangeLoadingUnchanged,
   ObservableChangeLoadingClear,
