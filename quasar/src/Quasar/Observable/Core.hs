@@ -203,6 +203,9 @@ mapObservable fn x = case toObservable x of
   (DynObservable f) -> toObservable (mapObservable# fn f)
   (ConstObservable content) -> ConstObservable (fn <$> content)
 
+evaluateObservable :: ToObservable canLoad exceptions c v a => a -> Observable canLoad exceptions Identity (c v)
+evaluateObservable x = mapObservableContent Identity x
+
 mapObservableCore :: ObservableFunctor c => (v -> f) -> ObservableCore canLoad c v -> ObservableCore canLoad c f
 mapObservableCore fn (ConstObservableCore content) = ConstObservableCore (fn <$> content)
 mapObservableCore fn (DynObservableCore f) = mapObservable# fn f
@@ -216,6 +219,66 @@ data CanLoad = Load | NoLoad
 type Load = 'Load
 type NoLoad = 'NoLoad
 #endif
+
+
+type ObservableContainer :: (Type -> Type) -> Type -> Constraint
+class ObservableContainer c v where
+  type Delta c :: Type -> Type
+  type Key c v
+  type SelectorResult c :: Type -> Type
+  applyDelta :: Delta c v -> c v -> c v
+  mergeDelta :: Delta c v -> Delta c v -> Delta c v
+  -- | Produce a delta from a content. The delta replaces any previous content when
+  -- applied.
+  toInitialDelta :: c v -> Delta c v
+  initializeFromDelta :: Delta c v -> c v
+
+instance ObservableContainer Identity v where
+  type Delta Identity = Identity
+  type Key Identity v = ()
+  type SelectorResult Identity = Identity
+  applyDelta new _ = new
+  mergeDelta _ new = new
+  toInitialDelta = id
+  initializeFromDelta = id
+
+
+type ObservableCore :: CanLoad -> (Type -> Type) -> Type -> Type
+data ObservableCore canLoad c v
+  = forall a. IsObservableCore canLoad c v a => DynObservableCore a
+  | ConstObservableCore (ObservableState canLoad c v)
+
+instance ObservableContainer c v => ToObservable canLoad exceptions c v (ObservableCore canLoad (ObservableResult exceptions c) v) where
+  toObservable = Observable
+
+instance ObservableFunctor c => Functor (ObservableCore canLoad c) where
+  fmap = mapObservableCore
+
+instance (IsString v, Applicative c) => IsString (ObservableCore canLoad c v) where
+  fromString x = ConstObservableCore (pure (fromString x))
+
+
+type Observable :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type
+newtype Observable canLoad exceptions c v = Observable (ObservableCore canLoad (ObservableResult exceptions c) v)
+
+{-# COMPLETE ConstObservable, DynObservable #-}
+
+pattern ConstObservable :: ObservableState canLoad (ObservableResult exceptions c) v -> Observable canLoad exceptions c v
+pattern ConstObservable x = Observable (ConstObservableCore x)
+
+pattern DynObservable :: () => IsObservableCore canLoad (ObservableResult exceptions c) v a => a -> Observable canLoad exceptions c v
+pattern DynObservable x = Observable (DynObservableCore x)
+
+instance ObservableContainer c v => ToObservable canLoad exceptions c v (Observable canLoad exceptions c v) where
+  toObservable = id
+
+type ObservableFunctor c = (Functor c, Functor (Delta c), forall v. ObservableContainer c v)
+
+instance ObservableFunctor c => Functor (Observable canLoad exceptions c) where
+  fmap = mapObservable
+
+instance (IsString v, Applicative c) => IsString (Observable canLoad exceptions c v) where
+  fromString x = ConstObservable (pure (fromString x))
 
 
 type ObservableChange :: CanLoad -> (Type -> Type) -> Type -> Type
@@ -400,70 +463,6 @@ deconstructObserverStateCached (ObserverStateLive content) = Just (Live, content
 constructObserverStateCached :: Loading canLoad -> c v -> ObserverState canLoad c v
 constructObserverStateCached Live content = ObserverStateLive content
 constructObserverStateCached Loading content = ObserverStateLoadingCached content
-
-
-type ObservableCore :: CanLoad -> (Type -> Type) -> Type -> Type
-data ObservableCore canLoad c v
-  = forall a. IsObservableCore canLoad c v a => DynObservableCore a
-  | ConstObservableCore (ObservableState canLoad c v)
-
-instance ObservableContainer c v => ToObservable canLoad exceptions c v (ObservableCore canLoad (ObservableResult exceptions c) v) where
-  toObservable = Observable
-
-instance ObservableFunctor c => Functor (ObservableCore canLoad c) where
-  fmap = mapObservableCore
-
-instance (IsString v, Applicative c) => IsString (ObservableCore canLoad c v) where
-  fromString x = ConstObservableCore (pure (fromString x))
-
-
-type Observable :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type
-newtype Observable canLoad exceptions c v = Observable (ObservableCore canLoad (ObservableResult exceptions c) v)
-
-{-# COMPLETE ConstObservable, DynObservable #-}
-
-pattern ConstObservable :: ObservableState canLoad (ObservableResult exceptions c) v -> Observable canLoad exceptions c v
-pattern ConstObservable x = Observable (ConstObservableCore x)
-
-pattern DynObservable :: () => IsObservableCore canLoad (ObservableResult exceptions c) v a => a -> Observable canLoad exceptions c v
-pattern DynObservable x = Observable (DynObservableCore x)
-
-instance ObservableContainer c v => ToObservable canLoad exceptions c v (Observable canLoad exceptions c v) where
-  toObservable = id
-
-instance ObservableFunctor c => Functor (Observable canLoad exceptions c) where
-  fmap = mapObservable
-
-instance (IsString v, Applicative c) => IsString (Observable canLoad exceptions c v) where
-  fromString x = ConstObservable (pure (fromString x))
-
-
-type ObservableContainer :: (Type -> Type) -> Type -> Constraint
-class ObservableContainer c v where
-  type Delta c :: Type -> Type
-  type Key c v
-  type SelectorResult c :: Type -> Type
-  applyDelta :: Delta c v -> c v -> c v
-  mergeDelta :: Delta c v -> Delta c v -> Delta c v
-  -- | Produce a delta from a content. The delta replaces any previous content when
-  -- applied.
-  toInitialDelta :: c v -> Delta c v
-  initializeFromDelta :: Delta c v -> c v
-
-type ObservableFunctor c = (Functor c, Functor (Delta c), forall v. ObservableContainer c v)
-
-instance ObservableContainer Identity v where
-  type Delta Identity = Identity
-  type Key Identity v = ()
-  type SelectorResult Identity = Identity
-  applyDelta new _ = new
-  mergeDelta _ new = new
-  toInitialDelta = id
-  initializeFromDelta = id
-
-
-evaluateObservable :: ToObservable canLoad exceptions c v a => a -> Observable canLoad exceptions Identity (c v)
-evaluateObservable x = mapObservableContent Identity x
 
 
 data MappedObservable canLoad c v = forall prev a. IsObservableCore canLoad c prev a => MappedObservable (prev -> v) a
