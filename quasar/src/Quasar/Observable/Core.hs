@@ -51,6 +51,13 @@ module Quasar.Observable.Core (
   unwrapObservableResult,
   mapObservableResultContent,
 
+  -- *** Pending change helpers
+  PendingChange(..),
+  LastChange(..),
+  updatePendingChange,
+  emptyPendingChange,
+  changeFromPending,
+
   -- * Identity observable (single value without partial updates)
   ObservableI,
   ToObservableI,
@@ -81,6 +88,7 @@ import Data.Map.Strict qualified as Map
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.String (IsString(..))
+import GHC.Records (HasField(..))
 import Quasar.Prelude
 import Quasar.Resources.Disposer
 import Quasar.Utils.Fix
@@ -305,9 +313,32 @@ instance (Traversable (Delta c)) => Traversable (ObservableChange canLoad c) whe
   traverse f (ObservableChangeLiveDelta delta) = ObservableChangeLiveDelta <$> traverse f delta
 
 {-# COMPLETE
+  ObservableChangeLoadingClear,
+  ObservableChangeUnchanged,
+  ObservableChangeLiveDelta
+  #-}
+
+pattern ObservableChangeUnchanged :: forall canLoad exceptions c v. Loading canLoad -> ObservableChange canLoad c v
+pattern ObservableChangeUnchanged loading <- (observableChangeUnchanged -> Just loading) where
+  ObservableChangeUnchanged Loading = ObservableChangeLoadingUnchanged
+  ObservableChangeUnchanged Live = ObservableChangeLiveUnchanged
+
+observableChangeUnchanged :: ObservableChange canLoad c v -> Maybe (Loading canLoad)
+observableChangeUnchanged ObservableChangeLoadingUnchanged = Just Loading
+observableChangeUnchanged ObservableChangeLiveUnchanged = Just Live
+observableChangeUnchanged _ = Nothing
+
+{-# COMPLETE
   ObservableChangeLoadingUnchanged,
   ObservableChangeLoadingClear,
   ObservableChangeLiveUnchanged,
+  ObservableChangeLiveDeltaOk,
+  ObservableChangeLiveDeltaThrow
+  #-}
+
+{-# COMPLETE
+  ObservableChangeLoadingClear,
+  ObservableChangeUnchanged,
   ObservableChangeLiveDeltaOk,
   ObservableChangeLiveDeltaThrow
   #-}
@@ -463,6 +494,54 @@ deconstructObserverStateCached (ObserverStateLive content) = Just (Live, content
 constructObserverStateCached :: Loading canLoad -> c v -> ObserverState canLoad c v
 constructObserverStateCached Live content = ObserverStateLive content
 constructObserverStateCached Loading content = ObserverStateLoadingCached content
+
+
+type PendingChange :: CanLoad -> (Type -> Type) -> Type -> Type
+data PendingChange canLoad c v where
+  PendingChangeClear :: PendingChange Load c v
+  PendingChangeAlter :: Loading canLoad -> Maybe (Delta c v) -> PendingChange canLoad c v
+
+type LastChange :: CanLoad -> (Type -> Type) -> Type -> Type
+data LastChange canLoad c v where
+  LastChangeLoadingCleared :: LastChange Load c v
+  LastChangeLoading :: LastChange Load c v
+  LastChangeLive :: LastChange canLoad c v
+
+instance HasField "loading" (LastChange canLoad c v) (Loading canLoad) where
+  getField LastChangeLoadingCleared = Loading
+  getField LastChangeLoading = Loading
+  getField LastChangeLive = Live
+
+updatePendingChange :: forall canLoad c v. ObservableContainer c v => ObservableChange canLoad c v -> PendingChange canLoad c v -> PendingChange canLoad c v
+updatePendingChange ObservableChangeLoadingClear _ = PendingChangeClear
+updatePendingChange (ObservableChangeUnchanged _loading) PendingChangeClear = PendingChangeClear
+updatePendingChange (ObservableChangeUnchanged loading) (PendingChangeAlter _loading delta) = PendingChangeAlter loading delta
+updatePendingChange (ObservableChangeLiveDelta delta) (PendingChangeAlter _loading (Just prevDelta)) =
+  PendingChangeAlter Live (Just (mergeDelta @c prevDelta delta))
+updatePendingChange (ObservableChangeLiveDelta delta) _ = PendingChangeAlter Live (Just delta)
+
+emptyPendingChange :: Loading canLoad -> PendingChange canLoad c v
+emptyPendingChange loading = PendingChangeAlter loading Nothing
+
+changeFromPending :: PendingChange canLoad c v -> LastChange canLoad c v -> Maybe (ObservableChange canLoad c v, LastChange canLoad c v, PendingChange canLoad c v)
+changeFromPending PendingChangeClear LastChangeLoadingCleared = Nothing
+changeFromPending PendingChangeClear _ = Just (ObservableChangeLoadingClear, LastChangeLoadingCleared, emptyPendingChange Loading)
+changeFromPending x@(PendingChangeAlter Loading _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, LastChangeLoading, x)
+changeFromPending (PendingChangeAlter Loading _) LastChangeLoadingCleared = Nothing
+changeFromPending (PendingChangeAlter Loading _) LastChangeLoading = Nothing
+changeFromPending (PendingChangeAlter Live Nothing) LastChangeLoadingCleared = Nothing
+changeFromPending (PendingChangeAlter Live Nothing) LastChangeLoading = Just (ObservableChangeLiveUnchanged, LastChangeLive, emptyPendingChange Live)
+changeFromPending (PendingChangeAlter Live Nothing) LastChangeLive = Nothing
+changeFromPending (PendingChangeAlter Live (Just delta)) _ = Just (ObservableChangeLiveDelta delta, LastChangeLive, emptyPendingChange Live)
+
+
+
+asyncObservable :: MonadIO m => (c v -> IO (ca va)) -> Observable canLoad exceptions c v -> m (Observable canLoad exceptions ca va)
+asyncObservable = undefined
+
+asyncObservableSTM :: MonadSTMc NoRetry '[] m => (c v -> IO (ca va)) -> Observable canLoad exceptions c v -> m (Observable canLoad exceptions ca va)
+asyncObservableSTM = undefined
+
 
 
 data MappedObservable canLoad c v = forall prev a. IsObservableCore canLoad c prev a => MappedObservable (prev -> v) a
