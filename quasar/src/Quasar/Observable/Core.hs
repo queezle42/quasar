@@ -45,6 +45,7 @@ module Quasar.Observable.Core (
   toObservableState,
   applyObservableChange,
   applyEvaluatedObservableChange,
+  toInitialChange,
 
   -- *** Exception wrapper container
   ObservableResult(..),
@@ -481,6 +482,10 @@ toObservableState ObserverStateLoadingCleared = ObservableStateLoading
 toObservableState (ObserverStateLoadingCached _) = ObservableStateLoading
 toObservableState (ObserverStateLive content) = ObservableStateLive content
 
+toInitialChange :: ObservableContainer c v => ObservableState canLoad c v -> ObservableChange canLoad c v
+toInitialChange ObservableStateLoading = ObservableChangeLoadingClear
+toInitialChange (ObservableStateLive x) = ObservableChangeLiveDelta (toInitialDelta x)
+
 
 pattern ObserverStateCached :: Loading canLoad -> c v -> ObserverState canLoad c v
 pattern ObserverStateCached loading state <- (deconstructObserverStateCached -> Just (loading, state)) where
@@ -536,13 +541,11 @@ changeFromPending (PendingChangeAlter Live Nothing) LastChangeLive = Nothing
 changeFromPending (PendingChangeAlter Live (Just delta)) _ = Just (ObservableChangeLiveDelta delta, LastChangeLive, emptyPendingChange Live)
 
 
-
 asyncObservable :: MonadIO m => (c v -> IO (ca va)) -> Observable canLoad exceptions c v -> m (Observable canLoad exceptions ca va)
 asyncObservable = undefined
 
 asyncObservableSTM :: MonadSTMc NoRetry '[] m => (c v -> IO (ca va)) -> Observable canLoad exceptions c v -> m (Observable canLoad exceptions ca va)
 asyncObservableSTM = undefined
-
 
 
 data MappedObservable canLoad c v = forall prev a. IsObservableCore canLoad c prev a => MappedObservable (prev -> v) a
