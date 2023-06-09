@@ -35,6 +35,7 @@ module Quasar.Observable.Core (
   ObservableContainer(..),
 
   -- ** Additional types
+  Loading(..),
   Final,
   ObservableChange(.., ObservableChangeLiveDeltaOk, ObservableChangeLiveDeltaThrow),
   EvaluatedObservableChange(..),
@@ -45,7 +46,7 @@ module Quasar.Observable.Core (
   applyObservableChange,
   applyEvaluatedObservableChange,
 
-  -- *** Exception handling types
+  -- *** Exception wrapper container
   ObservableResult(..),
   ObservableResultDelta(..),
   unwrapObservableResult,
