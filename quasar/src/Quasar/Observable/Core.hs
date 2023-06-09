@@ -37,7 +37,7 @@ module Quasar.Observable.Core (
   -- ** Additional types
   Loading(..),
   Final,
-  ObservableChange(.., ObservableChangeLiveDeltaOk, ObservableChangeLiveDeltaThrow),
+  ObservableChange(.., ObservableChangeLiveDeltaOk, ObservableChangeLiveDeltaThrow, ObservableChangeLoading, ObservableChangeLive),
   EvaluatedObservableChange(..),
   ObservableState(.., ObservableStateLiveOk, ObservableStateLiveEx),
   ObserverState(.., ObserverStateLoading, ObserverStateLiveOk, ObserverStateLiveEx),
@@ -313,6 +313,19 @@ instance (Traversable (Delta c)) => Traversable (ObservableChange canLoad c) whe
   traverse _fn ObservableChangeLoadingClear = pure ObservableChangeLoadingClear
   traverse _fn ObservableChangeLiveUnchanged = pure ObservableChangeLiveUnchanged
   traverse f (ObservableChangeLiveDelta delta) = ObservableChangeLiveDelta <$> traverse f delta
+
+{-# COMPLETE ObservableChangeLoading, ObservableChangeLive #-}
+
+pattern ObservableChangeLoading :: ObservableChange canLoad c v
+pattern ObservableChangeLoading <- (observableChangeIsLoading -> Live)
+
+pattern ObservableChangeLive :: ObservableChange canLoad c v
+pattern ObservableChangeLive <- (observableChangeIsLoading -> Live)
+
+observableChangeIsLoading :: ObservableChange canLoad c v -> Loading canLoad
+observableChangeIsLoading ObservableChangeLiveUnchanged = Live
+observableChangeIsLoading (ObservableChangeLiveDelta _delta) = Live
+observableChangeIsLoading _ = Live
 
 {-# COMPLETE
   ObservableChangeLoadingClear,
