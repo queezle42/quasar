@@ -11,8 +11,7 @@ module Quasar.Network.Runtime (
   NetworkRootReference(..),
 
   -- * Observable
-  ObservableState(..),
-  joinNetworkObservable,
+  NetworkObservableContainer(..),
 ) where
 
 import Quasar.Network.Runtime.Class

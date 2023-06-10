@@ -1,52 +1,84 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 module Quasar.Network.Runtime.Observable (
-  ObservableState(..),
-  joinNetworkObservable,
+  NetworkObservableContainer(..),
 ) where
 
 import Control.Monad.Catch
 import Data.Binary (Binary)
-import Quasar
+import Data.Functor.Identity (Identity(..))
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
+import Data.Maybe (mapMaybe)
+import Data.Set (Set)
+import Quasar.Async
 import Quasar.Exceptions
+import Quasar.MonadQuasar
+import Quasar.MonadQuasar.Misc
 import Quasar.Network.Channel
 import Quasar.Network.Exception
 import Quasar.Network.Multiplexer
 import Quasar.Network.Runtime.Class
+import Quasar.Network.Runtime.Generic () -- Instances are part of Quasar.Network.Runtime, but that would be an import loop.
+import Quasar.Observable.Core
+import Quasar.Observable.ObservableVar
 import Quasar.Prelude
+import Quasar.Resources
 
 
-data ObservableState a
-  = ObservableValue a
-  | ObservableLoading
-  | ObservableNotAvailable SomeException
+class (NetworkObservableContainer (NetworkContainer c v) (NetworkValue c v), ObservableContainer (NetworkContainer c v) Disposer, Binary (Delta (NetworkContainer c v) ()), NetworkObject (NetworkValue c v)) => NetworkObservable c v where
+  type NetworkContainer c v :: Type -> Type
+  type NetworkValue c v
+  toNetworkObservable
+    :: Observable Load '[SomeException] c v
+    -> Observable Load '[SomeException] (NetworkContainer c v) (NetworkValue c v)
+  fromNetworkObservable
+    :: Observable Load '[SomeException] (NetworkContainer c v) (NetworkValue c v)
+    -> Observable Load '[SomeException] c v
 
-instance Functor ObservableState where
-  fmap f (ObservableValue x) = ObservableValue (f x)
-  fmap _ ObservableLoading = ObservableLoading
-  fmap _ (ObservableNotAvailable e) = ObservableNotAvailable e
+instance NetworkObject v => NetworkObservable Identity v where
+  type NetworkContainer Identity v = Identity
+  type NetworkValue Identity v = v
+  toNetworkObservable = id
+  fromNetworkObservable = id
 
-instance Applicative ObservableState where
-  pure x = ObservableValue x
-  liftA2 f (ObservableValue x) (ObservableValue y) = ObservableValue (f x y)
-  liftA2 _ ObservableLoading _ = ObservableLoading
-  liftA2 _ (ObservableNotAvailable e) _ = ObservableNotAvailable e
-  liftA2 _ _ ObservableLoading = ObservableLoading
-  liftA2 _ _ (ObservableNotAvailable e) = ObservableNotAvailable e
-
-instance Monad ObservableState where
-  ObservableValue x >>= fy = fy x
-  ObservableLoading >>= _ = ObservableLoading
-  ObservableNotAvailable e >>= _ = ObservableNotAvailable e
-
-joinNetworkObservable :: Observable (ObservableState (Observable (ObservableState a))) -> Observable (ObservableState a)
-joinNetworkObservable x = x >>= \case
-  ObservableValue r -> r
-  ObservableLoading -> pure ObservableLoading
-  ObservableNotAvailable e -> pure (ObservableNotAvailable e)
+instance (Ord v, Binary v) => NetworkObservable Set v where
+  type NetworkContainer Set v = Map v
+  type NetworkValue Set v = ()
+  toNetworkObservable = undefined
+  fromNetworkObservable = undefined
 
 
-data ObservableProxyException = ObservableProxyException SomeException
+
+class (Foldable c, Traversable (Delta c), ObservableContainer c v) => NetworkObservableContainer c v where
+  selectRemoved :: Delta c v -> c a -> [a]
+
+instance NetworkObservableContainer Identity v where
+  selectRemoved _delta (Identity old) = [old]
+
+instance Ord k => NetworkObservableContainer (Map k) v where
+  selectRemoved (ObservableMapReplace _) old = toList old
+  selectRemoved (ObservableMapUpdate ops) old = mapMaybe (\key -> Map.lookup key old) (Map.keys ops)
+
+instance NetworkObservableContainer c v => NetworkObservableContainer (ObservableResult '[SomeException] c) v where
+  selectRemoved (ObservableResultDeltaOk delta) (ObservableResultOk x) = selectRemoved delta x
+  selectRemoved (ObservableResultDeltaThrow _ex) (ObservableResultOk x) = toList x
+  selectRemoved _ (ObservableResultEx _ex) = []
+
+
+provideDelta :: forall c v. (NetworkObject v, NetworkObservableContainer c v) => SendMessageContext -> Delta c v -> STMc NoRetry '[] (Delta c Disposer, Delta c ())
+provideDelta context delta = do
+  disposerDelta <- traverse (provideObjectAsDisposableMessagePart context) delta
+  pure (disposerDelta, void disposerDelta)
+
+receiveDelta :: (NetworkObject v, NetworkObservableContainer c v) => ReceiveMessageContext -> Delta c () -> STMc NoRetry '[MultiplexerException] (Delta c v)
+receiveDelta context delta = traverse (\() -> receiveObjectFromMessagePart context) delta
+
+
+
+newtype ObservableProxyException = ObservableProxyException SomeException
   deriving stock Show
 
 instance Exception ObservableProxyException
@@ -59,88 +91,183 @@ data ObservableRequest
 
 instance Binary ObservableRequest
 
-data ObservableResponse
-  = PackedObservableValue
-  | PackedObservableLoading
-  | PackedObservableNotAvailable PackedException
-  deriving stock Generic
+type ObservableResponse c = (Final, PackedChange c)
 
-instance Binary ObservableResponse
+data PackedChange c where
+  PackedChangeLoadingClear :: PackedChange c
+  PackedChangeLoadingUnchanged :: PackedChange c
+  PackedChangeLiveUnchanged :: PackedChange c
+  PackedChangeDeltaThrow :: PackedException -> PackedChange c
+  PackedChangeLiveDeltaOk :: Delta c () -> PackedChange c
+  deriving Generic
 
-
-instance NetworkObject a => NetworkRootReference (Observable (ObservableState a)) where
-  type NetworkRootReferenceChannel (Observable (ObservableState a)) = Channel () ObservableResponse ObservableRequest
-  provideRootReference = sendObservableReference
-  receiveRootReference = receiveObservableReference
-
-instance NetworkObject a => NetworkObject (Observable (ObservableState a)) where
-  type NetworkStrategy (Observable (ObservableState a)) = NetworkRootReference
+instance Binary (Delta c ()) => Binary (PackedChange c)
 
 
-data ObservableReference a = ObservableReference {
-  isLoading :: TVar Bool,
-  outbox :: TVar (Maybe (ObservableState a)),
-  activeDisposer :: TVar Disposer
+instance NetworkObservable c v => NetworkRootReference (Observable Load '[SomeException] c v) where
+  type NetworkRootReferenceChannel (Observable Load '[SomeException] c v) = Channel () (ObservableResponse (NetworkContainer c v)) ObservableRequest
+  provideRootReference = sendObservableReference . toNetworkObservable
+  receiveRootReference = fmap3 fromNetworkObservable receiveObservableReference
+
+instance NetworkObservable c v => NetworkObject (Observable Load '[SomeException] c v) where
+  type NetworkStrategy (Observable Load '[SomeException] c v) = NetworkRootReference
+
+
+type ObservableReference :: (Type -> Type) -> Type -> Type
+data ObservableReference c v = ObservableReference {
+  isAttached :: TVar Bool,
+  observableDisposer :: TVar TSimpleDisposer,
+  pendingChange :: TVar (PendingChange Load (ObservableResult '[SomeException] c) v),
+  lastChange :: TVar (LastChange Load (ObservableResult '[SomeException] c) v),
+  pendingFinal :: TVar Final,
+  activeObjects :: TVar (Maybe (c Disposer))
 }
 
-sendObservableReference :: forall a. NetworkObject a => Observable (ObservableState a) -> Channel () ObservableResponse ObservableRequest -> STMc NoRetry '[] (ChannelHandler ObservableRequest)
+sendObservableReference
+  :: forall c v. (NetworkObservableContainer c v, ObservableContainer c Disposer, Binary (Delta c ()), NetworkObject v)
+  => Observable Load '[SomeException] c v
+  -> Channel () (ObservableResponse c) ObservableRequest
+  -> STMc NoRetry '[] (ChannelHandler ObservableRequest)
 sendObservableReference observable channel = do
-  -- Bind resources lifetime to network channel
-  execForeignQuasarSTMc @NoRetry channel.quasar do
-    -- Initial state is defined as loading
-    isLoading <- newTVar True
-    outbox <- newTVar Nothing
-    activeDisposer <- newTVar trivialDisposer
-    let ref = ObservableReference { isLoading, outbox, activeDisposer }
-    asyncSTM_ $ sendThread ref
-    observeQ_ observable (callback ref)
-  pure requestCallback
-  where
-    requestCallback :: ReceiveMessageContext -> ObservableRequest -> QuasarIO ()
-    -- TODO: observe based on downstream request
-    requestCallback _context Start = pure ()
-    requestCallback _context Stop = pure ()
-    callback :: ObservableReference a -> ObservableState a -> STMc NoRetry '[SomeException] ()
-    callback ref state = do
-      unlessM (readTVar ref.isLoading) do
-        -- This will only happen (at most) once per sent update.
-        -- Required to preserve order across multiple observables while also being able to drop intermediate values.
-        handleDisconnect $ unsafeQueueChannelMessage channel PackedObservableLoading
-        writeTVar ref.isLoading True
-      writeTVar ref.outbox (Just state)
+  isAttached <- newTVar False
+  observableDisposer <- newTVar mempty
+  pendingChange <- newTVar (emptyPendingChange Loading)
+  pendingFinal <- newTVar False
+  lastChange <- newTVar LastChangeLoadingCleared
+  activeObjects <- newTVar Nothing
+  let ref = ObservableReference{isAttached, observableDisposer, pendingChange, lastChange, pendingFinal, activeObjects}
 
-    sendThread :: ObservableReference a -> QuasarIO ()
+  -- Bind send thread lifetime to network channel
+  execForeignQuasarSTMc @NoRetry channel.quasar do
+    asyncSTM_ $ sendThread ref
+
+  pure (requestCallback ref)
+  where
+    requestCallback :: ObservableReference c v -> ReceiveMessageContext -> ObservableRequest -> QuasarIO ()
+    requestCallback ref _context Start = do
+      atomicallyC do
+        whenM (readTVar ref.isAttached) do
+          (disposer, final, initial) <- attachObserver observable (upstreamObservableChanged ref)
+          writeTVar ref.observableDisposer disposer
+          upstreamObservableChanged ref final (toInitialChange initial)
+          writeTVar ref.isAttached True
+    requestCallback ref _context Stop = atomicallyC do
+      disposeTSimpleDisposer =<< swapTVar ref.observableDisposer mempty
+      -- TODO what if we already sent a final?
+      upstreamObservableChanged ref False ObservableChangeLoadingClear
+      writeTVar ref.isAttached False
+
+    upstreamObservableChanged :: ObservableReference c v -> Final -> ObservableChange Load (ObservableResult '[SomeException] c) v -> STMc NoRetry '[] ()
+    upstreamObservableChanged ref final change = do
+      pendingChange <- stateTVar ref.pendingChange (dup . updatePendingChange change)
+      lastChange <- readTVar ref.lastChange
+      writeTVar ref.pendingFinal final
+
+      case changeFromPending pendingChange lastChange of
+        Nothing -> pure ()
+        Just (ObservableChangeLoadingClear, loadingLastChange, loadingPendingChange) -> do
+          writeTVar ref.pendingChange loadingPendingChange
+          writeTVar ref.lastChange loadingLastChange
+          sendChangeImmediately final PackedChangeLoadingClear
+          -- Dispose active objects. This us usually handled by
+          -- `provideAndPackChange`, but that can't be used since it requires a
+          -- `SendMessageContext` because it also attaches `NetworkObject`s to
+          -- the current message.
+          activeObjects <- swapTVar ref.activeObjects Nothing
+          mapM_ (mapM_ disposeEventually . toList) activeObjects
+        Just (ObservableChangeLoadingUnchanged, loadingLastChange, loadingPendingChange) -> do
+          writeTVar ref.pendingChange loadingPendingChange
+          writeTVar ref.lastChange loadingLastChange
+          sendChangeImmediately final PackedChangeLoadingUnchanged
+        Just (ObservableChangeLive, _, _) -> do
+          case lastChange of
+            LastChangeLive -> do
+              writeTVar ref.lastChange LastChangeLoading
+              sendChangeImmediately False PackedChangeLoadingUnchanged
+            _ -> pure ()
+
+    sendChangeImmediately
+      :: Final
+      -> PackedChange c
+      -> STMc NoRetry '[] ()
+    sendChangeImmediately final packedChange = do
+      -- unsafeQueueChannelMessage forces a message to be queued. To ensure
+      -- network message scheduling fairness this will only happen at most twice
+      -- (LoadingUnchanged and/or LoadingClear) per sent `Live` change.
+      -- Forcing a message to be queued without waiting is required to preserve
+      -- order across multiple observables (while also being able to drop
+      -- intermediate values from the network stream).
+
+      -- Disconnects are handled as a no-op. Other potential exceptions would be
+      -- parse- and remote exceptions, which can't be handled here so they are
+      -- passed up the channel tree. This will terminate the connection, unless
+      -- the exceptions are handled explicitly somewhere else in the tree.
+      handleAllSTMc @NoRetry @'[SomeException] (throwToExceptionSink channel.quasar.exceptionSink) do
+        handleDisconnect $ unsafeQueueChannelMessage channel (final, packedChange)
+
+    provideAndPackChange
+      :: ObservableReference c v
+      -> SendMessageContext
+      -> ObservableChange Load (ObservableResult '[SomeException] c) v
+      -> STMc NoRetry '[] (PackedChange c, Disposer)
+    provideAndPackChange ref context change = do
+      maybeActiveObjects <- readTVar ref.activeObjects
+      case change of
+        ObservableChangeLoadingClear -> do
+          pure (PackedChangeLoadingClear, foldMap fold maybeActiveObjects)
+        ObservableChangeLoadingUnchanged -> pure (PackedChangeLoadingUnchanged, mempty)
+        ObservableChangeLiveUnchanged -> pure (PackedChangeLiveUnchanged, mempty)
+        ObservableChangeLiveDeltaOk delta -> do
+          (activeObjectsDelta, packedDelta) <- provideDelta @c context delta
+          let
+            newActiveObjects =
+              case maybeActiveObjects of
+                Just activeObjects -> applyDelta @c activeObjectsDelta activeObjects
+                Nothing -> initializeFromDelta activeObjectsDelta
+            removedObjects = fold (foldMap (selectRemoved @c delta) maybeActiveObjects)
+          writeTVar ref.activeObjects (Just newActiveObjects)
+          pure (PackedChangeLiveDeltaOk packedDelta, removedObjects)
+        ObservableChangeLiveDeltaThrow ex -> do
+          pure (PackedChangeDeltaThrow (packException ex), foldMap fold maybeActiveObjects)
+
+    sendThread :: ObservableReference c v -> QuasarIO ()
     sendThread ref = handleDisconnect $ forever do
       -- Block until an update has to be sent
-      atomically $ check . isJust =<< readTVar ref.outbox
-      dispose =<< atomically (swapTVar ref.activeDisposer trivialDisposer)
-      handle (\AbortSend -> pure ()) do
-        sendChannelMessageDeferred_ channel payloadHook
+      atomically do
+        pendingChange <- readTVar ref.pendingChange
+        lastChange <- readTVar ref.lastChange
+        check $ isJust $ changeFromPending pendingChange lastChange
+
+
+      removedObjects <- handle (\AbortSend -> pure mempty) do
+        sendChannelMessageDeferred channel payloadHook
+
+      dispose removedObjects
       where
-        payloadHook :: SendMessageContext -> STMc NoRetry '[AbortSend] ObservableResponse
+        payloadHook :: SendMessageContext -> STMc NoRetry '[AbortSend] (ObservableResponse c, Disposer)
         payloadHook context = do
-          writeTVar ref.isLoading False
-          swapTVar ref.outbox Nothing >>= \case
-            Just (ObservableValue content) -> do
-              disposer <- liftSTMc $ provideObjectAsDisposableMessagePart context content
-              writeTVar ref.activeDisposer disposer
-              pure PackedObservableValue
+          pendingChange <- readTVar ref.pendingChange
+          lastChange <- readTVar ref.lastChange
+          final <- readTVar ref.pendingFinal
+          case changeFromPending pendingChange lastChange of
+            Nothing -> throwC AbortSend
+            Just (change, lnew, pnew) -> do
+              writeTVar ref.lastChange lnew
+              writeTVar ref.pendingChange pnew
 
-            Just (ObservableNotAvailable ex) ->
-              pure (PackedObservableNotAvailable (packException ex))
+              (packedChange, removedObjects) <- liftSTMc $ provideAndPackChange ref context change
+              pure ((final, packedChange), removedObjects)
 
-            Just ObservableLoading -> throwC AbortSend
-            Nothing -> unreachableCodePath
 
     handleDisconnect :: MonadCatch m => m () -> m ()
     handleDisconnect = handle \ChannelNotConnected -> pure ()
 
 
 
-data ObservableProxy a =
+data ObservableProxy c v =
   ObservableProxy {
-    channel :: Channel () ObservableRequest ObservableResponse,
-    observableVar :: ObservableVar (ObservableState a)
+    channel :: Channel () ObservableRequest (ObservableResponse c),
+    observableVar :: ObservableVar Load '[SomeException] c v
   }
 
 data ProxyState
@@ -148,48 +275,51 @@ data ProxyState
   | Stopped
   deriving stock (Eq, Show)
 
-receiveObservableReference :: forall a. NetworkObject a => Channel () ObservableRequest ObservableResponse -> STMc NoRetry '[MultiplexerException] (ChannelHandler ObservableResponse, Observable (ObservableState a))
-receiveObservableReference channel = do
-  observableVar <- newObservableVar ObservableLoading
-  let proxy = ObservableProxy {
-      channel,
-      observableVar
-    }
+receiveObservableReference
+  :: NetworkObservableContainer c v
+  => Channel () ObservableRequest (ObservableResponse c)
+  -> STMc NoRetry '[MultiplexerException] (ChannelHandler (ObservableResponse c), Observable Load '[SomeException] c v)
+receiveObservableReference channel = undefined -- do
+--  observableVar <- newObservableVar ObservableLoading
+--  let proxy = ObservableProxy {
+--      channel,
+--      observableVar
+--    }
+--
+--  ac <- unmanagedAsyncSTM channel.quasar.exceptionSink do
+--    runQuasarIO channel.quasar (manageObservableProxy proxy)
+--
+--  handleSTMc @NoRetry @'[FailedToAttachResource] @FailedToAttachResource (throwToExceptionSink channel.quasar.exceptionSink) do
+--    attachResource channel.quasar.resourceManager ac
+--
+--  pure (callback proxy, toObservable proxy)
+--  where
+--    callback :: ObservableProxy c v -> ReceiveMessageContext -> ObservableResponse -> QuasarIO ()
+--    callback proxy context PackedObservableValue = do
+--      value <- atomicallyC $ receiveObjectFromMessagePart context
+--      atomically $ writeObservableVar proxy.observableVar (ObservableValue value)
+--    callback proxy _context PackedObservableLoading = do
+--      atomically $ writeObservableVar proxy.observableVar ObservableLoading
+--    callback proxy _context (PackedObservableNotAvailable ex) = do
+--      atomically $ writeObservableVar proxy.observableVar (ObservableNotAvailable (unpackException ex))
 
-  ac <- unmanagedAsyncSTM channel.quasar.exceptionSink do
-    runQuasarIO channel.quasar (manageObservableProxy proxy)
 
-  handleSTMc @NoRetry @'[FailedToAttachResource] @FailedToAttachResource (throwToExceptionSink channel.quasar.exceptionSink) do
-    attachResource channel.quasar.resourceManager ac
-
-  pure (callback proxy, toObservable proxy)
-  where
-    callback :: ObservableProxy a -> ReceiveMessageContext -> ObservableResponse -> QuasarIO ()
-    callback proxy context PackedObservableValue = do
-      value <- atomicallyC $ receiveObjectFromMessagePart context
-      atomically $ writeObservableVar proxy.observableVar (ObservableValue value)
-    callback proxy _context PackedObservableLoading = do
-      atomically $ writeObservableVar proxy.observableVar ObservableLoading
-    callback proxy _context (PackedObservableNotAvailable ex) = do
-      atomically $ writeObservableVar proxy.observableVar (ObservableNotAvailable (unpackException ex))
-
-
-instance NetworkObject a => ToObservable (ObservableState a) (ObservableProxy a) where
+instance (NetworkObject a, ObservableContainer c v) => ToObservable Load '[SomeException] c v (ObservableProxy c v) where
   toObservable proxy = toObservable proxy.observableVar
 
 
-manageObservableProxy :: ObservableProxy a -> QuasarIO ()
-manageObservableProxy proxy =
-  -- TODO verify no other exceptions can be thrown by `channelSend`
-  task `catch` \(ex :: Ex '[MultiplexerException, ChannelException]) ->
-    atomically (writeObservableVar proxy.observableVar (ObservableNotAvailable (toException (ObservableProxyException (toException ex)))))
-  where
-    task = bracket (pure proxy.channel) disposeEventuallyIO_ \channel -> do
-      forever do
-        atomically $ check =<< observableVarHasObservers proxy.observableVar
-
-        channelSend channel Start
-
-        atomically $ check . not =<< observableVarHasObservers proxy.observableVar
-
-        channelSend channel Stop
+manageObservableProxy :: ObservableProxy c v -> QuasarIO ()
+manageObservableProxy proxy = undefined
+--  -- TODO verify no other exceptions can be thrown by `channelSend`
+--  task `catch` \(ex :: Ex '[MultiplexerException, ChannelException]) ->
+--    atomically (writeObservableVar proxy.observableVar (ObservableNotAvailable (toException (ObservableProxyException (toException ex)))))
+--  where
+--    task = bracket (pure proxy.channel) disposeEventuallyIO_ \channel -> do
+--      forever do
+--        atomically $ check =<< observableVarHasObservers proxy.observableVar
+--
+--        channelSend channel Start
+--
+--        atomically $ check . not =<< observableVarHasObservers proxy.observableVar
+--
+--        channelSend channel Stop
