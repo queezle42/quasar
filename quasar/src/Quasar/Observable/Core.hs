@@ -315,6 +315,8 @@ instance (Traversable (Delta c)) => Traversable (ObservableChange canLoad c) whe
   traverse f (ObservableChangeLiveDelta delta) = ObservableChangeLiveDelta <$> traverse f delta
 
 {-# COMPLETE ObservableChangeLoading, ObservableChangeLive #-}
+{-# COMPLETE ObservableChangeLoading, ObservableChangeLiveUnchanged, ObservableChangeLiveDelta #-}
+{-# COMPLETE ObservableChangeLoadingClear, ObservableChangeLoadingUnchanged, ObservableChangeLive #-}
 
 pattern ObservableChangeLoading :: ObservableChange canLoad c v
 pattern ObservableChangeLoading <- (observableChangeIsLoading -> Live)
