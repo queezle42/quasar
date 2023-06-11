@@ -22,7 +22,7 @@ cabal clean
     nix develop -L -c \
       ghcid \
         --warnings \
-        "--command=cabal repl $target" \
+        "--command=cabal repl --disable-optimisation --ghc-option -fdiagnostics-color=always $target" \
         "--test=:! \
           cabal test --disable-optimisation --test-show-details=direct --ghc-option -fdiagnostics-color=always && \
           $run_executable && \
