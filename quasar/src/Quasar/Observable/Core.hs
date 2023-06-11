@@ -534,7 +534,7 @@ constructObserverStateCached Loading content = ObserverStateLoadingCached conten
 
 type PendingChange :: CanLoad -> (Type -> Type) -> Type -> Type
 data PendingChange canLoad c v where
-  PendingChangeClear :: PendingChange Load c v
+  PendingChangeLoadingClear :: PendingChange Load c v
   PendingChangeAlter :: Loading canLoad -> Maybe (Delta c v) -> PendingChange canLoad c v
 
 type LastChange :: CanLoad -> (Type -> Type) -> Type -> Type
@@ -549,8 +549,8 @@ instance HasField "loading" (LastChange canLoad c v) (Loading canLoad) where
   getField LastChangeLive = Live
 
 updatePendingChange :: forall canLoad c v. ObservableContainer c v => ObservableChange canLoad c v -> PendingChange canLoad c v -> PendingChange canLoad c v
-updatePendingChange ObservableChangeLoadingClear _ = PendingChangeClear
-updatePendingChange (ObservableChangeUnchanged _loading) PendingChangeClear = PendingChangeClear
+updatePendingChange ObservableChangeLoadingClear _ = PendingChangeLoadingClear
+updatePendingChange (ObservableChangeUnchanged _loading) PendingChangeLoadingClear = PendingChangeLoadingClear
 updatePendingChange (ObservableChangeUnchanged loading) (PendingChangeAlter _loading delta) = PendingChangeAlter loading delta
 updatePendingChange (ObservableChangeLiveDelta delta) (PendingChangeAlter _loading (Just prevDelta)) =
   PendingChangeAlter Live (Just (mergeDelta @c prevDelta delta))
@@ -560,8 +560,8 @@ emptyPendingChange :: Loading canLoad -> PendingChange canLoad c v
 emptyPendingChange loading = PendingChangeAlter loading Nothing
 
 changeFromPending :: PendingChange canLoad c v -> LastChange canLoad c v -> Maybe (ObservableChange canLoad c v, LastChange canLoad c v, PendingChange canLoad c v)
-changeFromPending PendingChangeClear LastChangeLoadingCleared = Nothing
-changeFromPending PendingChangeClear _ = Just (ObservableChangeLoadingClear, LastChangeLoadingCleared, emptyPendingChange Loading)
+changeFromPending PendingChangeLoadingClear LastChangeLoadingCleared = Nothing
+changeFromPending PendingChangeLoadingClear _ = Just (ObservableChangeLoadingClear, LastChangeLoadingCleared, emptyPendingChange Loading)
 changeFromPending x@(PendingChangeAlter Loading _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, LastChangeLoading, x)
 changeFromPending (PendingChangeAlter Loading _) LastChangeLoadingCleared = Nothing
 changeFromPending (PendingChangeAlter Loading _) LastChangeLoading = Nothing
