@@ -69,6 +69,7 @@ library
     Quasar.MonadQuasar
     Quasar.MonadQuasar.Misc
     Quasar.Observable
+    Quasar.Observable.Async
     Quasar.Observable.Cache
     Quasar.Observable.Core
     Quasar.Observable.ObservableList

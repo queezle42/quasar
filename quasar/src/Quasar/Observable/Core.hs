@@ -560,13 +560,6 @@ emptyPendingChange :: Loading canLoad -> PendingChange canLoad c v
 emptyPendingChange loading = PendingChangeAlter loading Nothing
 
 
-
-asyncObservable :: MonadIO m => (c v -> IO (ca va)) -> Observable canLoad exceptions c v -> m (Observable canLoad exceptions ca va)
-asyncObservable = undefined
-
-asyncObservableSTM :: MonadSTMc NoRetry '[] m => (c v -> IO (ca va)) -> Observable canLoad exceptions c v -> m (Observable canLoad exceptions ca va)
-asyncObservableSTM = undefined
-
 changeFromPending :: Loading canLoad -> PendingChange canLoad c v -> LastChange canLoad c v -> Maybe (ObservableChange canLoad c v, LastChange canLoad c v, PendingChange canLoad c v)
 -- Category: Changing to loading or already loading
 changeFromPending _ PendingChangeLoadingClear LastChangeLoadingCleared = Nothing
