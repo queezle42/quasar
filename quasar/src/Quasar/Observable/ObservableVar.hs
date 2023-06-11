@@ -6,6 +6,7 @@ module Quasar.Observable.ObservableVar (
   readObservableVar,
   modifyObservableVar,
   stateObservableVar,
+  changeObservableVar,
   observableVarHasObservers,
 ) where
 
@@ -16,31 +17,31 @@ import Quasar.Prelude
 import Quasar.Resources.Core
 
 
-data ObservableVar canLoad exceptions c v = ObservableVar (TVar (ObservableState canLoad (ObservableResult exceptions c) v)) (CallbackRegistry (ObservableChange canLoad (ObservableResult exceptions c) v))
+data ObservableVar canLoad exceptions c v = ObservableVar (TVar (ObserverState canLoad (ObservableResult exceptions c) v)) (CallbackRegistry (EvaluatedObservableChange canLoad (ObservableResult exceptions c) v))
 
 instance ObservableContainer c v => ToObservable canLoad exceptions c v (ObservableVar canLoad exceptions c v) where
   toObservable = DynObservable
 
 instance ObservableContainer c v => IsObservableCore canLoad (ObservableResult exceptions c) v (ObservableVar canLoad exceptions c v) where
-  attachObserver# (ObservableVar var registry) callback = do
+  attachEvaluatedObserver# (ObservableVar var registry) callback = do
     disposer <- registerCallback registry (callback False)
     value <- readTVar var
-    pure (disposer, False, value)
+    pure (disposer, False, toObservableState value)
 
   readObservable# (ObservableVar var _registry) =
-    (\case ObservableStateLive state -> (False, state)) <$> readTVar var
+    (\case ObserverStateLive state -> (False, state)) <$> readTVar var
 
 
 newObservableVar :: MonadSTMc NoRetry '[] m => c v -> m (ObservableVar canLoad exceptions c v)
-newObservableVar x = liftSTMc $ ObservableVar <$> newTVar (ObservableStateLiveOk x) <*> newCallbackRegistry
+newObservableVar x = liftSTMc $ ObservableVar <$> newTVar (ObserverStateLiveOk x) <*> newCallbackRegistry
 
 newObservableVarIO :: MonadIO m => c v -> m (ObservableVar canLoad exceptions c v)
-newObservableVarIO x = liftIO $ ObservableVar <$> newTVarIO (ObservableStateLiveOk x) <*> newCallbackRegistryIO
+newObservableVarIO x = liftIO $ ObservableVar <$> newTVarIO (ObserverStateLiveOk x) <*> newCallbackRegistryIO
 
 writeObservableVar :: (ObservableContainer c v, MonadSTMc NoRetry '[] m) => ObservableVar canLoad exceptions c v -> c v -> m ()
 writeObservableVar (ObservableVar var registry) value = liftSTMc $ do
-  writeTVar var (ObservableStateLiveOk value)
-  callCallbacks registry (ObservableChangeLiveDeltaOk (toInitialDelta value))
+  writeTVar var (ObserverStateLiveOk value)
+  callCallbacks registry (EvaluatedObservableChangeLiveDeltaOk (toInitialDelta value) value)
 
 readObservableVar
   :: MonadSTMc NoRetry '[] m
@@ -48,8 +49,8 @@ readObservableVar
   -> m (c v)
 readObservableVar (ObservableVar var _) = liftSTMc @NoRetry @'[] do
   readTVar var >>= \case
-    ObservableStateLiveOk result -> pure result
-    ObservableStateLiveEx ex -> absurdEx ex
+    ObserverStateLiveOk result -> pure result
+    ObserverStateLiveEx ex -> absurdEx ex
 
 modifyObservableVar :: (MonadSTMc NoRetry '[] m, ObservableContainer c v) => ObservableVar NoLoad '[] c v -> (c v -> c v) -> m ()
 modifyObservableVar var f = stateObservableVar var (((), ) . f)
@@ -64,6 +65,17 @@ stateObservableVar var f = liftSTMc @NoRetry @'[] do
   let (result, newValue) = f oldValue
   writeObservableVar var newValue
   pure result
+
+changeObservableVar
+  :: (MonadSTMc NoRetry '[] m, ObservableContainer c v)
+  => ObservableVar canLoad exceptions c v
+  -> ObservableChange canLoad (ObservableResult exceptions c) v
+  -> m ()
+changeObservableVar (ObservableVar var registry) change = liftSTMc do
+  state <- readTVar var
+  forM_ (applyObservableChange change state) \(evaluatedChange, newState) -> do
+    writeTVar var newState
+    callCallbacks registry evaluatedChange
 
 observableVarHasObservers :: MonadSTMc NoRetry '[] m => ObservableVar canLoad exceptions c v -> m Bool
 observableVarHasObservers (ObservableVar _ registry) =
