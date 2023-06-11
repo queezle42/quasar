@@ -116,9 +116,9 @@ sendChannelMessageDeferred (Channel channel) payloadHook = sendRawChannelMessage
 sendChannelMessageDeferred_ :: (Binary up, MonadIO m) => Channel cdata up down -> (SendMessageContext -> STMc NoRetry '[AbortSend] up) -> m ()
 sendChannelMessageDeferred_ channel payloadHook = sendChannelMessageDeferred channel ((,()) <<$>> payloadHook)
 
-unsafeQueueChannelMessage :: (Binary up, MonadSTMc NoRetry '[ChannelException, MultiplexerException] m) => Channel cdata up down -> up -> m ()
-unsafeQueueChannelMessage (Channel channel) value =
-  unsafeQueueRawChannelMessage channel (encode value)
+unsafeQueueChannelMessage :: (Binary up, MonadSTMc NoRetry '[ChannelException, MultiplexerException] m) => Channel cdata up down -> (SendMessageContext -> STMc NoRetry '[] up) -> m ()
+unsafeQueueChannelMessage (Channel channel) payloadHook =
+  unsafeQueueRawChannelMessage channel (encode <<$>> payloadHook)
 
 channelSetHandler :: (Binary down, MonadSTMc NoRetry '[] m) => Channel cdata up down -> ChannelHandler down -> m ()
 channelSetHandler (Channel s) fn = rawChannelSetHandler s (binaryHandler fn)

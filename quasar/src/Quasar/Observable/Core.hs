@@ -559,16 +559,6 @@ updatePendingChange (ObservableChangeLiveDelta delta) _ = PendingChangeAlter Liv
 emptyPendingChange :: Loading canLoad -> PendingChange canLoad c v
 emptyPendingChange loading = PendingChangeAlter loading Nothing
 
-changeFromPending :: PendingChange canLoad c v -> LastChange canLoad c v -> Maybe (ObservableChange canLoad c v, LastChange canLoad c v, PendingChange canLoad c v)
-changeFromPending PendingChangeLoadingClear LastChangeLoadingCleared = Nothing
-changeFromPending PendingChangeLoadingClear _ = Just (ObservableChangeLoadingClear, LastChangeLoadingCleared, emptyPendingChange Loading)
-changeFromPending x@(PendingChangeAlter Loading _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, LastChangeLoading, x)
-changeFromPending (PendingChangeAlter Loading _) LastChangeLoadingCleared = Nothing
-changeFromPending (PendingChangeAlter Loading _) LastChangeLoading = Nothing
-changeFromPending (PendingChangeAlter Live Nothing) LastChangeLoadingCleared = Nothing
-changeFromPending (PendingChangeAlter Live Nothing) LastChangeLoading = Just (ObservableChangeLiveUnchanged, LastChangeLive, emptyPendingChange Live)
-changeFromPending (PendingChangeAlter Live Nothing) LastChangeLive = Nothing
-changeFromPending (PendingChangeAlter Live (Just delta)) _ = Just (ObservableChangeLiveDelta delta, LastChangeLive, emptyPendingChange Live)
 
 
 asyncObservable :: MonadIO m => (c v -> IO (ca va)) -> Observable canLoad exceptions c v -> m (Observable canLoad exceptions ca va)
@@ -577,6 +567,21 @@ asyncObservable = undefined
 asyncObservableSTM :: MonadSTMc NoRetry '[] m => (c v -> IO (ca va)) -> Observable canLoad exceptions c v -> m (Observable canLoad exceptions ca va)
 asyncObservableSTM = undefined
 
+changeFromPending :: Loading canLoad -> PendingChange canLoad c v -> LastChange canLoad c v -> Maybe (ObservableChange canLoad c v, LastChange canLoad c v, PendingChange canLoad c v)
+-- Category: Changing to loading or already loading
+changeFromPending _ PendingChangeLoadingClear LastChangeLoadingCleared = Nothing
+changeFromPending _ PendingChangeLoadingClear _ = Just (ObservableChangeLoadingClear, LastChangeLoadingCleared, emptyPendingChange Loading)
+changeFromPending _ x@(PendingChangeAlter Loading _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, LastChangeLoading, x)
+changeFromPending _ (PendingChangeAlter Loading _) LastChangeLoadingCleared = Nothing
+changeFromPending _ (PendingChangeAlter Loading _) LastChangeLoading = Nothing
+changeFromPending _ (PendingChangeAlter Live Nothing) LastChangeLoadingCleared = Nothing
+changeFromPending Loading (PendingChangeAlter Live _) LastChangeLoadingCleared = Nothing
+changeFromPending Loading (PendingChangeAlter Live _) LastChangeLoading = Nothing
+changeFromPending Loading x@(PendingChangeAlter Live _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, LastChangeLoading, x)
+-- Category: Changing to live or already live
+changeFromPending Live (PendingChangeAlter Live Nothing) LastChangeLoading = Just (ObservableChangeLiveUnchanged, LastChangeLive, emptyPendingChange Live)
+changeFromPending Live (PendingChangeAlter Live Nothing) LastChangeLive = Nothing
+changeFromPending Live (PendingChangeAlter Live (Just delta)) _ = Just (ObservableChangeLiveDelta delta, LastChangeLive, emptyPendingChange Live)
 
 data MappedObservable canLoad c v = forall prev a. IsObservableCore canLoad c prev a => MappedObservable (prev -> v) a
 

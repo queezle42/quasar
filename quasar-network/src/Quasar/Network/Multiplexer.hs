@@ -707,13 +707,13 @@ sendRawChannelMessageDeferred channel msgHook = liftIO do
             pure (Just msg)
   awaitEx promise
 
-sendRawChannelMessageDeferred_ :: forall m a. MonadIO m => RawChannel -> (SendMessageContext -> STMc NoRetry '[AbortSend] BSL.ByteString) -> m ()
+sendRawChannelMessageDeferred_ :: MonadIO m => RawChannel -> (SendMessageContext -> STMc NoRetry '[AbortSend] BSL.ByteString) -> m ()
 sendRawChannelMessageDeferred_ channel fn =  sendRawChannelMessageDeferred channel ((,()) <<$>> fn)
 
 -- | Unsafely queue a network message to an unbounded send queue. This function does not block, even if `sendChannelMessage` would block. Queued messages will cause concurrent or following `sendChannelMessage`-calls to block until the queue is flushed.
-unsafeQueueRawChannelMessage :: MonadSTMc NoRetry '[ChannelException, MultiplexerException] m => RawChannel -> BSL.ByteString -> m ()
-unsafeQueueRawChannelMessage channel message = liftSTMc do
-  sendRawChannelMessageInternal unboundedQueueBehavior channel \_context -> pure (Just message)
+unsafeQueueRawChannelMessage :: MonadSTMc NoRetry '[ChannelException, MultiplexerException] m => RawChannel -> (SendMessageContext -> STMc NoRetry '[] BSL.ByteString) -> m ()
+unsafeQueueRawChannelMessage channel fn = liftSTMc do
+  sendRawChannelMessageInternal unboundedQueueBehavior channel (Just <<$>> fn)
 
 blockUntilReadyBehavior :: Bool -> STMc Retry exceptions ()
 blockUntilReadyBehavior = check

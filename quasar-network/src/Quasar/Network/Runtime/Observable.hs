@@ -128,7 +128,8 @@ data ObservableReference c v = ObservableReference {
   pendingChange :: TVar (PendingChange Load (ObservableResult '[SomeException] c) v),
   lastChange :: TVar (LastChange Load (ObservableResult '[SomeException] c) v),
   pendingFinal :: TVar Final,
-  activeObjects :: TVar (Maybe (c Disposer))
+  activeObjects :: TVar (Maybe (c Disposer)),
+  pendingDisposal :: TVar (Maybe Disposer)
 }
 
 sendObservableReference
@@ -143,7 +144,16 @@ sendObservableReference observable channel = do
   pendingFinal <- newTVar False
   lastChange <- newTVar LastChangeLoadingCleared
   activeObjects <- newTVar Nothing
-  let ref = ObservableReference{isAttached, observableDisposer, pendingChange, lastChange, pendingFinal, activeObjects}
+  pendingDisposal <- newTVar Nothing
+  let ref = ObservableReference{
+    isAttached,
+    observableDisposer,
+    pendingChange,
+    lastChange,
+    pendingFinal,
+    activeObjects,
+    pendingDisposal
+  }
 
   -- Bind send thread lifetime to network channel
   execForeignQuasarSTMc @NoRetry channel.quasar do
@@ -171,47 +181,28 @@ sendObservableReference observable channel = do
       lastChange <- readTVar ref.lastChange
       writeTVar ref.pendingFinal final
 
-      case changeFromPending pendingChange lastChange of
+      case changeFromPending Loading pendingChange lastChange of
         Nothing -> pure ()
-        Just (ObservableChangeLoadingClear, loadingLastChange, loadingPendingChange) -> do
-          writeTVar ref.pendingChange loadingPendingChange
-          writeTVar ref.lastChange loadingLastChange
-          sendChangeImmediately final PackedChangeLoadingClear
-          -- Dispose active objects. This us usually handled by
-          -- `provideAndPackChange`, but that can't be used since it requires a
-          -- `SendMessageContext` because it also attaches `NetworkObject`s to
-          -- the current message.
-          activeObjects <- swapTVar ref.activeObjects Nothing
-          mapM_ (mapM_ disposeEventually . toList) activeObjects
-        Just (ObservableChangeLoadingUnchanged, loadingLastChange, loadingPendingChange) -> do
-          writeTVar ref.pendingChange loadingPendingChange
-          writeTVar ref.lastChange loadingLastChange
-          sendChangeImmediately final PackedChangeLoadingUnchanged
-        Just (ObservableChangeLive, _, _) -> do
-          case lastChange of
-            LastChangeLive -> do
-              writeTVar ref.lastChange LastChangeLoading
-              sendChangeImmediately False PackedChangeLoadingUnchanged
-            _ -> pure ()
+        Just (loadingChange, lnew, pnew) -> do
+          writeTVar ref.lastChange lnew
+          writeTVar ref.pendingChange pnew
 
-    sendChangeImmediately
-      :: Final
-      -> PackedChange c
-      -> STMc NoRetry '[] ()
-    sendChangeImmediately final packedChange = do
-      -- unsafeQueueChannelMessage forces a message to be queued. To ensure
-      -- network message scheduling fairness this will only happen at most twice
-      -- (LoadingUnchanged and/or LoadingClear) per sent `Live` change.
-      -- Forcing a message to be queued without waiting is required to preserve
-      -- order across multiple observables (while also being able to drop
-      -- intermediate values from the network stream).
+          -- unsafeQueueChannelMessage forces a message to be queued. To ensure
+          -- network message scheduling fairness this will only happen at most twice
+          -- (LoadingUnchanged and/or LoadingClear) per sent `Live` change.
+          -- Forcing a message to be queued without waiting is required to preserve
+          -- order across multiple observables (while also being able to drop
+          -- intermediate values from the network stream).
 
-      -- Disconnects are handled as a no-op. Other potential exceptions would be
-      -- parse- and remote exceptions, which can't be handled here so they are
-      -- passed up the channel tree. This will terminate the connection, unless
-      -- the exceptions are handled explicitly somewhere else in the tree.
-      handleAllSTMc @NoRetry @'[SomeException] (throwToExceptionSink channel.quasar.exceptionSink) do
-        handleDisconnect $ unsafeQueueChannelMessage channel (final, packedChange)
+          -- Disconnects are handled as a no-op. Other potential exceptions would be
+          -- parse- and remote exceptions, which can't be handled here so they are
+          -- passed up the channel tree. This will terminate the connection, unless
+          -- the exceptions are handled explicitly somewhere else in the tree.
+          handleAllSTMc @NoRetry @'[SomeException] (throwToExceptionSink channel.quasar.exceptionSink) do
+            handleDisconnect $ unsafeQueueChannelMessage channel \context -> do
+              (packedChange, removedObjects) <- liftSTMc $ provideAndPackChange ref context loadingChange
+              modifyTVar ref.pendingDisposal (Just . (<> removedObjects) . fromMaybe mempty)
+              pure (final, packedChange)
 
     provideAndPackChange
       :: ObservableReference c v
@@ -241,23 +232,30 @@ sendObservableReference observable channel = do
     sendThread :: ObservableReference c v -> QuasarIO ()
     sendThread ref = handleDisconnect $ forever do
       -- Block until an update has to be sent
-      atomically do
+      (pendingDisposal, isMessageAvailable) <- atomically do
         pendingChange <- readTVar ref.pendingChange
         lastChange <- readTVar ref.lastChange
-        check $ isJust $ changeFromPending pendingChange lastChange
+        pendingDisposal <- swapTVar ref.pendingDisposal Nothing
+        let isMessageAvailable = isJust $ changeFromPending Live pendingChange lastChange
+        -- Block thread until it either has to dispose old objects or needs to
+        -- send a message.
+        check (isMessageAvailable || isJust pendingDisposal)
+        pure (pendingDisposal, isMessageAvailable)
 
+      mapM_ dispose pendingDisposal
 
-      removedObjects <- handle (\AbortSend -> pure mempty) do
-        sendChannelMessageDeferred channel payloadHook
+      when isMessageAvailable do
+        removedObjects <- handle (\AbortSend -> pure mempty) do
+          sendChannelMessageDeferred channel payloadHook
 
-      dispose removedObjects
+        dispose removedObjects
       where
         payloadHook :: SendMessageContext -> STMc NoRetry '[AbortSend] (ObservableResponse c, Disposer)
         payloadHook context = do
           pendingChange <- readTVar ref.pendingChange
           lastChange <- readTVar ref.lastChange
           final <- readTVar ref.pendingFinal
-          case changeFromPending pendingChange lastChange of
+          case changeFromPending Live pendingChange lastChange of
             Nothing -> throwC AbortSend
             Just (change, lnew, pnew) -> do
               writeTVar ref.lastChange lnew
