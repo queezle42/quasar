@@ -183,9 +183,9 @@ sendObservableReference observable channel = do
 
       case changeFromPending Loading pendingChange lastChange of
         Nothing -> pure ()
-        Just (loadingChange, lnew, pnew) -> do
-          writeTVar ref.lastChange lnew
+        Just (loadingChange, pnew, lnew) -> do
           writeTVar ref.pendingChange pnew
+          writeTVar ref.lastChange lnew
 
           -- unsafeQueueChannelMessage forces a message to be queued. To ensure
           -- network message scheduling fairness this will only happen at most twice
@@ -257,9 +257,9 @@ sendObservableReference observable channel = do
           final <- readTVar ref.pendingFinal
           case changeFromPending Live pendingChange lastChange of
             Nothing -> throwC AbortSend
-            Just (change, lnew, pnew) -> do
-              writeTVar ref.lastChange lnew
+            Just (change, pnew, lnew) -> do
               writeTVar ref.pendingChange pnew
+              writeTVar ref.lastChange lnew
 
               (packedChange, removedObjects) <- liftSTMc $ provideAndPackChange ref context change
               pure ((final, packedChange), removedObjects)

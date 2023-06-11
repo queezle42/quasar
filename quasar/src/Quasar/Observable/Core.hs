@@ -560,21 +560,21 @@ emptyPendingChange :: Loading canLoad -> PendingChange canLoad c v
 emptyPendingChange loading = PendingChangeAlter loading Nothing
 
 
-changeFromPending :: Loading canLoad -> PendingChange canLoad c v -> LastChange canLoad c v -> Maybe (ObservableChange canLoad c v, LastChange canLoad c v, PendingChange canLoad c v)
+changeFromPending :: Loading canLoad -> PendingChange canLoad c v -> LastChange canLoad c v -> Maybe (ObservableChange canLoad c v, PendingChange canLoad c v, LastChange canLoad c v)
 -- Category: Changing to loading or already loading
 changeFromPending _ PendingChangeLoadingClear LastChangeLoadingCleared = Nothing
-changeFromPending _ PendingChangeLoadingClear _ = Just (ObservableChangeLoadingClear, LastChangeLoadingCleared, emptyPendingChange Loading)
-changeFromPending _ x@(PendingChangeAlter Loading _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, LastChangeLoading, x)
+changeFromPending _ PendingChangeLoadingClear _ = Just (ObservableChangeLoadingClear, emptyPendingChange Loading, LastChangeLoadingCleared)
+changeFromPending _ x@(PendingChangeAlter Loading _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, x, LastChangeLoading)
 changeFromPending _ (PendingChangeAlter Loading _) LastChangeLoadingCleared = Nothing
 changeFromPending _ (PendingChangeAlter Loading _) LastChangeLoading = Nothing
 changeFromPending _ (PendingChangeAlter Live Nothing) LastChangeLoadingCleared = Nothing
 changeFromPending Loading (PendingChangeAlter Live _) LastChangeLoadingCleared = Nothing
 changeFromPending Loading (PendingChangeAlter Live _) LastChangeLoading = Nothing
-changeFromPending Loading x@(PendingChangeAlter Live _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, LastChangeLoading, x)
+changeFromPending Loading x@(PendingChangeAlter Live _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, x, LastChangeLoading)
 -- Category: Changing to live or already live
-changeFromPending Live (PendingChangeAlter Live Nothing) LastChangeLoading = Just (ObservableChangeLiveUnchanged, LastChangeLive, emptyPendingChange Live)
+changeFromPending Live (PendingChangeAlter Live Nothing) LastChangeLoading = Just (ObservableChangeLiveUnchanged, emptyPendingChange Live, LastChangeLive)
 changeFromPending Live (PendingChangeAlter Live Nothing) LastChangeLive = Nothing
-changeFromPending Live (PendingChangeAlter Live (Just delta)) _ = Just (ObservableChangeLiveDelta delta, LastChangeLive, emptyPendingChange Live)
+changeFromPending Live (PendingChangeAlter Live (Just delta)) _ = Just (ObservableChangeLiveDelta delta, emptyPendingChange Live, LastChangeLive)
 
 data MappedObservable canLoad c v = forall prev a. IsObservableCore canLoad c prev a => MappedObservable (prev -> v) a
 
