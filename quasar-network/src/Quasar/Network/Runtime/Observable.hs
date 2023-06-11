@@ -306,7 +306,9 @@ receiveObservableReference channel = do
   pure (callback proxy, toObservable proxy)
   where
     callback :: ObservableProxy c v -> ReceiveMessageContext -> ObservableResponse c -> QuasarIO ()
-    -- TODO handle final?
+    -- TODO Handle final? The observable will send a Clear after providing a
+    -- final value, so we need to decide if this is valid behavior and to
+    -- document it.
     callback proxy _context (_final, PackedChangeLoadingClear) = apply proxy ObservableChangeLoadingClear
     callback proxy _context (_final, PackedChangeLoadingUnchanged) = apply proxy ObservableChangeLoadingUnchanged
     callback proxy _context (_final, PackedChangeLiveUnchanged) = apply proxy ObservableChangeLiveUnchanged
