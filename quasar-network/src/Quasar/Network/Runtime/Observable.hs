@@ -68,12 +68,20 @@ instance NetworkObservableContainer c v => NetworkObservableContainer (Observabl
   selectRemoved _ (ObservableResultEx _ex) = []
 
 
-provideDelta :: forall c v. (NetworkObject v, NetworkObservableContainer c v) => SendMessageContext -> Delta c v -> STMc NoRetry '[] (Delta c Disposer, Delta c ())
+provideDelta
+  :: forall c v. (NetworkObject v, NetworkObservableContainer c v)
+  => SendMessageContext
+  -> Delta c v
+  -> STMc NoRetry '[] (Delta c Disposer, Delta c ())
 provideDelta context delta = do
   disposerDelta <- traverse (provideObjectAsDisposableMessagePart context) delta
   pure (disposerDelta, void disposerDelta)
 
-receiveDelta :: (NetworkObject v, NetworkObservableContainer c v) => ReceiveMessageContext -> Delta c () -> STMc NoRetry '[MultiplexerException] (Delta c v)
+receiveDelta
+  :: forall c v. (NetworkObject v, NetworkObservableContainer c v)
+  => ReceiveMessageContext
+  -> Delta c ()
+  -> STMc NoRetry '[MultiplexerException] (Delta c v)
 receiveDelta context delta = traverse (\() -> receiveObjectFromMessagePart context) delta
 
 
@@ -97,7 +105,7 @@ data PackedChange c where
   PackedChangeLoadingClear :: PackedChange c
   PackedChangeLoadingUnchanged :: PackedChange c
   PackedChangeLiveUnchanged :: PackedChange c
-  PackedChangeDeltaThrow :: PackedException -> PackedChange c
+  PackedChangeLiveDeltaThrow :: PackedException -> PackedChange c
   PackedChangeLiveDeltaOk :: Delta c () -> PackedChange c
   deriving Generic
 
@@ -228,7 +236,7 @@ sendObservableReference observable channel = do
           writeTVar ref.activeObjects (Just newActiveObjects)
           pure (PackedChangeLiveDeltaOk packedDelta, removedObjects)
         ObservableChangeLiveDeltaThrow ex -> do
-          pure (PackedChangeDeltaThrow (packException ex), foldMap fold maybeActiveObjects)
+          pure (PackedChangeLiveDeltaThrow (packException ex), foldMap fold maybeActiveObjects)
 
     sendThread :: ObservableReference c v -> QuasarIO ()
     sendThread ref = handleDisconnect $ forever do
@@ -267,6 +275,7 @@ sendObservableReference observable channel = do
 data ObservableProxy c v =
   ObservableProxy {
     channel :: Channel () ObservableRequest (ObservableResponse c),
+    terminated :: TVar Bool,
     observableVar :: ObservableVar Load '[SomeException] c v
   }
 
@@ -276,50 +285,61 @@ data ProxyState
   deriving stock (Eq, Show)
 
 receiveObservableReference
-  :: NetworkObservableContainer c v
+  :: forall c v. (NetworkObservableContainer c v, NetworkObject v)
   => Channel () ObservableRequest (ObservableResponse c)
   -> STMc NoRetry '[MultiplexerException] (ChannelHandler (ObservableResponse c), Observable Load '[SomeException] c v)
-receiveObservableReference channel = undefined -- do
---  observableVar <- newObservableVar ObservableLoading
---  let proxy = ObservableProxy {
---      channel,
---      observableVar
---    }
---
---  ac <- unmanagedAsyncSTM channel.quasar.exceptionSink do
---    runQuasarIO channel.quasar (manageObservableProxy proxy)
---
---  handleSTMc @NoRetry @'[FailedToAttachResource] @FailedToAttachResource (throwToExceptionSink channel.quasar.exceptionSink) do
---    attachResource channel.quasar.resourceManager ac
---
---  pure (callback proxy, toObservable proxy)
---  where
---    callback :: ObservableProxy c v -> ReceiveMessageContext -> ObservableResponse -> QuasarIO ()
---    callback proxy context PackedObservableValue = do
---      value <- atomicallyC $ receiveObjectFromMessagePart context
---      atomically $ writeObservableVar proxy.observableVar (ObservableValue value)
---    callback proxy _context PackedObservableLoading = do
---      atomically $ writeObservableVar proxy.observableVar ObservableLoading
---    callback proxy _context (PackedObservableNotAvailable ex) = do
---      atomically $ writeObservableVar proxy.observableVar (ObservableNotAvailable (unpackException ex))
+receiveObservableReference channel = do
+  observableVar <- newLoadingObservableVar
+  terminated <- newTVar False
+  let proxy = ObservableProxy {
+      channel,
+      terminated,
+      observableVar
+    }
+
+  ac <- unmanagedAsyncSTM channel.quasar.exceptionSink do
+    runQuasarIO channel.quasar (manageObservableProxy proxy)
+
+  handleSTMc @NoRetry @'[FailedToAttachResource] @FailedToAttachResource (throwToExceptionSink channel.quasar.exceptionSink) do
+    attachResource channel.quasar.resourceManager ac
+
+  pure (callback proxy, toObservable proxy)
+  where
+    callback :: ObservableProxy c v -> ReceiveMessageContext -> ObservableResponse c -> QuasarIO ()
+    -- TODO handle final?
+    callback proxy _context (_final, PackedChangeLoadingClear) = apply proxy ObservableChangeLoadingClear
+    callback proxy _context (_final, PackedChangeLoadingUnchanged) = apply proxy ObservableChangeLoadingUnchanged
+    callback proxy _context (_final, PackedChangeLiveUnchanged) = apply proxy ObservableChangeLiveUnchanged
+    callback proxy _context (_final, PackedChangeLiveDeltaThrow packedException) =
+      apply proxy (ObservableChangeLiveDeltaThrow (toEx (unpackException packedException)))
+    callback proxy context (_final, PackedChangeLiveDeltaOk packedDelta) = do
+      delta <- atomicallyC $ receiveDelta @c context packedDelta
+      apply proxy (ObservableChangeLiveDeltaOk delta)
+
+    apply :: ObservableProxy c v -> ObservableChange Load (ObservableResult '[SomeException] c) v -> QuasarIO ()
+    apply proxy change = atomically do
+      unlessM (readTVar proxy.terminated) do
+        changeObservableVar proxy.observableVar change
 
 
-instance (NetworkObject a, ObservableContainer c v) => ToObservable Load '[SomeException] c v (ObservableProxy c v) where
+instance (NetworkObject v, ObservableContainer c v) => ToObservable Load '[SomeException] c v (ObservableProxy c v) where
   toObservable proxy = toObservable proxy.observableVar
 
 
-manageObservableProxy :: ObservableProxy c v -> QuasarIO ()
-manageObservableProxy proxy = undefined
---  -- TODO verify no other exceptions can be thrown by `channelSend`
---  task `catch` \(ex :: Ex '[MultiplexerException, ChannelException]) ->
---    atomically (writeObservableVar proxy.observableVar (ObservableNotAvailable (toException (ObservableProxyException (toException ex)))))
---  where
---    task = bracket (pure proxy.channel) disposeEventuallyIO_ \channel -> do
---      forever do
---        atomically $ check =<< observableVarHasObservers proxy.observableVar
---
---        channelSend channel Start
---
---        atomically $ check . not =<< observableVarHasObservers proxy.observableVar
---
---        channelSend channel Stop
+manageObservableProxy :: ObservableContainer c v => ObservableProxy c v -> QuasarIO ()
+manageObservableProxy proxy = do
+  -- TODO verify no other exceptions can be thrown by `channelSend`
+  task `catch` \(ex :: Ex '[MultiplexerException, ChannelException]) ->
+    atomically do
+      writeTVar proxy.terminated True
+      changeObservableVar proxy.observableVar (ObservableChangeLiveDeltaThrow (toEx (ObservableProxyException (toException ex))))
+  where
+    task = bracket (pure proxy.channel) disposeEventuallyIO_ \channel -> do
+      forever do
+        atomically $ check =<< observableVarHasObservers proxy.observableVar
+
+        channelSend channel Start
+
+        atomically $ check . not =<< observableVarHasObservers proxy.observableVar
+
+        channelSend channel Stop
