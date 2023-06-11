@@ -38,7 +38,7 @@ module Quasar.Observable.Core (
   Loading(..),
   Final,
   ObservableChange(.., ObservableChangeLiveDeltaOk, ObservableChangeLiveDeltaThrow, ObservableChangeLoading, ObservableChangeLive),
-  EvaluatedObservableChange(..),
+  EvaluatedObservableChange(.., EvaluatedObservableChangeLiveDeltaOk, EvaluatedObservableChangeLiveDeltaThrow),
   ObservableState(.., ObservableStateLiveOk, ObservableStateLiveEx),
   ObserverState(.., ObserverStateLoading, ObserverStateLiveOk, ObserverStateLiveEx),
   createObserverState,
@@ -382,6 +382,21 @@ instance (Functor c, Functor (Delta c)) => Functor (EvaluatedObservableChange ca
     EvaluatedObservableChangeLiveUnchanged
   fmap fn (EvaluatedObservableChangeLiveDelta delta evaluated) =
     EvaluatedObservableChangeLiveDelta (fn <$> delta) (fn <$> evaluated)
+
+{-# COMPLETE
+  EvaluatedObservableChangeLoadingUnchanged,
+  EvaluatedObservableChangeLoadingClear,
+  EvaluatedObservableChangeLiveUnchanged,
+  EvaluatedObservableChangeLiveDeltaOk,
+  EvaluatedObservableChangeLiveDeltaThrow
+  #-}
+
+pattern EvaluatedObservableChangeLiveDeltaOk :: forall canLoad exceptions c v. Delta c v -> c v -> EvaluatedObservableChange canLoad (ObservableResult exceptions c) v
+pattern EvaluatedObservableChangeLiveDeltaOk delta evaluated = EvaluatedObservableChangeLiveDelta (ObservableResultDeltaOk delta) (ObservableResultOk evaluated)
+
+pattern EvaluatedObservableChangeLiveDeltaThrow :: forall canLoad exceptions c v. Ex exceptions -> EvaluatedObservableChange canLoad (ObservableResult exceptions c) v
+pattern EvaluatedObservableChangeLiveDeltaThrow ex <- EvaluatedObservableChangeLiveDelta (ObservableResultDeltaThrow ex) _ where
+  EvaluatedObservableChangeLiveDeltaThrow ex = EvaluatedObservableChangeLiveDelta (ObservableResultDeltaThrow ex) (ObservableResultEx ex)
 
 {-# COMPLETE ObservableStateLiveOk, ObservableStateLiveEx, ObservableStateLoading #-}
 
