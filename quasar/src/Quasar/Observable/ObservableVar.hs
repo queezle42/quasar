@@ -2,6 +2,8 @@ module Quasar.Observable.ObservableVar (
   ObservableVar,
   newObservableVar,
   newObservableVarIO,
+  newLoadingObservableVar,
+  newLoadingObservableVarIO,
   writeObservableVar,
   readObservableVar,
   modifyObservableVar,
@@ -35,8 +37,14 @@ instance ObservableContainer c v => IsObservableCore canLoad (ObservableResult e
 newObservableVar :: MonadSTMc NoRetry '[] m => c v -> m (ObservableVar canLoad exceptions c v)
 newObservableVar x = liftSTMc $ ObservableVar <$> newTVar (ObserverStateLiveOk x) <*> newCallbackRegistry
 
+newLoadingObservableVar :: forall exceptions c v m. MonadSTMc NoRetry '[] m => m (ObservableVar Load exceptions c v)
+newLoadingObservableVar = liftSTMc $ ObservableVar <$> newTVar (ObserverStateLoadingCleared @(ObservableResult exceptions c) @v) <*> newCallbackRegistry
+
 newObservableVarIO :: MonadIO m => c v -> m (ObservableVar canLoad exceptions c v)
 newObservableVarIO x = liftIO $ ObservableVar <$> newTVarIO (ObserverStateLiveOk x) <*> newCallbackRegistryIO
+
+newLoadingObservableVarIO :: forall exceptions c v m. MonadIO m => m (ObservableVar Load exceptions c v)
+newLoadingObservableVarIO = liftIO $ ObservableVar <$> newTVarIO (ObserverStateLoadingCleared @(ObservableResult exceptions c) @v) <*> newCallbackRegistryIO
 
 writeObservableVar :: (ObservableContainer c v, MonadSTMc NoRetry '[] m) => ObservableVar canLoad exceptions c v -> c v -> m ()
 writeObservableVar (ObservableVar var registry) value = liftSTMc $ do
