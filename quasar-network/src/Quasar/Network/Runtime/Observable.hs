@@ -12,7 +12,7 @@ import Data.Functor.Identity (Identity(..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
-import Data.Set (Set)
+--import Data.Set (Set)
 import Quasar.Async
 import Quasar.Exceptions
 import Quasar.MonadQuasar
@@ -44,11 +44,11 @@ instance NetworkObject v => NetworkObservable Identity v where
   toNetworkObservable = id
   fromNetworkObservable = id
 
-instance (Ord v, Binary v) => NetworkObservable Set v where
-  type NetworkContainer Set v = Map v
-  type NetworkValue Set v = ()
-  toNetworkObservable = undefined
-  fromNetworkObservable = undefined
+--instance (Ord v, Binary v) => NetworkObservable Set v where
+--  type NetworkContainer Set v = Map v
+--  type NetworkValue Set v = ()
+--  toNetworkObservable = undefined
+--  fromNetworkObservable = undefined
 
 
 
