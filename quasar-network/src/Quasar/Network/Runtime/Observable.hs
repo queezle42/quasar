@@ -142,7 +142,7 @@ sendObservableReference observable channel = do
   observableDisposer <- newTVar mempty
   pendingChange <- newTVar (emptyPendingChange Loading)
   pendingFinal <- newTVar False
-  lastChange <- newTVar LastChangeLoadingCleared
+  lastChange <- newTVar (initialLastChange Loading)
   activeObjects <- newTVar Nothing
   pendingDisposal <- newTVar Nothing
   let ref = ObservableReference{

@@ -58,6 +58,7 @@ module Quasar.Observable.Core (
   LastChange(..),
   updatePendingChange,
   emptyPendingChange,
+  initialLastChange,
   changeFromPending,
 
   -- * Identity observable (single value without partial updates)
@@ -558,6 +559,10 @@ updatePendingChange (ObservableChangeLiveDelta delta) _ = PendingChangeAlter Liv
 
 emptyPendingChange :: Loading canLoad -> PendingChange canLoad c v
 emptyPendingChange loading = PendingChangeAlter loading Nothing
+
+initialLastChange :: Loading canLoad -> LastChange canLoad c v
+initialLastChange Loading = LastChangeLoadingCleared
+initialLastChange Live = LastChangeLive
 
 
 changeFromPending :: Loading canLoad -> PendingChange canLoad c v -> LastChange canLoad c v -> Maybe (ObservableChange canLoad c v, PendingChange canLoad c v, LastChange canLoad c v)
