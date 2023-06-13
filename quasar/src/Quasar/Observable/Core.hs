@@ -54,7 +54,7 @@ module Quasar.Observable.Core (
   mapObservableResultContent,
 
   -- *** Pending change helpers
-  PendingChange(..),
+  PendingChange,
   LastChange(..),
   updatePendingChange,
   emptyPendingChange,
