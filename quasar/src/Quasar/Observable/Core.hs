@@ -412,6 +412,10 @@ data ObservableState canLoad c v where
   ObservableStateLoading :: ObservableState Load c v
   ObservableStateLive :: c v -> ObservableState canLoad c v
 
+instance HasField "loading" (ObservableState canLoad c v) (Loading canLoad) where
+  getField ObservableStateLoading = Loading
+  getField (ObservableStateLive _) = Live
+
 mapObservableState :: (cp vp -> c v) -> ObservableState canLoad cp vp -> ObservableState canLoad c v
 mapObservableState _fn ObservableStateLoading = ObservableStateLoading
 mapObservableState fn (ObservableStateLive content) = ObservableStateLive (fn content)
@@ -440,7 +444,7 @@ data ObserverState canLoad c v where
 {-# COMPLETE ObserverStateLoading, ObserverStateLive #-}
 
 pattern ObserverStateLoading :: () => (canLoad ~ Load) => ObserverState canLoad c v
-pattern ObserverStateLoading <- (observerStateIsLoading -> Loading)
+pattern ObserverStateLoading <- ((.loading) -> Loading)
 
 {-# COMPLETE ObserverStateLiveOk, ObserverStateLiveEx, ObserverStateLoading #-}
 {-# COMPLETE ObserverStateLiveOk, ObserverStateLiveEx, ObserverStateLoadingCached, ObserverStateLoadingCleared #-}
@@ -451,10 +455,10 @@ pattern ObserverStateLiveOk content = ObserverStateLive (ObservableResultOk cont
 pattern ObserverStateLiveEx :: forall canLoad exceptions c v. Ex exceptions -> ObserverState canLoad (ObservableResult exceptions c) v
 pattern ObserverStateLiveEx ex = ObserverStateLive (ObservableResultEx ex)
 
-observerStateIsLoading :: ObserverState canLoad c v -> Loading canLoad
-observerStateIsLoading ObserverStateLoadingCleared = Loading
-observerStateIsLoading (ObserverStateLoadingCached _) = Loading
-observerStateIsLoading (ObserverStateLive _) = Live
+instance HasField "loading" (ObserverState canLoad c v) (Loading canLoad) where
+  getField ObserverStateLoadingCleared = Loading
+  getField ObserverStateLoading = Loading
+  getField (ObserverStateLive _) = Live
 
 type Loading :: CanLoad -> Type
 data Loading canLoad where
