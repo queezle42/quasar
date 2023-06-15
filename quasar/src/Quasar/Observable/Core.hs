@@ -420,6 +420,11 @@ mapObservableState :: (cp vp -> c v) -> ObservableState canLoad cp vp -> Observa
 mapObservableState _fn ObservableStateLoading = ObservableStateLoading
 mapObservableState fn (ObservableStateLive content) = ObservableStateLive (fn content)
 
+mergeObservableState :: (ca va -> cb vb -> c v) -> ObservableState canLoad ca va -> ObservableState canLoad cb vb -> ObservableState canLoad c v
+mergeObservableState fn (ObservableStateLive x) (ObservableStateLive y) = ObservableStateLive (fn x y)
+mergeObservableState _fn ObservableStateLoading _ = ObservableStateLoading
+mergeObservableState _fn _ ObservableStateLoading = ObservableStateLoading
+
 instance Functor c => Functor (ObservableState canLoad c) where
   fmap _fn ObservableStateLoading = ObservableStateLoading
   fmap fn (ObservableStateLive content) = ObservableStateLive (fn <$> content)
