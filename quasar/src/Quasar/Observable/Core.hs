@@ -61,6 +61,10 @@ module Quasar.Observable.Core (
   initialLastChange,
   changeFromPending,
 
+  -- *** Merging changes
+  attachMergeObserver,
+  attachEvaluatedMergeObserver,
+
   -- * Identity observable (single value without partial updates)
   ObservableI,
   ToObservableI,
@@ -795,6 +799,79 @@ mergeCallback ourStateVar otherStateVar mergeStateVar fullMergeFn fn clearFn cal
         callback undefined change
 
 
+attachMergeObserver
+  :: forall canLoad exceptions ca va cb vb c v a b.
+  (
+    IsObservableCore canLoad (ObservableResult exceptions ca) va a,
+    IsObservableCore canLoad (ObservableResult exceptions cb) vb b,
+    ObservableContainer c v
+  )
+  -- Function to create the internal state during (re)initialisation.
+  => (ca va -> cb vb -> c v)
+  -- Function to create a delta from a LHS delta. Returning `Nothing` can be
+  -- used to signal a no-op.
+  -> (Delta ca va -> ca va -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v))
+  -- Function to create a delta from a RHS delta. Returning `Nothing` can be
+  -- used to signal a no-op.
+  -> (Delta cb vb -> cb vb -> MaybeL canLoad (ca va) -> Maybe (MergeChange canLoad c v))
+  -- Function to create a delta from a cleared LHS.
+  -> (canLoad :~: Load -> cb vb -> Maybe (MergeChange canLoad c v))
+  -- Function to create a delta from a cleared RHS.
+  -> (canLoad :~: Load -> ca va -> Maybe (MergeChange canLoad c v))
+  -- LHS observable input.
+  -> a
+  -- RHS observable input.
+  -> b
+  -- The remainder of the signature matches `attachObserver`, so it can be used
+  -- as an implementation for it.
+  -> (Final -> ObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ())
+  -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canLoad (ObservableResult exceptions c) v)
+attachMergeObserver fullMergeFn leftFn rightFn clearLeftFn clearRightFn fx fy callback = do
+  attachCoreMergeObserver wrappedFullMergeFn wrappedLeftFn wrappedRightFn wrappedClearLeftFn wrappedClearRightFn fx fy callback
+  where
+    wrappedFullMergeFn :: ObservableResult exceptions ca va -> ObservableResult exceptions cb vb -> ObservableResult exceptions c v
+    wrappedFullMergeFn = mergeObservableResult fullMergeFn
+
+    wrappedLeftFn :: Delta (ObservableResult exceptions ca) va -> ObservableResult exceptions ca va -> MaybeL canLoad (ObservableResult exceptions cb vb) -> Maybe (MergeChange canLoad (ObservableResult exceptions c) v)
+    -- LHS exception
+    wrappedLeftFn (ObservableResultDeltaThrow ex) _ _ = Just (MergeChangeDelta (ObservableResultDeltaThrow ex))
+
+    -- RHS exception
+    wrappedLeftFn (ObservableResultDeltaOk _delta) (ObservableResultOk _x) (JustL (ObservableResultEx _ex)) = Nothing
+
+    wrappedLeftFn (ObservableResultDeltaOk delta) (ObservableResultOk x) (JustL (ObservableResultOk y)) = wrapMergeChange <$> leftFn delta x (JustL y)
+    wrappedLeftFn (ObservableResultDeltaOk delta) (ObservableResultOk x) NothingL = wrapMergeChange <$> leftFn delta x NothingL
+
+    -- This is an error that can be produced by an upstream observable (by incorrectly implementing `attachEvaluatedObserver`)
+    wrappedLeftFn (ObservableResultDeltaOk _) (ObservableResultEx _) _ = Nothing
+
+    wrappedRightFn :: Delta (ObservableResult exceptions cb) vb -> ObservableResult exceptions cb vb -> MaybeL canLoad (ObservableResult exceptions ca va) -> Maybe (MergeChange canLoad (ObservableResult exceptions c) v)
+    -- LHS exception has priority over any RHS change
+    wrappedRightFn _ _ (JustL (ObservableResultEx _)) = Nothing
+
+    -- Otherwise RHS exception is chosen
+    wrappedRightFn (ObservableResultDeltaThrow ex) _ _ = Just (MergeChangeDelta (ObservableResultDeltaThrow ex))
+
+    wrappedRightFn (ObservableResultDeltaOk delta) (ObservableResultOk y) (JustL (ObservableResultOk x)) = wrapMergeChange <$> rightFn delta y (JustL x)
+    wrappedRightFn (ObservableResultDeltaOk delta) (ObservableResultOk y) NothingL = wrapMergeChange <$> rightFn delta y NothingL
+
+    -- This is an error that can be produced by an upstream observable (by incorrectly implementing `attachEvaluatedObserver`)
+    wrappedRightFn (ObservableResultDeltaOk _) (ObservableResultEx _) _ = Nothing
+
+    wrappedClearLeftFn :: canLoad :~: Load -> ObservableResult exceptions cb vb -> Maybe (MergeChange canLoad (ObservableResult exceptions c) v)
+    wrappedClearLeftFn Refl (ObservableResultOk y) = wrapMergeChange <$> clearLeftFn Refl y
+    wrappedClearLeftFn Refl (ObservableResultEx _ex) = Just MergeChangeClear
+
+    wrappedClearRightFn :: canLoad :~: Load -> ObservableResult exceptions ca va -> Maybe (MergeChange canLoad (ObservableResult exceptions c) v)
+    wrappedClearRightFn Refl (ObservableResultOk x) = wrapMergeChange <$> clearRightFn Refl x
+    wrappedClearRightFn Refl (ObservableResultEx _ex) = Just MergeChangeClear
+
+    wrapMergeChange :: MergeChange canLoad c v -> MergeChange canLoad (ObservableResult exceptions c) v
+    wrapMergeChange MergeChangeClear = MergeChangeClear
+    wrapMergeChange (MergeChangeDelta delta) = MergeChangeDelta (ObservableResultDeltaOk delta)
+
+
+
 data EvaluatedBindObservable canLoad c v = forall d p a. IsObservableCore canLoad d p a => EvaluatedBindObservable a (d p -> ObservableCore canLoad c v)
 
 data BindState canLoad c v where
@@ -1110,6 +1187,11 @@ unwrapObservableResult (ObservableResultEx ex) = throwEx ex
 mapObservableResultContent :: (ca va -> cb vb) -> ObservableResult exceptions ca va -> ObservableResult exceptions cb vb
 mapObservableResultContent fn (ObservableResultOk result) = ObservableResultOk (fn result)
 mapObservableResultContent _fn (ObservableResultEx ex) = ObservableResultEx ex
+
+mergeObservableResult :: (ca va -> cb vb -> c v) -> ObservableResult exceptions ca va -> ObservableResult exceptions cb vb -> ObservableResult exceptions c v
+mergeObservableResult fn (ObservableResultOk x) (ObservableResultOk y) = ObservableResultOk (fn x y)
+mergeObservableResult _fn (ObservableResultEx ex) _ = ObservableResultEx ex
+mergeObservableResult _fn _ (ObservableResultEx ex) = ObservableResultEx ex
 
 data ObservableResultDelta exceptions c v
   = ObservableResultDeltaOk (Delta c v)
