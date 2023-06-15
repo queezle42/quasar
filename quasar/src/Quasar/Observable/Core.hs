@@ -91,6 +91,7 @@ import Data.Map.Strict qualified as Map
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.String (IsString(..))
+import Data.Type.Equality ((:~:)(Refl))
 import GHC.Records (HasField(..))
 import Quasar.Prelude
 import Quasar.Resources.Disposer
@@ -674,140 +675,124 @@ instance (Applicative c, ObservableContainer c v) => IsObservableCore canLoad c 
 
 
 attachEvaluatedMergeObserver
-  :: (IsObservableCore canLoad ca va a, IsObservableCore canLoad cb vb b, ObservableContainer c v)
+  :: forall canLoad c v ca va cb vb a b.
+  (IsObservableCore canLoad ca va a, IsObservableCore canLoad cb vb b, ObservableContainer c v)
   => (ca va -> cb vb -> c v)
   -> a
   -> b
   -> (Final -> ObservableChange canLoad c v -> STMc NoRetry '[] ())
   -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canLoad c v)
 attachEvaluatedMergeObserver mergeState =
-  attachMergeObserver mergeState (fn mergeState) (fn (flip mergeState))
+  attachMergeObserver mergeState fn fn2 clearFn clearFn
   where
-    fn :: ObservableContainer c v => (ca va -> cb vb -> c v) -> Delta ca va -> ca va -> cb vb -> Maybe (Delta c v)
-    fn mergeState' _ x y = Just $ toInitialDelta $ mergeState' x y
+    fn :: Delta ca va -> ca va -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v)
+    fn _delta _x NothingL = Just MergeChangeClear
+    fn _ x (JustL y) = Just (MergeChangeDelta (toInitialDelta (mergeState x y)))
+    fn2 :: Delta cb vb -> cb vb -> MaybeL canLoad (ca va) -> Maybe (MergeChange canLoad c v)
+    fn2 _delta _x NothingL = Just MergeChangeClear
+    fn2 _ y (JustL x) = Just (MergeChangeDelta (toInitialDelta (mergeState x y)))
+    clearFn :: forall e. canLoad :~: Load -> e -> Maybe (MergeChange canLoad c v)
+    clearFn Refl _ = Just MergeChangeClear
 
-data MergeState canLoad where
-  MergeStateLoadingCleared :: MergeState Load
-  MergeStateValid :: Loading canLoad -> MergeState canLoad
 
-{-# COMPLETE MergeStateLoading, MergeStateLive #-}
+data MergeChange canLoad c v where
+  MergeChangeClear :: MergeChange Load c v
+  MergeChangeDelta :: Delta c v -> MergeChange canLoad c v
 
-pattern MergeStateLoading :: () => (canLoad ~ Load) => MergeState canLoad
-pattern MergeStateLoading <- (mergeStateIsLoading -> Loading)
+instance ObservableContainer c v => Semigroup (MergeChange canLoad c v) where
+  _ <> MergeChangeClear = MergeChangeClear
+  MergeChangeClear <> y = y
+  MergeChangeDelta x <> MergeChangeDelta y = MergeChangeDelta (mergeDelta @c x y)
 
-pattern MergeStateLive :: MergeState canLoad
-pattern MergeStateLive <- (mergeStateIsLoading -> Live)
-
-mergeStateIsLoading :: MergeState canLoad -> Loading canLoad
-mergeStateIsLoading MergeStateLoadingCleared = Loading
-mergeStateIsLoading (MergeStateValid loading) = loading
-
-changeMergeState :: Loading canLoad -> MergeState canLoad -> MergeState canLoad
-changeMergeState _loading MergeStateLoadingCleared = MergeStateLoadingCleared
-changeMergeState loading (MergeStateValid _) = MergeStateValid loading
 
 attachMergeObserver
   :: forall canLoad ca va cb vb c v a b.
   (IsObservableCore canLoad ca va a, IsObservableCore canLoad cb vb b, ObservableContainer c v)
+  -- Function to create the internal state during (re)initialisation.
   => (ca va -> cb vb -> c v)
-  -> (Delta ca va -> ca va -> cb vb -> Maybe (Delta c v))
-  -> (Delta cb vb -> cb vb -> ca va -> Maybe (Delta c v))
+  -- Function to create a delta from a LHS delta. Returning `Nothing` can be
+  -- used to signal a no-op.
+  -> (Delta ca va -> ca va -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v))
+  -- Function to create a delta from a RHS delta. Returning `Nothing` can be
+  -- used to signal a no-op.
+  -> (Delta cb vb -> cb vb -> MaybeL canLoad (ca va) -> Maybe (MergeChange canLoad c v))
+  -- Function to create a delta from a cleared LHS.
+  -> (canLoad :~: Load -> cb vb -> Maybe (MergeChange canLoad c v))
+  -- Function to create a delta from a cleared RHS.
+  -> (canLoad :~: Load -> ca va -> Maybe (MergeChange canLoad c v))
+  -- LHS observable input.
   -> a
+  -- RHS observable input.
   -> b
+  -- The remainder of the signature matches `attachObserver`, so it can be used
+  -- as an implementation for it.
   -> (Final -> ObservableChange canLoad c v -> STMc NoRetry '[] ())
   -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canLoad c v)
-attachMergeObserver mergeFn applyDeltaLeft applyDeltaRight fx fy callback = do
-  mfixTVar \var -> do
-    (disposerX, initialFinalX, initialX) <- attachEvaluatedObserver# fx \finalX evaluatedChangeX -> do
-      (_, oldStateX, finalY, stateY, oldMerged) <- readTVar var
-      let
-        final = finalX && finalY
-        mresult = do
-          stateX <- applyEvaluatedObservableChange evaluatedChangeX oldStateX
-          (change, merged) <- mergeLeft evaluatedChangeX stateX stateY oldMerged
-          pure (stateX, change, merged)
-      case mresult of
-        Nothing -> do
-          when final do
-            callback final case mergeStateIsLoading oldMerged of
-              Loading -> ObservableChangeLoadingClear
-              Live -> ObservableChangeLiveUnchanged
-        Just (stateX, change, merged) -> do
-          writeTVar var (finalX, stateX, finalY, stateY, merged)
-          callback final change
-
-    (disposerY, initialFinalY, initialY) <- attachEvaluatedObserver# fy \finalY evaluatedChangeY -> do
-      (finalX, stateX, _, oldStateY, oldMerged) <- readTVar var
-      let
-        final = finalX && finalY
-        mresult = do
-          stateY <- applyEvaluatedObservableChange evaluatedChangeY oldStateY
-          (change, merged) <- mergeRight evaluatedChangeY stateX stateY oldMerged
-          pure (stateY, change, merged)
-      case mresult of
-        Nothing -> do
-          when final do
-            callback final case mergeStateIsLoading oldMerged of
-              Loading -> ObservableChangeLoadingClear
-              Live -> ObservableChangeLiveUnchanged
-        Just (stateY, change, merged) -> do
-          writeTVar var (finalX, stateX, finalY, stateY, merged)
-          callback final change
-
+attachMergeObserver fullMergeFn leftFn rightFn clearLeftFn clearRightFn fx fy callback = do
+  mfixTVar \leftState -> mfixTVar \rightState -> mfixTVar \state -> do
+    (disposerX, finalX, stateX) <- attachEvaluatedObserver# fx (mergeCallback @canLoad @c leftState rightState state fullMergeFn leftFn clearLeftFn callback)
+    (disposerY, finalY, stateY) <- attachEvaluatedObserver# fy (mergeCallback @canLoad @c rightState leftState state (flip fullMergeFn) rightFn clearRightFn callback)
     let
-      disposer = disposerX <> disposerY
-      final = initialFinalX && initialFinalY
-      (initialState, initialMergeState) = case (initialX, initialY) of
-        (ObservableStateLive x, ObservableStateLive y) -> (ObservableStateLive (mergeFn x y), MergeStateValid Live)
-        (ObservableStateLoading, _) -> (ObservableStateLoading, MergeStateLoadingCleared)
-        (_, ObservableStateLoading) -> (ObservableStateLoading, MergeStateLoadingCleared)
-    pure ((disposer, final, initialState), (initialFinalX, createObserverState initialX, initialFinalY, createObserverState initialY, initialMergeState))
+      initialState = mergeObservableState fullMergeFn stateX stateY
+      initialMergeState = (emptyPendingChange initialState.loading, initialLastChange initialState.loading)
+      initialLeftState = createObserverState stateX
+      initialRightState = createObserverState stateY
+    pure ((((disposerX <> disposerY, finalX && finalY, initialState), initialLeftState), initialRightState), initialMergeState)
+
+mergeCallback
+  :: forall canLoad c v ca va cb vb. ObservableContainer c v
+  => TVar (ObserverState canLoad ca va)
+  -> TVar (ObserverState canLoad cb vb)
+  -> TVar (PendingChange canLoad c v, LastChange canLoad c v)
+  -> (ca va -> cb vb -> c v)
+  -> (Delta ca va -> ca va -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v))
+  -> (canLoad :~: Load -> cb vb -> Maybe (MergeChange canLoad c v))
+  -> (Final -> ObservableChange canLoad c v -> STMc NoRetry '[] ())
+  -> Final -> EvaluatedObservableChange canLoad ca va -> STMc NoRetry '[] ()
+mergeCallback ourStateVar otherStateVar mergeStateVar fullMergeFn fn clearFn callback inFinal inChange = do
+  oldState <- readTVar ourStateVar
+  forM_ (applyEvaluatedObservableChange inChange oldState) \state -> do
+    writeTVar ourStateVar state
+    mergeState@(_pending, last) <- readTVar mergeStateVar
+    otherState <- readTVar otherStateVar
+    case last of
+      LastChangeLoadingCleared -> do
+        case (state, otherState) of
+          -- The only way to restore from a cleared result is a reinitialisation.
+          (ObserverStateLive x, ObserverStateLive y) -> reinitialize x y
+          -- No need to keep deltas, since the only way out of Cleared state is a reinitialization.
+          _ -> pure ()
+      _lastNotCleared -> do
+        case inChange of
+          EvaluatedObservableChangeLoadingClear -> clearOur otherState.maybeL
+          EvaluatedObservableChangeLoadingUnchanged -> sendPendingChange Loading mergeState
+          EvaluatedObservableChangeLiveUnchanged -> sendPendingChange (state.loading <> otherState.loading) mergeState
+          EvaluatedObservableChangeLiveDelta delta evaluated ->
+            mapM_ (applyMergeChange otherState.loading) (fn delta evaluated otherState.maybeL)
   where
-    mergeLeft
-      :: EvaluatedObservableChange canLoad ca va
-      -> ObserverState canLoad ca va
-      -> ObserverState canLoad cb vb
-      -> MergeState canLoad
-      -> Maybe (ObservableChange canLoad c v, MergeState canLoad)
-    mergeLeft EvaluatedObservableChangeLoadingClear _ _ MergeStateLoadingCleared = Nothing
-    mergeLeft EvaluatedObservableChangeLoadingClear _ _ _ = Just (ObservableChangeLoadingClear, MergeStateLoadingCleared)
+    reinitialize :: ca va -> cb vb -> STMc NoRetry '[] ()
+    reinitialize x y = update Live (ObservableChangeLiveDelta (toInitialDelta (fullMergeFn x y)))
 
-    mergeLeft EvaluatedObservableChangeLoadingUnchanged _ _ MergeStateLoading = Nothing
-    mergeLeft EvaluatedObservableChangeLoadingUnchanged _ _ merged = Just (ObservableChangeLoadingUnchanged, changeMergeState Loading merged)
+    clearOur :: canLoad ~ Load => MaybeL Load (cb vb) -> STMc NoRetry '[] ()
+    clearOur NothingL = update Loading ObservableChangeLoadingClear
+    clearOur (JustL other) = mapM_ (applyMergeChange Loading) (clearFn Refl other)
 
-    mergeLeft EvaluatedObservableChangeLiveUnchanged _ _ MergeStateLive = Nothing
-    mergeLeft EvaluatedObservableChangeLiveUnchanged _ ObserverStateLoading _ = Nothing
-    mergeLeft EvaluatedObservableChangeLiveUnchanged _ _ merged = Just (ObservableChangeLiveUnchanged, changeMergeState Live merged)
+    applyMergeChange :: Loading canLoad -> MergeChange canLoad c v -> STMc NoRetry '[] ()
+    applyMergeChange _loading MergeChangeClear = update Loading ObservableChangeLoadingClear
+    applyMergeChange loading (MergeChangeDelta delta) = update loading (ObservableChangeLiveDelta delta)
 
-    mergeLeft (EvaluatedObservableChangeLiveDelta _ _) _ ObserverStateLoading _ = Nothing
-    mergeLeft (EvaluatedObservableChangeLiveDelta delta x) _ (ObserverStateLive y) (MergeStateValid _) = do
-      mergedDelta <- applyDeltaLeft delta x y
-      pure (ObservableChangeLiveDelta mergedDelta, MergeStateValid Live)
-    mergeLeft (EvaluatedObservableChangeLiveDelta _delta x) _ (ObserverStateLive y) _ =
-      Just (ObservableChangeLiveDelta (toInitialDelta (mergeFn x y)), MergeStateValid Live)
+    update :: Loading canLoad -> ObservableChange canLoad c v -> STMc NoRetry '[] ()
+    update loading change = do
+      (prevPending, lastChange) <- readTVar mergeStateVar
+      let pending = updatePendingChange change prevPending
+      writeTVar mergeStateVar (pending, lastChange)
+      sendPendingChange loading (pending, lastChange)
 
-    mergeRight
-      :: EvaluatedObservableChange canLoad cb vb
-      -> ObserverState canLoad ca va
-      -> ObserverState canLoad cb vb
-      -> MergeState canLoad
-      -> Maybe (ObservableChange canLoad c v, MergeState canLoad)
-    mergeRight EvaluatedObservableChangeLoadingClear _ _ MergeStateLoadingCleared = Nothing
-    mergeRight EvaluatedObservableChangeLoadingClear _ _ _ = Just (ObservableChangeLoadingClear, MergeStateLoadingCleared)
-
-    mergeRight EvaluatedObservableChangeLoadingUnchanged _ _ MergeStateLoading = Nothing
-    mergeRight EvaluatedObservableChangeLoadingUnchanged _ _ merged = Just (ObservableChangeLoadingUnchanged, changeMergeState Loading merged)
-
-    mergeRight _changeLive ObserverStateLoading _ _ = Nothing
-
-    mergeRight EvaluatedObservableChangeLiveUnchanged _ _ MergeStateLive = Nothing
-    mergeRight EvaluatedObservableChangeLiveUnchanged _ _ merged = Just (ObservableChangeLiveUnchanged, changeMergeState Live merged)
-
-    mergeRight (EvaluatedObservableChangeLiveDelta delta y) (ObserverStateLive x) _ (MergeStateValid _) = do
-      mergedDelta <- applyDeltaRight delta y x
-      pure (ObservableChangeLiveDelta mergedDelta, MergeStateValid Live)
-    mergeRight (EvaluatedObservableChangeLiveDelta _delta y) (ObserverStateLive x) _ _ =
-      Just (ObservableChangeLiveDelta (toInitialDelta (mergeFn x y)), MergeStateValid Live)
+    sendPendingChange :: Loading canLoad -> (PendingChange canLoad c v, LastChange canLoad c v) -> STMc NoRetry '[] ()
+    sendPendingChange loading (prevPending, prevLast) = do
+      forM_ (changeFromPending loading prevPending prevLast) \(change, pending, last) -> do
+        writeTVar mergeStateVar (pending, last)
+        callback undefined change
 
 
 data EvaluatedBindObservable canLoad c v = forall d p a. IsObservableCore canLoad d p a => EvaluatedBindObservable a (d p -> ObservableCore canLoad c v)
