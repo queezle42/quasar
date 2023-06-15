@@ -683,7 +683,7 @@ attachEvaluatedMergeObserver
   -> (Final -> ObservableChange canLoad c v -> STMc NoRetry '[] ())
   -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canLoad c v)
 attachEvaluatedMergeObserver mergeState =
-  attachMergeObserver mergeState fn fn2 clearFn clearFn
+  attachCoreMergeObserver mergeState fn fn2 clearFn clearFn
   where
     fn :: Delta ca va -> ca va -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v)
     fn _delta _x NothingL = Just MergeChangeClear
@@ -705,7 +705,7 @@ instance ObservableContainer c v => Semigroup (MergeChange canLoad c v) where
   MergeChangeDelta x <> MergeChangeDelta y = MergeChangeDelta (mergeDelta @c x y)
 
 
-attachMergeObserver
+attachCoreMergeObserver
   :: forall canLoad ca va cb vb c v a b.
   (IsObservableCore canLoad ca va a, IsObservableCore canLoad cb vb b, ObservableContainer c v)
   -- Function to create the internal state during (re)initialisation.
@@ -728,7 +728,7 @@ attachMergeObserver
   -- as an implementation for it.
   -> (Final -> ObservableChange canLoad c v -> STMc NoRetry '[] ())
   -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canLoad c v)
-attachMergeObserver fullMergeFn leftFn rightFn clearLeftFn clearRightFn fx fy callback = do
+attachCoreMergeObserver fullMergeFn leftFn rightFn clearLeftFn clearRightFn fx fy callback = do
   mfixTVar \leftState -> mfixTVar \rightState -> mfixTVar \state -> do
     (disposerX, finalX, stateX) <- attachEvaluatedObserver# fx (mergeCallback @canLoad @c leftState rightState state fullMergeFn leftFn clearLeftFn callback)
     (disposerY, finalY, stateY) <- attachEvaluatedObserver# fy (mergeCallback @canLoad @c rightState leftState state (flip fullMergeFn) rightFn clearRightFn callback)
