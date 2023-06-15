@@ -465,6 +465,11 @@ instance HasField "loading" (ObserverState canLoad c v) (Loading canLoad) where
   getField ObserverStateLoading = Loading
   getField (ObserverStateLive _) = Live
 
+instance HasField "maybeL" (ObserverState canLoad c v) (MaybeL canLoad (c v)) where
+  getField ObserverStateLoadingCleared = NothingL
+  getField (ObserverStateLoadingCached cache) = JustL cache
+  getField (ObserverStateLive evaluated) = JustL evaluated
+
 type Loading :: CanLoad -> Type
 data Loading canLoad where
   Live :: Loading canLoad
@@ -540,6 +545,11 @@ deconstructObserverStateCached (ObserverStateLive content) = Just (Live, content
 constructObserverStateCached :: Loading canLoad -> c v -> ObserverState canLoad c v
 constructObserverStateCached Live content = ObserverStateLive content
 constructObserverStateCached Loading content = ObserverStateLoadingCached content
+
+
+data MaybeL canLoad a where
+  NothingL :: MaybeL Load a
+  JustL :: a -> MaybeL canLoad a
 
 
 type PendingChange :: CanLoad -> (Type -> Type) -> Type -> Type
