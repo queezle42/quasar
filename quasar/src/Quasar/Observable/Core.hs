@@ -880,6 +880,50 @@ attachMergeObserver fullMergeFn leftFn rightFn clearLeftFn clearRightFn fx fy ca
     wrapMergeChange (MergeChangeDelta delta) = MergeChangeDelta (ObservableResultDeltaOk delta)
 
 
+attachMonoidMergeObserver
+  :: forall canLoad exceptions c v ca va cb vb a b.
+  (
+    Monoid (ca va),
+    Monoid (cb vb),
+    IsObservableCore canLoad (ObservableResult exceptions ca) va a,
+    IsObservableCore canLoad (ObservableResult exceptions cb) vb b,
+    ObservableContainer ca va,
+    ObservableContainer cb vb,
+    ObservableContainer c v
+  )
+  -- Function to create the internal state during (re)initialisation.
+  => (ca va -> cb vb -> c v)
+  -- Function to create a delta from a LHS delta. Returning `Nothing` can be
+  -- used to signal a no-op.
+  -> (Delta ca va -> ca va -> cb vb -> Maybe (Delta c v))
+  -- Function to create a delta from a RHS delta. Returning `Nothing` can be
+  -- used to signal a no-op.
+  -> (Delta cb vb -> cb vb -> ca va -> Maybe (Delta c v))
+  -- LHS observable input.
+  -> a
+  -- RHS observable input.
+  -> b
+  -- The remainder of the signature matches `attachObserver`, so it can be used
+  -- as an implementation for it.
+  -> (Final -> ObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ())
+  -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canLoad (ObservableResult exceptions c) v)
+attachMonoidMergeObserver fullMergeFn leftFn rightFn fx fy callback =
+  attachMergeObserver fullMergeFn wrappedLeftFn wrappedRightFn clearLeftFn clearRightFn fx fy callback
+  where
+
+    wrappedLeftFn :: Delta ca va -> Maybe (ca va) -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v)
+    wrappedLeftFn delta x y = MergeChangeDelta <$> leftFn delta (fromMaybe mempty x) (fromMaybeL mempty y)
+
+    wrappedRightFn :: Delta cb vb -> Maybe (cb vb) -> MaybeL canLoad (ca va) -> Maybe (MergeChange canLoad c v)
+    wrappedRightFn delta y x = MergeChangeDelta <$> rightFn delta (fromMaybe mempty y) (fromMaybeL mempty x)
+
+    clearLeftFn :: canLoad :~: Load -> ca va -> cb vb -> Maybe (MergeChange canLoad c v)
+    clearLeftFn _ prev other = wrappedLeftFn (toInitialDelta @ca mempty) (Just prev) (JustL other)
+
+    clearRightFn :: canLoad :~: Load -> cb vb -> ca va -> Maybe (MergeChange canLoad c v)
+    clearRightFn _ prev other = wrappedRightFn (toInitialDelta @cb mempty) (Just prev) (JustL other)
+
+
 
 data EvaluatedBindObservable canLoad c v = forall d p a. IsObservableCore canLoad d p a => EvaluatedBindObservable a (d p -> ObservableCore canLoad c v)
 
