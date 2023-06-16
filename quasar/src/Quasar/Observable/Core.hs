@@ -470,6 +470,11 @@ instance HasField "loading" (ObserverState canLoad c v) (Loading canLoad) where
   getField ObserverStateLoading = Loading
   getField (ObserverStateLive _) = Live
 
+instance HasField "maybe" (ObserverState canLoad c v) (Maybe (c v)) where
+  getField ObserverStateLoadingCleared = Nothing
+  getField (ObserverStateLoadingCached cache) = Just cache
+  getField (ObserverStateLive evaluated) = Just evaluated
+
 instance HasField "maybeL" (ObserverState canLoad c v) (MaybeL canLoad (c v)) where
   getField ObserverStateLoadingCleared = NothingL
   getField (ObserverStateLoadingCached cache) = JustL cache
