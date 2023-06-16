@@ -698,14 +698,14 @@ attachEvaluatedMergeObserver
 attachEvaluatedMergeObserver mergeState =
   attachCoreMergeObserver mergeState fn fn2 clearFn clearFn
   where
-    fn :: Delta ca va -> ca va -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v)
-    fn _delta _x NothingL = Just MergeChangeClear
-    fn _ x (JustL y) = Just (MergeChangeDelta (toInitialDelta (mergeState x y)))
-    fn2 :: Delta cb vb -> cb vb -> MaybeL canLoad (ca va) -> Maybe (MergeChange canLoad c v)
-    fn2 _delta _x NothingL = Just MergeChangeClear
-    fn2 _ y (JustL x) = Just (MergeChangeDelta (toInitialDelta (mergeState x y)))
-    clearFn :: forall e. canLoad :~: Load -> e -> Maybe (MergeChange canLoad c v)
-    clearFn Refl _ = Just MergeChangeClear
+    fn :: Delta ca va -> ca va -> Maybe (ca va) -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v)
+    fn _delta _x _prev NothingL = Just MergeChangeClear
+    fn _ x _prev (JustL y) = Just (MergeChangeDelta (toInitialDelta (mergeState x y)))
+    fn2 :: Delta cb vb -> cb vb -> Maybe (cb vb) -> MaybeL canLoad (ca va) -> Maybe (MergeChange canLoad c v)
+    fn2 _y _delta _x NothingL = Just MergeChangeClear
+    fn2 _ y _prev (JustL x) = Just (MergeChangeDelta (toInitialDelta (mergeState x y)))
+    clearFn :: forall d e. canLoad :~: Load -> d -> e -> Maybe (MergeChange canLoad c v)
+    clearFn Refl _ _ = Just MergeChangeClear
 
 
 data MergeChange canLoad c v where
@@ -725,14 +725,14 @@ attachCoreMergeObserver
   => (ca va -> cb vb -> c v)
   -- Function to create a delta from a LHS delta. Returning `Nothing` can be
   -- used to signal a no-op.
-  -> (Delta ca va -> ca va -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v))
+  -> (Delta ca va -> ca va -> Maybe (ca va) -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v))
   -- Function to create a delta from a RHS delta. Returning `Nothing` can be
   -- used to signal a no-op.
-  -> (Delta cb vb -> cb vb -> MaybeL canLoad (ca va) -> Maybe (MergeChange canLoad c v))
+  -> (Delta cb vb -> cb vb -> Maybe (cb vb) -> MaybeL canLoad (ca va) -> Maybe (MergeChange canLoad c v))
   -- Function to create a delta from a cleared LHS.
-  -> (canLoad :~: Load -> cb vb -> Maybe (MergeChange canLoad c v))
+  -> (canLoad :~: Load -> ca va -> cb vb -> Maybe (MergeChange canLoad c v))
   -- Function to create a delta from a cleared RHS.
-  -> (canLoad :~: Load -> ca va -> Maybe (MergeChange canLoad c v))
+  -> (canLoad :~: Load -> cb vb -> ca va -> Maybe (MergeChange canLoad c v))
   -- LHS observable input.
   -> a
   -- RHS observable input.
@@ -758,8 +758,8 @@ mergeCallback
   -> TVar (ObserverState canLoad cb vb)
   -> TVar (PendingChange canLoad c v, LastChange canLoad c v)
   -> (ca va -> cb vb -> c v)
-  -> (Delta ca va -> ca va -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v))
-  -> (canLoad :~: Load -> cb vb -> Maybe (MergeChange canLoad c v))
+  -> (Delta ca va -> ca va -> Maybe (ca va) -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v))
+  -> (canLoad :~: Load -> ca va -> cb vb -> Maybe (MergeChange canLoad c v))
   -> (Final -> ObservableChange canLoad c v -> STMc NoRetry '[] ())
   -> Final -> EvaluatedObservableChange canLoad ca va -> STMc NoRetry '[] ()
 mergeCallback ourStateVar otherStateVar mergeStateVar fullMergeFn fn clearFn callback inFinal inChange = do
@@ -781,14 +781,15 @@ mergeCallback ourStateVar otherStateVar mergeStateVar fullMergeFn fn clearFn cal
           EvaluatedObservableChangeLoadingUnchanged -> sendPendingChange Loading mergeState
           EvaluatedObservableChangeLiveUnchanged -> sendPendingChange (state.loading <> otherState.loading) mergeState
           EvaluatedObservableChangeLiveDelta delta evaluated ->
-            mapM_ (applyMergeChange otherState.loading) (fn delta evaluated otherState.maybeL)
+            mapM_ (applyMergeChange otherState.loading) (fn delta evaluated oldState.maybe otherState.maybeL)
   where
     reinitialize :: ca va -> cb vb -> STMc NoRetry '[] ()
     reinitialize x y = update Live (ObservableChangeLiveDelta (toInitialDelta (fullMergeFn x y)))
 
     clearOur :: canLoad ~ Load => MaybeL Load (cb vb) -> STMc NoRetry '[] ()
     clearOur NothingL = update Loading ObservableChangeLoadingClear
-    clearOur (JustL other) = mapM_ (applyMergeChange Loading) (clearFn Refl other)
+    -- TODO prev ours (undefined)
+    clearOur (JustL other) = mapM_ (applyMergeChange Loading) (clearFn Refl undefined other)
 
     applyMergeChange :: Loading canLoad -> MergeChange canLoad c v -> STMc NoRetry '[] ()
     applyMergeChange _loading MergeChangeClear = update Loading ObservableChangeLoadingClear
@@ -819,14 +820,14 @@ attachMergeObserver
   => (ca va -> cb vb -> c v)
   -- Function to create a delta from a LHS delta. Returning `Nothing` can be
   -- used to signal a no-op.
-  -> (Delta ca va -> ca va -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v))
+  -> (Delta ca va -> Maybe (ca va) -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v))
   -- Function to create a delta from a RHS delta. Returning `Nothing` can be
   -- used to signal a no-op.
-  -> (Delta cb vb -> cb vb -> MaybeL canLoad (ca va) -> Maybe (MergeChange canLoad c v))
+  -> (Delta cb vb -> Maybe (cb vb) -> MaybeL canLoad (ca va) -> Maybe (MergeChange canLoad c v))
   -- Function to create a delta from a cleared LHS.
-  -> (canLoad :~: Load -> cb vb -> Maybe (MergeChange canLoad c v))
+  -> (canLoad :~: Load -> ca va -> cb vb -> Maybe (MergeChange canLoad c v))
   -- Function to create a delta from a cleared RHS.
-  -> (canLoad :~: Load -> ca va -> Maybe (MergeChange canLoad c v))
+  -> (canLoad :~: Load -> cb vb -> ca va -> Maybe (MergeChange canLoad c v))
   -- LHS observable input.
   -> a
   -- RHS observable input.
@@ -841,39 +842,38 @@ attachMergeObserver fullMergeFn leftFn rightFn clearLeftFn clearRightFn fx fy ca
     wrappedFullMergeFn :: ObservableResult exceptions ca va -> ObservableResult exceptions cb vb -> ObservableResult exceptions c v
     wrappedFullMergeFn = mergeObservableResult fullMergeFn
 
-    wrappedLeftFn :: Delta (ObservableResult exceptions ca) va -> ObservableResult exceptions ca va -> MaybeL canLoad (ObservableResult exceptions cb vb) -> Maybe (MergeChange canLoad (ObservableResult exceptions c) v)
+    wrappedLeftFn :: Delta (ObservableResult exceptions ca) va -> ObservableResult exceptions ca va -> Maybe (ObservableResult exceptions ca va) -> MaybeL canLoad (ObservableResult exceptions cb vb) -> Maybe (MergeChange canLoad (ObservableResult exceptions c) v)
     -- LHS exception
-    wrappedLeftFn (ObservableResultDeltaThrow ex) _ _ = Just (MergeChangeDelta (ObservableResultDeltaThrow ex))
+    wrappedLeftFn (ObservableResultDeltaThrow ex) _ _ _ = Just (MergeChangeDelta (ObservableResultDeltaThrow ex))
 
     -- RHS exception
-    wrappedLeftFn (ObservableResultDeltaOk _delta) (ObservableResultOk _x) (JustL (ObservableResultEx _ex)) = Nothing
+    wrappedLeftFn (ObservableResultDeltaOk _delta) _ _ (JustL (ObservableResultEx _ex)) = Nothing
 
-    wrappedLeftFn (ObservableResultDeltaOk delta) (ObservableResultOk x) (JustL (ObservableResultOk y)) = wrapMergeChange <$> leftFn delta x (JustL y)
-    wrappedLeftFn (ObservableResultDeltaOk delta) (ObservableResultOk x) NothingL = wrapMergeChange <$> leftFn delta x NothingL
+    wrappedLeftFn (ObservableResultDeltaOk delta) _ (Just (ObservableResultOk prevX)) (JustL (ObservableResultOk y)) = wrapMergeChange <$> leftFn delta (Just prevX) (JustL y)
+    wrappedLeftFn (ObservableResultDeltaOk delta) _ (Just (ObservableResultOk prevX)) NothingL = wrapMergeChange <$> leftFn delta (Just prevX) NothingL
+    wrappedLeftFn (ObservableResultDeltaOk delta) _ _ (JustL (ObservableResultOk y)) = wrapMergeChange <$> leftFn delta Nothing (JustL y)
+    wrappedLeftFn (ObservableResultDeltaOk delta) _ _ NothingL = wrapMergeChange <$> leftFn delta Nothing NothingL
 
-    -- This is an error that can be produced by an upstream observable (by incorrectly implementing `attachEvaluatedObserver`)
-    wrappedLeftFn (ObservableResultDeltaOk _) (ObservableResultEx _) _ = Nothing
-
-    wrappedRightFn :: Delta (ObservableResult exceptions cb) vb -> ObservableResult exceptions cb vb -> MaybeL canLoad (ObservableResult exceptions ca va) -> Maybe (MergeChange canLoad (ObservableResult exceptions c) v)
+    wrappedRightFn :: Delta (ObservableResult exceptions cb) vb -> ObservableResult exceptions cb vb -> Maybe (ObservableResult exceptions cb vb) -> MaybeL canLoad (ObservableResult exceptions ca va) -> Maybe (MergeChange canLoad (ObservableResult exceptions c) v)
     -- LHS exception has priority over any RHS change
-    wrappedRightFn _ _ (JustL (ObservableResultEx _)) = Nothing
+    wrappedRightFn _ _ _ (JustL (ObservableResultEx _)) = Nothing
 
     -- Otherwise RHS exception is chosen
-    wrappedRightFn (ObservableResultDeltaThrow ex) _ _ = Just (MergeChangeDelta (ObservableResultDeltaThrow ex))
+    wrappedRightFn (ObservableResultDeltaThrow ex) _ _ _ = Just (MergeChangeDelta (ObservableResultDeltaThrow ex))
 
-    wrappedRightFn (ObservableResultDeltaOk delta) (ObservableResultOk y) (JustL (ObservableResultOk x)) = wrapMergeChange <$> rightFn delta y (JustL x)
-    wrappedRightFn (ObservableResultDeltaOk delta) (ObservableResultOk y) NothingL = wrapMergeChange <$> rightFn delta y NothingL
+    wrappedRightFn (ObservableResultDeltaOk delta) _ (Just (ObservableResultOk prevY)) (JustL (ObservableResultOk x)) = wrapMergeChange <$> rightFn delta (Just prevY) (JustL x)
+    wrappedRightFn (ObservableResultDeltaOk delta) _ (Just (ObservableResultOk prevY)) NothingL = wrapMergeChange <$> rightFn delta (Just prevY) NothingL
 
-    -- This is an error that can be produced by an upstream observable (by incorrectly implementing `attachEvaluatedObserver`)
-    wrappedRightFn (ObservableResultDeltaOk _) (ObservableResultEx _) _ = Nothing
+    wrappedRightFn (ObservableResultDeltaOk delta) _ _ (JustL (ObservableResultOk x)) = wrapMergeChange <$> rightFn delta Nothing (JustL x)
+    wrappedRightFn (ObservableResultDeltaOk delta) _ _ NothingL = wrapMergeChange <$> rightFn delta Nothing NothingL
 
-    wrappedClearLeftFn :: canLoad :~: Load -> ObservableResult exceptions cb vb -> Maybe (MergeChange canLoad (ObservableResult exceptions c) v)
-    wrappedClearLeftFn Refl (ObservableResultOk y) = wrapMergeChange <$> clearLeftFn Refl y
-    wrappedClearLeftFn Refl (ObservableResultEx _ex) = Just MergeChangeClear
+    wrappedClearLeftFn :: canLoad :~: Load -> ObservableResult exceptions ca va -> ObservableResult exceptions cb vb -> Maybe (MergeChange canLoad (ObservableResult exceptions c) v)
+    wrappedClearLeftFn Refl (ObservableResultOk prevX) (ObservableResultOk y) = wrapMergeChange <$> clearLeftFn Refl prevX y
+    wrappedClearLeftFn Refl _ _ = Just MergeChangeClear
 
-    wrappedClearRightFn :: canLoad :~: Load -> ObservableResult exceptions ca va -> Maybe (MergeChange canLoad (ObservableResult exceptions c) v)
-    wrappedClearRightFn Refl (ObservableResultOk x) = wrapMergeChange <$> clearRightFn Refl x
-    wrappedClearRightFn Refl (ObservableResultEx _ex) = Just MergeChangeClear
+    wrappedClearRightFn :: canLoad :~: Load -> ObservableResult exceptions cb vb -> ObservableResult exceptions ca va -> Maybe (MergeChange canLoad (ObservableResult exceptions c) v)
+    wrappedClearRightFn Refl (ObservableResultOk prevY) (ObservableResultOk x) = wrapMergeChange <$> clearRightFn Refl prevY x
+    wrappedClearRightFn Refl _ _ = Just MergeChangeClear
 
     wrapMergeChange :: MergeChange canLoad c v -> MergeChange canLoad (ObservableResult exceptions c) v
     wrapMergeChange MergeChangeClear = MergeChangeClear
