@@ -72,6 +72,7 @@ library
     Quasar.Observable.Async
     Quasar.Observable.Cache
     Quasar.Observable.Core
+    Quasar.Observable.Map
     Quasar.Observable.ObservableList
     Quasar.Observable.ObservableMap
     Quasar.Observable.ObservablePriority
