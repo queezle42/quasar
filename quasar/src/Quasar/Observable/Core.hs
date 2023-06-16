@@ -422,6 +422,10 @@ data ObservableState canLoad c v where
   ObservableStateLoading :: ObservableState Load c v
   ObservableStateLive :: c v -> ObservableState canLoad c v
 
+instance ObservableContainer c v => IsObservableCore canLoad c v (ObservableState canLoad c v) where
+  readObservable# (ObservableStateLive x) = pure (True, x)
+  attachObserver# x _callback = pure (mempty, True, x)
+
 instance HasField "loading" (ObservableState canLoad c v) (Loading canLoad) where
   getField ObservableStateLoading = Loading
   getField (ObservableStateLive _) = Live
