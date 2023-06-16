@@ -561,6 +561,10 @@ data MaybeL canLoad a where
   NothingL :: MaybeL Load a
   JustL :: a -> MaybeL canLoad a
 
+fromMaybeL :: a -> MaybeL canLoad a -> a
+fromMaybeL x NothingL = x
+fromMaybeL _ (JustL x) = x
+
 
 type PendingChange :: CanLoad -> (Type -> Type) -> Type -> Type
 data PendingChange canLoad c v where
