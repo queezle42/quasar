@@ -40,6 +40,7 @@ module Quasar.Observable.Core (
   ObservableChange(.., ObservableChangeLiveDeltaOk, ObservableChangeLiveDeltaThrow, ObservableChangeLoading, ObservableChangeLive),
   EvaluatedObservableChange(.., EvaluatedObservableChangeLiveDeltaOk, EvaluatedObservableChangeLiveDeltaThrow),
   ObservableState(.., ObservableStateLiveOk, ObservableStateLiveEx),
+  mergeObservableState,
   ObserverState(.., ObserverStateLoading, ObserverStateLiveOk, ObserverStateLiveEx),
   createObserverState,
   toObservableState,
@@ -52,6 +53,7 @@ module Quasar.Observable.Core (
   ObservableResultDelta(..),
   unwrapObservableResult,
   mapObservableResultContent,
+  mergeObservableResult,
 
   -- *** Pending change helpers
   PendingChange,
@@ -62,7 +64,10 @@ module Quasar.Observable.Core (
   changeFromPending,
 
   -- *** Merging changes
+  MergeChange(..),
+  MaybeL(..),
   attachMergeObserver,
+  attachMonoidMergeObserver,
   attachEvaluatedMergeObserver,
 
   -- * Identity observable (single value without partial updates)
