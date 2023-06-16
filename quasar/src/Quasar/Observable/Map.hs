@@ -1,4 +1,14 @@
 module Quasar.Observable.Map (
+  -- * ObservableMap
+  ObservableMap,
+  ToObservableMap,
+  toObservableMap,
+
+  -- ** Delta types
+  ObservableMapDelta(..),
+  ObservableMapOperation(..),
+
+  -- ** Map functions
   union,
   unionWith,
   unionWithKey,
