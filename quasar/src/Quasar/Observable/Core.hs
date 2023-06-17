@@ -37,7 +37,6 @@ module Quasar.Observable.Core (
 
   -- ** Additional types
   Loading(..),
-  Final,
   ObservableChange(.., ObservableChangeLiveDeltaOk, ObservableChangeLiveDeltaThrow, ObservableChangeLoading, ObservableChangeLive),
   mapObservableChangeDelta,
   EvaluatedObservableChange(.., EvaluatedObservableChangeLiveDeltaOk, EvaluatedObservableChangeLiveDeltaThrow),
@@ -123,14 +122,14 @@ class ObservableContainer c v => IsObservableCore canLoad c v a | a -> canLoad, 
   readObservable#
     :: canLoad ~ NoLoad
     => a
-    -> STMc NoRetry '[] (Final, c v)
+    -> STMc NoRetry '[] (c v)
 
   attachObserver#
     :: a
-    -> (Final -> ObservableChange canLoad c v -> STMc NoRetry '[] ())
-    -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canLoad c v)
-  attachObserver# x callback = attachEvaluatedObserver# x \final evaluatedChange ->
-    callback final case evaluatedChange of
+    -> (ObservableChange canLoad c v -> STMc NoRetry '[] ())
+    -> STMc NoRetry '[] (TSimpleDisposer, ObservableState canLoad c v)
+  attachObserver# x callback = attachEvaluatedObserver# x \evaluatedChange ->
+    callback case evaluatedChange of
       EvaluatedObservableChangeLoadingClear -> ObservableChangeLoadingClear
       EvaluatedObservableChangeLoadingUnchanged -> ObservableChangeLoadingUnchanged
       EvaluatedObservableChangeLiveUnchanged -> ObservableChangeLiveUnchanged
@@ -138,17 +137,17 @@ class ObservableContainer c v => IsObservableCore canLoad c v a | a -> canLoad, 
 
   attachEvaluatedObserver#
     :: a
-    -> (Final -> EvaluatedObservableChange canLoad c v -> STMc NoRetry '[] ())
-    -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canLoad c v)
+    -> (EvaluatedObservableChange canLoad c v -> STMc NoRetry '[] ())
+    -> STMc NoRetry '[] (TSimpleDisposer, ObservableState canLoad c v)
   attachEvaluatedObserver# x callback =
     mfixTVar \var -> do
-      (disposer, final, initial) <- attachObserver# x \final change -> do
+      (disposer, initial) <- attachObserver# x \change -> do
         cached <- readTVar var
         forM_ (applyObservableChange change cached) \(evaluatedChange, newCached) -> do
           writeTVar var newCached
-          callback final evaluatedChange
+          callback evaluatedChange
 
-      pure ((disposer, final, initial), createObserverState initial)
+      pure ((disposer, initial), createObserverState initial)
 
   isCachedObservable# :: a -> Bool
   isCachedObservable# _ = False
@@ -201,13 +200,13 @@ readObservable
   (ToObservable NoLoad exceptions c v a, MonadSTMc NoRetry exceptions m)
   => a -> m (c v)
 readObservable x = liftSTMc @NoRetry @exceptions do
-  liftSTMc @NoRetry @'[] (readObservable# (toObservable x)) >>= \case
-    (_final, result) -> unwrapObservableResult result
+  result <- liftSTMc @NoRetry @'[] (readObservable# (toObservable x))
+  unwrapObservableResult result
 
-attachObserver :: (ToObservable canLoad exceptions c v a, MonadSTMc NoRetry '[] m) => a -> (Final -> ObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, ObservableState canLoad (ObservableResult exceptions c) v)
+attachObserver :: (ToObservable canLoad exceptions c v a, MonadSTMc NoRetry '[] m) => a -> (ObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, ObservableState canLoad (ObservableResult exceptions c) v)
 attachObserver x callback = liftSTMc $ attachObserver# (toObservable x) callback
 
-attachEvaluatedObserver :: (ToObservable canLoad exceptions c v a, MonadSTMc NoRetry '[] m) => a -> (Final -> EvaluatedObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, ObservableState canLoad (ObservableResult exceptions c) v)
+attachEvaluatedObserver :: (ToObservable canLoad exceptions c v a, MonadSTMc NoRetry '[] m) => a -> (EvaluatedObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, ObservableState canLoad (ObservableResult exceptions c) v)
 attachEvaluatedObserver x callback = liftSTMc do
   attachEvaluatedObserver# (toObservable x) callback
 
@@ -219,8 +218,6 @@ mapObservable fn x = Observable (mapObservable# fn (toObservable x))
 
 evaluateObservable :: ToObservable canLoad exceptions c v a => a -> Observable canLoad exceptions Identity (c v)
 evaluateObservable x = mapObservableContent Identity x
-
-type Final = Bool
 
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
 type data CanLoad = Load | NoLoad
@@ -440,8 +437,8 @@ data ObservableState canLoad c v where
   ObservableStateLive :: c v -> ObservableState canLoad c v
 
 instance ObservableContainer c v => IsObservableCore canLoad c v (ObservableState canLoad c v) where
-  readObservable# (ObservableStateLive x) = pure (True, x)
-  attachObserver# x _callback = pure (mempty, True, x)
+  readObservable# (ObservableStateLive x) = pure x
+  attachObserver# x _callback = pure (mempty, x)
 
 instance HasField "loading" (ObservableState canLoad c v) (Loading canLoad) where
   getField ObservableStateLoading = Loading
@@ -658,10 +655,10 @@ data MappedObservable canLoad c v = forall prev a. IsObservableCore canLoad c pr
 
 instance ObservableFunctor c => IsObservableCore canLoad c v (MappedObservable canLoad c v) where
   attachObserver# (MappedObservable fn observable) callback =
-    fmap3 fn $ attachObserver# observable \final change ->
-      callback final (fn <$> change)
+    fmap3 fn $ attachObserver# observable \change ->
+      callback (fn <$> change)
   readObservable# (MappedObservable fn observable) =
-    fmap3 fn $ readObservable# observable
+    fn <<$>> readObservable# observable
   mapObservable# f1 (MappedObservable f2 upstream) =
     ObservableCore $ MappedObservable (f1 . f2) upstream
 
@@ -670,8 +667,8 @@ data MappedStateObservable canLoad c v = forall d p a. IsObservableCore canLoad 
 
 instance ObservableContainer c v => IsObservableCore canLoad c v (MappedStateObservable canLoad c v) where
   attachEvaluatedObserver# (MappedStateObservable fn observable) callback =
-    fmap2 (mapObservableState fn) $ attachEvaluatedObserver# observable \final evaluatedChange ->
-      callback final case evaluatedChange of
+    fmap2 (mapObservableState fn) $ attachEvaluatedObserver# observable \evaluatedChange ->
+      callback case evaluatedChange of
         EvaluatedObservableChangeLoadingClear -> EvaluatedObservableChangeLoadingClear
         EvaluatedObservableChangeLoadingUnchanged -> EvaluatedObservableChangeLoadingUnchanged
         EvaluatedObservableChangeLiveUnchanged -> EvaluatedObservableChangeLiveUnchanged
@@ -680,7 +677,7 @@ instance ObservableContainer c v => IsObservableCore canLoad c v (MappedStateObs
           in EvaluatedObservableChangeLiveDelta (toInitialDelta new) new
 
   readObservable# (MappedStateObservable fn observable) =
-    fn <<$>> readObservable# observable
+    fn <$> readObservable# observable
 
   mapObservable# f1 (MappedStateObservable f2 observable) =
     ObservableCore (MappedStateObservable (fmap f1 . f2) observable)
@@ -702,10 +699,8 @@ mapObservableResultState fn (ObservableStateLiveOk content) = ObservableStateLiv
 data LiftA2Observable l c v = forall va vb a b. (IsObservableCore l c va a, IsObservableCore l c vb b) => LiftA2Observable (va -> vb -> v) a b
 
 instance (Applicative c, ObservableContainer c v) => IsObservableCore canLoad c v (LiftA2Observable canLoad c v) where
-  readObservable# (LiftA2Observable fn fx fy) = do
-    (finalX, x) <- readObservable# fx
-    (finalY, y) <- readObservable# fy
-    pure (finalX && finalY, liftA2 fn x y)
+  readObservable# (LiftA2Observable fn fx fy) =
+    liftA2 (liftA2 fn) (readObservable# fx) (readObservable# fy)
 
   attachObserver# (LiftA2Observable fn fx fy) =
     attachEvaluatedMergeObserver (liftA2 fn) fx fy
@@ -717,8 +712,8 @@ attachEvaluatedMergeObserver
   => (ca va -> cb vb -> c v)
   -> a
   -> b
-  -> (Final -> ObservableChange canLoad c v -> STMc NoRetry '[] ())
-  -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canLoad c v)
+  -> (ObservableChange canLoad c v -> STMc NoRetry '[] ())
+  -> STMc NoRetry '[] (TSimpleDisposer, ObservableState canLoad c v)
 attachEvaluatedMergeObserver mergeState =
   attachCoreMergeObserver mergeState fn fn2 clearFn clearFn
   where
@@ -763,18 +758,18 @@ attachCoreMergeObserver
   -> b
   -- The remainder of the signature matches `attachObserver`, so it can be used
   -- as an implementation for it.
-  -> (Final -> ObservableChange canLoad c v -> STMc NoRetry '[] ())
-  -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canLoad c v)
+  -> (ObservableChange canLoad c v -> STMc NoRetry '[] ())
+  -> STMc NoRetry '[] (TSimpleDisposer, ObservableState canLoad c v)
 attachCoreMergeObserver fullMergeFn leftFn rightFn clearLeftFn clearRightFn fx fy callback = do
   mfixTVar \leftState -> mfixTVar \rightState -> mfixTVar \state -> do
-    (disposerX, finalX, stateX) <- attachEvaluatedObserver# fx (mergeCallback @canLoad @c leftState rightState state fullMergeFn leftFn clearLeftFn callback)
-    (disposerY, finalY, stateY) <- attachEvaluatedObserver# fy (mergeCallback @canLoad @c rightState leftState state (flip fullMergeFn) rightFn clearRightFn callback)
+    (disposerX, stateX) <- attachEvaluatedObserver# fx (mergeCallback @canLoad @c leftState rightState state fullMergeFn leftFn clearLeftFn callback)
+    (disposerY, stateY) <- attachEvaluatedObserver# fy (mergeCallback @canLoad @c rightState leftState state (flip fullMergeFn) rightFn clearRightFn callback)
     let
       initialState = mergeObservableState fullMergeFn stateX stateY
       initialMergeState = (emptyPendingChange initialState.loading, initialLastChange initialState.loading)
       initialLeftState = createObserverState stateX
       initialRightState = createObserverState stateY
-    pure ((((disposerX <> disposerY, finalX && finalY, initialState), initialLeftState), initialRightState), initialMergeState)
+    pure ((((disposerX <> disposerY, initialState), initialLeftState), initialRightState), initialMergeState)
 
 mergeCallback
   :: forall canLoad c v ca va cb vb. ObservableContainer c v
@@ -784,9 +779,9 @@ mergeCallback
   -> (ca va -> cb vb -> c v)
   -> (Delta ca va -> ca va -> Maybe (ca va) -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v))
   -> (canLoad :~: Load -> ca va -> cb vb -> Maybe (MergeChange canLoad c v))
-  -> (Final -> ObservableChange canLoad c v -> STMc NoRetry '[] ())
-  -> Final -> EvaluatedObservableChange canLoad ca va -> STMc NoRetry '[] ()
-mergeCallback ourStateVar otherStateVar mergeStateVar fullMergeFn fn clearFn callback inFinal inChange = do
+  -> (ObservableChange canLoad c v -> STMc NoRetry '[] ())
+  -> EvaluatedObservableChange canLoad ca va -> STMc NoRetry '[] ()
+mergeCallback ourStateVar otherStateVar mergeStateVar fullMergeFn fn clearFn callback inChange = do
   oldState <- readTVar ourStateVar
   forM_ (applyEvaluatedObservableChange inChange oldState) \state -> do
     writeTVar ourStateVar state
@@ -830,7 +825,7 @@ mergeCallback ourStateVar otherStateVar mergeStateVar fullMergeFn fn clearFn cal
     sendPendingChange loading (prevPending, prevLast) = do
       forM_ (changeFromPending loading prevPending prevLast) \(change, pending, last) -> do
         writeTVar mergeStateVar (pending, last)
-        callback undefined change
+        callback change
 
 
 attachMergeObserver
@@ -858,8 +853,8 @@ attachMergeObserver
   -> b
   -- The remainder of the signature matches `attachObserver`, so it can be used
   -- as an implementation for it.
-  -> (Final -> ObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ())
-  -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canLoad (ObservableResult exceptions c) v)
+  -> (ObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ())
+  -> STMc NoRetry '[] (TSimpleDisposer, ObservableState canLoad (ObservableResult exceptions c) v)
 attachMergeObserver fullMergeFn leftFn rightFn clearLeftFn clearRightFn fx fy callback = do
   attachCoreMergeObserver wrappedFullMergeFn wrappedLeftFn wrappedRightFn wrappedClearLeftFn wrappedClearRightFn fx fy callback
   where
@@ -929,8 +924,8 @@ attachMonoidMergeObserver
   -> b
   -- The remainder of the signature matches `attachObserver`, so it can be used
   -- as an implementation for it.
-  -> (Final -> ObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ())
-  -> STMc NoRetry '[] (TSimpleDisposer, Final, ObservableState canLoad (ObservableResult exceptions c) v)
+  -> (ObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ())
+  -> STMc NoRetry '[] (TSimpleDisposer, ObservableState canLoad (ObservableResult exceptions c) v)
 attachMonoidMergeObserver fullMergeFn leftFn rightFn fx fy callback =
   attachMergeObserver fullMergeFn wrappedLeftFn wrappedRightFn clearLeftFn clearRightFn fx fy callback
   where
@@ -955,8 +950,8 @@ data BindState canLoad c v where
   -- LHS cleared
   BindStateCleared :: BindState Load c v
   -- RHS attached
-  BindStateAttachedLoading :: TSimpleDisposer -> Final -> BindRHS canLoad c v -> BindState canLoad c v
-  BindStateAttachedLive :: TSimpleDisposer -> Final -> BindRHS canLoad c v -> BindState canLoad c v
+  BindStateAttachedLoading :: TSimpleDisposer -> BindRHS canLoad c v -> BindState canLoad c v
+  BindStateAttachedLive :: TSimpleDisposer -> BindRHS canLoad c v -> BindState canLoad c v
 
 data BindRHS canLoad c v where
   BindRHSCleared :: BindRHS Load c v
@@ -1000,79 +995,77 @@ updateActiveBindRHS (ObservableChangeLiveDelta delta) _ = (ObservableChangeLiveD
 
 instance ObservableContainer c v => IsObservableCore canLoad c v (EvaluatedBindObservable canLoad c v) where
   readObservable# (EvaluatedBindObservable fx fn) = do
-    (finalX, x) <- readObservable# fx
-    (finalY, wy) <- readObservable# (fn x)
-    pure (finalX && finalY, wy)
+    x <- readObservable# fx
+    readObservable# (fn x)
 
   attachObserver# (EvaluatedBindObservable fx fn) callback = do
     mfixTVar \var -> do
-      (disposerX, initialFinalX, initialX) <- attachEvaluatedObserver# fx \finalX changeX -> do
+      (disposerX, initialX) <- attachEvaluatedObserver# fx \changeX -> do
         case changeX of
           EvaluatedObservableChangeLoadingClear -> do
             detach var
-            writeTVar var (finalX, BindStateCleared)
+            writeTVar var BindStateCleared
           EvaluatedObservableChangeLoadingUnchanged -> do
-            (_, bindState) <- readTVar var
+            bindState <- readTVar var
             case bindState of
               BindStateCleared -> pure ()
-              BindStateAttachedLive disposer finalY rhs@(BindRHSValid Live) -> do
-                writeTVar var (finalX, BindStateAttachedLoading disposer finalY rhs)
-                callback finalX ObservableChangeLoadingUnchanged
-              BindStateAttachedLive disposer finalY rhs -> do
-                writeTVar var (finalX, BindStateAttachedLoading disposer finalY rhs)
+              BindStateAttachedLive disposer rhs@(BindRHSValid Live) -> do
+                writeTVar var (BindStateAttachedLoading disposer rhs)
+                callback ObservableChangeLoadingUnchanged
+              BindStateAttachedLive disposer rhs -> do
+                writeTVar var (BindStateAttachedLoading disposer rhs)
               BindStateAttachedLoading{} -> pure ()
           EvaluatedObservableChangeLiveUnchanged -> do
-            (_, bindState) <- readTVar var
+            bindState <- readTVar var
             case bindState of
               BindStateCleared -> pure ()
-              BindStateAttachedLoading disposer finalY rhs -> do
+              BindStateAttachedLoading disposer rhs -> do
                 case reactivateBindRHS rhs of
-                  Nothing -> writeTVar var (finalX, BindStateAttachedLive disposer finalY rhs)
+                  Nothing -> writeTVar var (BindStateAttachedLive disposer rhs)
                   Just (change, newRhs) -> do
-                    writeTVar var (finalX, BindStateAttachedLive disposer finalY newRhs)
-                    callback (finalX && finalY) change
+                    writeTVar var (BindStateAttachedLive disposer newRhs)
+                    callback change
               BindStateAttachedLive{} -> pure ()
           EvaluatedObservableChangeLiveDelta _deltaX evaluatedX -> do
             detach var
-            (finalY, stateY, bindState) <- attach var (fn evaluatedX)
-            writeTVar var (finalX, bindState)
-            callback (finalX && finalY) case stateY of
+            (stateY, bindState) <- attach var (fn evaluatedX)
+            writeTVar var bindState
+            callback case stateY of
               ObservableStateLoading -> ObservableChangeLoadingClear
               ObservableStateLive evaluatedY ->
                 ObservableChangeLiveDelta (toInitialDelta evaluatedY)
 
-      (initialFinalY, initial, bindState) <- case initialX of
-        ObservableStateLoading -> pure (initialFinalX, ObservableStateLoading, BindStateCleared)
+      (initial, bindState) <- case initialX of
+        ObservableStateLoading -> pure (ObservableStateLoading, BindStateCleared)
         ObservableStateLive x -> attach var (fn x)
 
-      -- TODO should be disposed when sending final callback
       disposer <- newUnmanagedTSimpleDisposer (detach var)
 
-      pure ((disposerX <> disposer, initialFinalX && initialFinalY, initial), (initialFinalX, bindState))
+      pure ((disposerX <> disposer, initial), bindState)
     where
       attach
-        :: TVar (Final, BindState canLoad c v)
+        :: TVar (BindState canLoad c v)
         -> ObservableCore canLoad c v
-        -> STMc NoRetry '[] (Final, ObservableState canLoad c v, BindState canLoad c v)
+        -> STMc NoRetry '[] (ObservableState canLoad c v, BindState canLoad c v)
       attach var fy = do
-        (disposerY, initialFinalY, initialY) <- attachObserver# fy \finalY changeY -> do
-          (finalX, bindState) <- readTVar var
+        (disposerY, initialY) <- attachObserver# fy \changeY -> do
+          bindState <- readTVar var
           case bindState of
-            BindStateAttachedLoading disposer _ rhs ->
-              writeTVar var (finalX, BindStateAttachedLoading disposer finalY (updateSuspendedBindRHS changeY rhs))
-            BindStateAttachedLive disposer _ rhs -> do
+            BindStateAttachedLoading disposer rhs ->
+              writeTVar var (BindStateAttachedLoading disposer (updateSuspendedBindRHS changeY rhs))
+            BindStateAttachedLive disposer rhs -> do
               let !(change, newRHS) = updateActiveBindRHS changeY rhs
-              writeTVar var (finalX, BindStateAttachedLive disposer finalY newRHS)
-              callback (finalX && finalY) change
+              writeTVar var (BindStateAttachedLive disposer newRHS)
+              callback change
             _ -> pure () -- error: no RHS should be attached in this state
-        pure (initialFinalY, initialY, BindStateAttachedLive disposerY initialFinalY (BindRHSValid (observableStateIsLoading initialY)))
+        pure (initialY, BindStateAttachedLive disposerY (BindRHSValid (observableStateIsLoading initialY)))
 
-      detach :: TVar (Final, BindState canLoad c v) -> STMc NoRetry '[] ()
-      detach var = detach' . snd =<< readTVar var
+      detach :: TVar (BindState canLoad c v) -> STMc NoRetry '[] ()
+      detach var = detach' =<< readTVar var
 
       detach' :: BindState canLoad c v -> STMc NoRetry '[] ()
-      detach' (BindStateAttachedLoading disposer _ _) = disposeTSimpleDisposer disposer
-      detach' (BindStateAttachedLive disposer _ _) = disposeTSimpleDisposer disposer
+      detach' (BindStateAttachedLoading disposer _) = disposeTSimpleDisposer disposer
+      detach' (BindStateAttachedLive disposer _) = disposeTSimpleDisposer disposer
       detach' _ = pure ()
 
 bindObservable

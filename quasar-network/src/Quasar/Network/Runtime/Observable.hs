@@ -99,7 +99,7 @@ data ObservableRequest
 
 instance Binary ObservableRequest
 
-type ObservableResponse c = (Final, PackedChange c)
+type ObservableResponse c = PackedChange c
 
 data PackedChange c where
   PackedChangeLoadingClear :: PackedChange c
@@ -127,7 +127,6 @@ data ObservableReference c v = ObservableReference {
   observableDisposer :: TVar TSimpleDisposer,
   pendingChange :: TVar (PendingChange Load (ObservableResult '[SomeException] c) v),
   lastChange :: TVar (LastChange Load (ObservableResult '[SomeException] c) v),
-  pendingFinal :: TVar Final,
   activeObjects :: TVar (Maybe (c Disposer)),
   pendingDisposal :: TVar (Maybe Disposer)
 }
@@ -141,7 +140,6 @@ sendObservableReference observable channel = do
   isAttached <- newTVar False
   observableDisposer <- newTVar mempty
   pendingChange <- newTVar (emptyPendingChange Loading)
-  pendingFinal <- newTVar False
   lastChange <- newTVar (initialLastChange Loading)
   activeObjects <- newTVar Nothing
   pendingDisposal <- newTVar Nothing
@@ -150,7 +148,6 @@ sendObservableReference observable channel = do
     observableDisposer,
     pendingChange,
     lastChange,
-    pendingFinal,
     activeObjects,
     pendingDisposal
   }
@@ -165,21 +162,19 @@ sendObservableReference observable channel = do
     requestCallback ref _context Start = do
       atomicallyC do
         whenM (readTVar ref.isAttached) do
-          (disposer, final, initial) <- attachObserver observable (upstreamObservableChanged ref)
+          (disposer, initial) <- attachObserver observable (upstreamObservableChanged ref)
           writeTVar ref.observableDisposer disposer
-          upstreamObservableChanged ref final (toInitialChange initial)
+          upstreamObservableChanged ref (toInitialChange initial)
           writeTVar ref.isAttached True
     requestCallback ref _context Stop = atomicallyC do
       disposeTSimpleDisposer =<< swapTVar ref.observableDisposer mempty
-      -- TODO what if we already sent a final?
-      upstreamObservableChanged ref False ObservableChangeLoadingClear
+      upstreamObservableChanged ref ObservableChangeLoadingClear
       writeTVar ref.isAttached False
 
-    upstreamObservableChanged :: ObservableReference c v -> Final -> ObservableChange Load (ObservableResult '[SomeException] c) v -> STMc NoRetry '[] ()
-    upstreamObservableChanged ref final change = do
+    upstreamObservableChanged :: ObservableReference c v -> ObservableChange Load (ObservableResult '[SomeException] c) v -> STMc NoRetry '[] ()
+    upstreamObservableChanged ref change = do
       pendingChange <- stateTVar ref.pendingChange (dup . updatePendingChange change)
       lastChange <- readTVar ref.lastChange
-      writeTVar ref.pendingFinal final
 
       case changeFromPending Loading pendingChange lastChange of
         Nothing -> pure ()
@@ -202,7 +197,7 @@ sendObservableReference observable channel = do
             handleDisconnect $ unsafeQueueChannelMessage channel \context -> do
               (packedChange, removedObjects) <- liftSTMc $ provideAndPackChange ref context loadingChange
               modifyTVar ref.pendingDisposal (Just . (<> removedObjects) . fromMaybe mempty)
-              pure (final, packedChange)
+              pure packedChange
 
     provideAndPackChange
       :: ObservableReference c v
@@ -254,7 +249,6 @@ sendObservableReference observable channel = do
         payloadHook context = do
           pendingChange <- readTVar ref.pendingChange
           lastChange <- readTVar ref.lastChange
-          final <- readTVar ref.pendingFinal
           case changeFromPending Live pendingChange lastChange of
             Nothing -> throwC AbortSend
             Just (change, pnew, lnew) -> do
@@ -262,7 +256,7 @@ sendObservableReference observable channel = do
               writeTVar ref.lastChange lnew
 
               (packedChange, removedObjects) <- liftSTMc $ provideAndPackChange ref context change
-              pure ((final, packedChange), removedObjects)
+              pure (packedChange, removedObjects)
 
 
     handleDisconnect :: MonadCatch m => m () -> m ()
@@ -304,15 +298,12 @@ receiveObservableReference channel = do
   pure (callback proxy, toObservable proxy)
   where
     callback :: ObservableProxy c v -> ReceiveMessageContext -> ObservableResponse c -> QuasarIO ()
-    -- TODO Handle final? The observable will send a Clear after providing a
-    -- final value, so we need to decide if this is valid behavior and to
-    -- document it.
-    callback proxy _context (_final, PackedChangeLoadingClear) = apply proxy ObservableChangeLoadingClear
-    callback proxy _context (_final, PackedChangeLoadingUnchanged) = apply proxy ObservableChangeLoadingUnchanged
-    callback proxy _context (_final, PackedChangeLiveUnchanged) = apply proxy ObservableChangeLiveUnchanged
-    callback proxy _context (_final, PackedChangeLiveDeltaThrow packedException) =
+    callback proxy _context PackedChangeLoadingClear = apply proxy ObservableChangeLoadingClear
+    callback proxy _context PackedChangeLoadingUnchanged = apply proxy ObservableChangeLoadingUnchanged
+    callback proxy _context PackedChangeLiveUnchanged = apply proxy ObservableChangeLiveUnchanged
+    callback proxy _context (PackedChangeLiveDeltaThrow packedException) =
       apply proxy (ObservableChangeLiveDeltaThrow (toEx (unpackException packedException)))
-    callback proxy context (_final, PackedChangeLiveDeltaOk packedDelta) = do
+    callback proxy context (PackedChangeLiveDeltaOk packedDelta) = do
       delta <- atomicallyC $ receiveDelta @c context packedDelta
       apply proxy (ObservableChangeLiveDeltaOk delta)
 

@@ -26,12 +26,12 @@ instance ObservableContainer c v => ToObservable canLoad exceptions c v (Observa
 
 instance ObservableContainer c v => IsObservableCore canLoad (ObservableResult exceptions c) v (ObservableVar canLoad exceptions c v) where
   attachEvaluatedObserver# (ObservableVar var registry) callback = do
-    disposer <- registerCallback registry (callback False)
+    disposer <- registerCallback registry callback
     value <- readTVar var
-    pure (disposer, False, toObservableState value)
+    pure (disposer, toObservableState value)
 
   readObservable# (ObservableVar var _registry) =
-    (\case ObserverStateLive state -> (False, state)) <$> readTVar var
+    (\case ObserverStateLive state -> state) <$> readTVar var
 
 
 newObservableVar :: MonadSTMc NoRetry '[] m => c v -> m (ObservableVar canLoad exceptions c v)

@@ -28,11 +28,11 @@ data MappedObservableMap canLoad k v = forall prev a. IsObservableCore canLoad (
 
 instance ObservableFunctor (Map k) => IsObservableCore canLoad (Map k) v (MappedObservableMap canLoad k v) where
   readObservable# (MappedObservableMap fn observable) =
-    Map.mapWithKey fn <<$>> readObservable# observable
+    Map.mapWithKey fn <$> readObservable# observable
 
   attachObserver# (MappedObservableMap fn observable) callback =
-    fmap2 (mapObservableState (Map.mapWithKey fn)) $ attachObserver# observable \final change ->
-      callback final (mapObservableChangeDelta (mapDeltaWithKey fn) change)
+    fmap2 (mapObservableState (Map.mapWithKey fn)) $ attachObserver# observable \change ->
+      callback (mapObservableChangeDelta (mapDeltaWithKey fn) change)
     where
       mapDeltaWithKey :: (k -> prev -> v) -> ObservableMapDelta k prev -> ObservableMapDelta k v
       mapDeltaWithKey f (ObservableMapUpdate ops) = ObservableMapUpdate (Map.mapWithKey (mapOperationWithKey f) ops)
@@ -53,9 +53,9 @@ data ObservableMapUnionWith l e k v = forall a b. (IsObservableCore l (Observabl
 
 instance Ord k => IsObservableCore canLoad (ObservableResult exceptions (Map k)) v (ObservableMapUnionWith canLoad exceptions k v) where
   readObservable# (ObservableMapUnionWith fn fx fy) = do
-    (finalX, x) <- readObservable# fx
-    (finalY, y) <- readObservable# fy
-    pure (finalX && finalY, mergeObservableResult (Map.unionWithKey fn) x y)
+    x <- readObservable# fx
+    y <- readObservable# fy
+    pure (mergeObservableResult (Map.unionWithKey fn) x y)
 
   attachObserver# (ObservableMapUnionWith fn fx fy) =
     attachMonoidMergeObserver fullMergeFn (deltaFn fn) (deltaFn (flip <$> fn)) fx fy

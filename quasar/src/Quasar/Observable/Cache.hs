@@ -23,28 +23,25 @@ data CacheState canLoad c v
   | CacheAttached
       (ObservableCore canLoad c v)
       TSimpleDisposer
-      (CallbackRegistry (Final, EvaluatedObservableChange canLoad c v))
+      (CallbackRegistry (EvaluatedObservableChange canLoad c v))
       (ObserverState canLoad c v)
-  | CacheFinalized (ObservableState canLoad c v)
 
 instance ObservableContainer c v => IsObservableCore canLoad c v (CachedObservable canLoad c v) where
   readObservable# (CachedObservable var) = do
     readTVar var >>= \case
       CacheIdle x -> readObservable# x
-      CacheAttached _x _disposer _registry (ObserverStateLive state) -> pure (False, state)
-      CacheFinalized (ObservableStateLive state) -> pure (True, state)
+      CacheAttached _x _disposer _registry (ObserverStateLive state) -> pure state
   attachEvaluatedObserver# (CachedObservable var) callback = do
     readTVar var >>= \case
       CacheIdle upstream -> do
         registry <- newCallbackRegistryWithEmptyCallback removeCacheListener
-        (upstreamDisposer, final, state) <- attachEvaluatedObserver# upstream updateCache
+        (upstreamDisposer, state) <- attachEvaluatedObserver# upstream updateCache
         writeTVar var (CacheAttached upstream upstreamDisposer registry (createObserverState state))
-        disposer <- registerCallback registry (uncurry callback)
-        pure (disposer, final, state)
+        disposer <- registerCallback registry callback
+        pure (disposer, state)
       CacheAttached _ _ registry value -> do
-        disposer <- registerCallback registry (uncurry callback)
-        pure (disposer, False, toObservableState value)
-      CacheFinalized value -> pure (mempty, True, value)
+        disposer <- registerCallback registry callback
+        pure (disposer, toObservableState value)
     where
       removeCacheListener :: STMc NoRetry '[] ()
       removeCacheListener = do
@@ -53,23 +50,15 @@ instance ObservableContainer c v => IsObservableCore canLoad c v (CachedObservab
           CacheAttached upstream upstreamDisposer _ _ -> do
             writeTVar var (CacheIdle upstream)
             disposeTSimpleDisposer upstreamDisposer
-          CacheFinalized _ -> pure ()
-      updateCache :: Final -> EvaluatedObservableChange canLoad c v -> STMc NoRetry '[] ()
-      updateCache final change = do
+      updateCache :: EvaluatedObservableChange canLoad c v -> STMc NoRetry '[] ()
+      updateCache change = do
         readTVar var >>= \case
           CacheIdle _ -> unreachableCodePath
           CacheAttached upstream upstreamDisposer registry oldState -> do
             let mstate = applyEvaluatedObservableChange change oldState
-            if final
-              then do
-                writeTVar var (CacheFinalized (toObservableState (fromMaybe oldState mstate)))
-                callCallbacks registry (final, change)
-                clearCallbackRegistry registry
-              else do
-                forM_ mstate \state -> do
-                  writeTVar var (CacheAttached upstream upstreamDisposer registry state)
-                  callCallbacks registry (final, change)
-          CacheFinalized _ -> pure () -- Upstream implementation error
+            forM_ mstate \state -> do
+              writeTVar var (CacheAttached upstream upstreamDisposer registry state)
+              callCallbacks registry change
 
   isCachedObservable# _ = True
 
@@ -90,10 +79,10 @@ data CacheObservableOperation canLoad exceptions l e c v = forall a. ToObservabl
 instance IsObservableCore canLoad (ObservableResult exceptions Identity) (Observable l e c v) (CacheObservableOperation canLoad exceptions l e c v) where
   readObservable# (CacheObservableOperation x) = do
     cache <- cacheObservable x
-    pure (True, pure cache)
+    pure (pure cache)
   attachObserver# (CacheObservableOperation x) _callback = do
     cache <- cacheObservable x
-    pure (mempty, True, ObservableStateLive (pure cache))
+    pure (mempty, ObservableStateLive (pure cache))
 
 -- | Cache an observable in the `ObservableI` monad. Use with care! A new cache
 -- is recreated whenever the result of this function is reevaluated.
