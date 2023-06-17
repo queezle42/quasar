@@ -11,10 +11,13 @@ module Quasar.Observable.Map (
   ObservableMapDelta(..),
   ObservableMapOperation(..),
 
-  -- ** Map functions
+  -- ** Combine
   union,
   unionWith,
   unionWithKey,
+
+  -- ** Traversal
+  mapWithKey,
 ) where
 
 import Control.Applicative
@@ -24,20 +27,20 @@ import Quasar.Observable.Core
 import Quasar.Prelude
 
 
-data MappedObservableMap canLoad k v = forall prev a. IsObservableCore canLoad (Map k) prev a => MappedObservableMap (k -> prev -> v) a
+data MappedObservableMap canLoad exceptions k v = forall va a. IsObservableCore canLoad (ObservableResult exceptions (Map k)) va a => MappedObservableMap (k -> va -> v) a
 
-instance ObservableFunctor (Map k) => IsObservableCore canLoad (Map k) v (MappedObservableMap canLoad k v) where
+instance ObservableFunctor (Map k) => IsObservableCore canLoad (ObservableResult exceptions (Map k)) v (MappedObservableMap canLoad exceptions k v) where
   readObservable# (MappedObservableMap fn observable) =
-    Map.mapWithKey fn <$> readObservable# observable
+    mapObservableResult (Map.mapWithKey fn) <$> readObservable# observable
 
   attachObserver# (MappedObservableMap fn observable) callback =
-    fmap2 (mapObservableState (Map.mapWithKey fn)) $ attachObserver# observable \change ->
-      callback (mapObservableChangeDelta (mapDeltaWithKey fn) change)
+    fmap2 (mapObservableState (mapObservableResult (Map.mapWithKey fn))) $ attachObserver# observable \change ->
+      callback (mapObservableChangeDelta (mapObservableResultDelta (mapDeltaWithKey fn)) change)
     where
-      mapDeltaWithKey :: (k -> prev -> v) -> ObservableMapDelta k prev -> ObservableMapDelta k v
+      mapDeltaWithKey :: (k -> va -> v) -> ObservableMapDelta k va -> ObservableMapDelta k v
       mapDeltaWithKey f (ObservableMapUpdate ops) = ObservableMapUpdate (Map.mapWithKey (mapOperationWithKey f) ops)
       mapDeltaWithKey f (ObservableMapReplace new) = ObservableMapReplace (Map.mapWithKey f new)
-      mapOperationWithKey :: (k -> prev -> v) -> k -> ObservableMapOperation prev -> ObservableMapOperation v
+      mapOperationWithKey :: (k -> va -> v) -> k -> ObservableMapOperation va -> ObservableMapOperation v
       mapOperationWithKey f key (ObservableMapInsert x) = ObservableMapInsert (f key x)
       mapOperationWithKey _f _key ObservableMapDelete = ObservableMapDelete
 
@@ -47,6 +50,9 @@ instance ObservableFunctor (Map k) => IsObservableCore canLoad (Map k) v (Mapped
 
   --mapObservable# f1 (MappedObservableMap f2 upstream) =
   --  DynObservableCore $ MappedObservableMap (f1 . f2) upstream
+
+mapWithKey :: Ord k => (k -> va -> v) -> ObservableMap canLoad exceptions k va -> ObservableMap canLoad exceptions k v
+mapWithKey fn (toObservable -> Observable x) = Observable (ObservableCore (MappedObservableMap fn x))
 
 
 data ObservableMapUnionWith l e k v = forall a b. (IsObservableCore l (ObservableResult e (Map k)) v a, IsObservableCore l (ObservableResult e (Map k)) v b) => ObservableMapUnionWith (k -> v -> v -> v) a b
