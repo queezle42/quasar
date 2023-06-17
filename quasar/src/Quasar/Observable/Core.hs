@@ -38,8 +38,10 @@ module Quasar.Observable.Core (
   Loading(..),
   Final,
   ObservableChange(.., ObservableChangeLiveDeltaOk, ObservableChangeLiveDeltaThrow, ObservableChangeLoading, ObservableChangeLive),
+  mapObservableChangeDelta,
   EvaluatedObservableChange(.., EvaluatedObservableChangeLiveDeltaOk, EvaluatedObservableChangeLiveDeltaThrow),
   ObservableState(.., ObservableStateLiveOk, ObservableStateLiveEx),
+  mapObservableState,
   mergeObservableState,
   ObserverState(.., ObserverStateLoading, ObserverStateLiveOk, ObserverStateLiveEx),
   createObserverState,
@@ -47,6 +49,7 @@ module Quasar.Observable.Core (
   applyObservableChange,
   applyEvaluatedObservableChange,
   toInitialChange,
+  ObservableFunctor,
 
   -- *** Exception wrapper container
   ObservableResult(..),
@@ -376,6 +379,13 @@ pattern ObservableChangeLiveDeltaOk content = ObservableChangeLiveDelta (Observa
 
 pattern ObservableChangeLiveDeltaThrow :: forall canLoad exceptions c v. Ex exceptions -> ObservableChange canLoad (ObservableResult exceptions c) v
 pattern ObservableChangeLiveDeltaThrow ex = ObservableChangeLiveDelta (ObservableResultDeltaThrow ex)
+
+mapObservableChangeDelta :: (Delta ca va -> Delta c v) -> ObservableChange canLoad ca va -> ObservableChange canLoad c v
+mapObservableChangeDelta _fn ObservableChangeLoadingClear = ObservableChangeLoadingClear
+mapObservableChangeDelta _fn ObservableChangeLoadingUnchanged = ObservableChangeLoadingUnchanged
+mapObservableChangeDelta _fn ObservableChangeLiveUnchanged = ObservableChangeLiveUnchanged
+mapObservableChangeDelta fn (ObservableChangeLiveDelta delta) = ObservableChangeLiveDelta (fn delta)
+
 
 type EvaluatedObservableChange :: CanLoad -> (Type -> Type) -> Type -> Type
 data EvaluatedObservableChange canLoad c v where

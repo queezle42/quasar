@@ -1,3 +1,6 @@
+{-# LANGUAGE ImpredicativeTypes #-}
+{-# LANGUAGE UndecidableInstances #-}
+
 module Quasar.Observable.Map (
   -- * ObservableMap
   ObservableMap,
@@ -19,6 +22,31 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Quasar.Observable.Core
 import Quasar.Prelude
+
+
+data MappedObservableMap canLoad k v = forall prev a. IsObservableCore canLoad (Map k) prev a => MappedObservableMap (k -> prev -> v) a
+
+instance ObservableFunctor (Map k) => IsObservableCore canLoad (Map k) v (MappedObservableMap canLoad k v) where
+  readObservable# (MappedObservableMap fn observable) =
+    Map.mapWithKey fn <<$>> readObservable# observable
+
+  attachObserver# (MappedObservableMap fn observable) callback =
+    fmap2 (mapObservableState (Map.mapWithKey fn)) $ attachObserver# observable \final change ->
+      callback final (mapObservableChangeDelta (mapDeltaWithKey fn) change)
+    where
+      mapDeltaWithKey :: (k -> prev -> v) -> ObservableMapDelta k prev -> ObservableMapDelta k v
+      mapDeltaWithKey f (ObservableMapUpdate ops) = ObservableMapUpdate (Map.mapWithKey (mapOperationWithKey f) ops)
+      mapDeltaWithKey f (ObservableMapReplace new) = ObservableMapReplace (Map.mapWithKey f new)
+      mapOperationWithKey :: (k -> prev -> v) -> k -> ObservableMapOperation prev -> ObservableMapOperation v
+      mapOperationWithKey f key (ObservableMapInsert x) = ObservableMapInsert (f key x)
+      mapOperationWithKey _f _key ObservableMapDelete = ObservableMapDelete
+
+  count# (MappedObservableMap _ upstream) = count# upstream
+  isEmpty# (MappedObservableMap _ upstream) = isEmpty# upstream
+  -- TODO lookup functions
+
+  --mapObservable# f1 (MappedObservableMap f2 upstream) =
+  --  DynObservableCore $ MappedObservableMap (f1 . f2) upstream
 
 
 data ObservableMapUnionWith l e k v = forall a b. (IsObservableCore l (ObservableResult e (Map k)) v a, IsObservableCore l (ObservableResult e (Map k)) v b) => ObservableMapUnionWith (k -> v -> v -> v) a b
