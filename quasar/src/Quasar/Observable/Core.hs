@@ -55,7 +55,8 @@ module Quasar.Observable.Core (
   ObservableResult(..),
   ObservableResultDelta(..),
   unwrapObservableResult,
-  mapObservableResultContent,
+  mapObservableResult,
+  mapObservableResultDelta,
   mergeObservableResult,
 
   -- *** Pending change helpers
@@ -688,7 +689,7 @@ instance ObservableContainer c v => IsObservableCore canLoad c v (MappedStateObs
 -- | Apply a function to an observable that can replace the whole content. The
 -- mapped observable is always fully evaluated.
 mapObservableContent :: (ToObservable canLoad exceptions d p a, ObservableContainer c v) => (d p -> c v) -> a -> Observable canLoad exceptions c v
-mapObservableContent fn x = toObservable (mapObservableContent# (mapObservableResultContent fn) (toObservable x))
+mapObservableContent fn x = toObservable (mapObservableContent# (mapObservableResult fn) (toObservable x))
 
 mapObservableResultState :: (cp vp -> c v) -> ObservableState canLoad (ObservableResult exceptions cp) vp -> ObservableState canLoad (ObservableResult exceptions c) v
 mapObservableResultState _fn ObservableStateLoading = ObservableStateLoading
@@ -1238,9 +1239,9 @@ unwrapObservableResult :: MonadSTMc NoRetry exceptions m => ObservableResult exc
 unwrapObservableResult (ObservableResultOk result) = pure result
 unwrapObservableResult (ObservableResultEx ex) = throwEx ex
 
-mapObservableResultContent :: (ca va -> cb vb) -> ObservableResult exceptions ca va -> ObservableResult exceptions cb vb
-mapObservableResultContent fn (ObservableResultOk result) = ObservableResultOk (fn result)
-mapObservableResultContent _fn (ObservableResultEx ex) = ObservableResultEx ex
+mapObservableResult :: (ca va -> cb vb) -> ObservableResult exceptions ca va -> ObservableResult exceptions cb vb
+mapObservableResult fn (ObservableResultOk result) = ObservableResultOk (fn result)
+mapObservableResult _fn (ObservableResultEx ex) = ObservableResultEx ex
 
 mergeObservableResult :: (ca va -> cb vb -> c v) -> ObservableResult exceptions ca va -> ObservableResult exceptions cb vb -> ObservableResult exceptions c v
 mergeObservableResult fn (ObservableResultOk x) (ObservableResultOk y) = ObservableResultOk (fn x y)
@@ -1262,6 +1263,10 @@ instance Foldable (Delta c) => Foldable (ObservableResultDelta exceptions c) whe
 instance Traversable (Delta c) => Traversable (ObservableResultDelta exceptions c) where
   traverse f (ObservableResultDeltaOk delta) = ObservableResultDeltaOk <$> traverse f delta
   traverse _f (ObservableResultDeltaThrow ex) = pure (ObservableResultDeltaThrow ex)
+
+mapObservableResultDelta :: (Delta ca va -> Delta c v) -> ObservableResultDelta exceptions ca va -> ObservableResultDelta exceptions c v
+mapObservableResultDelta fn (ObservableResultDeltaOk delta) = ObservableResultDeltaOk (fn delta)
+mapObservableResultDelta _fn (ObservableResultDeltaThrow ex) = ObservableResultDeltaThrow ex
 
 instance ObservableContainer c v => ObservableContainer (ObservableResult exceptions c) v where
   type Delta (ObservableResult exceptions c) = ObservableResultDelta exceptions c
