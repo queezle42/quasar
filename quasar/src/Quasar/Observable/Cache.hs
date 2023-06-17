@@ -19,10 +19,9 @@ import Quasar.Utils.CallbackRegistry
 newtype CachedObservable canLoad c v = CachedObservable (TVar (CacheState canLoad c v))
 
 data CacheState canLoad c v
-  = forall a. IsObservableCore canLoad c v a => CacheIdle a
-  | forall a. IsObservableCore canLoad c v a =>
-    CacheAttached
-      a
+  = CacheIdle (ObservableCore canLoad c v)
+  | CacheAttached
+      (ObservableCore canLoad c v)
       TSimpleDisposer
       (CallbackRegistry (Final, EvaluatedObservableChange canLoad c v))
       (ObserverState canLoad c v)
@@ -75,16 +74,13 @@ instance ObservableContainer c v => IsObservableCore canLoad c v (CachedObservab
   isCachedObservable# _ = True
 
 cacheObservable :: (ToObservable canLoad exceptions c v a, MonadSTMc NoRetry '[] m) => a -> m (Observable canLoad exceptions c v)
-cacheObservable x =
-  case toObservable x of
-    c@(ConstObservable _) -> pure c
-    (DynObservable f) -> Observable <$> cacheObservable# f
+cacheObservable (toObservable -> Observable x) = Observable <$> cacheObservableCore x
 
-cacheObservable# :: (IsObservableCore canLoad c v a, MonadSTMc NoRetry '[] m) => a -> m (ObservableCore canLoad c v)
-cacheObservable# f =
+cacheObservableCore :: (MonadSTMc NoRetry '[] m, ObservableContainer c v) => ObservableCore canLoad c v -> m (ObservableCore canLoad c v)
+cacheObservableCore f =
   if isCachedObservable# f
-    then pure (DynObservableCore f)
-    else DynObservableCore . CachedObservable <$> newTVar (CacheIdle f)
+    then pure (ObservableCore f)
+    else ObservableCore . CachedObservable <$> newTVar (CacheIdle f)
 
 
 -- ** Embedded cache in the Observable monad
@@ -103,6 +99,4 @@ instance IsObservableCore canLoad (ObservableResult exceptions Identity) (Observ
 -- is recreated whenever the result of this function is reevaluated.
 observeCachedObservable :: forall canLoad exceptions e l c v a. ToObservable l e c v a => a -> Observable canLoad exceptions Identity (Observable l e c v)
 observeCachedObservable x =
-  case toObservable x of
-    c@(ConstObservable _) -> pure c
-    f@(DynObservable _) -> DynObservable (CacheObservableOperation @canLoad @exceptions f)
+  Observable (ObservableCore (CacheObservableOperation @canLoad @exceptions (toObservable x)))

@@ -9,7 +9,8 @@
 
 module Quasar.Observable.Core (
   -- * Generalized observable
-  Observable(ConstObservable, DynObservable, Observable),
+  Observable(..),
+  constObservable,
   ToObservable(..),
 
   readObservable,
@@ -153,14 +154,14 @@ class ObservableContainer c v => IsObservableCore canLoad c v a | a -> canLoad, 
   isCachedObservable# _ = False
 
   mapObservable# :: ObservableFunctor c => (v -> n) -> a -> ObservableCore canLoad c n
-  mapObservable# f x = DynObservableCore (MappedObservable f x)
+  mapObservable# f x = ObservableCore (MappedObservable f x)
 
   mapObservableContent#
     :: ObservableContainer ca va
     => (c v -> ca va)
     -> a
     -> ObservableCore canLoad ca va
-  mapObservableContent# f x = DynObservableCore (MappedStateObservable f x)
+  mapObservableContent# f x = ObservableCore (MappedStateObservable f x)
 
   count# :: a -> ObservableCore canLoad (SelectorResult c) Int64
   count# = undefined
@@ -199,40 +200,25 @@ readObservable
   :: forall exceptions c v m a.
   (ToObservable NoLoad exceptions c v a, MonadSTMc NoRetry exceptions m)
   => a -> m (c v)
-readObservable x = liftSTMc @NoRetry @exceptions case toObservable x of
-  (ConstObservable (ObservableStateLive (ObservableResultOk result))) -> pure result
-  (ConstObservable (ObservableStateLive (ObservableResultEx ex))) -> throwEx ex
-  (DynObservable y) -> liftSTMc @NoRetry @'[] (readObservable# y) >>= \case
+readObservable x = liftSTMc @NoRetry @exceptions do
+  liftSTMc @NoRetry @'[] (readObservable# (toObservable x)) >>= \case
     (_final, result) -> unwrapObservableResult result
 
 attachObserver :: (ToObservable canLoad exceptions c v a, MonadSTMc NoRetry '[] m) => a -> (Final -> ObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, ObservableState canLoad (ObservableResult exceptions c) v)
-attachObserver x callback = liftSTMc
-  case toObservable x of
-    DynObservable f -> attachObserver# f callback
-    ConstObservable result -> pure (mempty, True, result)
+attachObserver x callback = liftSTMc $ attachObserver# (toObservable x) callback
 
 attachEvaluatedObserver :: (ToObservable canLoad exceptions c v a, MonadSTMc NoRetry '[] m) => a -> (Final -> EvaluatedObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Final, ObservableState canLoad (ObservableResult exceptions c) v)
-attachEvaluatedObserver x callback = liftSTMc
-  case toObservable x of
-    DynObservable f -> attachEvaluatedObserver# f callback
-    ConstObservable c -> pure (mempty, True, c)
+attachEvaluatedObserver x callback = liftSTMc do
+  attachEvaluatedObserver# (toObservable x) callback
 
 isCachedObservable :: ToObservable canLoad exceptions c v a => a -> Bool
-isCachedObservable x = case toObservable x of
-  DynObservable f -> isCachedObservable# f
-  ConstObservable _value -> True
+isCachedObservable x = isCachedObservable# (toObservable x)
 
 mapObservable :: (ObservableFunctor c, ToObservable canLoad exceptions c v a) => (v -> va) -> a -> Observable canLoad exceptions c va
-mapObservable fn x = case toObservable x of
-  (DynObservable f) -> toObservable (mapObservable# fn f)
-  (ConstObservable content) -> ConstObservable (fn <$> content)
+mapObservable fn x = Observable (mapObservable# fn (toObservable x))
 
 evaluateObservable :: ToObservable canLoad exceptions c v a => a -> Observable canLoad exceptions Identity (c v)
 evaluateObservable x = mapObservableContent Identity x
-
-mapObservableCore :: ObservableFunctor c => (v -> f) -> ObservableCore canLoad c v -> ObservableCore canLoad c f
-mapObservableCore fn (ConstObservableCore content) = ConstObservableCore (fn <$> content)
-mapObservableCore fn (DynObservableCore f) = mapObservable# fn f
 
 type Final = Bool
 
@@ -268,41 +254,62 @@ instance ObservableContainer Identity v where
 
 
 type ObservableCore :: CanLoad -> (Type -> Type) -> Type -> Type
-data ObservableCore canLoad c v
-  = forall a. IsObservableCore canLoad c v a => DynObservableCore a
-  | ConstObservableCore (ObservableState canLoad c v)
+data ObservableCore canLoad c v = forall a. IsObservableCore canLoad c v a => ObservableCore a
 
 instance ObservableContainer c v => ToObservable canLoad exceptions c v (ObservableCore canLoad (ObservableResult exceptions c) v) where
   toObservable = Observable
 
+instance ObservableContainer c v => IsObservableCore canLoad c v (ObservableCore canLoad c v) where
+  readObservable# (ObservableCore x) = readObservable# x
+  attachObserver# (ObservableCore x) = attachObserver# x
+  attachEvaluatedObserver# (ObservableCore x) = attachEvaluatedObserver# x
+  isCachedObservable# (ObservableCore x) = isCachedObservable# x
+  mapObservable# f (ObservableCore x) = mapObservable# f x
+  mapObservableContent# f (ObservableCore x) = mapObservableContent# f x
+  count# (ObservableCore x) = count# x
+  isEmpty# (ObservableCore x) = isEmpty# x
+  lookupKey# (ObservableCore x) = lookupKey# x
+  lookupItem# (ObservableCore x) = lookupItem# x
+  lookupValue# (ObservableCore x) = lookupValue# x
+
 instance ObservableFunctor c => Functor (ObservableCore canLoad c) where
-  fmap = mapObservableCore
+  fmap = mapObservable#
 
-instance (IsString v, Applicative c) => IsString (ObservableCore canLoad c v) where
-  fromString x = ConstObservableCore (pure (fromString x))
+instance (IsString v, Applicative c, ObservableContainer c v) => IsString (ObservableCore canLoad c v) where
+  fromString x = constObservableCore (pure (fromString x))
 
+constObservableCore :: ObservableContainer c v => ObservableState canLoad c v -> ObservableCore canLoad c v
+constObservableCore state = ObservableCore state
+
+constObservable :: ObservableContainer c v => ObservableState canLoad (ObservableResult exceptions c) v -> Observable canLoad exceptions c v
+constObservable state = Observable (constObservableCore state)
 
 type Observable :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type
 newtype Observable canLoad exceptions c v = Observable (ObservableCore canLoad (ObservableResult exceptions c) v)
 
-{-# COMPLETE ConstObservable, DynObservable #-}
-
-pattern ConstObservable :: ObservableState canLoad (ObservableResult exceptions c) v -> Observable canLoad exceptions c v
-pattern ConstObservable x = Observable (ConstObservableCore x)
-
-pattern DynObservable :: () => IsObservableCore canLoad (ObservableResult exceptions c) v a => a -> Observable canLoad exceptions c v
-pattern DynObservable x = Observable (DynObservableCore x)
-
 instance ObservableContainer c v => ToObservable canLoad exceptions c v (Observable canLoad exceptions c v) where
   toObservable = id
+
+instance ObservableContainer c v => IsObservableCore canLoad (ObservableResult exceptions c) v (Observable canLoad exceptions c v) where
+  readObservable# (Observable x) = readObservable# x
+  attachObserver# (Observable x) = attachObserver# x
+  attachEvaluatedObserver# (Observable x) = attachEvaluatedObserver# x
+  isCachedObservable# (Observable x) = isCachedObservable# x
+  mapObservable# f (Observable x) = mapObservable# f x
+  mapObservableContent# f (Observable x) = mapObservableContent# f x
+  count# (Observable x) = count# x
+  isEmpty# (Observable x) = isEmpty# x
+  lookupKey# (Observable x) = lookupKey# x
+  lookupItem# (Observable x) = lookupItem# x
+  lookupValue# (Observable x) = lookupValue# x
 
 type ObservableFunctor c = (Functor c, Functor (Delta c), forall v. ObservableContainer c v)
 
 instance ObservableFunctor c => Functor (Observable canLoad exceptions c) where
   fmap = mapObservable
 
-instance (IsString v, Applicative c) => IsString (Observable canLoad exceptions c v) where
-  fromString x = ConstObservable (pure (fromString x))
+instance (IsString v, Applicative c, ObservableContainer c v) => IsString (Observable canLoad exceptions c v) where
+  fromString x = constObservable (pure (fromString x))
 
 
 type ObservableChange :: CanLoad -> (Type -> Type) -> Type -> Type
@@ -656,7 +663,7 @@ instance ObservableFunctor c => IsObservableCore canLoad c v (MappedObservable c
   readObservable# (MappedObservable fn observable) =
     fmap3 fn $ readObservable# observable
   mapObservable# f1 (MappedObservable f2 upstream) =
-    DynObservableCore $ MappedObservable (f1 . f2) upstream
+    ObservableCore $ MappedObservable (f1 . f2) upstream
 
 
 data MappedStateObservable canLoad c v = forall d p a. IsObservableCore canLoad d p a => MappedStateObservable (d p -> c v) a
@@ -676,17 +683,15 @@ instance ObservableContainer c v => IsObservableCore canLoad c v (MappedStateObs
     fn <<$>> readObservable# observable
 
   mapObservable# f1 (MappedStateObservable f2 observable) =
-    DynObservableCore (MappedStateObservable (fmap f1 . f2) observable)
+    ObservableCore (MappedStateObservable (fmap f1 . f2) observable)
 
   mapObservableContent# f1 (MappedStateObservable f2 observable) =
-    DynObservableCore (MappedStateObservable (f1 . f2) observable)
+    ObservableCore (MappedStateObservable (f1 . f2) observable)
 
 -- | Apply a function to an observable that can replace the whole content. The
 -- mapped observable is always fully evaluated.
 mapObservableContent :: (ToObservable canLoad exceptions d p a, ObservableContainer c v) => (d p -> c v) -> a -> Observable canLoad exceptions c v
-mapObservableContent fn x = case toObservable x of
-  (ConstObservable wstate) -> ConstObservable (mapObservableResultState fn wstate)
-  (DynObservable f) -> toObservable (mapObservableContent# (mapObservableResultContent fn) f)
+mapObservableContent fn x = toObservable (mapObservableContent# (mapObservableResultContent fn) (toObservable x))
 
 mapObservableResultState :: (cp vp -> c v) -> ObservableState canLoad (ObservableResult exceptions cp) vp -> ObservableState canLoad (ObservableResult exceptions c) v
 mapObservableResultState _fn ObservableStateLoading = ObservableStateLoading
@@ -996,11 +1001,8 @@ updateActiveBindRHS (ObservableChangeLiveDelta delta) _ = (ObservableChangeLiveD
 instance ObservableContainer c v => IsObservableCore canLoad c v (EvaluatedBindObservable canLoad c v) where
   readObservable# (EvaluatedBindObservable fx fn) = do
     (finalX, x) <- readObservable# fx
-    case fn x of
-      ConstObservableCore (ObservableStateLive wy) -> pure (finalX, wy)
-      DynObservableCore fy -> do
-        (finalY, wy) <- readObservable# fy
-        pure (finalX && finalY, wy)
+    (finalY, wy) <- readObservable# (fn x)
+    pure (finalX && finalY, wy)
 
   attachObserver# (EvaluatedBindObservable fx fn) callback = do
     mfixTVar \var -> do
@@ -1052,21 +1054,18 @@ instance ObservableContainer c v => IsObservableCore canLoad c v (EvaluatedBindO
         :: TVar (Final, BindState canLoad c v)
         -> ObservableCore canLoad c v
         -> STMc NoRetry '[] (Final, ObservableState canLoad c v, BindState canLoad c v)
-      attach var y = do
-        case y of
-          ConstObservableCore stateY -> pure (True, stateY, BindStateAttachedLive mempty True (BindRHSValid (observableStateIsLoading stateY)))
-          DynObservableCore  fy -> do
-            (disposerY, initialFinalY, initialY) <- attachObserver# fy \finalY changeY -> do
-              (finalX, bindState) <- readTVar var
-              case bindState of
-                BindStateAttachedLoading disposer _ rhs ->
-                  writeTVar var (finalX, BindStateAttachedLoading disposer finalY (updateSuspendedBindRHS changeY rhs))
-                BindStateAttachedLive disposer _ rhs -> do
-                  let !(change, newRHS) = updateActiveBindRHS changeY rhs
-                  writeTVar var (finalX, BindStateAttachedLive disposer finalY newRHS)
-                  callback (finalX && finalY) change
-                _ -> pure () -- error: no RHS should be attached in this state
-            pure (initialFinalY, initialY, BindStateAttachedLive disposerY initialFinalY (BindRHSValid (observableStateIsLoading initialY)))
+      attach var fy = do
+        (disposerY, initialFinalY, initialY) <- attachObserver# fy \finalY changeY -> do
+          (finalX, bindState) <- readTVar var
+          case bindState of
+            BindStateAttachedLoading disposer _ rhs ->
+              writeTVar var (finalX, BindStateAttachedLoading disposer finalY (updateSuspendedBindRHS changeY rhs))
+            BindStateAttachedLive disposer _ rhs -> do
+              let !(change, newRHS) = updateActiveBindRHS changeY rhs
+              writeTVar var (finalX, BindStateAttachedLive disposer finalY newRHS)
+              callback (finalX && finalY) change
+            _ -> pure () -- error: no RHS should be attached in this state
+        pure (initialFinalY, initialY, BindStateAttachedLive disposerY initialFinalY (BindRHSValid (observableStateIsLoading initialY)))
 
       detach :: TVar (Final, BindState canLoad c v) -> STMc NoRetry '[] ()
       detach var = detach' . snd =<< readTVar var
@@ -1081,15 +1080,11 @@ bindObservable
   => Observable canLoad exceptions Identity a
   -> (a -> Observable canLoad exceptions c v)
   -> Observable canLoad exceptions c v
-bindObservable (ConstObservable ObservableStateLoading) _fn =
-  ConstObservable ObservableStateLoading
-bindObservable (ConstObservable (ObservableStateLiveOk (Identity x))) fn = fn x
-bindObservable (ConstObservable (ObservableStateLiveEx ex)) _fn = ConstObservable (ObservableStateLiveEx ex)
-bindObservable (DynObservable fx) fn = DynObservable (EvaluatedBindObservable fx rhsHandler)
+bindObservable (Observable fx) fn = Observable (ObservableCore (EvaluatedBindObservable fx rhsHandler))
   where
     rhsHandler :: ObservableResult exceptions Identity a -> ObservableCore canLoad (ObservableResult exceptions c) v
     rhsHandler (ObservableResultOk (Identity (fn -> Observable x))) = x
-    rhsHandler (ObservableResultEx ex) = ConstObservableCore (ObservableStateLiveEx ex)
+    rhsHandler (ObservableResultEx ex) = constObservableCore (ObservableStateLiveEx ex)
 
 
 -- ** Observable Identity
@@ -1100,14 +1095,8 @@ type ToObservableI :: CanLoad -> [Type] -> Type -> Type -> Constraint
 type ToObservableI canLoad exceptions a = ToObservable canLoad exceptions Identity a
 
 instance Applicative (Observable canLoad exceptions Identity) where
-  pure x = ConstObservable (pure x)
-  liftA2 f (DynObservable x) (DynObservable y) = DynObservable (LiftA2Observable f x y)
-  liftA2 _f (ConstObservable ObservableStateLoading) _ = ConstObservable ObservableStateLoading
-  liftA2 _f (ConstObservable (ObservableStateLiveEx ex)) _ = ConstObservable (ObservableStateLiveEx ex)
-  liftA2 f (ConstObservable (ObservableStateLiveOk x)) y = mapObservableContent (liftA2 f x) y
-  liftA2 _ _ (ConstObservable ObservableStateLoading) = ConstObservable ObservableStateLoading
-  liftA2 _ _ (ConstObservable (ObservableStateLiveEx ex)) = ConstObservable (ObservableStateLiveEx ex)
-  liftA2 f x (ConstObservable (ObservableStateLiveOk y)) = mapObservableContent (\l -> liftA2 f l y) x
+  pure x = constObservable (pure x)
+  liftA2 f (Observable x) (Observable y) = Observable (ObservableCore (LiftA2Observable f x y))
 
 instance Monad (Observable canLoad exceptions Identity) where
   (>>=) = bindObservable

@@ -22,7 +22,7 @@ import Quasar.Resources.Core
 data ObservableVar canLoad exceptions c v = ObservableVar (TVar (ObserverState canLoad (ObservableResult exceptions c) v)) (CallbackRegistry (EvaluatedObservableChange canLoad (ObservableResult exceptions c) v))
 
 instance ObservableContainer c v => ToObservable canLoad exceptions c v (ObservableVar canLoad exceptions c v) where
-  toObservable = DynObservable
+  toObservable var = Observable (ObservableCore var)
 
 instance ObservableContainer c v => IsObservableCore canLoad (ObservableResult exceptions c) v (ObservableVar canLoad exceptions c v) where
   attachEvaluatedObserver# (ObservableVar var registry) callback = do

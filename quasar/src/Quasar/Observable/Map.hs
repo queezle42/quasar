@@ -76,10 +76,7 @@ instance Ord k => IsObservableCore canLoad (ObservableResult exceptions (Map k))
 
 
 unionWithKey :: Ord k => (k -> v -> v -> v) -> ObservableMap l e k v -> ObservableMap l e k v -> ObservableMap l e k v
-unionWithKey fn (DynObservable x) (DynObservable y) = DynObservable (ObservableMapUnionWith fn x y)
-unionWithKey fn (ConstObservable x) (DynObservable y) = DynObservable (ObservableMapUnionWith fn x y)
-unionWithKey fn (DynObservable x) (ConstObservable y) = DynObservable (ObservableMapUnionWith fn x y)
-unionWithKey fn (ConstObservable x) (ConstObservable y) = ConstObservable (mergeObservableState (mergeObservableResult (Map.unionWithKey fn)) x y)
+unionWithKey fn (Observable x) (Observable y) = Observable (ObservableCore (ObservableMapUnionWith fn x y))
 
 unionWith :: Ord k => (v -> v -> v) -> ObservableMap l e k v -> ObservableMap l e k v -> ObservableMap l e k v
 unionWith fn = unionWithKey \_ x y -> fn x y
