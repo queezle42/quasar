@@ -13,6 +13,8 @@ module Quasar.Observable.Map (
 
   -- ** Query
   lookup,
+  count,
+  isEmpty,
 
   -- ** Combine
   union,
@@ -31,6 +33,12 @@ import Quasar.Prelude hiding (lookup)
 
 lookup :: Ord k => k -> ObservableMap l e k v -> ObservableI l e (Maybe v)
 lookup key x = lookupValue# (toObservableMap x) (Key key)
+
+count :: ObservableMap l e k v -> ObservableI l e Int64
+count = count#
+
+isEmpty :: ObservableMap l e k v -> ObservableI l e Bool
+isEmpty = isEmpty#
 
 
 data MappedObservableMap canLoad exceptions k va v = forall a. IsObservableCore canLoad (ObservableResult exceptions (Map k)) va a => MappedObservableMap (k -> va -> v) a
