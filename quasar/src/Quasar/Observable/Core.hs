@@ -97,6 +97,8 @@ module Quasar.Observable.Core (
 ) where
 
 import Control.Applicative
+import Control.Monad.Catch (MonadThrow)
+import Control.Monad.Catch.Pure (MonadThrow(..))
 import Control.Monad.Except
 import Data.Binary (Binary)
 import Data.Functor.Identity (Identity(..))
@@ -327,6 +329,16 @@ instance (Num v, Applicative (Observable canLoad exceptions c)) => Num (Observab
   abs = fmap abs
   signum = fmap signum
   fromInteger x = pure (fromInteger x)
+
+instance Monad (Observable canLoad exceptions c) => MonadThrowEx (Observable canLoad exceptions c) where
+  unsafeThrowEx ex = constObservable (ObservableStateLiveEx (unsafeToEx ex))
+
+instance (Exception e, e :< exceptions, Monad (Observable canLoad exceptions c)) => Throw e (Observable canLoad exceptions c) where
+  throwC exception =
+    constObservable (ObservableStateLiveEx (toEx @exceptions exception))
+
+instance (SomeException :< exceptions, Monad (Observable canLoad exceptions c)) => MonadThrow (Observable canLoad exceptions c) where
+  throwM x = throwEx (toEx @'[SomeException] x)
 
 
 type ObservableChange :: CanLoad -> (Type -> Type) -> Type -> Type
