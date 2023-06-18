@@ -27,9 +27,9 @@ import Quasar.Observable.Core
 import Quasar.Prelude
 
 
-data MappedObservableMap canLoad exceptions k v = forall va a. IsObservableCore canLoad (ObservableResult exceptions (Map k)) va a => MappedObservableMap (k -> va -> v) a
+data MappedObservableMap canLoad exceptions k va v = forall a. IsObservableCore canLoad (ObservableResult exceptions (Map k)) va a => MappedObservableMap (k -> va -> v) a
 
-instance ObservableFunctor (Map k) => IsObservableCore canLoad (ObservableResult exceptions (Map k)) v (MappedObservableMap canLoad exceptions k v) where
+instance ObservableFunctor (Map k) => IsObservableCore canLoad (ObservableResult exceptions (Map k)) v (MappedObservableMap canLoad exceptions k va v) where
   readObservable# (MappedObservableMap fn observable) =
     mapObservableResult (Map.mapWithKey fn) <$> readObservable# observable
 
@@ -46,10 +46,9 @@ instance ObservableFunctor (Map k) => IsObservableCore canLoad (ObservableResult
 
   count# (MappedObservableMap _ upstream) = count# upstream
   isEmpty# (MappedObservableMap _ upstream) = isEmpty# upstream
-  -- TODO lookup functions
-
-  --mapObservable# f1 (MappedObservableMap f2 upstream) =
-  --  DynObservableCore $ MappedObservableMap (f1 . f2) upstream
+  lookupKey# (MappedObservableMap _ upstream) selector = lookupKey# upstream (mapSelector id selector)
+  lookupItem# (MappedObservableMap fn upstream) selector =
+    (\(key, value) -> (key, fn key value)) <<$>> lookupItem# upstream (mapSelector id selector)
 
 mapWithKey :: Ord k => (k -> va -> v) -> ObservableMap canLoad exceptions k va -> ObservableMap canLoad exceptions k v
 mapWithKey fn (toObservable -> Observable x) = Observable (ObservableCore (MappedObservableMap fn x))
