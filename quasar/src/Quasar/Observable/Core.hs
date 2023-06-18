@@ -697,6 +697,8 @@ instance ObservableFunctor c => IsObservableCore canLoad c v (MappedObservable c
     fn <<$>> readObservable# observable
   mapObservable# f1 (MappedObservable f2 upstream) =
     ObservableCore $ MappedObservable (f1 . f2) upstream
+  count# (MappedObservable _ upstream) = count# upstream
+  isEmpty# (MappedObservable _ upstream) = isEmpty# upstream
 
 
 data MappedStateObservable canLoad c v = forall d p a. (IsObservableCore canLoad d p a, ObservableContainer d p) => MappedStateObservable (d p -> c v) a
