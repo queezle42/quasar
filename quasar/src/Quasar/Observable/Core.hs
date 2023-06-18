@@ -50,6 +50,8 @@ module Quasar.Observable.Core (
   applyEvaluatedObservableChange,
   toInitialChange,
   ObservableFunctor,
+  Selector(..),
+  mapSelector,
 
   -- *** Exception wrapper container
   ObservableResult(..),
@@ -195,6 +197,11 @@ data Selector c v
   = Min
   | Max
   | Key (Key c v)
+
+mapSelector :: (Key ca va -> Key c v) -> Selector ca va -> Selector c v
+mapSelector _fn Min = Min
+mapSelector _fn Max = Max
+mapSelector fn (Key key) = Key (fn key)
 
 readObservable
   :: forall exceptions c v m a.
