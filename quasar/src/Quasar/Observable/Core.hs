@@ -247,6 +247,8 @@ class ObservableContainer c v where
   -- applied.
   toInitialDelta :: c v -> Delta c v
   initializeFromDelta :: Delta c v -> c v
+  containerCount# :: c v -> ObservableI canLoad (ContainerExceptions c) Int64
+  containerIsEmpty# :: c v -> ObservableI canLoad (ContainerExceptions c) Bool
 
 instance ObservableContainer Identity v where
   type Delta Identity = Identity
@@ -256,6 +258,8 @@ instance ObservableContainer Identity v where
   mergeDelta _ new = new
   toInitialDelta = id
   initializeFromDelta = id
+  containerCount# _ = 1
+  containerIsEmpty# _ = pure False
 
 
 type ObservableCore :: CanLoad -> (Type -> Type) -> Type -> Type
@@ -1174,6 +1178,8 @@ instance Ord k => ObservableContainer (Map k) v where
   initializeFromDelta (ObservableMapReplace new) = new
   -- TODO replace with safe implementation once the module is tested
   initializeFromDelta (ObservableMapUpdate _) = error "ObservableMap.initializeFromDelta: expected ObservableMapReplace"
+  containerCount# x = fromIntegral (Map.size x)
+  containerIsEmpty# x = pure (Map.null x)
 
 toObservableMap :: ToObservable canLoad exceptions (Map k) v a => a -> ObservableMap canLoad exceptions k v
 toObservableMap = toObservable
@@ -1212,6 +1218,8 @@ instance Ord v => ObservableContainer Set v where
   initializeFromDelta (ObservableSetReplace new) = new
   -- TODO replace with safe implementation once the module is tested
   initializeFromDelta _ = error "ObservableSet.initializeFromDelta: expected ObservableSetReplace"
+  containerCount# x = fromIntegral (Set.size x)
+  containerIsEmpty# x = pure (Set.null x)
 
 toObservableSet :: ToObservable canLoad exceptions Set v a => a -> ObservableSet canLoad exceptions v
 toObservableSet = toObservable
@@ -1288,3 +1296,7 @@ instance ObservableContainer c v => ObservableContainer (ObservableResult except
   toInitialDelta (ObservableResultEx ex) = ObservableResultDeltaThrow ex
   initializeFromDelta (ObservableResultDeltaOk initial) = ObservableResultOk (initializeFromDelta initial)
   initializeFromDelta (ObservableResultDeltaThrow ex) = ObservableResultEx ex
+  containerCount# (ObservableResultOk x) = error "TODO relax ex" -- containerCount# x
+  containerCount# (ObservableResultEx ex) = error "TODO throwEx support" -- throwEx ex
+  containerIsEmpty# (ObservableResultOk x) = error "TODO relax ex" -- containerIsEmpty# x
+  containerIsEmpty# (ObservableResultEx ex) = error "TODO throwEx support" -- throwEx ex
