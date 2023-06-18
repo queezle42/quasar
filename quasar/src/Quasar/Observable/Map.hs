@@ -11,6 +11,9 @@ module Quasar.Observable.Map (
   ObservableMapDelta(..),
   ObservableMapOperation(..),
 
+  -- ** Query
+  lookup,
+
   -- ** Combine
   union,
   unionWith,
@@ -24,7 +27,10 @@ import Control.Applicative
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Quasar.Observable.Core
-import Quasar.Prelude
+import Quasar.Prelude hiding (lookup)
+
+lookup :: Ord k => k -> ObservableMap l e k v -> ObservableI l e (Maybe v)
+lookup key x = lookupValue# (toObservableMap x) (Key key)
 
 
 data MappedObservableMap canLoad exceptions k va v = forall a. IsObservableCore canLoad (ObservableResult exceptions (Map k)) va a => MappedObservableMap (k -> va -> v) a
