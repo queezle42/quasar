@@ -317,6 +317,15 @@ instance ObservableFunctor c => Functor (Observable canLoad exceptions c) where
 instance (IsString v, Applicative c, ObservableContainer c v) => IsString (Observable canLoad exceptions c v) where
   fromString x = constObservable (pure (fromString x))
 
+instance (Num v, Applicative (Observable canLoad exceptions c)) => Num (Observable canLoad exceptions c v) where
+  (+) = liftA2 (+)
+  (-) = liftA2 (-)
+  (*) = liftA2 (*)
+  negate = fmap negate
+  abs = fmap abs
+  signum = fmap signum
+  fromInteger x = pure (fromInteger x)
+
 
 type ObservableChange :: CanLoad -> (Type -> Type) -> Type -> Type
 data ObservableChange canLoad c v where
