@@ -119,7 +119,7 @@ class ObservableContainer c v => ToObservable canLoad exceptions c v a | a -> ca
   toObservable :: a -> Observable canLoad exceptions c v
 
 type IsObservableCore :: CanLoad -> (Type -> Type) -> Type -> Type -> Constraint
-class ObservableContainer c v => IsObservableCore canLoad c v a | a -> canLoad, a -> c, a -> v where
+class IsObservableCore canLoad c v a | a -> canLoad, a -> c, a -> v where
   {-# MINIMAL readObservable#, (attachObserver# | attachEvaluatedObserver#) #-}
 
   readObservable#
@@ -128,7 +128,8 @@ class ObservableContainer c v => IsObservableCore canLoad c v a | a -> canLoad, 
     -> STMc NoRetry '[] (c v)
 
   attachObserver#
-    :: a
+    :: ObservableContainer c v
+    => a
     -> (ObservableChange canLoad c v -> STMc NoRetry '[] ())
     -> STMc NoRetry '[] (TSimpleDisposer, ObservableState canLoad c v)
   attachObserver# x callback = attachEvaluatedObserver# x \evaluatedChange ->
@@ -139,7 +140,8 @@ class ObservableContainer c v => IsObservableCore canLoad c v a | a -> canLoad, 
       EvaluatedObservableChangeLiveDelta delta _ -> ObservableChangeLiveDelta delta
 
   attachEvaluatedObserver#
-    :: a
+    :: ObservableContainer c v
+    => a
     -> (EvaluatedObservableChange canLoad c v -> STMc NoRetry '[] ())
     -> STMc NoRetry '[] (TSimpleDisposer, ObservableState canLoad c v)
   attachEvaluatedObserver# x callback =
@@ -159,7 +161,7 @@ class ObservableContainer c v => IsObservableCore canLoad c v a | a -> canLoad, 
   mapObservable# f x = ObservableCore (MappedObservable f x)
 
   mapObservableContent#
-    :: ObservableContainer ca va
+    :: (ObservableContainer c v)
     => (c v -> ca va)
     -> a
     -> ObservableCore canLoad ca va
@@ -268,7 +270,7 @@ data ObservableCore canLoad c v = forall a. IsObservableCore canLoad c v a => Ob
 instance ObservableContainer c v => ToObservable canLoad exceptions c v (ObservableCore canLoad (ObservableResult exceptions c) v) where
   toObservable = Observable
 
-instance ObservableContainer c v => IsObservableCore canLoad c v (ObservableCore canLoad c v) where
+instance IsObservableCore canLoad c v (ObservableCore canLoad c v) where
   readObservable# (ObservableCore x) = readObservable# x
   attachObserver# (ObservableCore x) = attachObserver# x
   attachEvaluatedObserver# (ObservableCore x) = attachEvaluatedObserver# x
@@ -284,10 +286,10 @@ instance ObservableContainer c v => IsObservableCore canLoad c v (ObservableCore
 instance ObservableFunctor c => Functor (ObservableCore canLoad c) where
   fmap = mapObservable#
 
-constObservableCore :: ObservableContainer c v => ObservableState canLoad c v -> ObservableCore canLoad c v
+constObservableCore :: ObservableState canLoad c v -> ObservableCore canLoad c v
 constObservableCore state = ObservableCore state
 
-constObservable :: ObservableContainer c v => ObservableState canLoad (ObservableResult exceptions c) v -> Observable canLoad exceptions c v
+constObservable :: ObservableState canLoad (ObservableResult exceptions c) v -> Observable canLoad exceptions c v
 constObservable state = Observable (constObservableCore state)
 
 type Observable :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type
@@ -296,7 +298,7 @@ newtype Observable canLoad exceptions c v = Observable (ObservableCore canLoad (
 instance ObservableContainer c v => ToObservable canLoad exceptions c v (Observable canLoad exceptions c v) where
   toObservable = id
 
-instance ObservableContainer c v => IsObservableCore canLoad (ObservableResult exceptions c) v (Observable canLoad exceptions c v) where
+instance IsObservableCore canLoad (ObservableResult exceptions c) v (Observable canLoad exceptions c v) where
   readObservable# (Observable x) = readObservable# x
   attachObserver# (Observable x) = attachObserver# x
   attachEvaluatedObserver# (Observable x) = attachEvaluatedObserver# x
@@ -314,7 +316,7 @@ type ObservableFunctor c = (Functor c, Functor (Delta c), forall v. ObservableCo
 instance ObservableFunctor c => Functor (Observable canLoad exceptions c) where
   fmap = mapObservable
 
-instance (IsString v, Applicative c, ObservableContainer c v) => IsString (Observable canLoad exceptions c v) where
+instance (IsString v, Applicative c) => IsString (Observable canLoad exceptions c v) where
   fromString x = constObservable (pure (fromString x))
 
 instance (Num v, Applicative (Observable canLoad exceptions c)) => Num (Observable canLoad exceptions c v) where
@@ -454,7 +456,7 @@ data ObservableState canLoad c v where
   ObservableStateLoading :: ObservableState Load c v
   ObservableStateLive :: c v -> ObservableState canLoad c v
 
-instance ObservableContainer c v => IsObservableCore canLoad c v (ObservableState canLoad c v) where
+instance IsObservableCore canLoad c v (ObservableState canLoad c v) where
   readObservable# (ObservableStateLive x) = pure x
   attachObserver# x _callback = pure (mempty, x)
 
@@ -681,9 +683,9 @@ instance ObservableFunctor c => IsObservableCore canLoad c v (MappedObservable c
     ObservableCore $ MappedObservable (f1 . f2) upstream
 
 
-data MappedStateObservable canLoad c v = forall d p a. IsObservableCore canLoad d p a => MappedStateObservable (d p -> c v) a
+data MappedStateObservable canLoad c v = forall d p a. (IsObservableCore canLoad d p a, ObservableContainer d p) => MappedStateObservable (d p -> c v) a
 
-instance ObservableContainer c v => IsObservableCore canLoad c v (MappedStateObservable canLoad c v) where
+instance IsObservableCore canLoad c v (MappedStateObservable canLoad c v) where
   attachEvaluatedObserver# (MappedStateObservable fn observable) callback =
     fmap2 (mapObservableState fn) $ attachEvaluatedObserver# observable \evaluatedChange ->
       callback case evaluatedChange of
@@ -714,7 +716,7 @@ mapObservableResultState _fn (ObservableStateLiveEx ex) = ObservableStateLiveEx 
 mapObservableResultState fn (ObservableStateLiveOk content) = ObservableStateLiveOk (fn content)
 
 
-data LiftA2Observable l c v = forall va vb a b. (IsObservableCore l c va a, IsObservableCore l c vb b) => LiftA2Observable (va -> vb -> v) a b
+data LiftA2Observable l c v = forall va vb a b. (IsObservableCore l c va a, ObservableContainer c va, IsObservableCore l c vb b, ObservableContainer c vb) => LiftA2Observable (va -> vb -> v) a b
 
 instance (Applicative c, ObservableContainer c v) => IsObservableCore canLoad c v (LiftA2Observable canLoad c v) where
   readObservable# (LiftA2Observable fn fx fy) =
@@ -726,7 +728,7 @@ instance (Applicative c, ObservableContainer c v) => IsObservableCore canLoad c 
 
 attachEvaluatedMergeObserver
   :: forall canLoad c v ca va cb vb a b.
-  (IsObservableCore canLoad ca va a, IsObservableCore canLoad cb vb b, ObservableContainer c v)
+  (IsObservableCore canLoad ca va a, IsObservableCore canLoad cb vb b, ObservableContainer ca va, ObservableContainer cb vb, ObservableContainer c v)
   => (ca va -> cb vb -> c v)
   -> a
   -> b
@@ -757,7 +759,7 @@ instance ObservableContainer c v => Semigroup (MergeChange canLoad c v) where
 
 attachCoreMergeObserver
   :: forall canLoad ca va cb vb c v a b.
-  (IsObservableCore canLoad ca va a, IsObservableCore canLoad cb vb b, ObservableContainer c v)
+  (IsObservableCore canLoad ca va a, IsObservableCore canLoad cb vb b, ObservableContainer ca va, ObservableContainer cb vb, ObservableContainer c v)
   -- Function to create the internal state during (re)initialisation.
   => (ca va -> cb vb -> c v)
   -- Function to create a delta from a LHS delta. Returning `Nothing` can be
@@ -851,6 +853,8 @@ attachMergeObserver
   (
     IsObservableCore canLoad (ObservableResult exceptions ca) va a,
     IsObservableCore canLoad (ObservableResult exceptions cb) vb b,
+    ObservableContainer ca va,
+    ObservableContainer cb vb,
     ObservableContainer c v
   )
   -- Function to create the internal state during (re)initialisation.
@@ -962,7 +966,7 @@ attachMonoidMergeObserver fullMergeFn leftFn rightFn fx fy callback =
 
 
 
-data EvaluatedBindObservable canLoad c v = forall d p a. IsObservableCore canLoad d p a => EvaluatedBindObservable a (d p -> ObservableCore canLoad c v)
+data EvaluatedBindObservable canLoad c v = forall d p a. (IsObservableCore canLoad d p a, ObservableContainer d p) => EvaluatedBindObservable a (d p -> ObservableCore canLoad c v)
 
 data BindState canLoad c v where
   -- LHS cleared
