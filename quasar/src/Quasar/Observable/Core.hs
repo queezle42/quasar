@@ -284,9 +284,6 @@ instance ObservableContainer c v => IsObservableCore canLoad c v (ObservableCore
 instance ObservableFunctor c => Functor (ObservableCore canLoad c) where
   fmap = mapObservable#
 
-instance (IsString v, Applicative c, ObservableContainer c v) => IsString (ObservableCore canLoad c v) where
-  fromString x = constObservableCore (pure (fromString x))
-
 constObservableCore :: ObservableContainer c v => ObservableState canLoad c v -> ObservableCore canLoad c v
 constObservableCore state = ObservableCore state
 
