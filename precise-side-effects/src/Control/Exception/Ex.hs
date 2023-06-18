@@ -8,6 +8,7 @@ module Control.Exception.Ex (
   matchEx,
   limitEx,
   absurdEx,
+  exToException,
 
   Throw(..),
   ThrowAny,
@@ -15,9 +16,6 @@ module Control.Exception.Ex (
   ThrowEx,
   throwEx,
   ThrowForAll,
-
-  -- TODO maybe
-  --Throw(throwC),
 
   (:<),
   (:<<),
@@ -129,6 +127,11 @@ instance ExceptionList exceptions => Exception (Ex exceptions) where
 
 instance Show (Ex exceptions) where
   show (Ex ex) = show ex
+
+-- | Variant of `toException` specifically for `Ex` without the
+-- `Exception (Ex exceptions)`-constraint.
+exToException :: Ex exceptions -> SomeException
+exToException (Ex ex) = ex
 
 matchEx ::
   (Exception e, ExceptionList exceptions) =>
