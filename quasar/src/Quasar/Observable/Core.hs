@@ -169,10 +169,10 @@ class IsObservableCore canLoad c v a | a -> canLoad, a -> c, a -> v where
     -> ObservableCore canLoad ca va
   mapObservableContent# f x = ObservableCore (MappedStateObservable f x)
 
-  count# :: a -> ObservableI canLoad (ContainerExceptions c) Int64
+  count# :: ObservableContainer c v => a -> ObservableI canLoad (ContainerExceptions c) Int64
   count# = undefined
 
-  isEmpty# :: a -> ObservableI canLoad (ContainerExceptions c) Bool
+  isEmpty# :: ObservableContainer c v => a -> ObservableI canLoad (ContainerExceptions c) Bool
   isEmpty# = undefined
 
   lookupKey# :: Ord (Key c v) => a -> Selector c v -> ObservableI canLoad (ContainerExceptions c) (Maybe (Key c v))
@@ -471,6 +471,10 @@ data ObservableState canLoad c v where
 instance IsObservableCore canLoad c v (ObservableState canLoad c v) where
   readObservable# (ObservableStateLive x) = pure x
   attachObserver# x _callback = pure (mempty, x)
+  count# ObservableStateLoading = constObservable ObservableStateLoading
+  count# (ObservableStateLive x) = containerCount# x
+  isEmpty# ObservableStateLoading = constObservable ObservableStateLoading
+  isEmpty# (ObservableStateLive x) = containerIsEmpty# x
 
 instance HasField "loading" (ObservableState canLoad c v) (Loading canLoad) where
   getField ObservableStateLoading = Loading
