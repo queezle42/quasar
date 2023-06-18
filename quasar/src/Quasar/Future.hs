@@ -89,7 +89,7 @@ awaitSTM :: MonadSTMc Retry '[] m => ToFuture r a => a -> m r
 awaitSTM x = readFuture x
 {-# DEPRECATED awaitSTM "Use readFuture instead" #-}
 
-instance (MonadTrans t, MonadAwait m, Monad (t m)) => MonadAwait (t m) where
+instance {-# OVERLAPPABLE #-} (MonadTrans t, MonadAwait m, Monad (t m)) => MonadAwait (t m) where
   await = lift . await
 
 

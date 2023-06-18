@@ -319,5 +319,5 @@ beginDisposeResourceManagerInternal rm = do
 class Monad m => ResourceCollector m where
   collectResource :: (Disposable a, HasCallStack) => a -> m ()
 
-instance (ResourceCollector m, MonadTrans t, Monad (t m)) => ResourceCollector (t m) where
+instance {-# OVERLAPPABLE #-} (ResourceCollector m, MonadTrans t, Monad (t m)) => ResourceCollector (t m) where
   collectResource = lift . collectResource

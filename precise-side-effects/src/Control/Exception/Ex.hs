@@ -166,7 +166,7 @@ instance Exception e => Throw e IO where
 instance Exception e => Throw e STM where
   throwC = throwSTM
 
-instance (Exception e, Throw e m, Monad (t m), MonadTrans t) => Throw e (t m) where
+instance {-# OVERLAPPABLE #-} (Exception e, Throw e m, Monad (t m), MonadTrans t) => Throw e (t m) where
   throwC = lift . throwC
 
 type ThrowForAll :: [Type] -> (Type -> Type) -> Constraint
@@ -193,5 +193,5 @@ instance MonadThrowEx IO where
 instance MonadThrowEx STM where
   unsafeThrowEx = throwSTM
 
-instance (MonadThrowEx m, Monad (t m), MonadTrans t) => MonadThrowEx (t m) where
+instance {-# OVERLAPPABLE #-} (MonadThrowEx m, Monad (t m), MonadTrans t) => MonadThrowEx (t m) where
   unsafeThrowEx = lift . unsafeThrowEx
