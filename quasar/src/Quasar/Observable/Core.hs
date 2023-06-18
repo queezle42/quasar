@@ -687,7 +687,7 @@ changeFromPending loading pendingChange lastChange = do
     updateLastChange ObservableChangeLiveUnchanged LastChangeLive = LastChangeLive
     updateLastChange (ObservableChangeLiveDelta _) _ = LastChangeLive
 
-data MappedObservable canLoad c v = forall prev a. IsObservableCore canLoad c prev a => MappedObservable (prev -> v) a
+data MappedObservable canLoad c v = forall va a. IsObservableCore canLoad c va a => MappedObservable (va -> v) a
 
 instance ObservableFunctor c => IsObservableCore canLoad c v (MappedObservable canLoad c v) where
   attachObserver# (MappedObservable fn observable) callback =
