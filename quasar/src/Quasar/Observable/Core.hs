@@ -231,6 +231,9 @@ mapObservable fn x = Observable (mapObservable# fn (toObservable x))
 evaluateObservable :: ToObservable canLoad exceptions c v a => a -> Observable canLoad exceptions Identity (c v)
 evaluateObservable x = mapObservableContent Identity x
 
+evaluateObservableCore :: (IsObservableCore canLoad c v a, ObservableContainer c v) => a -> Observable canLoad exceptions Identity (c v)
+evaluateObservableCore x = observableFromCore (mapObservableContent# Identity x)
+
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
 type data CanLoad = Load | NoLoad
 #else
@@ -686,6 +689,7 @@ changeFromPending loading pendingChange lastChange = do
     updateLastChange ObservableChangeLiveUnchanged LastChangeLoading = LastChangeLive
     updateLastChange ObservableChangeLiveUnchanged LastChangeLive = LastChangeLive
     updateLastChange (ObservableChangeLiveDelta _) _ = LastChangeLive
+
 
 data MappedObservable canLoad c v = forall va a. IsObservableCore canLoad c va a => MappedObservable (va -> v) a
 
@@ -1328,3 +1332,24 @@ instance ObservableContainer c v => ObservableContainer (ObservableResult except
   containerCount# (ObservableResultEx ex) = error "TODO throwEx support" -- throwEx ex
   containerIsEmpty# (ObservableResultOk x) = error "TODO relax ex" -- containerIsEmpty# x
   containerIsEmpty# (ObservableResultEx ex) = error "TODO throwEx support" -- throwEx ex
+
+-- *** Wrap container in ObservableResultOk
+
+newtype AlwaysOk canLoad exceptions c v = AlwaysOk (ObservableCore canLoad c v)
+
+instance ObservableContainer c v => IsObservableCore canLoad (ObservableResult exceptions c) v (AlwaysOk canLoad exceptions c v) where
+  readObservable# (AlwaysOk x) = ObservableResultOk <$> readObservable# x
+  attachObserver# (AlwaysOk x) callback = mapObservableState ObservableResultOk <<$>> attachObserver# x wrappedCallback
+    where
+      wrappedCallback change = callback (mapObservableChangeDelta ObservableResultDeltaOk change)
+  attachEvaluatedObserver# (AlwaysOk x) callback = mapObservableState ObservableResultOk <<$>> attachEvaluatedObserver# x (callback . wrapChange)
+    where
+      wrapChange :: EvaluatedObservableChange canLoad c v -> EvaluatedObservableChange canLoad (ObservableResult exceptions c) v
+      wrapChange EvaluatedObservableChangeLoadingClear = EvaluatedObservableChangeLoadingClear
+      wrapChange EvaluatedObservableChangeLoadingUnchanged = EvaluatedObservableChangeLoadingUnchanged
+      wrapChange EvaluatedObservableChangeLiveUnchanged = EvaluatedObservableChangeLiveUnchanged
+      wrapChange (EvaluatedObservableChangeLiveDelta delta evaluated) =
+        EvaluatedObservableChangeLiveDelta (ObservableResultDeltaOk delta) (ObservableResultOk evaluated)
+
+observableFromCore :: forall canLoad exceptions c v. ObservableContainer c v => ObservableCore canLoad c v -> Observable canLoad exceptions c v
+observableFromCore x = Observable (ObservableCore (AlwaysOk @canLoad @exceptions x))
