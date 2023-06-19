@@ -14,6 +14,7 @@ module Quasar.Observable.Map (
   -- ** Construction
   empty,
   singleton,
+  fromList,
 
   -- ** Query
   lookup,
@@ -48,6 +49,10 @@ count = count#
 
 isEmpty :: Ord k => ObservableMap l e k v -> ObservableI l e Bool
 isEmpty = isEmpty#
+
+-- | From unordered list.
+fromList :: Ord k => [(k, v)] -> ObservableMap l e k v
+fromList list = constObservable (ObservableStateLiveOk (Map.fromList list))
 
 
 data MappedObservableMap canLoad exceptions k va v = forall a. IsObservableCore canLoad (ObservableResult exceptions (Map k)) va a => MappedObservableMap (k -> va -> v) a
