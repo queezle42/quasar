@@ -1334,9 +1334,9 @@ instance ObservableContainer c v => ObservableContainer (ObservableResult except
   initializeFromDelta (ObservableResultDeltaOk initial) = ObservableResultOk (initializeFromDelta initial)
   initializeFromDelta (ObservableResultDeltaThrow ex) = ObservableResultEx ex
   containerCount# (ObservableResultOk x) = error "TODO relax ex" -- containerCount# x
-  containerCount# (ObservableResultEx ex) = error "TODO throwEx support" -- throwEx ex
+  containerCount# (ObservableResultEx ex) = ObservableResultEx ex
   containerIsEmpty# (ObservableResultOk x) = error "TODO relax ex" -- containerIsEmpty# x
-  containerIsEmpty# (ObservableResultEx ex) = error "TODO throwEx support" -- throwEx ex
+  containerIsEmpty# (ObservableResultEx ex) = ObservableResultEx ex
 
 -- *** Wrap container in ObservableResultOk
 
