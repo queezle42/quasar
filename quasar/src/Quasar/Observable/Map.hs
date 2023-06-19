@@ -74,9 +74,13 @@ instance ObservableFunctor (Map k) => IsObservableCore canLoad (ObservableResult
 
   count# (MappedObservableMap _ upstream) = count# upstream
   isEmpty# (MappedObservableMap _ upstream) = isEmpty# upstream
-  lookupKey# (MappedObservableMap _ upstream) selector = lookupKey# upstream (mapSelector id selector)
-  lookupItem# (MappedObservableMap fn upstream) selector =
-    (\(key, value) -> (key, fn key value)) <<$>> lookupItem# upstream (mapSelector id selector)
+  lookupKey# (MappedObservableMap _ upstream) sel = lookupKey# upstream (mapSelector id sel)
+  lookupItem# (MappedObservableMap fn upstream) sel =
+    (\(key, value) -> (key, fn key value)) <<$>> lookupItem# upstream (mapSelector id sel)
+  lookupValue# (MappedObservableMap fn upstream) sel@(Key key) =
+    fn key <<$>> lookupValue# upstream (mapSelector id sel)
+  lookupValue# (MappedObservableMap fn upstream) sel =
+    uncurry fn <<$>> lookupItem# upstream (mapSelector id sel)
 
 mapWithKey :: Ord k => (k -> va -> v) -> ObservableMap canLoad exceptions k va -> ObservableMap canLoad exceptions k v
 mapWithKey fn (toObservable -> Observable x) = Observable (ObservableCore (MappedObservableMap fn x))
@@ -108,6 +112,28 @@ instance Ord k => IsObservableCore canLoad (ObservableResult exceptions (Map k))
         deltaFn f (ObservableMapUpdate (Map.union (ObservableMapInsert <$> new) (ObservableMapDelete <$ prev))) prev other
 
   isEmpty# (ObservableMapUnionWith _ x y) = liftA2 (||) (isEmpty# x) (isEmpty# y)
+  lookupKey# (ObservableMapUnionWith _fn fx fy) sel = do
+    x <- lookupKey# fx sel
+    y <- lookupKey# fy sel
+    pure (liftA2 (merge sel) x y)
+    where
+      merge :: Selector (ObservableResult exceptions (Map k)) v -> k -> k -> k
+      merge Min = min
+      merge Max = max
+      merge (Key _) = const
+  lookupItem# (ObservableMapUnionWith fn fx fy) sel@(Key key) = do
+    mx <- lookupValue# fx sel
+    my <- lookupValue# fy sel
+    pure (liftA2 (\x y -> (key, fn key x y)) mx my)
+  lookupItem# (ObservableMapUnionWith fn fx fy) sel = do
+    x <- lookupItem# fx sel
+    y <- lookupItem# fy sel
+    pure (liftA2 (merge sel) x y)
+    where
+      merge :: Selector (ObservableResult exceptions (Map k)) v -> (k, v) -> (k, v) -> (k, v)
+      merge Min x@(kx, _) y@(ky, _) = if kx <= ky then x else y
+      merge Max x@(kx, _) y@(ky, _) = if kx >= ky then x else y
+      merge (Key key) (_, x) (_, y) = (key, fn key x y)
 
 
 unionWithKey :: Ord k => (k -> v -> v -> v) -> ObservableMap l e k v -> ObservableMap l e k v -> ObservableMap l e k v
