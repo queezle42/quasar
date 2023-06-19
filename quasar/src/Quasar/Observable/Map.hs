@@ -11,6 +11,10 @@ module Quasar.Observable.Map (
   ObservableMapDelta(..),
   ObservableMapOperation(..),
 
+  -- ** Construction
+  empty,
+  singleton,
+
   -- ** Query
   lookup,
   count,
@@ -25,11 +29,16 @@ module Quasar.Observable.Map (
   mapWithKey,
 ) where
 
-import Control.Applicative
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Quasar.Observable.Core
 import Quasar.Prelude hiding (lookup)
+
+empty :: ObservableMap canLoad exceptions k v
+empty = constObservable (ObservableStateLiveOk Map.empty)
+
+singleton :: k -> v -> ObservableMap canLoad exceptions k v
+singleton key value = constObservable (ObservableStateLiveOk (Map.singleton key value))
 
 lookup :: Ord k => k -> ObservableMap l e k v -> ObservableI l e (Maybe v)
 lookup key x = lookupValue# (toObservableMap x) (Key key)
@@ -48,7 +57,7 @@ instance ObservableFunctor (Map k) => IsObservableCore canLoad (ObservableResult
     mapObservableResult (Map.mapWithKey fn) <$> readObservable# observable
 
   attachObserver# (MappedObservableMap fn observable) callback =
-    fmap2 (mapObservableState (mapObservableResult (Map.mapWithKey fn))) $ attachObserver# observable \change ->
+    mapObservableState (mapObservableResult (Map.mapWithKey fn)) <<$>> attachObserver# observable \change ->
       callback (mapObservableChangeDelta (mapObservableResultDelta (mapDeltaWithKey fn)) change)
     where
       mapDeltaWithKey :: (k -> va -> v) -> ObservableMapDelta k va -> ObservableMapDelta k v
