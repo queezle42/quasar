@@ -1112,6 +1112,10 @@ instance ObservableContainer c v => IsObservableCore canLoad c v (EvaluatedBindO
 
   count# (EvaluatedBindObservable fx fn) = evaluateObservableCore fx >>= count# . fn
   isEmpty# (EvaluatedBindObservable fx fn) = evaluateObservableCore fx >>= isEmpty# . fn
+  lookupKey# (EvaluatedBindObservable fx fn) sel = evaluateObservableCore fx >>= \x -> lookupKey# (fn x) sel
+  lookupItem# (EvaluatedBindObservable fx fn) sel = evaluateObservableCore fx >>= \x -> lookupItem# (fn x) sel
+  lookupValue# (EvaluatedBindObservable fx fn) sel = evaluateObservableCore fx >>= \x -> lookupValue# (fn x) sel
+
 bindObservable
   :: forall canLoad exceptions c v a. ObservableContainer c v
   => Observable canLoad exceptions Identity a
