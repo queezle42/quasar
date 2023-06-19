@@ -170,10 +170,10 @@ class IsObservableCore canLoad c v a | a -> canLoad, a -> c, a -> v where
   mapObservableContent# f x = ObservableCore (MappedStateObservable f x)
 
   count# :: ObservableContainer c v => a -> ObservableI canLoad (ContainerExceptions c) Int64
-  count# = undefined
+  count# x = Observable (mapObservableContent# containerCount# x)
 
   isEmpty# :: ObservableContainer c v => a -> ObservableI canLoad (ContainerExceptions c) Bool
-  isEmpty# = undefined
+  isEmpty# x = Observable (mapObservableContent# containerIsEmpty# x)
 
   lookupKey# :: Ord (Key c v) => a -> Selector c v -> ObservableI canLoad (ContainerExceptions c) (Maybe (Key c v))
   lookupKey# = undefined
@@ -254,8 +254,8 @@ class ObservableContainer c v where
   -- applied.
   toInitialDelta :: c v -> Delta c v
   initializeFromDelta :: Delta c v -> c v
-  containerCount# :: c v -> ObservableI canLoad (ContainerExceptions c) Int64
-  containerIsEmpty# :: c v -> ObservableI canLoad (ContainerExceptions c) Bool
+  containerCount# :: c v -> ObservableResult (ContainerExceptions c) Identity Int64
+  containerIsEmpty# :: c v -> ObservableResult (ContainerExceptions c) Identity Bool
 
 instance ObservableContainer Identity v where
   type Delta Identity = Identity
@@ -265,7 +265,7 @@ instance ObservableContainer Identity v where
   mergeDelta _ new = new
   toInitialDelta = id
   initializeFromDelta = id
-  containerCount# _ = 1
+  containerCount# _ = pure 1
   containerIsEmpty# _ = pure False
 
 
@@ -474,10 +474,8 @@ data ObservableState canLoad c v where
 instance IsObservableCore canLoad c v (ObservableState canLoad c v) where
   readObservable# (ObservableStateLive x) = pure x
   attachObserver# x _callback = pure (mempty, x)
-  count# ObservableStateLoading = constObservable ObservableStateLoading
-  count# (ObservableStateLive x) = containerCount# x
-  isEmpty# ObservableStateLoading = constObservable ObservableStateLoading
-  isEmpty# (ObservableStateLive x) = containerIsEmpty# x
+  count# x = constObservable (mapObservableState containerCount# x)
+  isEmpty# x = constObservable (mapObservableState containerIsEmpty# x)
 
 instance HasField "loading" (ObservableState canLoad c v) (Loading canLoad) where
   getField ObservableStateLoading = Loading
@@ -1112,6 +1110,8 @@ instance ObservableContainer c v => IsObservableCore canLoad c v (EvaluatedBindO
       detach' (BindStateAttachedLive disposer _) = disposeTSimpleDisposer disposer
       detach' _ = pure ()
 
+  count# (EvaluatedBindObservable fx fn) = evaluateObservableCore fx >>= count# . fn
+  isEmpty# (EvaluatedBindObservable fx fn) = evaluateObservableCore fx >>= isEmpty# . fn
 bindObservable
   :: forall canLoad exceptions c v a. ObservableContainer c v
   => Observable canLoad exceptions Identity a
@@ -1210,7 +1210,7 @@ instance Ord k => ObservableContainer (Map k) v where
   initializeFromDelta (ObservableMapReplace new) = new
   -- TODO replace with safe implementation once the module is tested
   initializeFromDelta (ObservableMapUpdate _) = error "ObservableMap.initializeFromDelta: expected ObservableMapReplace"
-  containerCount# x = fromIntegral (Map.size x)
+  containerCount# x = pure (fromIntegral (Map.size x))
   containerIsEmpty# x = pure (Map.null x)
 
 toObservableMap :: ToObservable canLoad exceptions (Map k) v a => a -> ObservableMap canLoad exceptions k v
@@ -1250,7 +1250,7 @@ instance Ord v => ObservableContainer Set v where
   initializeFromDelta (ObservableSetReplace new) = new
   -- TODO replace with safe implementation once the module is tested
   initializeFromDelta _ = error "ObservableSet.initializeFromDelta: expected ObservableSetReplace"
-  containerCount# x = fromIntegral (Set.size x)
+  containerCount# x = pure (fromIntegral (Set.size x))
   containerIsEmpty# x = pure (Set.null x)
 
 toObservableSet :: ToObservable canLoad exceptions Set v a => a -> ObservableSet canLoad exceptions v

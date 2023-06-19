@@ -93,6 +93,8 @@ instance Ord k => IsObservableCore canLoad (ObservableResult exceptions (Map k))
       deltaFn f (ObservableMapReplace new) prev other =
         deltaFn f (ObservableMapUpdate (Map.union (ObservableMapInsert <$> new) (ObservableMapDelete <$ prev))) prev other
 
+  isEmpty# (ObservableMapUnionWith _ x y) = liftA2 (||) (isEmpty# x) (isEmpty# y)
+
 
 unionWithKey :: Ord k => (k -> v -> v -> v) -> ObservableMap l e k v -> ObservableMap l e k v -> ObservableMap l e k v
 unionWithKey fn (Observable x) (Observable y) = Observable (ObservableCore (ObservableMapUnionWith fn x y))
