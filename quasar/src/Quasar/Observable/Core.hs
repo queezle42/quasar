@@ -474,6 +474,7 @@ data ObservableState canLoad c v where
 instance IsObservableCore canLoad c v (ObservableState canLoad c v) where
   readObservable# (ObservableStateLive x) = pure x
   attachObserver# x _callback = pure (mempty, x)
+  isCachedObservable# _ = True
   count# x = constObservable (mapObservableState containerCount# x)
   isEmpty# x = constObservable (mapObservableState containerIsEmpty# x)
 
