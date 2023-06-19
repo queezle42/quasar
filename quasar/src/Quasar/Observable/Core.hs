@@ -81,6 +81,13 @@ module Quasar.Observable.Core (
   ToObservableI,
   toObservableI,
 
+  -- * ObservableList
+  ObservableList,
+  ToObservableList,
+  toObservableList,
+  ObservableListDelta(..),
+  ObservableListOperation(..),
+
   -- * ObservableMap
   ObservableMap,
   ToObservableMap,
@@ -1145,6 +1152,39 @@ instance Monad (Observable canLoad exceptions Identity) where
 
 toObservableI :: ToObservableI canLoad exceptions v a => a -> ObservableI canLoad exceptions v
 toObservableI = toObservable
+
+
+-- ** ObservableList
+
+type ObservableList canLoad exceptions v = Observable canLoad exceptions [] v
+
+type ToObservableList canLoad exceptions v = ToObservable canLoad exceptions [] v
+
+toObservableList :: ToObservable canLoad exceptions [] v a => a -> ObservableList canLoad exceptions v
+toObservableList = toObservable
+
+data ObservableListDelta v
+  = ObservableListUpdate [ObservableListOperation v]
+  | ObservableListReplace [v]
+  deriving Generic
+
+instance Binary v => Binary (ObservableListDelta v)
+
+data ObservableListOperation v
+  deriving Generic
+
+instance Binary v => Binary (ObservableListOperation v)
+
+instance ObservableContainer [] v where
+  type Delta [] = ObservableListDelta
+  type Key [] v = Int
+  type ContainerExceptions [] = '[]
+  applyDelta _delta _state = undefined
+  mergeDelta _old _new = undefined
+  toInitialDelta = undefined
+  initializeFromDelta = undefined
+  containerCount# x = pure (fromIntegral (length x))
+  containerIsEmpty# x = pure (null x)
 
 
 -- ** ObservableMap
