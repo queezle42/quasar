@@ -16,17 +16,17 @@ import Quasar.Utils.CallbackRegistry
 
 -- * Cache
 
-newtype CachedObservable canLoad c v = CachedObservable (TVar (CacheState canLoad c v))
+newtype CachedObservable canLoad exceptions c v = CachedObservable (TVar (CacheState canLoad exceptions c v))
 
-data CacheState canLoad c v
-  = CacheIdle (ObservableCore canLoad c v)
+data CacheState canLoad exceptions c v
+  = CacheIdle (Observable canLoad exceptions c v)
   | CacheAttached
-      (ObservableCore canLoad c v)
+      (Observable canLoad exceptions c v)
       TSimpleDisposer
-      (CallbackRegistry (EvaluatedObservableChange canLoad c v))
-      (ObserverState canLoad c v)
+      (CallbackRegistry (EvaluatedObservableChange canLoad (ObservableResult exceptions c) v))
+      (ObserverState canLoad (ObservableResult exceptions c) v)
 
-instance ObservableContainer c v => IsObservableCore canLoad c v (CachedObservable canLoad c v) where
+instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (CachedObservable canLoad exceptions c v) where
   readObservable# (CachedObservable var) = do
     readTVar var >>= \case
       CacheIdle x -> readObservable# x
@@ -50,7 +50,7 @@ instance ObservableContainer c v => IsObservableCore canLoad c v (CachedObservab
           CacheAttached upstream upstreamDisposer _ _ -> do
             writeTVar var (CacheIdle upstream)
             disposeTSimpleDisposer upstreamDisposer
-      updateCache :: EvaluatedObservableChange canLoad c v -> STMc NoRetry '[] ()
+      updateCache :: EvaluatedObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ()
       updateCache change = do
         readTVar var >>= \case
           CacheIdle _ -> unreachableCodePath
@@ -63,20 +63,17 @@ instance ObservableContainer c v => IsObservableCore canLoad c v (CachedObservab
   isCachedObservable# _ = True
 
 cacheObservable :: (ToObservable canLoad exceptions c v a, MonadSTMc NoRetry '[] m) => a -> m (Observable canLoad exceptions c v)
-cacheObservable (toObservable -> Observable x) = Observable <$> cacheObservableCore x
-
-cacheObservableCore :: (MonadSTMc NoRetry '[] m, ObservableContainer c v) => ObservableCore canLoad c v -> m (ObservableCore canLoad c v)
-cacheObservableCore f =
+cacheObservable (toObservable -> f) =
   if isCachedObservable# f
-    then pure (ObservableCore f)
-    else ObservableCore . CachedObservable <$> newTVar (CacheIdle f)
+    then pure f
+    else Observable . CachedObservable <$> newTVar (CacheIdle f)
 
 
 -- ** Embedded cache in the Observable monad
 
 data CacheObservableOperation canLoad exceptions l e c v = forall a. ToObservable l e c v a => CacheObservableOperation a
 
-instance IsObservableCore canLoad (ObservableResult exceptions Identity) (Observable l e c v) (CacheObservableOperation canLoad exceptions l e c v) where
+instance IsObservableCore canLoad exceptions Identity (Observable l e c v) (CacheObservableOperation canLoad exceptions l e c v) where
   readObservable# (CacheObservableOperation x) = do
     cache <- cacheObservable x
     pure (pure cache)
@@ -88,4 +85,4 @@ instance IsObservableCore canLoad (ObservableResult exceptions Identity) (Observ
 -- is recreated whenever the result of this function is reevaluated.
 observeCachedObservable :: forall canLoad exceptions e l c v a. ToObservable l e c v a => a -> Observable canLoad exceptions Identity (Observable l e c v)
 observeCachedObservable x =
-  Observable (ObservableCore (CacheObservableOperation @canLoad @exceptions (toObservable x)))
+  Observable (CacheObservableOperation @canLoad @exceptions (toObservable x))
