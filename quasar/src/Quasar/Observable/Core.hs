@@ -139,7 +139,7 @@ class IsObservableCore canLoad exceptions c v a | a -> canLoad, a -> exceptions,
   readObservable#
     :: canLoad ~ NoLoad
     => a
-    -> STMc NoRetry '[] (ObservableResult exceptions c v)
+    -> STMc NoRetry exceptions (c v)
 
   attachObserver#
     :: ObservableContainer c v
@@ -228,8 +228,7 @@ readObservable
   (ToObservable NoLoad exceptions c v a, MonadSTMc NoRetry exceptions m)
   => a -> m (c v)
 readObservable x = liftSTMc @NoRetry @exceptions do
-  result <- liftSTMc @NoRetry @'[] (readObservable# (toObservable x))
-  unwrapObservableResult result
+  readObservable# (toObservable x)
 
 attachObserver :: (ToObservable canLoad exceptions c v a, MonadSTMc NoRetry '[] m) => a -> (ObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, ObservableState canLoad (ObservableResult exceptions c) v)
 attachObserver x callback = liftSTMc $ attachObserver# (toObservable x) callback
@@ -470,7 +469,7 @@ data ObservableState canLoad c v where
   ObservableStateLive :: c v -> ObservableState canLoad c v
 
 instance IsObservableCore canLoad exceptions c v (ObservableState canLoad (ObservableResult exceptions c) v) where
-  readObservable# (ObservableStateLive x) = pure x
+  readObservable# (ObservableStateLive result) = unwrapObservableResult result
   attachObserver# x _callback = pure (mempty, x)
   isCachedObservable# _ = True
   count# x = constObservable (mapObservableState (mapObservableResult (Identity . containerCount#)) x)
@@ -717,7 +716,7 @@ instance IsObservableCore canLoad exceptions c v (MappedStateObservable canLoad 
           in EvaluatedObservableChangeLiveDelta (toInitialEvaluatedDelta new)
 
   readObservable# (MappedStateObservable fn observable) =
-    mapObservableResult fn <$> readObservable# observable
+    fn <$> readObservable# observable
 
   mapObservable# f1 (MappedStateObservable f2 observable) =
     Observable (MappedStateObservable (fmap f1 . f2) observable)
@@ -1008,8 +1007,10 @@ updateActiveBindRHS (ObservableChangeLiveDelta delta) _ = (ObservableChangeLiveD
 
 instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (EvaluatedBindObservable canLoad exceptions c v) where
   readObservable# (EvaluatedBindObservable fx fn) = do
-    x <- readObservable# fx
-    readObservable# (fn x)
+    x <- tryExSTMc $ readObservable# fx
+    readObservable# $ fn case x of
+      Left ex -> ObservableResultEx ex
+      Right ok -> ObservableResultOk ok
 
   attachObserver# (EvaluatedBindObservable fx fn) callback = do
     mfixTVar \var -> do
@@ -1305,9 +1306,9 @@ instance Traversable c => Traversable (ObservableResult exceptions c) where
   traverse f (ObservableResultOk x) = ObservableResultOk <$> traverse f x
   traverse _f (ObservableResultEx ex) = pure (ObservableResultEx ex)
 
-unwrapObservableResult :: MonadSTMc NoRetry exceptions m => ObservableResult exceptions c v -> m (c v)
+unwrapObservableResult :: ObservableResult exceptions c v -> STMc NoRetry exceptions (c v)
 unwrapObservableResult (ObservableResultOk result) = pure result
-unwrapObservableResult (ObservableResultEx ex) = throwEx ex
+unwrapObservableResult (ObservableResultEx ex) = throwExSTMc ex
 
 mapObservableResult :: (ca va -> cb vb) -> ObservableResult exceptions ca va -> ObservableResult exceptions cb vb
 mapObservableResult fn (ObservableResultOk result) = ObservableResultOk (fn result)

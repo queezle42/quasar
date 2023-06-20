@@ -31,7 +31,9 @@ instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (Obs
     pure (disposer, toObservableState value)
 
   readObservable# (ObservableVar var _registry) =
-    (\case ObserverStateLive state -> state) <$> readTVar var
+    readTVar var >>= \case
+      ObserverStateLiveOk result -> pure result
+      ObserverStateLiveEx ex -> throwExSTMc ex
 
 
 newObservableVar :: MonadSTMc NoRetry '[] m => c v -> m (ObservableVar canLoad exceptions c v)

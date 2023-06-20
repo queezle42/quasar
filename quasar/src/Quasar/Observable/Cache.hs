@@ -30,7 +30,7 @@ instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (Cac
   readObservable# (CachedObservable var) = do
     readTVar var >>= \case
       CacheIdle x -> readObservable# x
-      CacheAttached _x _disposer _registry (ObserverStateLive state) -> pure state
+      CacheAttached _x _disposer _registry (ObserverStateLive state) -> unwrapObservableResult state
   attachEvaluatedObserver# (CachedObservable var) callback = do
     readTVar var >>= \case
       CacheIdle upstream -> do

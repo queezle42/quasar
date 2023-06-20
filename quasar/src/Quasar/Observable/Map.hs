@@ -59,7 +59,7 @@ data MappedObservableMap canLoad exceptions k va v = forall a. IsObservableCore 
 
 instance ObservableFunctor (Map k) => IsObservableCore canLoad exceptions (Map k) v (MappedObservableMap canLoad exceptions k va v) where
   readObservable# (MappedObservableMap fn observable) =
-    mapObservableResult (Map.mapWithKey fn) <$> readObservable# observable
+    Map.mapWithKey fn <$> readObservable# observable
 
   attachObserver# (MappedObservableMap fn observable) callback =
     mapObservableState (mapObservableResult (Map.mapWithKey fn)) <<$>> attachObserver# observable \change ->
@@ -92,7 +92,7 @@ instance Ord k => IsObservableCore canLoad exceptions (Map k) v (ObservableMapUn
   readObservable# (ObservableMapUnionWith fn fx fy) = do
     x <- readObservable# fx
     y <- readObservable# fy
-    pure (mergeObservableResult (Map.unionWithKey fn) x y)
+    pure (Map.unionWithKey fn x y)
 
   attachObserver# (ObservableMapUnionWith fn fx fy) =
     attachMonoidMergeObserver fullMergeFn (deltaFn fn) (deltaFn (flip <$> fn)) fx fy
