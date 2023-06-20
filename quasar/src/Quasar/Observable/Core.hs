@@ -55,7 +55,8 @@ module Quasar.Observable.Core (
 
   -- *** Query
   Selector(..),
-  Bounds(..),
+  Bounds,
+  Bound(..),
   mapSelector,
 
   -- *** Exception wrapper container
