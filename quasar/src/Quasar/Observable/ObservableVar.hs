@@ -49,7 +49,7 @@ newLoadingObservableVarIO = liftIO $ ObservableVar <$> newTVarIO (ObserverStateL
 writeObservableVar :: (ObservableContainer c v, MonadSTMc NoRetry '[] m) => ObservableVar canLoad exceptions c v -> c v -> m ()
 writeObservableVar (ObservableVar var registry) value = liftSTMc $ do
   writeTVar var (ObserverStateLiveOk value)
-  callCallbacks registry (EvaluatedObservableChangeLiveDeltaOk (toInitialDelta value) value)
+  callCallbacks registry (EvaluatedObservableChangeLiveDeltaOk (toInitialEvaluatedDelta value))
 
 readObservableVar
   :: MonadSTMc NoRetry '[] m
