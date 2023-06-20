@@ -255,9 +255,13 @@ class ObservableContainer c v where
   type Key c v
   applyDelta :: Delta c v -> c v -> c v
   mergeDelta :: Delta c v -> Delta c v -> Delta c v
-  -- | Produce a delta from a content. The delta replaces any previous content when
-  -- applied.
+  -- | Produce a delta from a content. The delta replaces any previous content
+  -- when applied.
   toInitialDelta :: c v -> Delta c v
+  -- | (Re)initialize the container content from a special delta. Using this
+  -- function only produces a valid result when the previous observer state is
+  -- `ObserverStateLoadingCleared`; otherwise the resulting container content is
+  -- undefined.
   initializeFromDelta :: Delta c v -> c v
 
 instance ObservableContainer Identity v where
