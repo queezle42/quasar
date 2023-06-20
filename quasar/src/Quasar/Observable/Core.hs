@@ -854,8 +854,7 @@ attachMergeObserver fullMergeFn leftFn rightFn clearLeftFn clearRightFn fx fy ca
 mergeCallback
   :: forall canLoad c v ca va cb vb. (
     ObservableContainer c v,
-    ObservableContainer ca va,
-    ObservableContainer cb vb
+    ObservableContainer ca va
   )
   => TVar (ObserverState canLoad ca va)
   -> TVar (ObserverState canLoad cb vb)
