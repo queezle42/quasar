@@ -45,6 +45,7 @@ module Control.Concurrent.STM.Class (
 
   -- ** Throw
   throwSTM,
+  throwExSTMc,
   catchSTM,
   catchSTMc,
   catchAllSTMc,
@@ -259,6 +260,12 @@ runSTMc (STMc f) = f
 
 throwSTM :: forall e m a. (Exception e, MonadSTMc NoRetry '[e] m) => e -> m a
 throwSTM = unsafeLiftSTM . STM.throwSTM
+
+-- | Can be used instead of `throwEx` when the exception list cannot be
+-- evaluated at compile time.
+throwExSTMc :: Ex exceptions -> STMc canRetry exceptions a
+throwExSTMc = unsafeThrowEx . exToException
+
 
 catchSTMc ::
   forall canRetry exceptions e m a. (
