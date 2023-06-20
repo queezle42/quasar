@@ -19,6 +19,8 @@ module Quasar.Observable.Core (
   mapObservable,
   isCachedObservable,
 
+  query,
+
   mapObservableContent,
   evaluateObservable,
 
@@ -50,7 +52,10 @@ module Quasar.Observable.Core (
   applyEvaluatedObservableChange,
   toInitialChange,
   ObservableFunctor,
+
+  -- *** Query
   Selector(..),
+  Bounds(..),
   mapSelector,
 
   -- *** Exception wrapper container
@@ -191,11 +196,15 @@ class IsObservableCore canLoad exceptions c v a | a -> canLoad, a -> exceptions,
   lookupValue# :: Ord (Key c v) => a -> Selector c v -> ObservableI canLoad exceptions (Maybe v)
   lookupValue# x selector = snd <<$>> lookupItem# x selector
 
-  --query# :: a -> ObservableList canLoad (Bounds c v) -> Observable canLoad c v
-  --query# = undefined
+  query# :: a -> ObservableList canLoad exceptions (Bounds c v) -> Observable canLoad exceptions c v
+  query# = undefined
 
---query :: ToObservable canLoad exceptions c v a => a -> ObservableList canLoad (Bounds c v) -> Observable canLoad exceptions c v
---query = undefined
+query
+  :: ToObservable canLoad exceptions c v a
+  => a
+  -> ObservableList canLoad exceptions (Bounds c v)
+  -> Observable canLoad exceptions c v
+query x = query# (toObservable x)
 
 type Bounds c v = (Bound c v, Bound c v)
 
