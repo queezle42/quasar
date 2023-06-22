@@ -19,8 +19,6 @@ module Quasar.Observable.Core (
   mapObservable,
   isCachedObservable,
 
-  query,
-
   mapObservableContent,
   evaluateObservable,
 
@@ -58,7 +56,6 @@ module Quasar.Observable.Core (
   Selector(..),
   Bounds,
   Bound(..),
-  mapSelector,
 
   -- *** Exception wrapper container
   ObservableResult(..),
@@ -186,41 +183,17 @@ class IsObservableCore canLoad exceptions c v a | a -> canLoad, a -> exceptions,
   isEmpty# :: (ContainerCount c, ObservableContainer c v) => a -> ObservableI canLoad exceptions Bool
   isEmpty# x = mapObservableContent# (Identity . containerIsEmpty#) x
 
-  lookupKey# :: Ord (Key c v) => a -> Selector c v -> ObservableI canLoad exceptions (Maybe (Key c v))
-  lookupKey# = undefined
+type Bounds k = (Bound k, Bound k)
 
-  lookupItem# :: Ord (Key c v) => a -> Selector c v -> ObservableI canLoad exceptions (Maybe (Key c v, v))
-  lookupItem# = undefined
-
-  lookupValue# :: Ord (Key c v) => a -> Selector c v -> ObservableI canLoad exceptions (Maybe v)
-  lookupValue# x selector = snd <<$>> lookupItem# x selector
-
-  query# :: a -> ObservableList canLoad exceptions (Bounds c v) -> Observable canLoad exceptions c v
-  query# = undefined
-
-query
-  :: ToObservable canLoad exceptions c v a
-  => a
-  -> ObservableList canLoad exceptions (Bounds c v)
-  -> Observable canLoad exceptions c v
-query x = query# (toObservable x)
-
-type Bounds c v = (Bound c v, Bound c v)
-
-data Bound c v
-  = ExcludingBound (Key c v)
-  | IncludingBound (Key c v)
+data Bound k
+  = ExcludingBound k
+  | IncludingBound k
   | NoBound
 
-data Selector c v
+data Selector k
   = Min
   | Max
-  | Key (Key c v)
-
-mapSelector :: (Key ca va -> Key c v) -> Selector ca va -> Selector c v
-mapSelector _fn Min = Min
-mapSelector _fn Max = Max
-mapSelector fn (Key key) = Key (fn key)
+  | Key k
 
 readObservable
   :: forall exceptions c v m a.
@@ -315,9 +288,6 @@ instance IsObservableCore canLoad exceptions c v (Observable canLoad exceptions 
   mapObservableContent# f (Observable x) = mapObservableContent# f x
   count# (Observable x) = count# x
   isEmpty# (Observable x) = isEmpty# x
-  lookupKey# (Observable x) = lookupKey# x
-  lookupItem# (Observable x) = lookupItem# x
-  lookupValue# (Observable x) = lookupValue# x
 
 instance ObservableFunctor c => Functor (Observable canLoad exceptions c) where
   fmap fn (Observable x) = Observable (mapObservable# fn x)
@@ -1079,9 +1049,6 @@ instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (Eva
 
   count# (EvaluatedBindObservable fx fn) = evaluateObservableCore fx >>= count# . fn . ObservableResultOk
   isEmpty# (EvaluatedBindObservable fx fn) = evaluateObservableCore fx >>= isEmpty# . fn . ObservableResultOk
-  lookupKey# (EvaluatedBindObservable fx fn) sel = evaluateObservableCore fx >>= \x -> lookupKey# (fn (ObservableResultOk x)) sel
-  lookupItem# (EvaluatedBindObservable fx fn) sel = evaluateObservableCore fx >>= \x -> lookupItem# (fn (ObservableResultOk x)) sel
-  lookupValue# (EvaluatedBindObservable fx fn) sel = evaluateObservableCore fx >>= \x -> lookupValue# (fn (ObservableResultOk x)) sel
 
 bindObservable
   :: forall canLoad exceptions c v va. ObservableContainer c v
