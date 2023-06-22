@@ -3,9 +3,9 @@
 
 module Quasar.Observable.Map (
   -- * ObservableMap
-  ObservableMap,
-  ToObservableMap,
-  toObservableMap,
+  ObservableMap(..),
+  ToObservableMap(..),
+  IsObservableMap(..),
 
   -- ** Delta types
   ObservableMapDelta(..),
@@ -35,11 +35,41 @@ import Data.Map.Strict qualified as Map
 import Quasar.Observable.Core
 import Quasar.Prelude hiding (lookup)
 
+class ToObservableMap canLoad exceptions k v a where
+  toObservableMap :: a -> ObservableMap canLoad exceptions k v
+
+data ObservableMap canLoad exceptions k v
+  = forall a. IsObservableMap canLoad exceptions k v a => ObservableMap a
+
+instance ToObservableMap canLoad exceptions k v (ObservableMap canLoad exceptions k v) where
+  toObservableMap = id
+
+instance IsObservableCore canLoad exceptions (Map k) v (ObservableMap canLoad exceptions k v) where
+  readObservable# (ObservableMap x) = readObservable# x
+  attachObserver# (ObservableMap x) = attachObserver# x
+  attachEvaluatedObserver# (ObservableMap x) = attachEvaluatedObserver# x
+  isCachedObservable# (ObservableMap x) = isCachedObservable# x
+
+instance IsObservableMap canLoad exceptions k v (ObservableMap canLoad exceptions k v) where
+
+
+class IsObservableCore canLoad exceptions (Map k) v a => IsObservableMap canLoad exceptions k v a where
+
+instance IsObservableMap canLoad exceptions k v (ObservableState canLoad (ObservableResult exceptions (Map k)) v) where
+
+
+instance Ord k => IsObservableMap canLoad exceptions k v (MappedObservable canLoad exceptions (Map k) v) where
+
+instance Ord k => Functor (ObservableMap canLoad exceptions k) where
+  fmap fn (ObservableMap x) = ObservableMap (mapObservable# fn x)
+
+
+
 empty :: ObservableMap canLoad exceptions k v
-empty = constObservable (ObservableStateLiveOk Map.empty)
+empty = ObservableMap (ObservableStateLiveOk Map.empty)
 
 singleton :: k -> v -> ObservableMap canLoad exceptions k v
-singleton key value = constObservable (ObservableStateLiveOk (Map.singleton key value))
+singleton key value = ObservableMap (ObservableStateLiveOk (Map.singleton key value))
 
 lookup :: Ord k => k -> ObservableMap l e k v -> ObservableI l e (Maybe v)
 lookup key x = lookupValue# (toObservableMap x) (Key key)
@@ -52,7 +82,7 @@ isEmpty = isEmpty#
 
 -- | From unordered list.
 fromList :: Ord k => [(k, v)] -> ObservableMap l e k v
-fromList list = constObservable (ObservableStateLiveOk (Map.fromList list))
+fromList list = ObservableMap (ObservableStateLiveOk (Map.fromList list))
 
 
 data MappedObservableMap canLoad exceptions k va v = forall a. IsObservableCore canLoad exceptions (Map k) va a => MappedObservableMap (k -> va -> v) a
@@ -82,8 +112,11 @@ instance ObservableFunctor (Map k) => IsObservableCore canLoad exceptions (Map k
   lookupValue# (MappedObservableMap fn upstream) sel =
     uncurry fn <<$>> lookupItem# upstream (mapSelector id sel)
 
+instance ObservableFunctor (Map k) => IsObservableMap canLoad exceptions k v (MappedObservableMap canLoad exceptions k va v) where
+  -- TODO
+
 mapWithKey :: Ord k => (k -> va -> v) -> ObservableMap canLoad exceptions k va -> ObservableMap canLoad exceptions k v
-mapWithKey fn (toObservable -> Observable x) = Observable (MappedObservableMap fn x)
+mapWithKey fn (toObservableMap -> ObservableMap x) = ObservableMap (MappedObservableMap fn x)
 
 
 data ObservableMapUnionWith l e k v = forall a b. (IsObservableCore l e (Map k) v a, IsObservableCore l e (Map k) v b) => ObservableMapUnionWith (k -> v -> v -> v) a b
@@ -135,9 +168,12 @@ instance Ord k => IsObservableCore canLoad exceptions (Map k) v (ObservableMapUn
       merge Max x@(kx, _) y@(ky, _) = if kx >= ky then x else y
       merge (Key key) (_, x) (_, y) = (key, fn key x y)
 
+instance Ord k => IsObservableMap canLoad exceptions k v (ObservableMapUnionWith canLoad exceptions k v) where
+  -- TODO
+
 
 unionWithKey :: Ord k => (k -> v -> v -> v) -> ObservableMap l e k v -> ObservableMap l e k v -> ObservableMap l e k v
-unionWithKey fn (Observable x) (Observable y) = Observable (ObservableMapUnionWith fn x y)
+unionWithKey fn (ObservableMap x) (ObservableMap y) = ObservableMap (ObservableMapUnionWith fn x y)
 
 unionWith :: Ord k => (v -> v -> v) -> ObservableMap l e k v -> ObservableMap l e k v -> ObservableMap l e k v
 unionWith fn = unionWithKey \_ x y -> fn x y

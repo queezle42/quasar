@@ -52,6 +52,7 @@ module Quasar.Observable.Core (
   applyEvaluatedObservableChange,
   toInitialChange,
   ObservableFunctor,
+  MappedObservable(..),
 
   -- *** Query
   Selector(..),
@@ -95,9 +96,6 @@ module Quasar.Observable.Core (
   ObservableListOperation(..),
 
   -- * ObservableMap
-  ObservableMap,
-  ToObservableMap,
-  toObservableMap,
   ObservableMapDelta(..),
   ObservableMapOperation(..),
 
@@ -172,8 +170,8 @@ class IsObservableCore canLoad exceptions c v a | a -> canLoad, a -> exceptions,
   isCachedObservable# :: a -> Bool
   isCachedObservable# _ = False
 
-  mapObservable# :: ObservableFunctor c => (v -> n) -> a -> Observable canLoad exceptions c n
-  mapObservable# f x = Observable (MappedObservable f x)
+  mapObservable# :: ObservableFunctor c => (v -> vb) -> a -> MappedObservable canLoad exceptions c vb
+  mapObservable# f x = MappedObservable f x
 
   mapObservableContent#
     :: (ObservableContainer c v)
@@ -322,7 +320,7 @@ instance IsObservableCore canLoad exceptions c v (Observable canLoad exceptions 
   lookupValue# (Observable x) = lookupValue# x
 
 instance ObservableFunctor c => Functor (Observable canLoad exceptions c) where
-  fmap = mapObservable#
+  fmap fn (Observable x) = Observable (mapObservable# fn x)
 
 constObservable :: ObservableState canLoad (ObservableResult exceptions c) v -> Observable canLoad exceptions c v
 constObservable state = Observable state
@@ -698,7 +696,7 @@ instance ObservableFunctor c => IsObservableCore canLoad exceptions c v (MappedO
   readObservable# (MappedObservable fn observable) =
     fn <<$>> readObservable# observable
   mapObservable# f1 (MappedObservable f2 upstream) =
-    Observable $ MappedObservable (f1 . f2) upstream
+    MappedObservable (f1 . f2) upstream
   count# (MappedObservable _ upstream) = count# upstream
   isEmpty# (MappedObservable _ upstream) = isEmpty# upstream
 
@@ -718,9 +716,6 @@ instance IsObservableCore canLoad exceptions c v (MappedStateObservable canLoad 
 
   readObservable# (MappedStateObservable fn observable) =
     fn <$> readObservable# observable
-
-  mapObservable# f1 (MappedStateObservable f2 observable) =
-    Observable (MappedStateObservable (fmap f1 . f2) observable)
 
   mapObservableContent# f1 (MappedStateObservable f2 observable) =
     Observable (MappedStateObservable (f1 . f2) observable)
@@ -1158,10 +1153,6 @@ instance ContainerCount [] where
 
 -- ** ObservableMap
 
-type ObservableMap canLoad exceptions k v = Observable canLoad exceptions (Map k) v
-
-type ToObservableMap canLoad exceptions k v = ToObservable canLoad exceptions (Map k) v
-
 data ObservableMapDelta k v
   = ObservableMapUpdate (Map k (ObservableMapOperation v))
   | ObservableMapReplace (Map k v)
@@ -1231,9 +1222,6 @@ instance Ord k => ObservableContainer (Map k) v where
 instance ContainerCount (Map k) where
   containerCount# x = fromIntegral (Map.size x)
   containerIsEmpty# x = Map.null x
-
-toObservableMap :: ToObservable canLoad exceptions (Map k) v a => a -> ObservableMap canLoad exceptions k v
-toObservableMap = toObservable
 
 
 -- ** ObservableSet
