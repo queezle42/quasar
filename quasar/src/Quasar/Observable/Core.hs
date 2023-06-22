@@ -441,8 +441,8 @@ instance IsObservableCore canLoad exceptions c v (ObservableState canLoad (Obser
   readObservable# (ObservableStateLive result) = unwrapObservableResult result
   attachObserver# x _callback = pure (mempty, x)
   isCachedObservable# _ = True
-  count# x = constObservable (mapObservableState (mapObservableResult (Identity . containerCount#)) x)
-  isEmpty# x = constObservable (mapObservableState (mapObservableResult (Identity . containerIsEmpty#)) x)
+  count# x = constObservable (mapObservableStateResult (Identity . containerCount#) x)
+  isEmpty# x = constObservable (mapObservableStateResult (Identity . containerIsEmpty#) x)
 
 instance HasField "loading" (ObservableState canLoad c v) (Loading canLoad) where
   getField ObservableStateLoading = Loading
@@ -675,7 +675,7 @@ data MappedStateObservable canLoad exceptions c v = forall d p a. (IsObservableC
 
 instance IsObservableCore canLoad exceptions c v (MappedStateObservable canLoad exceptions c v) where
   attachEvaluatedObserver# (MappedStateObservable fn observable) callback =
-    fmap2 (mapObservableState (mapObservableResult fn)) $ attachEvaluatedObserver# observable \evaluatedChange ->
+    fmap2 (mapObservableStateResult fn) $ attachEvaluatedObserver# observable \evaluatedChange ->
       callback case evaluatedChange of
         EvaluatedObservableChangeLoadingClear -> EvaluatedObservableChangeLoadingClear
         EvaluatedObservableChangeLoadingUnchanged -> EvaluatedObservableChangeLoadingUnchanged
@@ -695,10 +695,10 @@ instance IsObservableCore canLoad exceptions c v (MappedStateObservable canLoad 
 mapObservableContent :: (ToObservable canLoad exceptions d p a, ObservableContainer c v) => (d p -> c v) -> a -> Observable canLoad exceptions c v
 mapObservableContent fn x = toObservable (mapObservableContent# fn (toObservable x))
 
-mapObservableResultState :: (cp vp -> c v) -> ObservableState canLoad (ObservableResult exceptions cp) vp -> ObservableState canLoad (ObservableResult exceptions c) v
-mapObservableResultState _fn ObservableStateLoading = ObservableStateLoading
-mapObservableResultState _fn (ObservableStateLiveEx ex) = ObservableStateLiveEx ex
-mapObservableResultState fn (ObservableStateLiveOk content) = ObservableStateLiveOk (fn content)
+mapObservableStateResult :: (cp vp -> c v) -> ObservableState canLoad (ObservableResult exceptions cp) vp -> ObservableState canLoad (ObservableResult exceptions c) v
+mapObservableStateResult _fn ObservableStateLoading = ObservableStateLoading
+mapObservableStateResult _fn (ObservableStateLiveEx ex) = ObservableStateLiveEx ex
+mapObservableStateResult fn (ObservableStateLiveOk content) = ObservableStateLiveOk (fn content)
 
 
 data LiftA2Observable l e c v = forall va vb a b. (IsObservableCore l e c va a, ObservableContainer c va, IsObservableCore l e c vb b, ObservableContainer c vb) => LiftA2Observable (va -> vb -> v) a b
