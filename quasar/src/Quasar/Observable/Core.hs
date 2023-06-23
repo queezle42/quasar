@@ -97,9 +97,6 @@ module Quasar.Observable.Core (
   ObservableMapOperation(..),
 
   -- * ObservableSet
-  ObservableSet,
-  ToObservableSet,
-  toObservableSet,
   ObservableSetDelta(..),
   ObservableSetOperation(..),
 ) where
