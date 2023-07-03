@@ -7,10 +7,10 @@ import Quasar.Observable.Core
 import Quasar.Prelude
 
 
-data AsyncMapObservable canLoad exceptions c v = forall ca va. AsyncMapObservable (ca va -> IO (c v)) (Observable canLoad exceptions ca va)
+data AsyncMapObservable canLoad exceptions v = forall va. AsyncMapObservable (va -> IO v) (Observable canLoad exceptions va)
 
-asyncMapObservable :: MonadIO m => (c v -> IO (ca va)) -> Observable canLoad exceptions c v -> m (Observable canLoad exceptions ca va)
+asyncMapObservable :: MonadIO m => (v -> IO va) -> Observable canLoad exceptions v -> m (Observable canLoad exceptions va)
 asyncMapObservable fn observable = undefined
 
-asyncMapObservableSTM :: MonadSTMc NoRetry '[] m => (c v -> IO (ca va)) -> Observable canLoad exceptions c v -> m (Observable canLoad exceptions ca va)
+asyncMapObservableSTM :: MonadSTMc NoRetry '[] m => (v -> IO va) -> Observable canLoad exceptions v -> m (Observable canLoad exceptions va)
 asyncMapObservableSTM = undefined

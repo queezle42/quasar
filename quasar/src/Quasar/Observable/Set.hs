@@ -1,7 +1,6 @@
 module Quasar.Observable.Set (
   ObservableSet,
-  ToObservableSet,
-  toObservableSet,
+  ToObservableSet(..),
   ObservableSetDelta(..),
   ObservableSetOperation(..),
 ) where
@@ -9,6 +8,7 @@ module Quasar.Observable.Set (
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Quasar.Observable.Core
+import Quasar.Observable.List
 import Quasar.Prelude
 
 class ToObservableSet canLoad exceptions v a where
@@ -32,10 +32,10 @@ instance IsObservableSet canLoad exceptions v (ObservableSet canLoad exceptions 
 
 
 class IsObservableCore canLoad exceptions Set v a => IsObservableSet canLoad exceptions v a where
-  member# :: Ord v => a -> v -> ObservableI canLoad exceptions Bool
+  member# :: Ord v => a -> v -> Observable canLoad exceptions Bool
   member# = undefined
 
-  lookupValue# :: Ord v => a -> Selector k -> ObservableI canLoad exceptions (Maybe v)
+  lookupValue# :: Ord v => a -> Selector k -> Observable canLoad exceptions (Maybe v)
   lookupValue# x selector = undefined
 
   query# :: a -> ObservableList canLoad exceptions (Bounds k) -> ObservableSet canLoad exceptions v

@@ -8,10 +8,12 @@ module Quasar.Observable.Map (
   IsObservableMap(..),
   query,
 
-
   -- ** Delta types
   ObservableMapDelta(..),
   ObservableMapOperation(..),
+
+  -- * Observable interaction
+  bindObservableMap,
 
   -- ** Construction
   empty,
@@ -32,9 +34,11 @@ module Quasar.Observable.Map (
   mapWithKey,
 ) where
 
+import Data.Functor.Identity (Identity(..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Quasar.Observable.Core
+import Quasar.Observable.List
 import Quasar.Prelude hiding (lookup)
 
 class ToObservableMap canLoad exceptions k v a where
@@ -59,13 +63,13 @@ instance IsObservableMap canLoad exceptions k v (ObservableMap canLoad exception
 
 
 class IsObservableCore canLoad exceptions (Map k) v a => IsObservableMap canLoad exceptions k v a where
-  lookupKey# :: Ord k => a -> Selector k -> ObservableI canLoad exceptions (Maybe k)
+  lookupKey# :: Ord k => a -> Selector k -> Observable canLoad exceptions (Maybe k)
   lookupKey# = undefined
 
-  lookupItem# :: Ord k => a -> Selector k -> ObservableI canLoad exceptions (Maybe (k, v))
+  lookupItem# :: Ord k => a -> Selector k -> Observable canLoad exceptions (Maybe (k, v))
   lookupItem# = undefined
 
-  lookupValue# :: Ord k => a -> Selector k -> ObservableI canLoad exceptions (Maybe v)
+  lookupValue# :: Ord k => a -> Selector k -> Observable canLoad exceptions (Maybe v)
   lookupValue# x selector = snd <<$>> lookupItem# x selector
 
   query# :: a -> ObservableList canLoad exceptions (Bounds k) -> ObservableMap canLoad exceptions k v
@@ -89,19 +93,37 @@ query
 query x = query# (toObservableMap x)
 
 
+
+instance (Ord k, IsObservableCore l e (Map k) v b) => IsObservableMap l e k v (BindObservable l e va b) where
+
+bindObservableMap
+  :: forall canLoad exceptions k v va. Ord k
+  => Observable canLoad exceptions va
+  -> (va -> ObservableMap canLoad exceptions k v)
+  -> ObservableMap canLoad exceptions k v
+bindObservableMap fx fn = ObservableMap (BindObservable fx rhsHandler)
+  where
+    rhsHandler :: ObservableResult exceptions Identity va -> ObservableMap canLoad exceptions k v
+    rhsHandler (ObservableResultOk (Identity x)) = fn x
+    rhsHandler (ObservableResultEx ex) = constObservableMap (ObservableStateLiveEx ex)
+
+constObservableMap :: ObservableState canLoad (ObservableResult exceptions (Map k)) v -> ObservableMap canLoad exceptions k v
+constObservableMap = ObservableMap
+
+
 empty :: ObservableMap canLoad exceptions k v
 empty = ObservableMap (ObservableStateLiveOk Map.empty)
 
 singleton :: k -> v -> ObservableMap canLoad exceptions k v
 singleton key value = ObservableMap (ObservableStateLiveOk (Map.singleton key value))
 
-lookup :: Ord k => k -> ObservableMap l e k v -> ObservableI l e (Maybe v)
+lookup :: Ord k => k -> ObservableMap l e k v -> Observable l e (Maybe v)
 lookup key x = lookupValue# (toObservableMap x) (Key key)
 
-count :: Ord k => ObservableMap l e k v -> ObservableI l e Int64
+count :: Ord k => ObservableMap l e k v -> Observable l e Int64
 count = count#
 
-isEmpty :: Ord k => ObservableMap l e k v -> ObservableI l e Bool
+isEmpty :: Ord k => ObservableMap l e k v -> Observable l e Bool
 isEmpty = isEmpty#
 
 -- | From unordered list.

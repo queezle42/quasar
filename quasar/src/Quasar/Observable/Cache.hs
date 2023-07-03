@@ -19,9 +19,10 @@ import Quasar.Utils.CallbackRegistry
 newtype CachedObservable canLoad exceptions c v = CachedObservable (TVar (CacheState canLoad exceptions c v))
 
 data CacheState canLoad exceptions c v
-  = CacheIdle (Observable canLoad exceptions c v)
-  | CacheAttached
-      (Observable canLoad exceptions c v)
+  = forall a. IsObservableCore canLoad exceptions c v a => CacheIdle a
+  | forall a. IsObservableCore canLoad exceptions c v a
+    => CacheAttached
+      a
       TSimpleDisposer
       (CallbackRegistry (EvaluatedObservableChange canLoad (ObservableResult exceptions c) v))
       (ObserverState canLoad (ObservableResult exceptions c) v)
@@ -62,7 +63,7 @@ instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (Cac
 
   isCachedObservable# _ = True
 
-cacheObservable :: (ToObservable canLoad exceptions c v a, MonadSTMc NoRetry '[] m) => a -> m (Observable canLoad exceptions c v)
+cacheObservable :: (ToObservable canLoad exceptions v a, MonadSTMc NoRetry '[] m) => a -> m (Observable canLoad exceptions v)
 cacheObservable (toObservable -> f) =
   if isCachedObservable# f
     then pure f
@@ -71,9 +72,9 @@ cacheObservable (toObservable -> f) =
 
 -- ** Embedded cache in the Observable monad
 
-data CacheObservableOperation canLoad exceptions l e c v = forall a. ToObservable l e c v a => CacheObservableOperation a
+newtype CacheObservableOperation canLoad exceptions l e v = CacheObservableOperation (Observable l e v)
 
-instance IsObservableCore canLoad exceptions Identity (Observable l e c v) (CacheObservableOperation canLoad exceptions l e c v) where
+instance IsObservableCore canLoad exceptions Identity (Observable l e v) (CacheObservableOperation canLoad exceptions l e v) where
   readObservable# (CacheObservableOperation x) = do
     cache <- cacheObservable x
     pure (pure cache)
@@ -81,8 +82,8 @@ instance IsObservableCore canLoad exceptions Identity (Observable l e c v) (Cach
     cache <- cacheObservable x
     pure (mempty, ObservableStateLive (pure cache))
 
--- | Cache an observable in the `ObservableI` monad. Use with care! A new cache
+-- | Cache an observable in the `Observable` monad. Use with care! A new cache
 -- is recreated whenever the result of this function is reevaluated.
-observeCachedObservable :: forall canLoad exceptions e l c v a. ToObservable l e c v a => a -> Observable canLoad exceptions Identity (Observable l e c v)
+observeCachedObservable :: forall canLoad exceptions e l v a. ToObservable l e v a => a -> Observable canLoad exceptions (Observable l e v)
 observeCachedObservable x =
   Observable (CacheObservableOperation @canLoad @exceptions (toObservable x))
