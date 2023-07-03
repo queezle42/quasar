@@ -8,6 +8,7 @@ module Quasar.Observable.ObservableVar (
   newLoadingObservableVarIO,
   writeObservableVar,
   readObservableVar,
+  readObservableVarIO,
   modifyObservableVar,
   stateObservableVar,
   changeObservableVar,
@@ -61,6 +62,15 @@ readObservableVar
   -> m (c v)
 readObservableVar (ObservableVar var _) = liftSTMc @NoRetry @'[] do
   readTVar var >>= \case
+    ObserverStateLiveOk result -> pure result
+    ObserverStateLiveEx ex -> absurdEx ex
+
+readObservableVarIO
+  :: MonadIO m
+  => ObservableVar NoLoad '[] c v
+  -> m (c v)
+readObservableVarIO (ObservableVar var _) = liftIO do
+  readTVarIO var >>= \case
     ObserverStateLiveOk result -> pure result
     ObserverStateLiveEx ex -> absurdEx ex
 
