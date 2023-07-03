@@ -115,6 +115,7 @@ test-suite quasar-test
     Quasar.FutureSpec
     Quasar.Observable.ObservableHashMapSpec
     Quasar.Observable.ObservablePrioritySpec
+    Quasar.Observable.ObservableVarSpec
     Quasar.ObservableSpec
     Quasar.ResourcesSpec
     Quasar.Utils.ReaderLockSpec
