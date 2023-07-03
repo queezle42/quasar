@@ -29,14 +29,23 @@ import Quasar.Prelude
 import Quasar.Resources
 
 
+-- * ObservableT instance
+
+instance (ContainerConstraint Load '[SomeException] c v (ObservableProxy c v), NetworkObject v, NetworkObservableContainer c v, ObservableContainer c Disposer, Binary (Delta c ())) => NetworkRootReference (ObservableT Load '[SomeException] c v) where
+  type NetworkRootReferenceChannel (ObservableT Load '[SomeException] c v) = Channel () (ObservableResponse c) ObservableRequest
+  provideRootReference = sendObservableReference
+  receiveRootReference = receiveObservableReference
+
+instance (ContainerConstraint Load '[SomeException] c v (ObservableProxy c v), NetworkObject v, NetworkObservableContainer c v, ObservableContainer c Disposer, Binary (Delta c ())) => NetworkObject (ObservableT Load '[SomeException] c v) where
+  type NetworkStrategy (ObservableT Load '[SomeException] c v) = NetworkRootReference
+
+
 -- * Instances for Observable
 
 instance NetworkObject v => NetworkRootReference (Observable Load '[SomeException] v) where
-  type NetworkRootReferenceChannel (Observable Load '[SomeException] v) = NetworkRootReferenceChannel (NetworkObservable Identity v)
-  provideRootReference (Observable x) = sendObservableReference (NetworkObservable x)
-  receiveRootReference channel = do
-    (handler, NetworkObservable x) <- receiveObservableReference channel
-    pure (handler, Observable x)
+  type NetworkRootReferenceChannel (Observable Load '[SomeException] v) = NetworkRootReferenceChannel (ObservableT Load '[SomeException] Identity v)
+  provideRootReference (Observable x) = sendObservableReference (ObservableT x)
+  receiveRootReference channel = Observable <<$>> receiveObservableReference channel
 
 instance NetworkObject v => NetworkObject (Observable Load '[SomeException] v) where
   type NetworkStrategy (Observable Load '[SomeException] v) = NetworkRootReference
@@ -44,39 +53,15 @@ instance NetworkObject v => NetworkObject (Observable Load '[SomeException] v) w
 
 -- * Instances for ObservableMap
 
-instance IsObservableCore Load '[SomeException] (Map k) v (NetworkObservable (Map k) v) => IsObservableMap Load '[SomeException] k v (NetworkObservable (Map k) v)
-
 instance (Ord k, Binary k, NetworkObject v) => NetworkRootReference (ObservableMap Load '[SomeException] k v) where
-  type NetworkRootReferenceChannel (ObservableMap Load '[SomeException] k v) = NetworkRootReferenceChannel (NetworkObservable (Map k) v)
-  provideRootReference (ObservableMap x) = sendObservableReference (NetworkObservable x)
+  type NetworkRootReferenceChannel (ObservableMap Load '[SomeException] k v) = NetworkRootReferenceChannel (ObservableT Load '[SomeException] (Map k) v)
+  provideRootReference (ObservableMap x) = sendObservableReference x
   receiveRootReference channel = do
     (handler, x) <- receiveObservableReference @(Map k) @v channel
     pure (handler, ObservableMap x)
 
 instance (Ord k, Binary k, NetworkObject v) => NetworkObject (ObservableMap Load '[SomeException] k v) where
   type NetworkStrategy (ObservableMap Load '[SomeException] k v) = NetworkRootReference
-
-
--- * NetworkObservable base type
-
-data NetworkObservable c v = forall a. IsObservableCore Load '[SomeException] c v a => NetworkObservable a
-
-instance IsObservableCore Load '[SomeException] c v (NetworkObservable c v) where
-  readObservable# = absurdLoad
-  attachObserver# (NetworkObservable x) = attachObserver# x
-  attachEvaluatedObserver# (NetworkObservable x) = attachEvaluatedObserver# x
-  isCachedObservable# (NetworkObservable x) = isCachedObservable# x
-  mapObservable# f (NetworkObservable x) = mapObservable# f x
-  count# (NetworkObservable x) = count# x
-  isEmpty# (NetworkObservable x) = isEmpty# x
-
-instance (NetworkObject v, NetworkObservableContainer c v, ObservableContainer c Disposer, Binary (Delta c ())) => NetworkRootReference (NetworkObservable c v) where
-  type NetworkRootReferenceChannel (NetworkObservable c v) = Channel () (ObservableResponse c) ObservableRequest
-  provideRootReference = sendObservableReference
-  receiveRootReference = receiveObservableReference
-
-instance (NetworkObject v, NetworkObservableContainer c v, ObservableContainer c Disposer, Binary (Delta c ())) => NetworkObject (NetworkObservable c v) where
-  type NetworkStrategy (NetworkObservable c v) = NetworkRootReference
 
 
 -- * Selecting removals from a delta
@@ -155,10 +140,10 @@ data ObservableReference c v = ObservableReference {
 
 sendObservableReference
   :: forall c v. (NetworkObservableContainer c v, ObservableContainer c Disposer, Binary (Delta c ()), NetworkObject v)
-  => NetworkObservable c v
+  => ObservableT Load '[SomeException] c v
   -> Channel () (ObservableResponse c) ObservableRequest
   -> STMc NoRetry '[] (ChannelHandler ObservableRequest)
-sendObservableReference (NetworkObservable observable) channel = do
+sendObservableReference observable channel = do
   isAttached <- newTVar False
   observableDisposer <- newTVar mempty
   pendingChange <- newTVar (emptyPendingChange Loading)
@@ -299,9 +284,9 @@ data ProxyState
   deriving stock (Eq, Show)
 
 receiveObservableReference
-  :: forall c v. (NetworkObservableContainer c v, NetworkObject v)
+  :: forall c v. (ContainerConstraint Load '[SomeException] c v (ObservableProxy c v), NetworkObservableContainer c v, NetworkObject v)
   => Channel () ObservableRequest (ObservableResponse c)
-  -> STMc NoRetry '[MultiplexerException] (ChannelHandler (ObservableResponse c), NetworkObservable c v)
+  -> STMc NoRetry '[MultiplexerException] (ChannelHandler (ObservableResponse c), ObservableT Load '[SomeException] c v)
 receiveObservableReference channel = do
   observableVar <- newLoadingObservableVar
   terminated <- newTVar False
@@ -317,7 +302,7 @@ receiveObservableReference channel = do
   handleSTMc @NoRetry @'[FailedToAttachResource] @FailedToAttachResource (throwToExceptionSink channel.quasar.exceptionSink) do
     attachResource channel.quasar.resourceManager ac
 
-  pure (callback proxy, NetworkObservable proxy.observableVar)
+  pure (callback proxy, toObservableCore proxy)
   where
     callback :: ObservableProxy c v -> ReceiveMessageContext -> ObservableResponse c -> QuasarIO ()
     callback proxy _context PackedChangeLoadingClear = apply proxy ObservableChangeLoadingClear
@@ -333,6 +318,18 @@ receiveObservableReference channel = do
     apply proxy change = atomically do
       unlessM (readTVar proxy.terminated) do
         changeObservableVar proxy.observableVar change
+
+instance ContainerConstraint Load '[SomeException] c v (ObservableProxy c v) => ToObservableT Load '[SomeException] c v (ObservableProxy c v) where
+  toObservableCore proxy = ObservableT proxy
+
+instance IsObservableCore Load '[SomeException] c v (ObservableProxy c v) where
+  readObservable# = absurdLoad
+  attachObserver# proxy callback = attachObserver# proxy.observableVar callback
+  attachEvaluatedObserver# proxy callback = attachEvaluatedObserver# proxy.observableVar callback
+  -- TODO better count#/isEmpty#
+
+instance IsObservableMap Load '[SomeException] k v (ObservableProxy (Map k) v) where
+  -- TODO
 
 
 manageObservableProxy :: ObservableContainer c v => ObservableProxy c v -> QuasarIO ()

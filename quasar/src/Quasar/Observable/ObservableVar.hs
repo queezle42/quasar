@@ -1,3 +1,5 @@
+{-# LANGUAGE UndecidableInstances #-}
+
 module Quasar.Observable.ObservableVar (
   ObservableVar,
   newObservableVar,
@@ -21,8 +23,8 @@ import Quasar.Resources.Core
 
 data ObservableVar canLoad exceptions c v = ObservableVar (TVar (ObserverState canLoad (ObservableResult exceptions c) v)) (CallbackRegistry (EvaluatedObservableChange canLoad (ObservableResult exceptions c) v))
 
-instance ToObservable canLoad exceptions v (ObservableVar canLoad exceptions Identity v) where
-  toObservable var = Observable var
+instance (ContainerConstraint canLoad exceptions c v (ObservableVar canLoad exceptions c v), ObservableContainer c v) => ToObservableT canLoad exceptions c v (ObservableVar canLoad exceptions c v) where
+  toObservableCore var = ObservableT var
 
 instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (ObservableVar canLoad exceptions c v) where
   attachEvaluatedObserver# (ObservableVar var registry) callback = do

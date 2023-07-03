@@ -12,6 +12,7 @@ module Quasar.Observable.Core (
   IsObservableCore(..),
   ObservableContainer(..),
   toInitialEvaluatedDelta,
+  ContainerCount(..),
 
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
   CanLoad(..),
@@ -20,6 +21,11 @@ module Quasar.Observable.Core (
   Load,
   NoLoad,
 #endif
+
+  absurdLoad,
+
+  ObservableT(..),
+  ToObservableT(..),
 
   evaluateObservable,
   mapObservableContent,
@@ -42,6 +48,7 @@ module Quasar.Observable.Core (
 
   MappedObservable(..),
   BindObservable(..),
+  bindObservableCore,
 
   -- *** Query
   Selector(..),
@@ -73,34 +80,16 @@ module Quasar.Observable.Core (
 
   -- * Identity observable (single value without partial updates)
   Observable(..),
-  ToObservable(..),
+  ToObservable,
+  toObservable,
   constObservable,
-
-
-  -- * ObservableList
-  ObservableListDelta(..),
-  ObservableListOperation(..),
-
-  -- * ObservableMap
-  ObservableMapDelta(..),
-  ObservableMapOperation(..),
-
-  -- * ObservableSet
-  ObservableSetDelta(..),
-  ObservableSetOperation(..),
 ) where
 
 import Control.Applicative
 import Control.Monad.Catch (MonadThrow)
 import Control.Monad.Catch.Pure (MonadThrow(..))
 import Control.Monad.Except
-import Data.Binary (Binary)
 import Data.Functor.Identity (Identity(..))
-import Data.Map.Merge.Strict qualified as Map
-import Data.Map.Strict (Map)
-import Data.Map.Strict qualified as Map
-import Data.Set (Set)
-import Data.Set qualified as Set
 import Data.String (IsString(..))
 import Data.Type.Equality ((:~:)(Refl))
 import GHC.Records (HasField(..))
@@ -171,14 +160,14 @@ data Selector k
   | Key k
 
 evaluateObservable :: (IsObservableCore canLoad exceptions c v a, ObservableContainer c v) => a -> Observable canLoad exceptions (c v)
-evaluateObservable x = Observable (EvaluatedObservableCore x)
+evaluateObservable x = toObservable (EvaluatedObservableCore x)
 
 mapObservableContent
   :: (IsObservableCore canLoad exceptions c v a, ObservableContainer c v)
   => (c v -> va)
   -> a
   -> Observable canLoad exceptions va
-mapObservableContent f x = Observable (mapObservable# f (evaluateObservable x))
+mapObservableContent f x = Observable (ObservableT (mapObservable# f (evaluateObservable x)))
 
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
 type data CanLoad = Load | NoLoad
@@ -188,9 +177,33 @@ type Load = 'Load
 type NoLoad = 'NoLoad
 #endif
 
+absurdLoad :: Load ~ NoLoad => a
+absurdLoad = unreachableCodePath
+
+
+data ObservableT canLoad exceptions c v
+  = forall a. (IsObservableCore canLoad exceptions c v a, ContainerConstraint canLoad exceptions c v a) => ObservableT a
+
+instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (ObservableT canLoad exceptions c v) where
+  readObservable# (ObservableT x) = readObservable# x
+  attachObserver# (ObservableT x) = attachObserver# x
+  attachEvaluatedObserver# (ObservableT x) = attachEvaluatedObserver# x
+  isCachedObservable# (ObservableT x) = isCachedObservable# x
+  mapObservable# f (ObservableT x) = mapObservable# f x
+  count# (ObservableT x) = count# x
+  isEmpty# (ObservableT x) = isEmpty# x
+
+type ToObservableT :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type -> Constraint
+class ToObservableT canLoad exceptions c v a | a -> canLoad, a -> exceptions, a -> c, a -> v where
+  toObservableCore :: a -> ObservableT canLoad exceptions c v
+
+instance ToObservableT canLoad exceptions c v (ObservableT canLoad exceptions c v) where
+  toObservableCore = id
+
 
 type ObservableContainer :: (Type -> Type) -> Type -> Constraint
 class ObservableContainer c v where
+  type ContainerConstraint (canLoad :: CanLoad) (exceptions :: [Type]) c v a :: Constraint
   type Delta c :: Type -> Type
   type EvaluatedDelta c v :: Type
   type Key c v
@@ -212,6 +225,7 @@ toInitialEvaluatedDelta :: ObservableContainer c v => c v -> EvaluatedDelta c v
 toInitialEvaluatedDelta x = toEvaluatedDelta (toInitialDelta x) x
 
 instance ObservableContainer Identity v where
+  type ContainerConstraint _canLoad _exceptions Identity v _a = ()
   type Delta Identity = Identity
   type EvaluatedDelta Identity v = Identity v
   type Key Identity v = ()
@@ -356,8 +370,8 @@ instance IsObservableCore canLoad exceptions c v (ObservableState canLoad (Obser
   readObservable# (ObservableStateLive result) = unwrapObservableResult result
   attachObserver# x _callback = pure (mempty, x)
   isCachedObservable# _ = True
-  count# x = Observable (constObservable (mapObservableStateResult (Identity . containerCount#) x))
-  isEmpty# x = Observable (constObservable (mapObservableStateResult (Identity . containerIsEmpty#) x))
+  count# x = constObservable (mapObservableStateResult (Identity . containerCount#) x)
+  isEmpty# x = constObservable (mapObservableStateResult (Identity . containerIsEmpty#) x)
 
 instance HasField "loading" (ObservableState canLoad c v) (Loading canLoad) where
   getField ObservableStateLoading = Loading
@@ -588,6 +602,9 @@ instance ObservableFunctor c => IsObservableCore canLoad exceptions c v (MappedO
 
 data EvaluatedObservableCore canLoad exceptions c v = forall a. IsObservableCore canLoad exceptions c v a => EvaluatedObservableCore a
 
+instance ObservableContainer c v => ToObservableT canLoad exceptions Identity (c v) (EvaluatedObservableCore canLoad exceptions c v) where
+  toObservableCore = ObservableT
+
 instance ObservableContainer c v => IsObservableCore canLoad exceptions Identity (c v) (EvaluatedObservableCore canLoad exceptions c v) where
   readObservable# (EvaluatedObservableCore observable) = Identity <$> readObservable# observable
   attachEvaluatedObserver# (EvaluatedObservableCore observable) callback =
@@ -607,6 +624,9 @@ mapObservableStateResult fn (ObservableStateLiveOk content) = ObservableStateLiv
 
 
 data LiftA2Observable l e c v = forall va vb a b. (IsObservableCore l e c va a, ObservableContainer c va, IsObservableCore l e c vb b, ObservableContainer c vb) => LiftA2Observable (va -> vb -> v) a b
+
+instance (Applicative c, ObservableContainer c v, ContainerConstraint canLoad exceptions c v (LiftA2Observable canLoad exceptions c v)) => ToObservableT canLoad exceptions c v (LiftA2Observable canLoad exceptions c v) where
+  toObservableCore = ObservableT
 
 instance (Applicative c, ObservableContainer c v) => IsObservableCore canLoad exceptions c v (LiftA2Observable canLoad exceptions c v) where
   readObservable# (LiftA2Observable fn fx fy) =
@@ -956,28 +976,42 @@ instance (IsObservableCore canLoad exceptions c v b, ObservableContainer c v) =>
   count# (BindObservable fx fn) = fx >>= count# . fn . ObservableResultOk . Identity
   isEmpty# (BindObservable fx fn) = fx >>= isEmpty# . fn . ObservableResultOk . Identity
 
+bindObservableCore
+  :: (
+    ObservableContainer c v,
+    ContainerConstraint canLoad exceptions c v (BindObservable canLoad exceptions va (ObservableT canLoad exceptions c v)),
+    ContainerConstraint canLoad exceptions c v (ObservableState canLoad (ObservableResult exceptions c) v)
+  )
+  => Observable canLoad exceptions va -> (va -> ObservableT canLoad exceptions c v) -> ObservableT canLoad exceptions c v
+bindObservableCore fx fn = ObservableT (BindObservable fx rhsHandler)
+    where
+      rhsHandler (ObservableResultOk (Identity x)) = fn x
+      rhsHandler (ObservableResultEx ex) = ObservableT (ObservableStateLiveEx ex)
+
+
 -- ** Observable Identity
 
-type ToObservable :: CanLoad -> [Type] -> Type -> Type -> Constraint
-class ToObservable canLoad exceptions v a where
-  toObservable :: ToObservable canLoad exceptions v a => a -> Observable canLoad exceptions v
+type ToObservable canLoad exceptions v = ToObservableT canLoad exceptions Identity v
 
-instance ToObservable canLoad exceptions v (Observable canLoad exceptions v) where
-  toObservable = id
+toObservable :: ToObservable canLoad exceptions v a => a -> Observable canLoad exceptions v
+toObservable = Observable . toObservableCore
 
 
 type Observable :: CanLoad -> [Type] -> Type -> Type
-data Observable canLoad exceptions v = forall a. IsObservableCore canLoad exceptions Identity v a => Observable a
+newtype Observable canLoad exceptions v = Observable (ObservableT canLoad exceptions Identity v)
+
+instance ToObservableT canLoad exceptions Identity v (Observable canLoad exceptions v) where
+  toObservableCore (Observable x) = ObservableT x
 
 instance Functor (Observable canLoad exceptions) where
-  fmap fn (Observable fx) = Observable (mapObservable# fn fx)
+  fmap fn (Observable fx) = Observable (ObservableT (mapObservable# fn fx))
 
 instance Applicative (Observable canLoad exceptions) where
-  pure x = Observable (constObservable (pure x))
-  liftA2 f (Observable x) (Observable y) = Observable (LiftA2Observable f x y)
+  pure x = constObservable (pure x)
+  liftA2 f (Observable x) (Observable y) = toObservable (LiftA2Observable f x y)
 
 instance Monad (Observable canLoad exceptions) where
-  fx >>= fn = Observable (BindObservable fx rhsHandler)
+  fx >>= fn = Observable (ObservableT (BindObservable fx rhsHandler))
     where
       rhsHandler (ObservableResultOk (Identity x)) = fn x
       rhsHandler (ObservableResultEx ex) = constObservable (ObservableStateLiveEx ex)
@@ -1015,149 +1049,13 @@ instance IsObservableCore canLoad exceptions Identity v (Observable canLoad exce
   isEmpty# (Observable x) = isEmpty# x
 
 constObservable :: ObservableState canLoad (ObservableResult exceptions Identity) v -> Observable canLoad exceptions v
-constObservable state = Observable state
+constObservable state = Observable (ObservableT state)
 
 
 -- ** ObservableList
 
-data ObservableListDelta v
-  = ObservableListUpdate [ObservableListOperation v]
-  | ObservableListReplace [v]
-  deriving Generic
-
-instance Binary v => Binary (ObservableListDelta v)
-
-data ObservableListOperation v
-  deriving Generic
-
-instance Binary v => Binary (ObservableListOperation v)
-
-instance ObservableContainer [] v where
-  type Delta [] = ObservableListDelta
-  type EvaluatedDelta [] v = (ObservableListDelta v, [v])
-  type Key [] v = Int
-  applyDelta _delta _state = undefined
-  mergeDelta _old _new = undefined
-  toInitialDelta = undefined
-  initializeFromDelta = undefined
-  toDelta = fst
-  toEvaluatedDelta = (,)
-  toEvaluatedContent = snd
-
-instance ContainerCount [] where
-  containerCount# x = fromIntegral (length x)
-  containerIsEmpty# x = null x
-
-
--- ** ObservableMap
-
-data ObservableMapDelta k v
-  = ObservableMapUpdate (Map k (ObservableMapOperation v))
-  | ObservableMapReplace (Map k v)
-  deriving Generic
-
-instance (Binary k, Binary v) => Binary (ObservableMapDelta k v)
-
-instance Functor (ObservableMapDelta k) where
-  fmap f (ObservableMapUpdate x) = ObservableMapUpdate (f <<$>> x)
-  fmap f (ObservableMapReplace x) = ObservableMapReplace (f <$> x)
-
-instance Foldable (ObservableMapDelta k) where
-  foldMap f (ObservableMapUpdate x) = foldMap (foldMap f) x
-  foldMap f (ObservableMapReplace x) = foldMap f x
-
-instance Traversable (ObservableMapDelta k) where
-  traverse f (ObservableMapUpdate ops) = ObservableMapUpdate <$> traverse (traverse f) ops
-  traverse f (ObservableMapReplace new) = ObservableMapReplace <$> traverse f new
-
-data ObservableMapOperation v = ObservableMapInsert v | ObservableMapDelete
-  deriving Generic
-
-instance Binary v => Binary (ObservableMapOperation v)
-
-instance Functor ObservableMapOperation where
-  fmap f (ObservableMapInsert x) = ObservableMapInsert (f x)
-  fmap _f ObservableMapDelete = ObservableMapDelete
-
-instance Foldable ObservableMapOperation where
-  foldMap f (ObservableMapInsert x) = f x
-  foldMap _f ObservableMapDelete = mempty
-
-instance Traversable ObservableMapOperation where
-  traverse f (ObservableMapInsert x) = ObservableMapInsert <$> f x
-  traverse _f ObservableMapDelete = pure ObservableMapDelete
-
-observableMapOperationToMaybe :: ObservableMapOperation v -> Maybe v
-observableMapOperationToMaybe (ObservableMapInsert x) = Just x
-observableMapOperationToMaybe ObservableMapDelete = Nothing
-
-applyObservableMapOperations :: Ord k => Map k (ObservableMapOperation v) -> Map k v -> Map k v
-applyObservableMapOperations ops old =
-  Map.merge
-    Map.preserveMissing'
-    (Map.mapMaybeMissing \_ -> observableMapOperationToMaybe)
-    (Map.zipWithMaybeMatched \_ _ -> observableMapOperationToMaybe)
-    old
-    ops
-
-instance Ord k => ObservableContainer (Map k) v where
-  type Delta (Map k) = (ObservableMapDelta k)
-  type EvaluatedDelta (Map k) v = (ObservableMapDelta k v, Map k v)
-  type Key (Map k) v = k
-  applyDelta (ObservableMapReplace new) _ = new
-  applyDelta (ObservableMapUpdate ops) old = applyObservableMapOperations ops old
-  mergeDelta _ new@ObservableMapReplace{} = new
-  mergeDelta (ObservableMapUpdate old) (ObservableMapUpdate new) = ObservableMapUpdate (Map.union new old)
-  mergeDelta (ObservableMapReplace old) (ObservableMapUpdate new) = ObservableMapReplace (applyObservableMapOperations new old)
-  toInitialDelta = ObservableMapReplace
-  initializeFromDelta (ObservableMapReplace new) = new
-  -- TODO replace with safe implementation once the module is tested
-  initializeFromDelta (ObservableMapUpdate _) = error "ObservableMap.initializeFromDelta: expected ObservableMapReplace"
-  toDelta = fst
-  toEvaluatedDelta = (,)
-  toEvaluatedContent = snd
-
-instance ContainerCount (Map k) where
-  containerCount# x = fromIntegral (Map.size x)
-  containerIsEmpty# x = Map.null x
-
-
 -- ** ObservableSet
 
-data ObservableSetDelta v
-  = ObservableSetUpdate (Set (ObservableSetOperation v))
-  | ObservableSetReplace (Set v)
-
-data ObservableSetOperation v = ObservableSetInsert v | ObservableSetDelete v
-  deriving (Eq, Ord)
-
-applyObservableSetOperation :: Ord v => ObservableSetOperation v -> Set v -> Set v
-applyObservableSetOperation (ObservableSetInsert x) = Set.insert x
-applyObservableSetOperation (ObservableSetDelete x) = Set.delete x
-
-applyObservableSetOperations :: Ord v => Set (ObservableSetOperation v) -> Set v -> Set v
-applyObservableSetOperations ops old = Set.foldr applyObservableSetOperation old ops
-
-instance Ord v => ObservableContainer Set v where
-  type Delta Set = ObservableSetDelta
-  type EvaluatedDelta Set v = (ObservableSetDelta v, Set v)
-  type Key Set v = v
-  applyDelta (ObservableSetReplace new) _ = new
-  applyDelta (ObservableSetUpdate ops) old = applyObservableSetOperations ops old
-  mergeDelta _ new@ObservableSetReplace{} = new
-  mergeDelta (ObservableSetUpdate old) (ObservableSetUpdate new) = ObservableSetUpdate (Set.union new old)
-  mergeDelta (ObservableSetReplace old) (ObservableSetUpdate new) = ObservableSetReplace (applyObservableSetOperations new old)
-  toInitialDelta = ObservableSetReplace
-  initializeFromDelta (ObservableSetReplace new) = new
-  -- TODO replace with safe implementation once the module is tested
-  initializeFromDelta _ = error "ObservableSet.initializeFromDelta: expected ObservableSetReplace"
-  toDelta = fst
-  toEvaluatedDelta = (,)
-  toEvaluatedContent = snd
-
-instance ContainerCount Set where
-  containerCount# x = fromIntegral (Set.size x)
-  containerIsEmpty# x = Set.null x
 
 
 -- ** Exception wrapper
@@ -1223,6 +1121,7 @@ mapObservableResultDelta fn (ObservableResultDeltaOk delta) = ObservableResultDe
 mapObservableResultDelta _fn (ObservableResultDeltaThrow ex) = ObservableResultDeltaThrow ex
 
 instance ObservableContainer c v => ObservableContainer (ObservableResult exceptions c) v where
+  type ContainerConstraint canLoad exceptions (ObservableResult exceptions c) v a = ContainerConstraint canLoad exceptions c v a
   type Delta (ObservableResult exceptions c) = ObservableResultDelta exceptions c
   type EvaluatedDelta (ObservableResult exceptions c) v = EvaluatedObservableResultDelta exceptions c v
   type Key (ObservableResult exceptions c) v = Key c v

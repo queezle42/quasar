@@ -1,10 +1,12 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Quasar.Observable.Map (
   -- * ObservableMap
   ObservableMap(..),
-  ToObservableMap(..),
+  ToObservableMap,
+  toObservableMap,
   IsObservableMap(..),
   query,
 
@@ -34,32 +36,88 @@ module Quasar.Observable.Map (
   mapWithKey,
 ) where
 
-import Data.Functor.Identity (Identity(..))
+import Control.Applicative hiding (empty)
+import Control.Monad.Except
+import Data.Binary (Binary)
+import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Quasar.Observable.Core
 import Quasar.Observable.List
 import Quasar.Prelude hiding (lookup)
 
-class ToObservableMap canLoad exceptions k v a where
-  toObservableMap :: a -> ObservableMap canLoad exceptions k v
 
-data ObservableMap canLoad exceptions k v
-  = forall a. IsObservableMap canLoad exceptions k v a => ObservableMap a
+data ObservableMapDelta k v
+  = ObservableMapUpdate (Map k (ObservableMapOperation v))
+  | ObservableMapReplace (Map k v)
+  deriving Generic
 
-instance ToObservableMap canLoad exceptions k v (ObservableMap canLoad exceptions k v) where
-  toObservableMap = id
+instance (Binary k, Binary v) => Binary (ObservableMapDelta k v)
 
-instance IsObservableCore canLoad exceptions (Map k) v (ObservableMap canLoad exceptions k v) where
-  readObservable# (ObservableMap x) = readObservable# x
-  attachObserver# (ObservableMap x) = attachObserver# x
-  attachEvaluatedObserver# (ObservableMap x) = attachEvaluatedObserver# x
-  isCachedObservable# (ObservableMap x) = isCachedObservable# x
+instance Functor (ObservableMapDelta k) where
+  fmap f (ObservableMapUpdate x) = ObservableMapUpdate (f <<$>> x)
+  fmap f (ObservableMapReplace x) = ObservableMapReplace (f <$> x)
 
-instance IsObservableMap canLoad exceptions k v (ObservableMap canLoad exceptions k v) where
-  lookupKey# (ObservableMap x) = lookupKey# x
-  lookupItem# (ObservableMap x) = lookupItem# x
-  lookupValue# (ObservableMap x) = lookupValue# x
+instance Foldable (ObservableMapDelta k) where
+  foldMap f (ObservableMapUpdate x) = foldMap (foldMap f) x
+  foldMap f (ObservableMapReplace x) = foldMap f x
+
+instance Traversable (ObservableMapDelta k) where
+  traverse f (ObservableMapUpdate ops) = ObservableMapUpdate <$> traverse (traverse f) ops
+  traverse f (ObservableMapReplace new) = ObservableMapReplace <$> traverse f new
+
+data ObservableMapOperation v = ObservableMapInsert v | ObservableMapDelete
+  deriving Generic
+
+instance Binary v => Binary (ObservableMapOperation v)
+
+instance Functor ObservableMapOperation where
+  fmap f (ObservableMapInsert x) = ObservableMapInsert (f x)
+  fmap _f ObservableMapDelete = ObservableMapDelete
+
+instance Foldable ObservableMapOperation where
+  foldMap f (ObservableMapInsert x) = f x
+  foldMap _f ObservableMapDelete = mempty
+
+instance Traversable ObservableMapOperation where
+  traverse f (ObservableMapInsert x) = ObservableMapInsert <$> f x
+  traverse _f ObservableMapDelete = pure ObservableMapDelete
+
+observableMapOperationToMaybe :: ObservableMapOperation v -> Maybe v
+observableMapOperationToMaybe (ObservableMapInsert x) = Just x
+observableMapOperationToMaybe ObservableMapDelete = Nothing
+
+applyObservableMapOperations :: Ord k => Map k (ObservableMapOperation v) -> Map k v -> Map k v
+applyObservableMapOperations ops old =
+  Map.merge
+    Map.preserveMissing'
+    (Map.mapMaybeMissing \_ -> observableMapOperationToMaybe)
+    (Map.zipWithMaybeMatched \_ _ -> observableMapOperationToMaybe)
+    old
+    ops
+
+instance Ord k => ObservableContainer (Map k) v where
+  type ContainerConstraint canLoad exceptions (Map k) v a = IsObservableMap canLoad exceptions k v a
+  type Delta (Map k) = (ObservableMapDelta k)
+  type EvaluatedDelta (Map k) v = (ObservableMapDelta k v, Map k v)
+  type Key (Map k) v = k
+  applyDelta (ObservableMapReplace new) _ = new
+  applyDelta (ObservableMapUpdate ops) old = applyObservableMapOperations ops old
+  mergeDelta _ new@ObservableMapReplace{} = new
+  mergeDelta (ObservableMapUpdate old) (ObservableMapUpdate new) = ObservableMapUpdate (Map.union new old)
+  mergeDelta (ObservableMapReplace old) (ObservableMapUpdate new) = ObservableMapReplace (applyObservableMapOperations new old)
+  toInitialDelta = ObservableMapReplace
+  initializeFromDelta (ObservableMapReplace new) = new
+  -- TODO replace with safe implementation once the module is tested
+  initializeFromDelta (ObservableMapUpdate _) = error "ObservableMap.initializeFromDelta: expected ObservableMapReplace"
+  toDelta = fst
+  toEvaluatedDelta = (,)
+  toEvaluatedContent = snd
+
+instance ContainerCount (Map k) where
+  containerCount# x = fromIntegral (Map.size x)
+  containerIsEmpty# x = Map.null x
+
 
 
 class IsObservableCore canLoad exceptions (Map k) v a => IsObservableMap canLoad exceptions k v a where
@@ -78,11 +136,36 @@ class IsObservableCore canLoad exceptions (Map k) v a => IsObservableMap canLoad
 
 instance IsObservableMap canLoad exceptions k v (ObservableState canLoad (ObservableResult exceptions (Map k)) v) where
 
+instance Ord k => IsObservableMap canLoad exceptions k v (ObservableT canLoad exceptions (Map k) v) where
+
 
 instance Ord k => IsObservableMap canLoad exceptions k v (MappedObservable canLoad exceptions (Map k) v) where
 
+
+
+type ToObservableMap canLoad exceptions k v a = ToObservableT canLoad exceptions (Map k) v a
+
+toObservableMap :: ToObservableMap canLoad exceptions k v a => a -> ObservableMap canLoad exceptions k v
+toObservableMap x = ObservableMap (toObservableCore x)
+
+newtype ObservableMap canLoad exceptions k v = ObservableMap (ObservableT canLoad exceptions (Map k) v)
+
+instance ToObservableT canLoad exceptions (Map k) v (ObservableMap canLoad exceptions k v) where
+  toObservableCore (ObservableMap x) = x
+
+instance IsObservableCore canLoad exceptions (Map k) v (ObservableMap canLoad exceptions k v) where
+  readObservable# (ObservableMap (ObservableT x)) = readObservable# x
+  attachObserver# (ObservableMap x) = attachObserver# x
+  attachEvaluatedObserver# (ObservableMap x) = attachEvaluatedObserver# x
+  isCachedObservable# (ObservableMap (ObservableT x)) = isCachedObservable# x
+
+instance IsObservableMap canLoad exceptions k v (ObservableMap canLoad exceptions k v) where
+  lookupKey# (ObservableMap x) = lookupKey# x
+  lookupItem# (ObservableMap x) = lookupItem# x
+  lookupValue# (ObservableMap x) = lookupValue# x
+
 instance Ord k => Functor (ObservableMap canLoad exceptions k) where
-  fmap fn (ObservableMap x) = ObservableMap (mapObservable# fn x)
+  fmap fn (ObservableMap x) = ObservableMap (ObservableT (mapObservable# fn x))
 
 
 query
@@ -95,27 +178,26 @@ query x = query# (toObservableMap x)
 
 
 instance (Ord k, IsObservableCore l e (Map k) v b) => IsObservableMap l e k v (BindObservable l e va b) where
+  -- TODO
+
 
 bindObservableMap
   :: forall canLoad exceptions k v va. Ord k
   => Observable canLoad exceptions va
   -> (va -> ObservableMap canLoad exceptions k v)
   -> ObservableMap canLoad exceptions k v
-bindObservableMap fx fn = ObservableMap (BindObservable fx rhsHandler)
-  where
-    rhsHandler :: ObservableResult exceptions Identity va -> ObservableMap canLoad exceptions k v
-    rhsHandler (ObservableResultOk (Identity x)) = fn x
-    rhsHandler (ObservableResultEx ex) = constObservableMap (ObservableStateLiveEx ex)
+bindObservableMap fx fn = ObservableMap (bindObservableCore fx ((\(ObservableMap x) -> x) . fn))
+
 
 constObservableMap :: ObservableState canLoad (ObservableResult exceptions (Map k)) v -> ObservableMap canLoad exceptions k v
-constObservableMap = ObservableMap
+constObservableMap = ObservableMap . ObservableT
 
 
 empty :: ObservableMap canLoad exceptions k v
-empty = ObservableMap (ObservableStateLiveOk Map.empty)
+empty = constObservableMap (ObservableStateLiveOk Map.empty)
 
 singleton :: k -> v -> ObservableMap canLoad exceptions k v
-singleton key value = ObservableMap (ObservableStateLiveOk (Map.singleton key value))
+singleton key value = constObservableMap (ObservableStateLiveOk (Map.singleton key value))
 
 lookup :: Ord k => k -> ObservableMap l e k v -> Observable l e (Maybe v)
 lookup key x = lookupValue# (toObservableMap x) (Key key)
@@ -128,7 +210,7 @@ isEmpty = isEmpty#
 
 -- | From unordered list.
 fromList :: Ord k => [(k, v)] -> ObservableMap l e k v
-fromList list = ObservableMap (ObservableStateLiveOk (Map.fromList list))
+fromList list = constObservableMap (ObservableStateLiveOk (Map.fromList list))
 
 
 data MappedObservableMap canLoad exceptions k va v = MappedObservableMap (k -> va -> v) (ObservableMap canLoad exceptions k va)
@@ -161,7 +243,7 @@ instance ObservableFunctor (Map k) => IsObservableMap canLoad exceptions k v (Ma
     uncurry fn <<$>> lookupItem# upstream sel
 
 mapWithKey :: Ord k => (k -> va -> v) -> ObservableMap canLoad exceptions k va -> ObservableMap canLoad exceptions k v
-mapWithKey fn x = ObservableMap (MappedObservableMap fn x)
+mapWithKey fn x = ObservableMap (ObservableT (MappedObservableMap fn x))
 
 
 data ObservableMapUnionWith l e k v =
@@ -221,7 +303,7 @@ instance Ord k => IsObservableMap canLoad exceptions k v (ObservableMapUnionWith
 
 
 unionWithKey :: Ord k => (k -> v -> v -> v) -> ObservableMap l e k v -> ObservableMap l e k v -> ObservableMap l e k v
-unionWithKey fn x y = ObservableMap (ObservableMapUnionWith fn x y)
+unionWithKey fn x y = ObservableMap (ObservableT (ObservableMapUnionWith fn x y))
 
 unionWith :: Ord k => (v -> v -> v) -> ObservableMap l e k v -> ObservableMap l e k v -> ObservableMap l e k v
 unionWith fn = unionWithKey \_ x y -> fn x y
