@@ -661,11 +661,6 @@ data MergeChange canLoad c v where
   MergeChangeClear :: MergeChange Load c v
   MergeChangeDelta :: Delta c v -> MergeChange canLoad c v
 
-instance ObservableContainer c v => Semigroup (MergeChange canLoad c v) where
-  _ <> MergeChangeClear = MergeChangeClear
-  MergeChangeClear <> y = y
-  MergeChangeDelta x <> MergeChangeDelta y = MergeChangeDelta (mergeDelta @c x y)
-
 
 attachMergeObserver
   :: forall canLoad exceptions ca va cb vb c v a b.
