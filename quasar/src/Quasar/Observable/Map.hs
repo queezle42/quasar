@@ -103,9 +103,9 @@ instance Ord k => ObservableContainer (Map k) v where
   type Key (Map k) v = k
   applyDelta (ObservableMapReplace new) _ = new
   applyDelta (ObservableMapUpdate ops) old = applyObservableMapOperations ops old
-  mergeDelta _ new@ObservableMapReplace{} = new
-  mergeDelta (ObservableMapUpdate old) (ObservableMapUpdate new) = ObservableMapUpdate (Map.union new old)
-  mergeDelta (ObservableMapReplace old) (ObservableMapUpdate new) = ObservableMapReplace (applyObservableMapOperations new old)
+  mergeDelta _ new@ObservableMapReplace{} = ((), new)
+  mergeDelta (_, ObservableMapUpdate old) (ObservableMapUpdate new) = ((), ObservableMapUpdate (Map.union new old))
+  mergeDelta (_, ObservableMapReplace old) (ObservableMapUpdate new) = ((), ObservableMapReplace (applyObservableMapOperations new old))
   toInitialDelta = ObservableMapReplace
   initializeFromDelta (ObservableMapReplace new) = new
   -- TODO replace with safe implementation once the module is tested

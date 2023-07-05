@@ -36,9 +36,9 @@ instance Ord v => ObservableContainer Set v where
   type Key Set v = v
   applyDelta (ObservableSetReplace new) _ = new
   applyDelta (ObservableSetUpdate ops) old = applyObservableSetOperations ops old
-  mergeDelta _ new@ObservableSetReplace{} = new
-  mergeDelta (ObservableSetUpdate old) (ObservableSetUpdate new) = ObservableSetUpdate (Set.union new old)
-  mergeDelta (ObservableSetReplace old) (ObservableSetUpdate new) = ObservableSetReplace (applyObservableSetOperations new old)
+  mergeDelta _ new@ObservableSetReplace{} = ((), new)
+  mergeDelta (_, ObservableSetUpdate old) (ObservableSetUpdate new) = ((), ObservableSetUpdate (Set.union new old))
+  mergeDelta (_, ObservableSetReplace old) (ObservableSetUpdate new) = ((), ObservableSetReplace (applyObservableSetOperations new old))
   toInitialDelta = ObservableSetReplace
   initializeFromDelta (ObservableSetReplace new) = new
   -- TODO replace with safe implementation once the module is tested

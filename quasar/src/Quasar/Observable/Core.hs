@@ -67,8 +67,7 @@ module Quasar.Observable.Core (
   PendingChange,
   LastChange(..),
   updatePendingChange,
-  emptyPendingChange,
-  initialLastChange,
+  initialPendingAndLastChange,
   changeFromPending,
 
   -- *** Merging changes
@@ -207,16 +206,31 @@ class ObservableContainer c v where
   type Delta c :: Type -> Type
   type EvaluatedDelta c v :: Type
   type Key c v
+  -- | Enough context to merge deltas.
+  type DeltaContext c v
+  type instance DeltaContext _c _v = ()
+
   applyDelta :: Delta c v -> c v -> c v
-  mergeDelta :: Delta c v -> Delta c v -> Delta c v
+  mergeDelta :: (DeltaContext c v, Delta c v) -> Delta c v -> (DeltaContext c v, Delta c v)
+
+  updateDeltaContext :: DeltaContext c v -> Delta c v -> DeltaContext c v
+  default updateDeltaContext :: DeltaContext c v ~ () => DeltaContext c v -> Delta c v -> DeltaContext c v
+  updateDeltaContext _ _ = ()
+
   -- | Produce a delta from a content. The delta replaces any previous content
   -- when applied.
   toInitialDelta :: c v -> Delta c v
+
+  toInitialDeltaContext :: c v -> DeltaContext c v
+  default toInitialDeltaContext :: DeltaContext c v ~ () => c v -> DeltaContext c v
+  toInitialDeltaContext _ = ()
+
   -- | (Re)initialize the container content from a special delta. Using this
   -- function only produces a valid result when the previous observer state is
   -- `ObserverStateLoadingCleared`; otherwise the resulting container content is
   -- undefined.
   initializeFromDelta :: Delta c v -> c v
+
   toDelta :: EvaluatedDelta c v -> Delta c v
   toEvaluatedDelta :: Delta c v -> c v -> EvaluatedDelta c v
   toEvaluatedContent :: EvaluatedDelta c v -> c v
@@ -224,14 +238,24 @@ class ObservableContainer c v where
 toInitialEvaluatedDelta :: ObservableContainer c v => c v -> EvaluatedDelta c v
 toInitialEvaluatedDelta x = toEvaluatedDelta (toInitialDelta x) x
 
+reinitializeFromDelta
+  :: forall c v. ObservableContainer c v
+  => Delta c v
+  -> (DeltaContext c v, Delta c v)
+reinitializeFromDelta delta =
+  let initial = initializeFromDelta @c delta
+  in (toInitialDeltaContext initial, toInitialDelta initial)
+
 instance ObservableContainer Identity v where
   type ContainerConstraint _canLoad _exceptions Identity v _a = ()
   type Delta Identity = Identity
   type EvaluatedDelta Identity v = Identity v
   type Key Identity v = ()
   applyDelta new _ = new
-  mergeDelta _ new = new
+  mergeDelta _ new = ((), new)
+  updateDeltaContext _ _ = ()
   toInitialDelta = id
+  toInitialDeltaContext _ = ()
   initializeFromDelta = id
   toDelta = id
   toEvaluatedDelta x _ = x
@@ -526,7 +550,7 @@ fromMaybeL _ (JustL x) = x
 type PendingChange :: CanLoad -> (Type -> Type) -> Type -> Type
 data PendingChange canLoad c v where
   PendingChangeLoadingClear :: PendingChange Load c v
-  PendingChangeAlter :: Loading canLoad -> Maybe (Delta c v) -> PendingChange canLoad c v
+  PendingChangeAlter :: Loading canLoad -> DeltaContext c v -> Maybe (Delta c v) -> PendingChange canLoad c v
 
 type LastChange :: CanLoad -> (Type -> Type) -> Type -> Type
 data LastChange canLoad c v where
@@ -542,17 +566,21 @@ instance HasField "loading" (LastChange canLoad c v) (Loading canLoad) where
 updatePendingChange :: forall canLoad c v. ObservableContainer c v => ObservableChange canLoad c v -> PendingChange canLoad c v -> PendingChange canLoad c v
 updatePendingChange ObservableChangeLoadingClear _ = PendingChangeLoadingClear
 updatePendingChange (ObservableChangeUnchanged _loading) PendingChangeLoadingClear = PendingChangeLoadingClear
-updatePendingChange (ObservableChangeUnchanged loading) (PendingChangeAlter _loading delta) = PendingChangeAlter loading delta
-updatePendingChange (ObservableChangeLiveDelta delta) (PendingChangeAlter _loading (Just prevDelta)) =
-  PendingChangeAlter Live (Just (mergeDelta @c prevDelta delta))
-updatePendingChange (ObservableChangeLiveDelta delta) _ = PendingChangeAlter Live (Just delta)
+updatePendingChange (ObservableChangeUnchanged loading) (PendingChangeAlter _loading ctx delta) = PendingChangeAlter loading ctx delta
+updatePendingChange (ObservableChangeLiveDelta delta) (PendingChangeAlter _loading ctx (Just prevDelta)) =
+  let (newCtx, newDelta) = mergeDelta @c (ctx, prevDelta) delta
+  in PendingChangeAlter Live newCtx (Just newDelta)
+updatePendingChange (ObservableChangeLiveDelta delta) (PendingChangeAlter _loading ctx Nothing) =
+  PendingChangeAlter Live (updateDeltaContext @c ctx delta) (Just delta)
+updatePendingChange (ObservableChangeLiveDelta delta) PendingChangeLoadingClear =
+  let (reinitCtx, reinitDelta) = reinitializeFromDelta @c delta
+  in PendingChangeAlter Live reinitCtx (Just reinitDelta)
 
-emptyPendingChange :: Loading canLoad -> PendingChange canLoad c v
-emptyPendingChange loading = PendingChangeAlter loading Nothing
-
-initialLastChange :: Loading canLoad -> LastChange canLoad c v
-initialLastChange Loading = LastChangeLoadingCleared
-initialLastChange Live = LastChangeLive
+initialPendingAndLastChange :: ObservableContainer c v => ObservableState canLoad c v -> (PendingChange canLoad c v, LastChange canLoad c v)
+initialPendingAndLastChange ObservableStateLoading =
+  (PendingChangeLoadingClear, LastChangeLoadingCleared)
+initialPendingAndLastChange (ObservableStateLive initial) =
+  (PendingChangeAlter Live (toInitialDeltaContext initial) Nothing, LastChangeLive)
 
 
 changeFromPending :: Loading canLoad -> PendingChange canLoad c v -> LastChange canLoad c v -> Maybe (ObservableChange canLoad c v, PendingChange canLoad c v, LastChange canLoad c v)
@@ -564,18 +592,18 @@ changeFromPending loading pendingChange lastChange = do
     changeFromPending' :: Loading canLoad -> PendingChange canLoad c v -> LastChange canLoad c v -> Maybe (ObservableChange canLoad c v, PendingChange canLoad c v)
     -- Category: Changing to loading or already loading
     changeFromPending' _ PendingChangeLoadingClear LastChangeLoadingCleared = Nothing
-    changeFromPending' _ PendingChangeLoadingClear _ = Just (ObservableChangeLoadingClear, emptyPendingChange Loading)
-    changeFromPending' _ x@(PendingChangeAlter Loading _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, x)
-    changeFromPending' _ (PendingChangeAlter Loading _) LastChangeLoadingCleared = Nothing
-    changeFromPending' _ (PendingChangeAlter Loading _) LastChangeLoading = Nothing
-    changeFromPending' _ (PendingChangeAlter Live Nothing) LastChangeLoadingCleared = Nothing
-    changeFromPending' Loading (PendingChangeAlter Live _) LastChangeLoadingCleared = Nothing
-    changeFromPending' Loading (PendingChangeAlter Live _) LastChangeLoading = Nothing
-    changeFromPending' Loading x@(PendingChangeAlter Live _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, x)
+    changeFromPending' _ PendingChangeLoadingClear _ = Just (ObservableChangeLoadingClear, PendingChangeLoadingClear)
+    changeFromPending' _ x@(PendingChangeAlter Loading _ _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, x)
+    changeFromPending' _ (PendingChangeAlter Loading _ _) LastChangeLoadingCleared = Nothing
+    changeFromPending' _ (PendingChangeAlter Loading _ _) LastChangeLoading = Nothing
+    changeFromPending' _ (PendingChangeAlter Live _ Nothing) LastChangeLoadingCleared = Nothing
+    changeFromPending' Loading (PendingChangeAlter Live _ _) LastChangeLoadingCleared = Nothing
+    changeFromPending' Loading (PendingChangeAlter Live _ _) LastChangeLoading = Nothing
+    changeFromPending' Loading x@(PendingChangeAlter Live _ _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, x)
     -- Category: Changing to live or already live
-    changeFromPending' Live (PendingChangeAlter Live Nothing) LastChangeLoading = Just (ObservableChangeLiveUnchanged, emptyPendingChange Live)
-    changeFromPending' Live (PendingChangeAlter Live Nothing) LastChangeLive = Nothing
-    changeFromPending' Live (PendingChangeAlter Live (Just delta)) _ = Just (ObservableChangeLiveDelta delta, emptyPendingChange Live)
+    changeFromPending' Live x@(PendingChangeAlter Live _ Nothing) LastChangeLoading = Just (ObservableChangeLiveUnchanged, x)
+    changeFromPending' Live (PendingChangeAlter Live _ Nothing) LastChangeLive = Nothing
+    changeFromPending' Live (PendingChangeAlter Live ctx (Just delta)) _ = Just (ObservableChangeLiveDelta delta, PendingChangeAlter Live ctx Nothing)
 
     updateLastChange :: ObservableChange canLoad c v -> LastChange canLoad c v -> LastChange canLoad c v
     updateLastChange ObservableChangeLoadingClear _ = LastChangeLoadingCleared
@@ -691,7 +719,7 @@ attachMergeObserver fullMergeFn leftFn rightFn clearLeftFn clearRightFn fx fy ca
     (disposerY, stateY) <- attachEvaluatedObserver# fy (mergeCallback @canLoad @(ObservableResult exceptions c) rightState leftState state (flip wrappedFullMergeFn) wrappedRightFn wrappedClearRightFn callback)
     let
       initialState = mergeObservableState wrappedFullMergeFn stateX stateY
-      initialMergeState = (emptyPendingChange initialState.loading, initialLastChange initialState.loading)
+      initialMergeState = initialPendingAndLastChange initialState
       initialLeftState = createObserverState stateX
       initialRightState = createObserverState stateY
     pure ((((disposerX <> disposerY, initialState), initialLeftState), initialRightState), initialMergeState)
@@ -875,7 +903,7 @@ updateSuspendedBindRHS
 updateSuspendedBindRHS ObservableChangeLoadingClear _ = BindRHSCleared
 updateSuspendedBindRHS ObservableChangeLoadingUnchanged rhs = bindRHSSetLoading Loading rhs
 updateSuspendedBindRHS ObservableChangeLiveUnchanged rhs = bindRHSSetLoading Live rhs
-updateSuspendedBindRHS (ObservableChangeLiveDelta delta) (BindRHSPendingDelta _ prevDelta) = BindRHSPendingDelta Live (mergeDelta @c prevDelta delta)
+updateSuspendedBindRHS (ObservableChangeLiveDelta delta) (BindRHSPendingDelta _ prevDelta) = undefined -- BindRHSPendingDelta Live (mergeDelta @c prevDelta delta)
 updateSuspendedBindRHS (ObservableChangeLiveDelta delta) _ = BindRHSPendingDelta Live delta
 
 updateActiveBindRHS
@@ -887,7 +915,7 @@ updateActiveBindRHS ObservableChangeLoadingClear _ = (ObservableChangeLoadingCle
 updateActiveBindRHS ObservableChangeLoadingUnchanged rhs = (ObservableChangeLoadingUnchanged, bindRHSSetLoading Loading rhs)
 updateActiveBindRHS ObservableChangeLiveUnchanged (BindRHSPendingDelta _ delta) = (ObservableChangeLiveDelta delta, BindRHSValid Live)
 updateActiveBindRHS ObservableChangeLiveUnchanged rhs = (ObservableChangeLiveUnchanged, bindRHSSetLoading Live rhs)
-updateActiveBindRHS (ObservableChangeLiveDelta delta) (BindRHSPendingDelta _ prevDelta) = (ObservableChangeLiveDelta (mergeDelta @c prevDelta delta), BindRHSValid Live)
+updateActiveBindRHS (ObservableChangeLiveDelta delta) (BindRHSPendingDelta _ prevDelta) = undefined -- (ObservableChangeLiveDelta (mergeDelta @c prevDelta delta), BindRHSValid Live)
 updateActiveBindRHS (ObservableChangeLiveDelta delta) _ = (ObservableChangeLiveDelta delta, BindRHSValid Live)
 
 
@@ -1114,13 +1142,33 @@ instance ObservableContainer c v => ObservableContainer (ObservableResult except
   type Delta (ObservableResult exceptions c) = ObservableResultDelta exceptions c
   type EvaluatedDelta (ObservableResult exceptions c) v = EvaluatedObservableResultDelta exceptions c v
   type Key (ObservableResult exceptions c) v = Key c v
+  type instance DeltaContext (ObservableResult exceptions c) v = Maybe (DeltaContext c v)
   applyDelta (ObservableResultDeltaThrow ex) _ = ObservableResultEx ex
   applyDelta (ObservableResultDeltaOk delta) (ObservableResultOk old) = ObservableResultOk (applyDelta delta old)
   applyDelta (ObservableResultDeltaOk delta) _ = ObservableResultOk (initializeFromDelta delta)
-  mergeDelta (ObservableResultDeltaOk old) (ObservableResultDeltaOk new) = ObservableResultDeltaOk (mergeDelta @c old new)
-  mergeDelta _ new = new
+  mergeDelta _old new@(ObservableResultDeltaThrow _) = (Nothing, new)
+  mergeDelta (_, ObservableResultDeltaThrow _) (ObservableResultDeltaOk new) =
+    let (reinitCtx, reinitDelta) = reinitializeFromDelta @c new
+    in (Just reinitCtx, ObservableResultDeltaOk reinitDelta)
+  mergeDelta (Just ctx, ObservableResultDeltaOk old) (ObservableResultDeltaOk new) =
+    let (newCtx, newDelta) = mergeDelta @c (ctx, old) new
+    in (Just newCtx, ObservableResultDeltaOk newDelta)
+  mergeDelta (Nothing, ObservableResultDeltaOk old) (ObservableResultDeltaOk new) =
+    -- This is an invalid state (we should have a ctx). This only happens when
+    -- the function is called incorrectly.
+    -- By reinitializing the delta we get consistent behavior and a non-partial
+    -- function, even though the actual state might be nonsense.
+    let
+      (reinitCtx, reinitDelta) = reinitializeFromDelta @c old
+      (newCtx, newDelta) = mergeDelta @c (reinitCtx, reinitDelta) new
+    in (Just newCtx, ObservableResultDeltaOk newDelta)
+  updateDeltaContext _ctx (ObservableResultDeltaThrow _) = Nothing
+  updateDeltaContext (Just ctx) (ObservableResultDeltaOk delta) = Just (updateDeltaContext @c ctx delta)
+  updateDeltaContext Nothing (ObservableResultDeltaOk delta) = Just (toInitialDeltaContext (initializeFromDelta @c delta))
   toInitialDelta (ObservableResultOk initial) = ObservableResultDeltaOk (toInitialDelta initial)
   toInitialDelta (ObservableResultEx ex) = ObservableResultDeltaThrow ex
+  toInitialDeltaContext (ObservableResultOk initial) = Just (toInitialDeltaContext initial)
+  toInitialDeltaContext (ObservableResultEx _) = Nothing
   initializeFromDelta (ObservableResultDeltaOk initial) = ObservableResultOk (initializeFromDelta initial)
   initializeFromDelta (ObservableResultDeltaThrow ex) = ObservableResultEx ex
   toDelta (EvaluatedObservableResultDeltaOk evaluated) = ObservableResultDeltaOk (toDelta @c evaluated)

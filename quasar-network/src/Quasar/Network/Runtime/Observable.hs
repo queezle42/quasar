@@ -56,9 +56,7 @@ instance NetworkObject v => NetworkObject (Observable Load '[SomeException] v) w
 instance (Ord k, Binary k, NetworkObject v) => NetworkRootReference (ObservableMap Load '[SomeException] k v) where
   type NetworkRootReferenceChannel (ObservableMap Load '[SomeException] k v) = NetworkRootReferenceChannel (ObservableT Load '[SomeException] (Map k) v)
   provideRootReference (ObservableMap x) = sendObservableReference x
-  receiveRootReference channel = do
-    (handler, x) <- receiveObservableReference @(Map k) @v channel
-    pure (handler, ObservableMap x)
+  receiveRootReference channel = ObservableMap <<$>> receiveObservableReference @(Map k) @v channel
 
 instance (Ord k, Binary k, NetworkObject v) => NetworkObject (ObservableMap Load '[SomeException] k v) where
   type NetworkStrategy (ObservableMap Load '[SomeException] k v) = NetworkRootReference
@@ -146,8 +144,9 @@ sendObservableReference
 sendObservableReference observable channel = do
   isAttached <- newTVar False
   observableDisposer <- newTVar mempty
-  pendingChange <- newTVar (emptyPendingChange Loading)
-  lastChange <- newTVar (initialLastChange Loading)
+  let (pending, last) = initialPendingAndLastChange @(ObservableResult '[SomeException] c) ObservableStateLoading
+  pendingChange <- newTVar pending
+  lastChange <- newTVar last
   activeObjects <- newTVar Nothing
   pendingDisposal <- newTVar Nothing
   let ref = ObservableReference{
