@@ -1047,12 +1047,6 @@ constObservable :: ObservableState canLoad (ObservableResult exceptions Identity
 constObservable state = Observable (ObservableT state)
 
 
--- ** ObservableList
-
--- ** ObservableSet
-
-
-
 -- ** Exception wrapper
 
 type ObservableResult :: [Type] -> (Type -> Type) -> Type -> Type
