@@ -186,7 +186,7 @@ bindObservableMap
   => Observable canLoad exceptions va
   -> (va -> ObservableMap canLoad exceptions k v)
   -> ObservableMap canLoad exceptions k v
-bindObservableMap fx fn = ObservableMap (bindObservableCore fx ((\(ObservableMap x) -> x) . fn))
+bindObservableMap fx fn = ObservableMap (bindObservableT fx ((\(ObservableMap x) -> x) . fn))
 
 
 constObservableMap :: ObservableState canLoad (ObservableResult exceptions (Map k)) v -> ObservableMap canLoad exceptions k v

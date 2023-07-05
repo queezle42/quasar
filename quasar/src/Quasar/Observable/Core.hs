@@ -48,7 +48,7 @@ module Quasar.Observable.Core (
 
   MappedObservable(..),
   BindObservable(..),
-  bindObservableCore,
+  bindObservableT,
 
   -- *** Query
   Selector(..),
@@ -971,14 +971,14 @@ instance (IsObservableCore canLoad exceptions c v b, ObservableContainer c v) =>
   count# (BindObservable fx fn) = fx >>= count# . fn . ObservableResultOk . Identity
   isEmpty# (BindObservable fx fn) = fx >>= isEmpty# . fn . ObservableResultOk . Identity
 
-bindObservableCore
+bindObservableT
   :: (
     ObservableContainer c v,
     ContainerConstraint canLoad exceptions c v (BindObservable canLoad exceptions va (ObservableT canLoad exceptions c v)),
     ContainerConstraint canLoad exceptions c v (ObservableState canLoad (ObservableResult exceptions c) v)
   )
   => Observable canLoad exceptions va -> (va -> ObservableT canLoad exceptions c v) -> ObservableT canLoad exceptions c v
-bindObservableCore fx fn = ObservableT (BindObservable fx rhsHandler)
+bindObservableT fx fn = ObservableT (BindObservable fx rhsHandler)
     where
       rhsHandler (ObservableResultOk (Identity x)) = fn x
       rhsHandler (ObservableResultEx ex) = ObservableT (ObservableStateLiveEx ex)
