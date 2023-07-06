@@ -67,6 +67,7 @@ module Quasar.Observable.Core (
   PendingChange,
   LastChange(..),
   updatePendingChange,
+  initialPendingChange,
   initialPendingAndLastChange,
   changeFromPending,
 
@@ -575,6 +576,10 @@ updatePendingChange (ObservableChangeLiveDelta delta) (PendingChangeAlter _loadi
 updatePendingChange (ObservableChangeLiveDelta delta) PendingChangeLoadingClear =
   let (reinitCtx, reinitDelta) = reinitializeFromDelta @c delta
   in PendingChangeAlter Live reinitCtx (Just reinitDelta)
+
+initialPendingChange :: ObservableContainer c v => ObservableState canLoad c v -> PendingChange canLoad c v
+initialPendingChange ObservableStateLoading = PendingChangeLoadingClear
+initialPendingChange (ObservableStateLive initial) = PendingChangeAlter Live (toInitialDeltaContext initial) Nothing
 
 initialPendingAndLastChange :: ObservableContainer c v => ObservableState canLoad c v -> (PendingChange canLoad c v, LastChange canLoad c v)
 initialPendingAndLastChange ObservableStateLoading =
