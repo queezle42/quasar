@@ -15,9 +15,8 @@ import Quasar.Observable.Core
 import Quasar.Prelude
 
 
-data ObservableListDelta v
+newtype ObservableListDelta v
   = ObservableListUpdate (Seq (ObservableListOperation v))
-  | ObservableListReplace (Seq v)
   deriving Generic
 
 instance Binary v => Binary (ObservableListDelta v)
@@ -30,18 +29,14 @@ instance Binary v => Binary (ObservableListOperation v)
 instance ObservableContainer Seq v where
   type ContainerConstraint canLoad exceptions Seq v a = IsObservableList canLoad exceptions v a
   type Delta Seq = ObservableListDelta
-  type EvaluatedDelta Seq v = (ObservableListDelta v, Seq v)
   type Key Seq v = Int
   type DeltaContext Seq v = Word32
   applyDelta _delta _state = undefined
   mergeDelta _old _new = undefined
   updateDeltaContext = undefined
-  toInitialDelta = undefined
   toInitialDeltaContext = undefined
-  initializeFromDelta = undefined
   toDelta = fst
-  toEvaluatedDelta = (,)
-  toEvaluatedContent = snd
+  contentFromEvaluatedDelta = snd
 
 instance ContainerCount Seq where
   containerCount# x = fromIntegral (length x)

@@ -47,24 +47,20 @@ import Quasar.Observable.List
 import Quasar.Prelude hiding (lookup)
 
 
-data ObservableMapDelta k v
-  = ObservableMapUpdate (Map k (ObservableMapOperation v))
-  | ObservableMapReplace (Map k v)
+newtype ObservableMapDelta k v
+  = ObservableMapDelta (Map k (ObservableMapOperation v))
   deriving Generic
 
 instance (Binary k, Binary v) => Binary (ObservableMapDelta k v)
 
 instance Functor (ObservableMapDelta k) where
-  fmap f (ObservableMapUpdate x) = ObservableMapUpdate (f <<$>> x)
-  fmap f (ObservableMapReplace x) = ObservableMapReplace (f <$> x)
+  fmap f (ObservableMapDelta x) = ObservableMapDelta (f <<$>> x)
 
 instance Foldable (ObservableMapDelta k) where
-  foldMap f (ObservableMapUpdate x) = foldMap (foldMap f) x
-  foldMap f (ObservableMapReplace x) = foldMap f x
+  foldMap f (ObservableMapDelta x) = foldMap (foldMap f) x
 
 instance Traversable (ObservableMapDelta k) where
-  traverse f (ObservableMapUpdate ops) = ObservableMapUpdate <$> traverse (traverse f) ops
-  traverse f (ObservableMapReplace new) = ObservableMapReplace <$> traverse f new
+  traverse f (ObservableMapDelta ops) = ObservableMapDelta <$> traverse (traverse f) ops
 
 data ObservableMapOperation v = ObservableMapInsert v | ObservableMapDelete
   deriving Generic
@@ -99,20 +95,11 @@ applyObservableMapOperations ops old =
 instance Ord k => ObservableContainer (Map k) v where
   type ContainerConstraint canLoad exceptions (Map k) v a = IsObservableMap canLoad exceptions k v a
   type Delta (Map k) = (ObservableMapDelta k)
-  type EvaluatedDelta (Map k) v = (ObservableMapDelta k v, Map k v)
   type Key (Map k) v = k
-  applyDelta (ObservableMapReplace new) _ = new
-  applyDelta (ObservableMapUpdate ops) old = applyObservableMapOperations ops old
-  mergeDelta _ new@ObservableMapReplace{} = ((), new)
-  mergeDelta (_, ObservableMapUpdate old) (ObservableMapUpdate new) = ((), ObservableMapUpdate (Map.union new old))
-  mergeDelta (_, ObservableMapReplace old) (ObservableMapUpdate new) = ((), ObservableMapReplace (applyObservableMapOperations new old))
-  toInitialDelta = ObservableMapReplace
-  initializeFromDelta (ObservableMapReplace new) = new
-  -- TODO replace with safe implementation once the module is tested
-  initializeFromDelta (ObservableMapUpdate _) = error "ObservableMap.initializeFromDelta: expected ObservableMapReplace"
+  applyDelta (ObservableMapDelta ops) old = Just (applyObservableMapOperations ops old)
+  mergeDelta (_, ObservableMapDelta old) (ObservableMapDelta new) = Just ((), ObservableMapDelta (Map.union new old))
   toDelta = fst
-  toEvaluatedDelta = (,)
-  toEvaluatedContent = snd
+  contentFromEvaluatedDelta = snd
 
 instance ContainerCount (Map k) where
   containerCount# x = fromIntegral (Map.size x)
@@ -221,11 +208,10 @@ instance ObservableFunctor (Map k) => IsObservableCore canLoad exceptions (Map k
 
   attachObserver# (MappedObservableMap fn observable) callback =
     mapObservableState (mapObservableResult (Map.mapWithKey fn)) <<$>> attachObserver# observable \change ->
-      callback (mapObservableChangeDelta (mapObservableResultDelta (mapDeltaWithKey fn)) change)
+      callback (mapObservableChange (mapObservableResult (Map.mapWithKey fn)) (mapDeltaWithKey fn) change)
     where
       mapDeltaWithKey :: (k -> va -> v) -> ObservableMapDelta k va -> ObservableMapDelta k v
-      mapDeltaWithKey f (ObservableMapUpdate ops) = ObservableMapUpdate (Map.mapWithKey (mapOperationWithKey f) ops)
-      mapDeltaWithKey f (ObservableMapReplace new) = ObservableMapReplace (Map.mapWithKey f new)
+      mapDeltaWithKey f (ObservableMapDelta ops) = ObservableMapDelta (Map.mapWithKey (mapOperationWithKey f) ops)
       mapOperationWithKey :: (k -> va -> v) -> k -> ObservableMapOperation va -> ObservableMapOperation v
       mapOperationWithKey f key (ObservableMapInsert x) = ObservableMapInsert (f key x)
       mapOperationWithKey _f _key ObservableMapDelete = ObservableMapDelete
@@ -263,17 +249,17 @@ instance Ord k => IsObservableCore canLoad exceptions (Map k) v (ObservableMapUn
     where
       fullMergeFn :: Map k v -> Map k v -> Map k v
       fullMergeFn = Map.unionWithKey fn
-      deltaFn :: (k -> v -> v -> v) -> ObservableMapDelta k v -> Map k v -> Map k v -> Maybe (ObservableMapDelta k v)
-      deltaFn f (ObservableMapUpdate ops) _prev other =
-        Just (ObservableMapUpdate (Map.fromList ((\(k, v) -> (k, helper k v)) <$> Map.toList ops)))
+      deltaFn :: (k -> v -> v -> v) -> ObservableUpdate (Map k) v -> Map k v -> Map k v -> Maybe (ObservableUpdate (Map k) v)
+      deltaFn f (ObservableUpdateDelta (ObservableMapDelta ops)) _prev other =
+        Just (ObservableUpdateDelta (ObservableMapDelta (Map.fromList ((\(k, v) -> (k, helper k v)) <$> Map.toList ops))))
         where
           helper :: k -> ObservableMapOperation v -> ObservableMapOperation v
           helper key (ObservableMapInsert x) = ObservableMapInsert do
             maybe x (f key x) (Map.lookup key other)
           helper key ObservableMapDelete =
             maybe ObservableMapDelete ObservableMapInsert (Map.lookup key other)
-      deltaFn f (ObservableMapReplace new) prev other =
-        deltaFn f (ObservableMapUpdate (Map.union (ObservableMapInsert <$> new) (ObservableMapDelete <$ prev))) prev other
+      deltaFn f (ObservableUpdateReplace new) prev other =
+        deltaFn f (ObservableUpdateDelta (ObservableMapDelta (Map.union (ObservableMapInsert <$> new) (ObservableMapDelete <$ prev)))) prev other
 
   isEmpty# (ObservableMapUnionWith _ x y) = liftA2 (||) (isEmpty# x) (isEmpty# y)
 

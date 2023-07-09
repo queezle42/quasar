@@ -15,9 +15,8 @@ import Quasar.Observable.List
 import Quasar.Prelude
 
 
-data ObservableSetDelta v
-  = ObservableSetUpdate (Set (ObservableSetOperation v))
-  | ObservableSetReplace (Set v)
+newtype ObservableSetDelta v
+  = ObservableSetDelta (Set (ObservableSetOperation v))
 
 data ObservableSetOperation v = ObservableSetInsert v | ObservableSetDelete v
   deriving (Eq, Ord)
@@ -32,20 +31,11 @@ applyObservableSetOperations ops old = Set.foldr applyObservableSetOperation old
 instance Ord v => ObservableContainer Set v where
   type ContainerConstraint _canLoad _exceptions Set v _a = ()
   type Delta Set = ObservableSetDelta
-  type EvaluatedDelta Set v = (ObservableSetDelta v, Set v)
   type Key Set v = v
-  applyDelta (ObservableSetReplace new) _ = new
-  applyDelta (ObservableSetUpdate ops) old = applyObservableSetOperations ops old
-  mergeDelta _ new@ObservableSetReplace{} = ((), new)
-  mergeDelta (_, ObservableSetUpdate old) (ObservableSetUpdate new) = ((), ObservableSetUpdate (Set.union new old))
-  mergeDelta (_, ObservableSetReplace old) (ObservableSetUpdate new) = ((), ObservableSetReplace (applyObservableSetOperations new old))
-  toInitialDelta = ObservableSetReplace
-  initializeFromDelta (ObservableSetReplace new) = new
-  -- TODO replace with safe implementation once the module is tested
-  initializeFromDelta _ = error "ObservableSet.initializeFromDelta: expected ObservableSetReplace"
+  applyDelta (ObservableSetDelta ops) old = Just (applyObservableSetOperations ops old)
+  mergeDelta (_, ObservableSetDelta old) (ObservableSetDelta new) = Just ((), ObservableSetDelta (Set.union new old))
   toDelta = fst
-  toEvaluatedDelta = (,)
-  toEvaluatedContent = snd
+  contentFromEvaluatedDelta = snd
 
 instance ContainerCount Set where
   containerCount# x = fromIntegral (Set.size x)

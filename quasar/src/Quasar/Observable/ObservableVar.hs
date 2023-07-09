@@ -51,10 +51,10 @@ newObservableVarIO x = liftIO $ ObservableVar <$> newTVarIO (ObserverStateLiveOk
 newLoadingObservableVarIO :: forall exceptions c v m. MonadIO m => m (ObservableVar Load exceptions c v)
 newLoadingObservableVarIO = liftIO $ ObservableVar <$> newTVarIO (ObserverStateLoadingCleared @(ObservableResult exceptions c) @v) <*> newCallbackRegistryIO
 
-writeObservableVar :: (ObservableContainer c v, MonadSTMc NoRetry '[] m) => ObservableVar canLoad exceptions c v -> c v -> m ()
+writeObservableVar :: (MonadSTMc NoRetry '[] m) => ObservableVar canLoad exceptions c v -> c v -> m ()
 writeObservableVar (ObservableVar var registry) value = liftSTMc $ do
   writeTVar var (ObserverStateLiveOk value)
-  callCallbacks registry (EvaluatedObservableChangeLiveDeltaOk (toInitialEvaluatedDelta value))
+  callCallbacks registry (EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace (ObservableResultOk value)))
 
 readObservableVar
   :: MonadSTMc NoRetry '[] m
@@ -74,11 +74,11 @@ readObservableVarIO (ObservableVar var _) = liftIO do
     ObserverStateLiveOk result -> pure result
     ObserverStateLiveEx ex -> absurdEx ex
 
-modifyObservableVar :: (MonadSTMc NoRetry '[] m, ObservableContainer c v) => ObservableVar NoLoad '[] c v -> (c v -> c v) -> m ()
+modifyObservableVar :: MonadSTMc NoRetry '[] m => ObservableVar NoLoad '[] c v -> (c v -> c v) -> m ()
 modifyObservableVar var f = stateObservableVar var (((), ) . f)
 
 stateObservableVar
-  :: (MonadSTMc NoRetry '[] m, ObservableContainer c v)
+  :: MonadSTMc NoRetry '[] m
   => ObservableVar NoLoad '[] c v
   -> (c v -> (a, c v))
   -> m a
