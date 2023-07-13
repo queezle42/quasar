@@ -82,6 +82,8 @@ module Quasar.Observable.Core (
   ToObservable,
   toObservable,
   constObservable,
+  Void1,
+  absurd1,
 ) where
 
 import Control.Applicative
@@ -97,6 +99,7 @@ import Quasar.Resources.Disposer
 import Quasar.Utils.Fix
 import Data.Void (absurd)
 import Data.Bifunctor (first)
+import Data.Binary (Binary)
 
 -- * Generalized observables
 
@@ -245,15 +248,15 @@ updateDeltaContext' ctx (ObservableUpdateDelta delta) = updateDeltaContext @c ct
 
 instance ObservableContainer Identity v where
   type ContainerConstraint _canLoad _exceptions Identity v _a = ()
-  type Delta Identity = Const Void
+  type Delta Identity = Void1
   type EvaluatedDelta Identity v = Void
   type Key Identity v = ()
-  applyDelta new _ = absurd (getConst new)
   mergeDelta _ new = Just ((), new)
+  applyDelta = absurd1
   updateDeltaContext _ _ = ()
   toInitialDeltaContext _ = ()
   toDelta = absurd
-  toEvaluatedDelta = absurd . getConst
+  toEvaluatedDelta = absurd1
   contentFromEvaluatedDelta = absurd
 
 class ContainerCount c where
@@ -263,6 +266,25 @@ class ContainerCount c where
 instance ContainerCount Identity where
   containerCount# _ = 1
   containerIsEmpty# _ = False
+
+type Void1 :: Type -> Type
+data Void1 a
+  deriving Generic
+
+absurd1 :: Void1 a -> b
+absurd1 = \case {}
+
+instance Functor Void1 where
+  fmap _ = absurd1
+
+instance Foldable Void1 where
+  foldMap _ = absurd1
+  foldr _ _ = absurd1
+
+instance Traversable Void1 where
+  traverse _ = absurd1
+
+instance Binary (Void1 a)
 
 
 type ObservableFunctor c = (Functor c, Functor (Delta c), forall v. ObservableContainer c v)
