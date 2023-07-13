@@ -33,9 +33,9 @@ module Quasar.Observable.Core (
   Loading(..),
   ObservableChange(..),
   mapObservableChange,
-  ObservableUpdate(..),
+  ObservableUpdate(.., ObservableUpdateOk, ObservableUpdateThrow),
   EvaluatedObservableChange(..),
-  EvaluatedUpdate(..),
+  EvaluatedUpdate(.., EvaluatedUpdateOk, EvaluatedUpdateThrow),
   ObservableState(.., ObservableStateLiveOk, ObservableStateLiveEx),
   mapObservableState,
   mergeObservableState,
@@ -294,6 +294,21 @@ data ObservableUpdate c v where
   ObservableUpdateReplace :: c v -> ObservableUpdate c v
   ObservableUpdateDelta :: Delta c v -> ObservableUpdate c v
 
+pattern ObservableUpdateOk :: ObservableUpdate c v -> ObservableUpdate (ObservableResult exceptions c) v
+pattern ObservableUpdateOk update <- (observableUpdateIsOk -> Just update) where
+  ObservableUpdateOk (ObservableUpdateReplace x) = ObservableUpdateReplace (ObservableResultOk x)
+  ObservableUpdateOk (ObservableUpdateDelta delta) = ObservableUpdateDelta delta
+
+pattern ObservableUpdateThrow :: Ex exceptions -> ObservableUpdate (ObservableResult exceptions c) v
+pattern ObservableUpdateThrow ex = (ObservableUpdateReplace (ObservableResultEx ex))
+
+observableUpdateIsOk :: ObservableUpdate (ObservableResult exceptions c) v -> Maybe (ObservableUpdate c v)
+observableUpdateIsOk (ObservableUpdateReplace (ObservableResultOk x)) = Just (ObservableUpdateReplace x)
+observableUpdateIsOk (ObservableUpdateReplace (ObservableResultEx _)) = Nothing
+observableUpdateIsOk (ObservableUpdateDelta delta) = Just (ObservableUpdateDelta delta)
+
+{-# COMPLETE ObservableUpdateOk, ObservableUpdateThrow #-}
+
 instance (Functor c, Functor (Delta c)) => Functor (ObservableUpdate c) where
   fmap fn (ObservableUpdateReplace x) = ObservableUpdateReplace (fn <$> x)
   fmap fn (ObservableUpdateDelta delta) = ObservableUpdateDelta (fn <$> delta)
@@ -311,13 +326,13 @@ data EvaluatedUpdate c v where
   EvaluatedUpdateReplace :: c v -> EvaluatedUpdate c v
   EvaluatedUpdateDelta :: EvaluatedDelta c v -> EvaluatedUpdate c v
 
-pattern EvaluatedUpdateThrow :: Ex exceptions -> EvaluatedUpdate (ObservableResult exceptions c) v
-pattern EvaluatedUpdateThrow ex = (EvaluatedUpdateReplace (ObservableResultEx ex))
-
 pattern EvaluatedUpdateOk :: EvaluatedUpdate c v -> EvaluatedUpdate (ObservableResult exceptions c) v
 pattern EvaluatedUpdateOk update <- (evaluatedUpdateIsOk -> Just update) where
   EvaluatedUpdateOk (EvaluatedUpdateReplace x) = EvaluatedUpdateReplace (ObservableResultOk x)
   EvaluatedUpdateOk (EvaluatedUpdateDelta delta) = EvaluatedUpdateDelta delta
+
+pattern EvaluatedUpdateThrow :: Ex exceptions -> EvaluatedUpdate (ObservableResult exceptions c) v
+pattern EvaluatedUpdateThrow ex = (EvaluatedUpdateReplace (ObservableResultEx ex))
 
 evaluatedUpdateIsOk :: EvaluatedUpdate (ObservableResult exceptions c) v -> Maybe (EvaluatedUpdate c v)
 evaluatedUpdateIsOk (EvaluatedUpdateReplace (ObservableResultOk x)) = Just (EvaluatedUpdateReplace x)
