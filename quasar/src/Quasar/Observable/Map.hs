@@ -97,7 +97,7 @@ instance Ord k => ObservableContainer (Map k) v where
   type Delta (Map k) = (ObservableMapDelta k)
   type Key (Map k) v = k
   applyDelta (ObservableMapDelta ops) old = Just (applyObservableMapOperations ops old)
-  mergeDelta (_, ObservableMapDelta old) (ObservableMapDelta new) = Just ((), ObservableMapDelta (Map.union new old))
+  mergeDelta (_, ObservableMapDelta old) (ObservableMapDelta new) = ((), ObservableMapDelta (Map.union new old))
   toDelta = fst
   contentFromEvaluatedDelta = snd
 

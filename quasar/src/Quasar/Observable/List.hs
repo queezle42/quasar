@@ -30,7 +30,7 @@ instance ObservableContainer Seq v where
   type ContainerConstraint canLoad exceptions Seq v a = IsObservableList canLoad exceptions v a
   type Delta Seq = ObservableListDelta
   type Key Seq v = Int
-  type DeltaContext Seq v = Word32
+  type DeltaContext Seq = Word32
   applyDelta _delta _state = undefined
   mergeDelta _old _new = undefined
   updateDeltaContext = undefined

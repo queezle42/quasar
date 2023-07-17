@@ -33,7 +33,7 @@ instance Ord v => ObservableContainer Set v where
   type Delta Set = ObservableSetDelta
   type Key Set v = v
   applyDelta (ObservableSetDelta ops) old = Just (applyObservableSetOperations ops old)
-  mergeDelta (_, ObservableSetDelta old) (ObservableSetDelta new) = Just ((), ObservableSetDelta (Set.union new old))
+  mergeDelta (_, ObservableSetDelta old) (ObservableSetDelta new) = ((), ObservableSetDelta (Set.union new old))
   toDelta = fst
   contentFromEvaluatedDelta = snd
 

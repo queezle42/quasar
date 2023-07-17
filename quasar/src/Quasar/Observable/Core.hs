@@ -34,6 +34,7 @@ module Quasar.Observable.Core (
   ObservableChange(..),
   mapObservableChange,
   ObservableUpdate(.., ObservableUpdateOk, ObservableUpdateThrow),
+  updateDeltaContext',
   EvaluatedObservableChange(..),
   EvaluatedUpdate(.., EvaluatedUpdateOk, EvaluatedUpdateThrow),
   ObservableState(.., ObservableStateLiveOk, ObservableStateLiveEx),
@@ -42,6 +43,7 @@ module Quasar.Observable.Core (
   ObserverState(.., ObserverStateLoading, ObserverStateLiveOk, ObserverStateLiveEx),
   createObserverState,
   toObservableState,
+  applyObservableUpdate,
   applyObservableChange,
   applyEvaluatedObservableChange,
   toInitialChange,
@@ -215,18 +217,19 @@ class ObservableContainer c v where
   type instance EvaluatedDelta c v = (Delta c v, c v)
   type Key c v
   -- | Enough context to merge deltas.
-  type DeltaContext c v
-  type instance DeltaContext _c _v = ()
+  type DeltaContext c
+  type instance DeltaContext _c = ()
 
   applyDelta :: Delta c v -> c v -> Maybe (c v)
-  mergeDelta :: (DeltaContext c v, Delta c v) -> Delta c v -> Maybe (DeltaContext c v, Delta c v)
+  mergeDelta :: (DeltaContext c, Delta c v) -> Delta c v -> (DeltaContext c, Delta c v)
 
-  updateDeltaContext :: DeltaContext c v -> Delta c v -> DeltaContext c v
-  default updateDeltaContext :: DeltaContext c v ~ () => DeltaContext c v -> Delta c v -> DeltaContext c v
+
+  updateDeltaContext :: DeltaContext c -> Delta c v -> DeltaContext c
+  default updateDeltaContext :: DeltaContext c ~ () => DeltaContext c -> Delta c v -> DeltaContext c
   updateDeltaContext _ _ = ()
 
-  toInitialDeltaContext :: c v -> DeltaContext c v
-  default toInitialDeltaContext :: DeltaContext c v ~ () => c v -> DeltaContext c v
+  toInitialDeltaContext :: c v -> DeltaContext c
+  default toInitialDeltaContext :: DeltaContext c ~ () => c v -> DeltaContext c
   toInitialDeltaContext _ = ()
 
   toDelta :: EvaluatedDelta c v -> Delta c v
@@ -237,12 +240,15 @@ class ObservableContainer c v where
 
   contentFromEvaluatedDelta :: EvaluatedDelta c v -> c v
 
-mergeUpdate :: forall c v. ObservableContainer c v => (DeltaContext c v, ObservableUpdate c v) -> ObservableUpdate c v -> Maybe (DeltaContext c v, ObservableUpdate c v)
-mergeUpdate _ x@(ObservableUpdateReplace content) = Just (toInitialDeltaContext content, x)
-mergeUpdate (_, ObservableUpdateReplace content) (ObservableUpdateDelta delta) = (toInitialDeltaContext content,) . ObservableUpdateReplace <$> applyDelta @c delta content
-mergeUpdate (ctx, ObservableUpdateDelta old) (ObservableUpdateDelta new) = ObservableUpdateDelta <<$>> mergeDelta @c (ctx, old) new
+mergeUpdate :: forall c v. ObservableContainer c v => (DeltaContext c, ObservableUpdate c v) -> ObservableUpdate c v -> (DeltaContext c, ObservableUpdate c v)
+mergeUpdate _ x@(ObservableUpdateReplace content) = (toInitialDeltaContext content, x)
+mergeUpdate old@(_, ObservableUpdateReplace content) (ObservableUpdateDelta delta) =
+  case applyDelta @c delta content of
+    Just new -> (toInitialDeltaContext new, ObservableUpdateReplace new)
+    Nothing -> old
+mergeUpdate (ctx, ObservableUpdateDelta old) (ObservableUpdateDelta new) = ObservableUpdateDelta <$> mergeDelta @c (ctx, old) new
 
-updateDeltaContext' :: forall c v. ObservableContainer c v => DeltaContext c v -> ObservableUpdate c v -> DeltaContext c v
+updateDeltaContext' :: forall c v. ObservableContainer c v => DeltaContext c -> ObservableUpdate c v -> DeltaContext c
 updateDeltaContext' _ (ObservableUpdateReplace content) = toInitialDeltaContext content
 updateDeltaContext' ctx (ObservableUpdateDelta delta) = updateDeltaContext @c ctx delta
 
@@ -251,8 +257,8 @@ instance ObservableContainer Identity v where
   type Delta Identity = Void1
   type EvaluatedDelta Identity v = Void
   type Key Identity v = ()
-  mergeDelta _ new = Just ((), new)
   applyDelta = absurd1
+  mergeDelta _ new = ((), new)
   updateDeltaContext _ _ = ()
   toInitialDeltaContext _ = ()
   toDelta = absurd
@@ -493,6 +499,14 @@ instance Semigroup (Loading canLoad) where
   Loading <> _ = Loading
   _ <> Loading = Loading
 
+applyObservableUpdate
+  :: ObservableContainer c v
+  => ObservableUpdate c v
+  -> c v
+  -> Maybe (c v)
+applyObservableUpdate (ObservableUpdateReplace new) _ = Just new
+applyObservableUpdate (ObservableUpdateDelta delta) old = applyDelta delta old
+
 applyObservableChange
   :: ObservableContainer c v
   => ObservableChange canLoad c v
@@ -577,7 +591,7 @@ fromMaybeL _ (JustL x) = x
 type PendingChange :: CanLoad -> (Type -> Type) -> Type -> Type
 data PendingChange canLoad c v where
   PendingChangeLoadingClear :: PendingChange Load c v
-  PendingChangeAlter :: Loading canLoad -> DeltaContext c v -> Maybe (ObservableUpdate c v) -> PendingChange canLoad c v
+  PendingChangeAlter :: Loading canLoad -> DeltaContext c -> Maybe (ObservableUpdate c v) -> PendingChange canLoad c v
 
 type LastChange :: CanLoad -> (Type -> Type) -> Type -> Type
 data LastChange canLoad c v where
@@ -598,9 +612,8 @@ updatePendingChange (ObservableChangeLiveUpdate (ObservableUpdateReplace content
   PendingChangeAlter Live (toInitialDeltaContext content) (Just (ObservableUpdateReplace content))
 updatePendingChange (ObservableChangeLiveUpdate (ObservableUpdateDelta _delta)) PendingChangeLoadingClear = PendingChangeLoadingClear
 updatePendingChange (ObservableChangeLiveUpdate update) prev@(PendingChangeAlter _loading ctx (Just prevUpdate)) =
-  case mergeUpdate @c (ctx, prevUpdate) update of
-    Just (newCtx, newDelta) -> PendingChangeAlter Live newCtx (Just newDelta)
-    Nothing -> prev
+  let (newCtx, newDelta) = mergeUpdate @c (ctx, prevUpdate) update
+  in PendingChangeAlter Live newCtx (Just newDelta)
 updatePendingChange (ObservableChangeLiveUpdate update) (PendingChangeAlter _loading ctx Nothing) =
   PendingChangeAlter Live (updateDeltaContext' @c ctx update) (Just update)
 
@@ -1042,14 +1055,14 @@ instance ObservableContainer c v => ObservableContainer (ObservableResult except
   type Delta (ObservableResult exceptions c) = Delta c
   type EvaluatedDelta (ObservableResult exceptions c) v = EvaluatedDelta c v
   type Key (ObservableResult exceptions c) v = Key c v
-  type instance DeltaContext (ObservableResult exceptions c) v = Maybe (DeltaContext c v)
+  type instance DeltaContext (ObservableResult exceptions c) = Maybe (DeltaContext c)
   applyDelta delta (ObservableResultOk content) = ObservableResultOk <$> applyDelta @c delta content
   -- NOTE This rejects deltas that are applied to an exception state. Beware
   -- that regardeless of this fact this still does count as a valid delta
   -- application, so it won't prevent the state transition from Loading to Live.
   applyDelta _delta (ObservableResultEx _ex) = Nothing
-  mergeDelta (Just resultCtx, old) new = first Just <$> mergeDelta @c (resultCtx, old) new
-  mergeDelta (Nothing, _old) _new = Nothing
+  mergeDelta (Just resultCtx, old) new = first Just (mergeDelta @c (resultCtx, old) new)
+  mergeDelta old@(Nothing, _old) _new = old -- Ignore deltas when in 'Ex' state
   updateDeltaContext (Just ctx) delta = Just (updateDeltaContext @c ctx delta)
   updateDeltaContext Nothing _delta = Nothing
   toInitialDeltaContext (ObservableResultOk initial) = Just (toInitialDeltaContext initial)
