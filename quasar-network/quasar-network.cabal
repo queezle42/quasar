@@ -19,6 +19,7 @@ source-repository head
 common shared-properties
   default-extensions:
     AllowAmbiguousTypes
+    ApplicativeDo
     BangPatterns
     BlockArguments
     DataKinds
