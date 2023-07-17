@@ -6,6 +6,8 @@ module Quasar.Prelude
     (>=>),
     (<=<),
     (<|>),
+    (&),
+    (<&>),
     Control.Applicative.liftA2,
     Control.Applicative.Alternative,
     Data.Foldable.fold,
@@ -91,6 +93,8 @@ import Control.Monad qualified
 import Control.Monad.Fix qualified
 import Control.Monad.IO.Class qualified
 import Data.Foldable qualified
+import Data.Function ((&))
+import Data.Functor ((<&>))
 import Data.Functor.Identity qualified
 import Data.Hashable qualified
 import Data.Int qualified

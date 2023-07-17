@@ -17,6 +17,7 @@ import Data.Hashable qualified as Hashable
 import Data.List qualified as List
 import Data.Maybe qualified as Maybe
 import GHC.Stack.Types qualified
+import Data.Functor ((<&>))
 
 io :: IO a -> IO a
 io = id
@@ -77,6 +78,10 @@ duplicates = HS.toList . duplicates' HS.empty
 infixl 4 <<$>>
 (<<$>>) :: (Functor f, Functor g) => (a -> b) -> f (g a) -> f (g b)
 (<<$>>) = fmap . fmap
+
+infixl 1 <<&>>
+(<<&>>) :: (Functor f, Functor g) => f (g a) -> (a -> b) -> f (g b)
+(<<&>>) = flip (<<$>>)
 
 infixl 4 <<*>>
 (<<*>>) :: (Applicative f, Applicative g) => f (g (a -> b)) -> f (g a) -> f (g b)
