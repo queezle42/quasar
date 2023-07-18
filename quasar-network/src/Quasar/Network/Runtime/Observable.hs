@@ -27,7 +27,6 @@ import Quasar.Observable.Map
 import Quasar.Observable.ObservableVar
 import Quasar.Prelude
 import Quasar.Resources
-import Data.Bifunctor (first)
 
 
 -- * ObservableT instance
@@ -95,22 +94,8 @@ traverseUpdate fn (ObservableUpdateDelta delta) (Just context) = do
     (ObservableUpdateDelta newDelta, updateDeltaContext @c context delta)
 traverseUpdate _fn (ObservableUpdateDelta _delta) Nothing = pure Nothing
 
-selectRemovedUpdate :: NetworkObservableContainer c => ObservableUpdate c v -> c a -> [a]
-selectRemovedUpdate (ObservableUpdateReplace _new) old = toList old
-selectRemovedUpdate (ObservableUpdateDelta delta) old = selectRemoved delta old
-
 
 -- * Implementation
-
-provideUpdate
-  :: forall c v. (NetworkObject v, NetworkObservableContainer c)
-  => SendMessageContext
-  -> ObservableUpdate c v
-  -> Maybe (DeltaContext c)
-  -> STMc NoRetry '[] (Maybe (ObservableUpdate c Disposer, ObservableUpdate c (), DeltaContext c))
-provideUpdate context update ctx = do
-  (\(disposerDelta, newCtx) -> (disposerDelta, void disposerDelta, newCtx)) <<$>> traverseUpdate (provideObjectAsDisposableMessagePart context) update ctx
-
 
 
 newtype ObservableProxyException = ObservableProxyException SomeException
@@ -221,7 +206,10 @@ sendObservableReference observable channel = do
                 Just (packedChange, removedObjects) -> do
                   modifyTVar ref.pendingDisposal (Just . (<> removedObjects) . fromMaybe mempty)
                   pure packedChange
-                Nothing -> undefined
+                Nothing ->
+                  -- TODO This might be an unreachable code path, but we should
+                  -- check properly and maybe rearchitect this.
+                  undefined
 
     provideAndPackChange
       :: ObservableReference c v
@@ -238,20 +226,28 @@ sendObservableReference observable channel = do
               pure (Just (PackedChangeLoadingClear, fold activeDisposers))
         ObservableChangeLoadingUnchanged -> pure (Just (PackedChangeLoadingUnchanged, mempty))
         ObservableChangeLiveUnchanged -> pure (Just (PackedChangeLiveUnchanged, mempty))
-        ObservableChangeLiveUpdate (ObservableUpdateOk update) -> do
-          (ctx, activeDisposers) <- maybe (Nothing, undefined) (first Just) <$> readTVar ref.activeObjects
-          provideUpdate @c context update ctx >>= \case
+        ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk content)) -> do
+          previousDisposers <- maybe mempty (fold . snd) <$> readTVar ref.activeObjects
+          newContent <- traverse (provideObjectAsDisposableMessagePart context) content
+          writeTVar ref.activeObjects (Just (toInitialDeltaContext newContent, newContent))
+          pure (Just (PackedChangeLiveUpdateReplace (void newContent), previousDisposers))
+        ObservableChangeLiveUpdate (ObservableUpdateDelta delta) -> do
+          readTVar ref.activeObjects >>= \case
+            -- Received a delta in a 'Cleared' or exception state is a no-op.
             Nothing -> pure Nothing
-            Just (activeObjectsUpdate, unitUpdate, newCtx) -> do
-              let
-                removed = fold (selectRemovedUpdate @c update activeDisposers)
-                newActiveDisposers = applyObservableUpdate activeObjectsUpdate activeDisposers
-                packedUnitChange = case unitUpdate of
-                  (ObservableUpdateReplace unitContainer) -> PackedChangeLiveUpdateReplace unitContainer
-                  (ObservableUpdateDelta unitDelta) -> PackedChangeLiveUpdateDelta unitDelta
-              mapM_ (\x -> writeTVar ref.activeObjects (Just (newCtx, x))) newActiveDisposers
-              pure (Just (packedUnitChange, removed))
-        ObservableChangeLiveUpdate (ObservableUpdateThrow ex) -> do
+            Just (ctx, activeDisposers) -> do
+              traverseDelta @c (provideObjectAsDisposableMessagePart context) delta ctx >>= \case
+                -- `traverseDelta` decided the delta has no effect.
+                Nothing -> pure Nothing
+                Just newDelta -> do
+                  let
+                    removed = mconcat (selectRemoved newDelta activeDisposers)
+                    newActiveDisposers = fromMaybe activeDisposers  (applyDelta newDelta activeDisposers)
+                    packedUnitChange = PackedChangeLiveUpdateDelta (void newDelta)
+                    newCtx = updateDeltaContext @c ctx newDelta
+                  writeTVar ref.activeObjects (Just (newCtx, newActiveDisposers))
+                  pure (Just (packedUnitChange, removed))
+        ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx ex)) -> do
           readTVar ref.activeObjects >>= \case
             Nothing -> pure Nothing
             Just (_ctx, activeDisposers) -> do
