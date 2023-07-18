@@ -207,9 +207,8 @@ sendObservableReference observable channel = do
                   modifyTVar ref.pendingDisposal (Just . (<> removedObjects) . fromMaybe mempty)
                   pure packedChange
                 Nothing ->
-                  -- TODO This might be an unreachable code path, but we should
-                  -- check properly and maybe rearchitect this.
-                  undefined
+                  -- This should be an unreachable code path.
+                  pure PackedChangeLoadingUnchanged
 
     provideAndPackChange
       :: ObservableReference c v
