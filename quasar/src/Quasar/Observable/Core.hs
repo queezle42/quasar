@@ -593,13 +593,13 @@ data PendingChange canLoad c v where
   PendingChangeLoadingClear :: PendingChange Load c v
   PendingChangeAlter :: Loading canLoad -> DeltaContext c -> Maybe (ObservableUpdate c v) -> PendingChange canLoad c v
 
-type LastChange :: CanLoad -> (Type -> Type) -> Type -> Type
-data LastChange canLoad c v where
-  LastChangeLoadingCleared :: LastChange Load c v
-  LastChangeLoading :: LastChange Load c v
-  LastChangeLive :: LastChange canLoad c v
+type LastChange :: CanLoad -> Type
+data LastChange canLoad where
+  LastChangeLoadingCleared :: LastChange Load
+  LastChangeLoading :: LastChange Load
+  LastChangeLive :: LastChange canLoad
 
-instance HasField "loading" (LastChange canLoad c v) (Loading canLoad) where
+instance HasField "loading" (LastChange canLoad) (Loading canLoad) where
   getField LastChangeLoadingCleared = Loading
   getField LastChangeLoading = Loading
   getField LastChangeLive = Live
@@ -621,7 +621,7 @@ initialPendingChange :: ObservableContainer c v => ObservableState canLoad c v -
 initialPendingChange ObservableStateLoading = PendingChangeLoadingClear
 initialPendingChange (ObservableStateLive initial) = PendingChangeAlter Live (toInitialDeltaContext initial) Nothing
 
-initialPendingAndLastChange :: ObservableContainer c v => ObservableState canLoad c v -> (PendingChange canLoad c v, LastChange canLoad c v)
+initialPendingAndLastChange :: ObservableContainer c v => ObservableState canLoad c v -> (PendingChange canLoad c v, LastChange canLoad)
 initialPendingAndLastChange ObservableStateLoading =
   (PendingChangeLoadingClear, LastChangeLoadingCleared)
 initialPendingAndLastChange (ObservableStateLive initial) =
@@ -632,14 +632,14 @@ initialPendingAndLastChange (ObservableStateLive initial) =
 changeFromPending :: forall canLoad c v.
   Loading canLoad
   -> PendingChange canLoad c v
-  -> LastChange canLoad c v
-  -> Maybe (ObservableChange canLoad c v, PendingChange canLoad c v, LastChange canLoad c v)
+  -> LastChange canLoad
+  -> Maybe (ObservableChange canLoad c v, PendingChange canLoad c v, LastChange canLoad)
 changeFromPending loading pendingChange lastChange = do
   (change, newPendingChange) <- changeFromPending' loading pendingChange lastChange
   pure (change, newPendingChange, updateLastChange change lastChange)
   where
 
-    changeFromPending' :: Loading canLoad -> PendingChange canLoad c v -> LastChange canLoad c v -> Maybe (ObservableChange canLoad c v, PendingChange canLoad c v)
+    changeFromPending' :: Loading canLoad -> PendingChange canLoad c v -> LastChange canLoad -> Maybe (ObservableChange canLoad c v, PendingChange canLoad c v)
     -- Category: Changing to loading or already loading
     changeFromPending' _ PendingChangeLoadingClear LastChangeLoadingCleared = Nothing
     changeFromPending' _ PendingChangeLoadingClear _ = Just (ObservableChangeLoadingClear, PendingChangeLoadingClear)
@@ -655,7 +655,7 @@ changeFromPending loading pendingChange lastChange = do
     changeFromPending' Live (PendingChangeAlter Live _ Nothing) LastChangeLive = Nothing
     changeFromPending' Live (PendingChangeAlter Live ctx (Just update)) _ = Just (ObservableChangeLiveUpdate update, PendingChangeAlter Live ctx Nothing)
 
-    updateLastChange :: ObservableChange canLoad c v -> LastChange canLoad c v -> LastChange canLoad c v
+    updateLastChange :: ObservableChange canLoad c v -> LastChange canLoad -> LastChange canLoad
     updateLastChange ObservableChangeLoadingClear _ = LastChangeLoadingCleared
     updateLastChange ObservableChangeLoadingUnchanged LastChangeLoadingCleared = LastChangeLoadingCleared
     updateLastChange ObservableChangeLoadingUnchanged _ = LastChangeLoading
@@ -829,7 +829,7 @@ mergeCallback
   )
   => TVar (ObserverState canLoad ca va)
   -> TVar (ObserverState canLoad cb vb)
-  -> TVar (PendingChange canLoad c v, LastChange canLoad c v)
+  -> TVar (PendingChange canLoad c v, LastChange canLoad)
   -> (ca va -> cb vb -> c v)
   -> (EvaluatedUpdate ca va -> Maybe (ca va) -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v))
   -> (canLoad :~: Load -> ca va -> cb vb -> Maybe (MergeChange canLoad c v))
@@ -877,7 +877,7 @@ mergeCallback ourStateVar otherStateVar mergeStateVar fullMergeFn fn clearFn cal
       writeTVar mergeStateVar (pending, lastChange)
       sendPendingChange loading (pending, lastChange)
 
-    sendPendingChange :: Loading canLoad -> (PendingChange canLoad c v, LastChange canLoad c v) -> STMc NoRetry '[] ()
+    sendPendingChange :: Loading canLoad -> (PendingChange canLoad c v, LastChange canLoad) -> STMc NoRetry '[] ()
     sendPendingChange loading (prevPending, prevLast) = do
       forM_ (changeFromPending loading prevPending prevLast) \(change, pending, last) -> do
         writeTVar mergeStateVar (pending, last)

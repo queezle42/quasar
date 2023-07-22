@@ -130,7 +130,7 @@ data ObservableReference c v = ObservableReference {
   isAttached :: TVar Bool,
   observableDisposer :: TVar TSimpleDisposer,
   pendingChange :: TVar (PendingChange Load (ObservableResult '[SomeException] c) v),
-  lastChange :: TVar (LastChange Load (ObservableResult '[SomeException] c) v),
+  lastChange :: TVar (LastChange Load),
   activeObjects :: TVar (Maybe (DeltaContext c, c Disposer)),
   pendingDisposal :: TVar (Maybe Disposer)
 }
