@@ -928,13 +928,113 @@ attachMonoidMergeObserver fullMergeFn leftFn rightFn fx fy callback =
 
 
 
+data BindState canLoad c v where
+  -- LHS cleared
+  BindStateDetached :: BindState canLoad c v
+  -- RHS attached
+  BindStateAttached
+    :: Loading canLoad -- ^ is LHS loading
+    -> TSimpleDisposer -- ^ RHS disposer
+    -> (PendingChange canLoad c v, LastChange canLoad) -- ^ RHS pending change
+    -> BindState canLoad c v
+
+
 data BindObservable canLoad exceptions va b
   = BindObservable (Observable canLoad exceptions va) (ObservableResult exceptions Identity va -> b)
 
 instance (IsObservableCore canLoad exceptions c v b, ObservableContainer c v) => IsObservableCore canLoad exceptions c v (BindObservable canLoad exceptions va b) where
-  readObservable# (BindObservable fx fn) = undefined
-  attachObserver# (BindObservable fx fn) callback = undefined
+  readObservable# (BindObservable fx fn) = do
+    tryExSTMc (readObservable# fx) >>= \case
+      (Left ex) -> readObservable# (fn (ObservableResultEx ex))
+      (Right x) -> readObservable# (fn (ObservableResultOk x))
 
+  attachObserver# (BindObservable fx fn) callback = do
+    mfixTVar \var -> do
+
+      (fxDisposer, initialX) <- attachObserver# fx \case
+        ObservableChangeLoadingClear -> lhsClear var
+        ObservableChangeLoadingUnchanged -> lhsSetLoading var Loading
+        ObservableChangeLiveUnchanged -> lhsSetLoading var Live
+        ObservableChangeLiveUpdate (ObservableUpdateReplace x) -> lhsReplace var x
+        ObservableChangeLiveUpdate (ObservableUpdateDelta delta) -> absurd1 delta
+
+      (initial, bindState) <- case initialX of
+        ObservableStateLoading -> pure (ObservableStateLoading, BindStateDetached)
+        ObservableStateLive x -> do
+          (disposerY, initialY) <- attachObserver# (fn x) (rhsCallback var)
+          pure (initialY, BindStateAttached Live disposerY (initialPendingAndLastChange initialY))
+
+      rhsDisposer <- newUnmanagedTSimpleDisposer do
+        readTVar var >>= \case
+          (BindStateAttached _ disposer _) -> disposeTSimpleDisposer disposer
+          _ -> pure ()
+      -- This relies on the fact, that the left disposer is detached first to
+      -- prevent race conditions.
+      let disposer = fxDisposer <> rhsDisposer
+
+      pure ((disposer, initial), bindState)
+
+    where
+      lhsClear
+        :: canLoad ~ Load
+        => TVar (BindState canLoad (ObservableResult exceptions c) v)
+        -> STMc NoRetry '[] ()
+      lhsClear var =
+        readTVar var >>= \case
+          (BindStateAttached _ disposer (_, last)) -> do
+            disposeTSimpleDisposer disposer
+            writeTVar var BindStateDetached
+            case last of
+              LastChangeLoadingCleared -> pure () -- was already cleared
+              _ -> callback ObservableChangeLoadingClear
+          BindStateDetached -> pure () -- lhs was already cleared
+
+      lhsSetLoading
+        :: TVar (BindState canLoad (ObservableResult exceptions c) v)
+        -> Loading canLoad
+        -> STMc NoRetry '[] ()
+      lhsSetLoading var loading =
+        readTVar var >>= \case
+          BindStateAttached _oldLoading disposer (pending, last) ->
+            writeAndSendPending var loading disposer pending last
+          _ -> pure () -- LHS is cleared, so this is a no-op
+
+      lhsReplace
+        :: TVar (BindState canLoad (ObservableResult exceptions c) v)
+        -> ObservableResult exceptions Identity va
+        -> STMc NoRetry '[] ()
+      lhsReplace var x = do
+        readTVar var >>= \case
+          BindStateAttached loading disposer (pending, last) -> do
+            disposeTSimpleDisposer disposer
+            (disposerY, initialY) <- attachObserver# (fn x) (rhsCallback var)
+            writeAndSendPending var loading disposerY (initialPendingChange initialY) last
+          _ -> pure () -- Bug. This only happens due to law violations elsewhere: the callback was called after unsubscribing.
+
+      rhsCallback
+        :: TVar (BindState canLoad (ObservableResult exceptions c) v)
+        -> ObservableChange canLoad (ObservableResult exceptions c) v
+        -> STMc NoRetry '[] ()
+      rhsCallback var changeY = do
+        readTVar var >>= \case
+          BindStateAttached loading disposer (pending, last) -> do
+            let newPending = updatePendingChange changeY pending
+            writeAndSendPending var loading disposer newPending last
+          _ -> pure ()
+
+      writeAndSendPending
+        :: TVar (BindState canLoad (ObservableResult exceptions c) v)
+        -> Loading canLoad
+        -> TSimpleDisposer
+        -> PendingChange canLoad (ObservableResult exceptions c) v
+        -> LastChange canLoad
+        -> STMc NoRetry '[] ()
+      writeAndSendPending var loading disposer pending last =
+        case changeFromPending loading pending last of
+          Nothing -> writeTVar var (BindStateAttached loading disposer (pending, last))
+          Just (change, newPending, newLast) -> do
+            writeTVar var (BindStateAttached loading disposer (newPending, newLast))
+            callback change
 
 bindObservableT
   :: (
