@@ -6,6 +6,9 @@ module Quasar.Observable.List (
   toObservableList,
   ObservableListDelta(..),
   ObservableListOperation(..),
+
+  -- * Reexports
+  Seq,
 ) where
 
 import Data.Binary (Binary)
@@ -16,12 +19,15 @@ import Quasar.Prelude
 
 
 newtype ObservableListDelta v
-  = ObservableListUpdate (Seq (ObservableListOperation v))
+  = ObservableListDelta (Seq (ObservableListOperation v))
   deriving Generic
 
 instance Binary v => Binary (ObservableListDelta v)
 
+-- Operations are relative to the end of the previous operation.
 data ObservableListOperation v
+  = ObservableListInsert Word32 (Seq v)
+  | ObservableListDelete Word32 Word32
   deriving Generic
 
 instance Binary v => Binary (ObservableListOperation v)

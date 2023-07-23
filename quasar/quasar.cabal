@@ -114,6 +114,7 @@ test-suite quasar-test
   other-modules:
     Quasar.AsyncSpec
     Quasar.FutureSpec
+    Quasar.Observable.ListSpec
     Quasar.Observable.ObservableHashMapSpec
     Quasar.Observable.ObservablePrioritySpec
     Quasar.Observable.ObservableVarSpec
