@@ -32,12 +32,35 @@ data ObservableListOperation v
 
 instance Binary v => Binary (ObservableListOperation v)
 
+applyOperations
+  :: Seq v
+  -> Seq (ObservableListOperation v)
+  -> Maybe (Seq v)
+applyOperations _x Empty = Nothing
+applyOperations x (ObservableListInsert _off Empty :<| ops) = applyOperations x ops
+applyOperations x (ObservableListDelete _off 0 :<| ops) = applyOperations x ops
+applyOperations x (ObservableListDelete off _ :<| ops)
+  | fromIntegral off >= Seq.length x = applyOperations x ops
+applyOperations x' y' = Just (go x' y')
+  where
+    go
+      :: Seq v
+      -> Seq (ObservableListOperation v)
+      -> Seq v
+    go x Empty = x
+    go x (ObservableListInsert off y :<| ops) =
+      let (pre, post) = Seq.splitAt (fromIntegral off) x
+      in (pre <> y <> go post ops)
+    go x (ObservableListDelete off len :<| ops) =
+      let (pre, post) = Seq.drop (fromIntegral len) <$> Seq.splitAt (fromIntegral off) x
+      in (pre <> go post ops)
+
 instance ObservableContainer Seq v where
   type ContainerConstraint canLoad exceptions Seq v a = IsObservableList canLoad exceptions v a
   type Delta Seq = ObservableListDelta
   type Key Seq v = Int
   type DeltaContext Seq = Word32
-  applyDelta _delta _state = undefined
+  applyDelta (ObservableListDelta ops) state = applyOperations state ops
   mergeDelta _old _new = undefined
   updateDeltaContext = undefined
   toInitialDeltaContext = undefined
