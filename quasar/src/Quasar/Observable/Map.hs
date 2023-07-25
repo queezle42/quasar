@@ -89,6 +89,12 @@ instance Traversable ObservableMapOperation where
   traverse f (ObservableMapInsert x) = ObservableMapInsert <$> f x
   traverse _f ObservableMapDelete = pure ObservableMapDelete
 
+insertDelta :: k -> v -> ObservableMapDelta k v
+insertDelta key value = ObservableMapDelta (Map.singleton key (ObservableMapInsert value))
+
+deleteDelta :: k -> ObservableMapDelta k v
+deleteDelta key = ObservableMapDelta (Map.singleton key ObservableMapDelete)
+
 observableMapOperationToMaybe :: ObservableMapOperation v -> Maybe v
 observableMapOperationToMaybe (ObservableMapInsert x) = Just x
 observableMapOperationToMaybe ObservableMapDelete = Nothing
@@ -320,11 +326,11 @@ newObservableMapVarIO x = liftIO $ ObservableMapVar <$> newObservableVarIO x
 
 insert :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> k -> v -> m ()
 insert (ObservableMapVar var) key value =
-  changeObservableVar var (ObservableChangeLiveUpdate (ObservableUpdateDelta (ObservableMapDelta (Map.singleton key (ObservableMapInsert value)))))
+  changeObservableVar var (ObservableChangeLiveUpdate (ObservableUpdateDelta (insertDelta key value)))
 
 delete :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> k -> m ()
 delete (ObservableMapVar var) key =
-  changeObservableVar var (ObservableChangeLiveUpdate (ObservableUpdateDelta (ObservableMapDelta (Map.singleton key ObservableMapDelete))))
+  changeObservableVar var (ObservableChangeLiveUpdate (ObservableUpdateDelta (deleteDelta key)))
 
 replace :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> Map k v -> m ()
 replace (ObservableMapVar var) new =
