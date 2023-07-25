@@ -41,6 +41,7 @@ module Quasar.Observable.Map (
   newObservableMapVarIO,
   insert,
   delete,
+  lookupDelete,
   replace,
   clear,
 ) where
@@ -331,6 +332,13 @@ insert (ObservableMapVar var) key value =
 delete :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> k -> m ()
 delete (ObservableMapVar var) key =
   changeObservableVar var (ObservableChangeLiveUpdate (ObservableUpdateDelta (deleteDelta key)))
+
+lookupDelete :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> k -> m (Maybe v)
+lookupDelete (ObservableMapVar var) key = do
+  r <- Map.lookup key <$> readObservableVar var
+  when (isJust r) do
+    changeObservableVar var (ObservableChangeLiveUpdate (ObservableUpdateDelta (deleteDelta key)))
+  pure r
 
 replace :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> Map k v -> m ()
 replace (ObservableMapVar var) new =
