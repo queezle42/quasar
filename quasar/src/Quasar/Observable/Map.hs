@@ -35,6 +35,10 @@ module Quasar.Observable.Map (
   -- ** Traversal
   mapWithKey,
 
+  -- ** Filter
+  filter,
+  filterWithKey,
+
   -- * ObservableMapVar
   ObservableMapVar,
   newObservableMapVar,
@@ -53,9 +57,9 @@ import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Quasar.Observable.Core
-import Quasar.Observable.List
+import Quasar.Observable.List (ObservableList)
 import Quasar.Observable.ObservableVar
-import Quasar.Prelude hiding (lookup)
+import Quasar.Prelude hiding (filter, lookup)
 
 
 newtype ObservableMapDelta k v
@@ -316,6 +320,42 @@ union :: Ord k => ObservableMap l e k v -> ObservableMap l e k v -> ObservableMa
 union = unionWithKey \_ x _ -> x
 
 
+-- * Filter
+
+data FilteredObservableMap l e k v = FilteredObservableMap (k -> v -> Bool) (ObservableMap l e k v)
+
+instance IsObservableCore l e (Map k) v (FilteredObservableMap l e k v) where
+  readObservable# (FilteredObservableMap fn fx) =
+    Map.filterWithKey fn <$> readObservable# fx
+
+  attachObserver# (FilteredObservableMap fn fx) callback = do
+    (disposer, initial) <- attachObserver# fx \case
+      ObservableChangeLiveUpdate (ObservableUpdateOk (ObservableUpdateReplace new)) ->
+        callback (ObservableChangeLiveUpdate (ObservableUpdateOk (ObservableUpdateReplace (Map.filterWithKey fn new))))
+      ObservableChangeLiveUpdate (ObservableUpdateOk (ObservableUpdateDelta delta)) ->
+        callback (ObservableChangeLiveUpdate (ObservableUpdateOk (ObservableUpdateDelta (filterDelta delta))))
+      -- Exception, loading, cleared or unchanged
+      other -> callback other
+
+    pure (disposer, mapObservableStateResult (Map.filterWithKey fn) initial)
+    where
+      filterDelta :: ObservableMapDelta k v -> ObservableMapDelta k v
+      filterDelta (ObservableMapDelta ops) = ObservableMapDelta (Map.mapWithKey filterOperation ops)
+      filterOperation :: k -> ObservableMapOperation v -> ObservableMapOperation v
+      filterOperation key ins@(ObservableMapInsert value) =
+        if fn key value then ins else ObservableMapDelete
+      filterOperation _key ObservableMapDelete = ObservableMapDelete
+
+instance IsObservableMap l e k v (FilteredObservableMap l e k v) where
+
+filter :: (v -> Bool) -> ObservableMap l e k v -> ObservableMap l e k v
+filter fn = filterWithKey (const fn)
+
+filterWithKey :: (k -> v -> Bool) -> ObservableMap l e k v -> ObservableMap l e k v
+filterWithKey fn fx = ObservableMap (ObservableT (FilteredObservableMap fn fx))
+
+
+-- * ObservableMapVar
 
 newtype ObservableMapVar k v = ObservableMapVar (ObservableVar NoLoad '[] (Map k) v)
 

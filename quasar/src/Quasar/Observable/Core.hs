@@ -62,6 +62,7 @@ module Quasar.Observable.Core (
   ObservableResult(..),
   unwrapObservableResult,
   mapObservableResult,
+  mapObservableStateResult,
   mergeObservableResult,
 
   -- *** Pending change helpers
