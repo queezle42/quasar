@@ -216,7 +216,6 @@ class ObservableContainer c v where
   type Delta c :: Type -> Type
   type EvaluatedDelta c v :: Type
   type instance EvaluatedDelta c v = (Delta c v, c v)
-  type Key c v
   -- | Enough context to merge deltas.
   type DeltaContext c
   type instance DeltaContext _c = ()
@@ -257,7 +256,6 @@ instance ObservableContainer Identity v where
   type ContainerConstraint _canLoad _exceptions Identity v _a = ()
   type Delta Identity = Void1
   type EvaluatedDelta Identity v = Void
-  type Key Identity v = ()
   applyDelta = absurd1
   mergeDelta _ new = ((), new)
   updateDeltaContext _ _ = ()
@@ -1155,7 +1153,6 @@ instance ObservableContainer c v => ObservableContainer (ObservableResult except
   type ContainerConstraint canLoad exceptions (ObservableResult exceptions c) v a = ContainerConstraint canLoad exceptions c v a
   type Delta (ObservableResult exceptions c) = Delta c
   type EvaluatedDelta (ObservableResult exceptions c) v = EvaluatedDelta c v
-  type Key (ObservableResult exceptions c) v = Key c v
   type instance DeltaContext (ObservableResult exceptions c) = Maybe (DeltaContext c)
   applyDelta delta (ObservableResultOk content) = ObservableResultOk <$> applyDelta @c delta content
   -- NOTE This rejects deltas that are applied to an exception state. Beware

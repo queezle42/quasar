@@ -116,7 +116,6 @@ applyObservableMapOperations ops old =
 instance Ord k => ObservableContainer (Map k) v where
   type ContainerConstraint canLoad exceptions (Map k) v a = IsObservableMap canLoad exceptions k v a
   type Delta (Map k) = (ObservableMapDelta k)
-  type Key (Map k) v = k
   applyDelta (ObservableMapDelta ops) old = Just (applyObservableMapOperations ops old)
   mergeDelta (_, ObservableMapDelta old) (ObservableMapDelta new) = ((), ObservableMapDelta (Map.union new old))
   toDelta = fst

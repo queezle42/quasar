@@ -31,7 +31,6 @@ applyObservableSetOperations ops old = Set.foldr applyObservableSetOperation old
 instance Ord v => ObservableContainer Set v where
   type ContainerConstraint _canLoad _exceptions Set v _a = ()
   type Delta Set = ObservableSetDelta
-  type Key Set v = v
   applyDelta (ObservableSetDelta ops) old = Just (applyObservableSetOperations ops old)
   mergeDelta (_, ObservableSetDelta old) (ObservableSetDelta new) = ((), ObservableSetDelta (Set.union new old))
   toDelta = fst

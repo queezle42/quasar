@@ -58,7 +58,6 @@ applyOperations x' y' = Just (go x' y')
 instance ObservableContainer Seq v where
   type ContainerConstraint canLoad exceptions Seq v a = IsObservableList canLoad exceptions v a
   type Delta Seq = ObservableListDelta
-  type Key Seq v = Int
   type DeltaContext Seq = Word32
   applyDelta (ObservableListDelta ops) state = applyOperations state ops
   mergeDelta _old _new = undefined
