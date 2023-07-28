@@ -358,7 +358,7 @@ type ObservableChange :: CanLoad -> (Type -> Type) -> Type -> Type
 data ObservableChange canLoad c v where
   ObservableChangeLoadingClear :: ObservableChange Load c v
   ObservableChangeLoadingUnchanged :: ObservableChange Load c v
-  ObservableChangeLiveUnchanged :: ObservableChange canLoad c v
+  ObservableChangeLiveUnchanged :: ObservableChange Load c v
   ObservableChangeLiveUpdate :: ObservableUpdate c v -> ObservableChange canLoad c v
 
 instance (Functor c, Functor (Delta c)) => Functor (ObservableChange canLoad c) where
@@ -377,22 +377,6 @@ instance (Traversable c, Traversable (Delta c)) => Traversable (ObservableChange
   traverse _fn ObservableChangeLiveUnchanged = pure ObservableChangeLiveUnchanged
   traverse f (ObservableChangeLiveUpdate update) = ObservableChangeLiveUpdate <$> traverse f update
 
-{-# COMPLETE
-  ObservableChangeLoadingClear,
-  ObservableChangeUnchanged,
-  ObservableChangeLiveUpdate
-  #-}
-
-pattern ObservableChangeUnchanged :: forall canLoad c v. Loading canLoad -> ObservableChange canLoad c v
-pattern ObservableChangeUnchanged loading <- (observableChangeUnchanged -> Just loading) where
-  ObservableChangeUnchanged Loading = ObservableChangeLoadingUnchanged
-  ObservableChangeUnchanged Live = ObservableChangeLiveUnchanged
-
-observableChangeUnchanged :: ObservableChange canLoad c v -> Maybe (Loading canLoad)
-observableChangeUnchanged ObservableChangeLoadingUnchanged = Just Loading
-observableChangeUnchanged ObservableChangeLiveUnchanged = Just Live
-observableChangeUnchanged _ = Nothing
-
 mapObservableChange :: (ca va -> c v) -> (Delta ca va -> Delta c v) -> ObservableChange canLoad ca va -> ObservableChange canLoad c v
 mapObservableChange _ _ ObservableChangeLoadingClear = ObservableChangeLoadingClear
 mapObservableChange _ _ ObservableChangeLoadingUnchanged = ObservableChangeLoadingUnchanged
@@ -406,7 +390,7 @@ type EvaluatedObservableChange :: CanLoad -> (Type -> Type) -> Type -> Type
 data EvaluatedObservableChange canLoad c v where
   EvaluatedObservableChangeLoadingUnchanged :: EvaluatedObservableChange Load c v
   EvaluatedObservableChangeLoadingClear :: EvaluatedObservableChange Load c v
-  EvaluatedObservableChangeLiveUnchanged :: EvaluatedObservableChange canLoad c v
+  EvaluatedObservableChangeLiveUnchanged :: EvaluatedObservableChange Load c v
   EvaluatedObservableChangeLiveUpdate :: EvaluatedUpdate c v -> EvaluatedObservableChange canLoad c v
 
 {-# COMPLETE ObservableStateLiveOk, ObservableStateLiveEx, ObservableStateLoading #-}
@@ -605,8 +589,10 @@ instance HasField "loading" (LastChange canLoad) (Loading canLoad) where
 
 updatePendingChange :: forall canLoad c v. ObservableContainer c v => ObservableChange canLoad c v -> PendingChange canLoad c v -> PendingChange canLoad c v
 updatePendingChange ObservableChangeLoadingClear _ = PendingChangeLoadingClear
-updatePendingChange (ObservableChangeUnchanged _loading) PendingChangeLoadingClear = PendingChangeLoadingClear
-updatePendingChange (ObservableChangeUnchanged loading) (PendingChangeAlter _loading ctx delta) = PendingChangeAlter loading ctx delta
+updatePendingChange ObservableChangeLoadingUnchanged PendingChangeLoadingClear = PendingChangeLoadingClear
+updatePendingChange ObservableChangeLiveUnchanged PendingChangeLoadingClear = PendingChangeLoadingClear
+updatePendingChange ObservableChangeLoadingUnchanged (PendingChangeAlter _loading ctx delta) = PendingChangeAlter Loading ctx delta
+updatePendingChange ObservableChangeLiveUnchanged (PendingChangeAlter _loading ctx delta) = PendingChangeAlter Live ctx delta
 updatePendingChange (ObservableChangeLiveUpdate (ObservableUpdateReplace content)) _ =
   PendingChangeAlter Live (toInitialDeltaContext content) (Just (ObservableUpdateReplace content))
 updatePendingChange (ObservableChangeLiveUpdate (ObservableUpdateDelta _delta)) PendingChangeLoadingClear = PendingChangeLoadingClear
