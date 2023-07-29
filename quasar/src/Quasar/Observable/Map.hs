@@ -358,6 +358,13 @@ filterWithKey fn fx = ObservableMap (ObservableT (FilteredObservableMap fn fx))
 
 newtype ObservableMapVar k v = ObservableMapVar (ObservableVar NoLoad '[] (Map k) v)
 
+deriving newtype instance Ord k => IsObservableCore NoLoad '[] (Map k) v (ObservableMapVar k v)
+deriving newtype instance Ord k => IsObservableMap NoLoad '[] k v (ObservableMapVar k v)
+deriving newtype instance Ord k => ToObservableT NoLoad '[] (Map k) v (ObservableMapVar k v)
+
+instance Ord k => IsObservableMap l e k v (ObservableVar l e (Map k) v)
+  -- TODO
+
 newObservableMapVar :: MonadSTMc NoRetry '[] m => Map k v -> m (ObservableMapVar k v)
 newObservableMapVar x = liftSTMc @NoRetry @'[] $ ObservableMapVar <$> newObservableVar x
 
