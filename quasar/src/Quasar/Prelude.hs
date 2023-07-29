@@ -1,3 +1,5 @@
+{-# OPTIONS_HADDOCK not-home #-}
+
 module Quasar.Prelude
   ( module Prelude,
     module Quasar.PreludeExtras,
