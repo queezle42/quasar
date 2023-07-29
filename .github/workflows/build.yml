@@ -1,27 +1,15 @@
 name: "Build"
+
 on:
-  pull_request:
-    branches:
-      - main
   push:
-     branches:
-      - main
-      - dev
+  pull_request:
+
 jobs:
   build:
     name: "Build"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: cachix/install-nix-action@v20
-      - uses: cachix/cachix-action@v12
-        with:
-          name: quasar
-          authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
-          skipPush: true
+      - uses: DeterminateSystems/nix-installer-action@v4
+      - uses: DeterminateSystems/magic-nix-cache-action@v2
       - run: nix --print-build-logs build .
-      - name: "Cachix: Push and pin as 'main'"
-        run: |
-          cachix push quasar result
-          cachix pin quasar main result --keep-revisions 7
-        if: github.event_name == 'push' && github.repository == 'queezle42/quasar' && github.ref == 'refs/heads/main'
