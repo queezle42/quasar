@@ -48,6 +48,10 @@ module Quasar.Observable.Map (
   lookupDelete,
   replace,
   clear,
+
+  -- * Reexports
+  -- ** Observable
+  CanLoad,
 ) where
 
 import Control.Applicative hiding (empty)
