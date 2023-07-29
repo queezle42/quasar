@@ -80,6 +80,7 @@ library
     Quasar.Observable.ObservablePriority
     Quasar.Observable.ObservableVar
     Quasar.Observable.Set
+    Quasar.Observable.Traversable
     Quasar.Prelude
     Quasar.PreludeExtras
     Quasar.Resources

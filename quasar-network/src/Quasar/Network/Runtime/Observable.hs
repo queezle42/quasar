@@ -3,9 +3,7 @@
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 
-module Quasar.Network.Runtime.Observable (
-  NetworkObservableContainer(..),
-) where
+module Quasar.Network.Runtime.Observable () where
 
 import Control.Monad.Catch
 import Data.Binary (Binary)
@@ -25,18 +23,19 @@ import Quasar.Network.Runtime.Generic () -- Instances are part of Quasar.Network
 import Quasar.Observable.Core
 import Quasar.Observable.Map
 import Quasar.Observable.ObservableVar
+import Quasar.Observable.Traversable
 import Quasar.Prelude
 import Quasar.Resources
 
 
 -- * ObservableT instance
 
-instance (ContainerConstraint Load '[SomeException] c v (ObservableProxy c v), NetworkObject v, NetworkObservableContainer c, ObservableContainer c Disposer, Binary (c ()), Binary (Delta c ())) => NetworkRootReference (ObservableT Load '[SomeException] c v) where
+instance (ContainerConstraint Load '[SomeException] c v (ObservableProxy c v), NetworkObject v, TraversableObservableContainer c, ObservableContainer c Disposer, Binary (c ()), Binary (Delta c ())) => NetworkRootReference (ObservableT Load '[SomeException] c v) where
   type NetworkRootReferenceChannel (ObservableT Load '[SomeException] c v) = Channel () (ObservableResponse c) ObservableRequest
   provideRootReference = sendObservableReference
   receiveRootReference = receiveObservableReference
 
-instance (ContainerConstraint Load '[SomeException] c v (ObservableProxy c v), NetworkObject v, NetworkObservableContainer c, ObservableContainer c Disposer, Binary (c ()), Binary (Delta c ())) => NetworkObject (ObservableT Load '[SomeException] c v) where
+instance (ContainerConstraint Load '[SomeException] c v (ObservableProxy c v), NetworkObject v, TraversableObservableContainer c, ObservableContainer c Disposer, Binary (c ()), Binary (Delta c ())) => NetworkObject (ObservableT Load '[SomeException] c v) where
   type NetworkStrategy (ObservableT Load '[SomeException] c v) = NetworkRootReference
 
 
@@ -60,39 +59,6 @@ instance (Ord k, Binary k, NetworkObject v) => NetworkRootReference (ObservableM
 
 instance (Ord k, Binary k, NetworkObject v) => NetworkObject (ObservableMap Load '[SomeException] k v) where
   type NetworkStrategy (ObservableMap Load '[SomeException] k v) = NetworkRootReference
-
-
--- * Selecting removals from a delta
-
-class (Traversable c, Functor (Delta c), forall a. ObservableContainer c a) => NetworkObservableContainer c where
-  traverseDelta :: Applicative m => (v -> m a) -> Delta c v -> DeltaContext c -> m (Maybe (Delta c a))
-  default traverseDelta :: (Traversable (Delta c), Applicative m) => (v -> m a) -> Delta c v -> DeltaContext c -> m (Maybe (Delta c a))
-  traverseDelta fn delta _ = Just <$> traverse fn delta
-
-  selectRemoved :: Delta c v -> c a -> [a]
-
-instance NetworkObservableContainer Identity where
-  selectRemoved _update (Identity old) = [old]
-
-instance Ord k => NetworkObservableContainer (Map k) where
-  selectRemoved (ObservableMapDelta ops) old = mapMaybe (\key -> Map.lookup key old) (Map.keys ops)
-
-instance NetworkObservableContainer c => NetworkObservableContainer (ObservableResult '[SomeException] c) where
-  traverseDelta fn delta (Just x) = traverseDelta @c fn delta x
-  traverseDelta _fn _delta Nothing = pure Nothing
-
-  selectRemoved delta (ObservableResultOk x) = selectRemoved delta x
-  selectRemoved _ (ObservableResultEx _ex) = []
-
-
-traverseUpdate :: forall c v a m. (Applicative m, NetworkObservableContainer c) => (v -> m a) -> ObservableUpdate c v -> Maybe (DeltaContext c) -> m (Maybe (ObservableUpdate c a, DeltaContext c))
-traverseUpdate fn (ObservableUpdateReplace content) _context = do
-  newContent <- traverse fn content
-  pure (Just (ObservableUpdateReplace newContent, toInitialDeltaContext @c newContent))
-traverseUpdate fn (ObservableUpdateDelta delta) (Just context) = do
-  traverseDelta @c fn delta context <<&>> \newDelta ->
-    (ObservableUpdateDelta newDelta, updateDeltaContext @c context delta)
-traverseUpdate _fn (ObservableUpdateDelta _delta) Nothing = pure Nothing
 
 
 -- * Implementation
@@ -136,7 +102,7 @@ data ObservableReference c v = ObservableReference {
 }
 
 sendObservableReference
-  :: forall c v. (NetworkObservableContainer c, ObservableContainer c Disposer, Binary (c ()), Binary (Delta c ()), NetworkObject v)
+  :: forall c v. (TraversableObservableContainer c, ObservableContainer c Disposer, Binary (c ()), Binary (Delta c ()), NetworkObject v)
   => ObservableT Load '[SomeException] c v
   -> Channel () (ObservableResponse c) ObservableRequest
   -> STMc NoRetry '[] (ChannelHandler ObservableRequest)
@@ -308,7 +274,7 @@ data ProxyState
   deriving stock (Eq, Show)
 
 receiveObservableReference
-  :: forall c v. (ContainerConstraint Load '[SomeException] c v (ObservableProxy c v), NetworkObservableContainer c, NetworkObject v)
+  :: forall c v. (ContainerConstraint Load '[SomeException] c v (ObservableProxy c v), TraversableObservableContainer c, NetworkObject v)
   => Channel () ObservableRequest (ObservableResponse c)
   -> STMc NoRetry '[MultiplexerException] (ChannelHandler (ObservableResponse c), ObservableT Load '[SomeException] c v)
 receiveObservableReference channel = do
@@ -356,7 +322,7 @@ receiveObservableReference channel = do
         changeObservableVar proxy.observableVar change
 
 receiveUpdate
-  :: forall c v. (NetworkObject v, NetworkObservableContainer c)
+  :: forall c v. (NetworkObject v, TraversableObservableContainer c)
   => TVar (Maybe (DeltaContext c))
   -> ReceiveMessageContext
   -> ObservableUpdate c ()

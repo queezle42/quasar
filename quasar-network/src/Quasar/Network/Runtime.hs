@@ -9,9 +9,6 @@ module Quasar.Network.Runtime (
   receiveObjectFromMessagePart,
   NetworkReference(..),
   NetworkRootReference(..),
-
-  -- * Observable
-  NetworkObservableContainer(..),
 ) where
 
 import Quasar.Network.Runtime.Class
