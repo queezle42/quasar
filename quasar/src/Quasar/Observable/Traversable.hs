@@ -78,6 +78,7 @@ instance TraversableObservableContainer c => IsObservableCore NoLoad e c v (Trav
           callback (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk (snd <$> result))))
         ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx ex)) -> do
           mapM_ (mapM_ disposeTSimpleDisposer) =<< swapTVar var Nothing
+          callback (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx ex)))
         ObservableChangeLiveUpdate (ObservableUpdateDelta delta) -> do
           readTVar var >>= \case
             -- Receiving a delta in a 'Cleared' or exception state is a no-op.
