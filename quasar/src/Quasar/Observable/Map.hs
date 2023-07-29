@@ -60,10 +60,13 @@ import Data.Binary (Binary)
 import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
+import Data.Maybe (mapMaybe)
 import Quasar.Observable.Core
 import Quasar.Observable.List (ObservableList)
 import Quasar.Observable.ObservableVar
+import Quasar.Observable.Traversable
 import Quasar.Prelude hiding (filter, lookup)
+import Quasar.Resources.Disposer
 
 
 newtype ObservableMapDelta k v
@@ -128,6 +131,9 @@ instance Ord k => ObservableContainer (Map k) v where
 instance ContainerCount (Map k) where
   containerCount# x = fromIntegral (Map.size x)
   containerIsEmpty# x = Map.null x
+
+instance Ord k => TraversableObservableContainer (Map k) where
+  selectRemoved (ObservableMapDelta ops) old = mapMaybe (\key -> Map.lookup key old) (Map.keys ops)
 
 
 
@@ -397,3 +403,20 @@ replace (ObservableMapVar var) new =
 clear :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> m ()
 clear (ObservableMapVar var) =
   changeObservableVar var (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk mempty)))
+
+
+instance Ord k => IsObservableMap NoLoad e k v (TraversingObservable e (Map k) v)
+
+mapSTM ::
+  Ord k =>
+  (va -> STMc NoRetry '[] (TSimpleDisposer, v)) ->
+  ObservableMap NoLoad e k va ->
+  ObservableMap NoLoad e k v
+mapSTM fn (ObservableMap fx) = ObservableMap (observableTMapSTM fn fx)
+
+attachForEach ::
+  Ord k =>
+  (va -> STMc NoRetry '[] TSimpleDisposer) ->
+  ObservableMap NoLoad '[] k va ->
+  STMc NoRetry '[] TSimpleDisposer
+attachForEach fn (ObservableMap fx) = observableTAttachForEach fn fx

@@ -5,6 +5,13 @@ module Quasar.Observable.Traversable (
   -- * Traversing deltas and selecting removed items
   TraversableObservableContainer(..),
   traverseUpdate,
+
+  -- * Traverse active observable items in STM
+  observableTMapSTM,
+  observableTAttachForEach,
+
+  -- ** Support for `runForEach` and `mapSTM`
+  TraversingObservable(..),
 ) where
 
 import Control.Applicative hiding (empty)
@@ -12,6 +19,8 @@ import Control.Monad.Except
 import Data.Functor.Identity (Identity(..))
 import Quasar.Observable.Core
 import Quasar.Prelude hiding (filter, lookup)
+import Quasar.Resources.Disposer
+import Quasar.Utils.Fix
 
 
 -- * Selecting removals from a delta
@@ -42,3 +51,69 @@ traverseUpdate fn (ObservableUpdateDelta delta) (Just context) = do
   traverseDelta @c fn delta context <<&>> \newDelta ->
     (ObservableUpdateDelta newDelta, updateDeltaContext @c context delta)
 traverseUpdate _fn (ObservableUpdateDelta _delta) Nothing = pure Nothing
+
+
+-- * Traverse active observable items in STM
+
+data TraversingObservable e c v =
+  forall va. TraversingObservable
+    (va -> STMc NoRetry '[] (TSimpleDisposer, v))
+    (ObservableT NoLoad e c va)
+
+instance TraversableObservableContainer c => IsObservableCore NoLoad e c v (TraversingObservable e c v) where
+  readObservable# (TraversingObservable fn fx) = do
+    x <- readObservable# fx
+    mapped <- liftSTMc @NoRetry @'[] $ traverse fn x
+    mapM_ (disposeTSimpleDisposer . fst) mapped
+    pure (snd <$> mapped)
+
+  attachObserver# (TraversingObservable fn fx) callback = do
+    mfixTVar \var -> do
+
+      (fxDisposer, initial) <- attachObserver# fx \case
+        ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk new)) -> do
+          mapM_ (mapM_ disposeTSimpleDisposer) =<< readTVar var
+          result <- traverse fn new
+          writeTVar var (Just (fst <$> result))
+          callback (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk (snd <$> result))))
+        ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx ex)) -> do
+          mapM_ (mapM_ disposeTSimpleDisposer) =<< swapTVar var Nothing
+        ObservableChangeLiveUpdate (ObservableUpdateDelta delta) -> do
+          readTVar var >>= \case
+            -- Receiving a delta in a 'Cleared' or exception state is a no-op.
+            Nothing -> pure ()
+            Just disposers -> do
+              mapM_ disposeTSimpleDisposer (selectRemoved delta disposers)
+              traverseDelta @c fn delta (toInitialDeltaContext disposers) >>=
+                mapM_ \traversedDelta -> do
+                  mapM_ (writeTVar var . Just) (applyDelta (fst <$> traversedDelta) disposers)
+                  callback (ObservableChangeLiveUpdate (ObservableUpdateDelta (snd <$> traversedDelta)))
+
+      (initialState, initialVar) <- case initial of
+        ObservableStateLiveOk initial' -> do
+          result <- traverse fn initial'
+          pure (ObservableStateLiveOk (snd <$> result), Just (fst <$> result))
+        ObservableStateLiveEx ex -> pure (ObservableStateLiveEx ex, Nothing)
+
+      finalDisposer <- newUnmanagedTSimpleDisposer do
+        mapM_ (mapM_ disposeTSimpleDisposer) =<< swapTVar var Nothing
+
+      pure ((fxDisposer <> finalDisposer, initialState), initialVar)
+
+
+observableTMapSTM ::
+  (TraversableObservableContainer c, ContainerConstraint NoLoad e c v (TraversingObservable e c v)) =>
+  (va -> STMc NoRetry '[] (TSimpleDisposer, v)) ->
+  ObservableT NoLoad e c va ->
+  ObservableT NoLoad e c v
+observableTMapSTM fn fx = ObservableT (TraversingObservable fn fx)
+
+observableTAttachForEach ::
+  forall e c va.
+  (TraversableObservableContainer c, ContainerConstraint NoLoad e c () (TraversingObservable e c ())) =>
+  (va -> STMc NoRetry '[] TSimpleDisposer) ->
+  ObservableT NoLoad e c va ->
+  STMc NoRetry '[] TSimpleDisposer
+observableTAttachForEach fn fx = do
+  (disposer, _) <- attachObserver# (observableTMapSTM ((,()) <<$>> fn) fx) \_ -> pure ()
+  pure disposer
