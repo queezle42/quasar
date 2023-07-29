@@ -148,7 +148,7 @@ limitEx (Ex x) = Ex x
 
 
 absurdEx :: Ex '[] -> a
-absurdEx = error "unreachable code path"
+absurdEx = error "absurdEx: Code path marked as unreachable was reached. Somewhere an exception with a mismatched type was encapsulated in an `Ex`."
 
 
 type ThrowAny = MonadThrow
