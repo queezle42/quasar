@@ -405,18 +405,18 @@ clear (ObservableMapVar var) =
   changeObservableVar var (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk mempty)))
 
 
-instance Ord k => IsObservableMap NoLoad e k v (TraversingObservable e (Map k) v)
+instance Ord k => IsObservableMap l e k v (TraversingObservable l e (Map k) v)
 
 mapSTM ::
   Ord k =>
   (va -> STMc NoRetry '[] (TSimpleDisposer, v)) ->
-  ObservableMap NoLoad e k va ->
-  ObservableMap NoLoad e k v
+  ObservableMap l e k va ->
+  ObservableMap l e k v
 mapSTM fn (ObservableMap fx) = ObservableMap (observableTMapSTM fn fx)
 
 attachForEach ::
   Ord k =>
   (va -> STMc NoRetry '[] TSimpleDisposer) ->
-  ObservableMap NoLoad '[] k va ->
+  ObservableMap l e k va ->
   STMc NoRetry '[] TSimpleDisposer
 attachForEach fn (ObservableMap fx) = observableTAttachForEach fn fx

@@ -55,12 +55,12 @@ traverseUpdate _fn (ObservableUpdateDelta _delta) Nothing = pure Nothing
 
 -- * Traverse active observable items in STM
 
-data TraversingObservable e c v =
+data TraversingObservable l e c v =
   forall va. TraversingObservable
     (va -> STMc NoRetry '[] (TSimpleDisposer, v))
-    (ObservableT NoLoad e c va)
+    (ObservableT l e c va)
 
-instance TraversableObservableContainer c => IsObservableCore NoLoad e c v (TraversingObservable e c v) where
+instance TraversableObservableContainer c => IsObservableCore l e c v (TraversingObservable l e c v) where
   readObservable# (TraversingObservable fn fx) = do
     x <- readObservable# fx
     mapped <- liftSTMc @NoRetry @'[] $ traverse fn x
@@ -71,6 +71,11 @@ instance TraversableObservableContainer c => IsObservableCore NoLoad e c v (Trav
     mfixTVar \var -> do
 
       (fxDisposer, initial) <- attachObserver# fx \case
+        ObservableChangeLoadingClear -> do
+          mapM_ (mapM_ disposeTSimpleDisposer) =<< swapTVar var Nothing
+          callback ObservableChangeLoadingClear
+        ObservableChangeLoadingUnchanged -> callback ObservableChangeLoadingUnchanged
+        ObservableChangeLiveUnchanged -> callback ObservableChangeLiveUnchanged
         ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk new)) -> do
           mapM_ (mapM_ disposeTSimpleDisposer) =<< readTVar var
           result <- traverse fn new
@@ -91,6 +96,7 @@ instance TraversableObservableContainer c => IsObservableCore NoLoad e c v (Trav
                   callback (ObservableChangeLiveUpdate (ObservableUpdateDelta (snd <$> traversedDelta)))
 
       (initialState, initialVar) <- case initial of
+        ObservableStateLoading -> pure (ObservableStateLoading, Nothing)
         ObservableStateLiveOk initial' -> do
           result <- traverse fn initial'
           pure (ObservableStateLiveOk (snd <$> result), Just (fst <$> result))
@@ -103,17 +109,17 @@ instance TraversableObservableContainer c => IsObservableCore NoLoad e c v (Trav
 
 
 observableTMapSTM ::
-  (TraversableObservableContainer c, ContainerConstraint NoLoad e c v (TraversingObservable e c v)) =>
+  (TraversableObservableContainer c, ContainerConstraint l e c v (TraversingObservable l e c v)) =>
   (va -> STMc NoRetry '[] (TSimpleDisposer, v)) ->
-  ObservableT NoLoad e c va ->
-  ObservableT NoLoad e c v
+  ObservableT l e c va ->
+  ObservableT l e c v
 observableTMapSTM fn fx = ObservableT (TraversingObservable fn fx)
 
 observableTAttachForEach ::
-  forall e c va.
-  (TraversableObservableContainer c, ContainerConstraint NoLoad e c () (TraversingObservable e c ())) =>
+  forall l e c va.
+  (TraversableObservableContainer c, ContainerConstraint l e c () (TraversingObservable l e c ())) =>
   (va -> STMc NoRetry '[] TSimpleDisposer) ->
-  ObservableT NoLoad e c va ->
+  ObservableT l e c va ->
   STMc NoRetry '[] TSimpleDisposer
 observableTAttachForEach fn fx = do
   (disposer, _) <- attachObserver# (observableTMapSTM ((,()) <<$>> fn) fx) \_ -> pure ()
