@@ -16,12 +16,25 @@ enum State {
 
 type Command =
   | { fn: "pong" }
+  | { fn: "setRoot", content: WireDomElement }
+  | { fn: "set", id: number, content: WireDomElement }
   | { fn: "root", html: string }
   | { fn: "splice", id: number, html: string }
   | { fn: "listInsert", id: number, i: number, html: string }
   | { fn: "listAppend", id: number, html: string }
   | { fn: "listRemove", id: number, i: number }
   | { fn: "listRemoveAll", id: number }
+
+// type Event =
+//   | { fn: "ping" }
+
+type WireDomElement =
+  | { ref: number | null, tag: string, attributes: Map<string, string>, content: DomElementContent }
+
+type DomElementContent =
+  | { type: "text", text: string }
+  | { type: "children", children: [WireDomElement] }
+
 
 class QuasarWebClient {
   private websocketAddress: string;
