@@ -84,6 +84,7 @@ module Quasar.Observable.Core (
   Observable(..),
   ToObservable,
   toObservable,
+  readObservable,
   constObservable,
   Void1,
   absurd1,
@@ -1040,6 +1041,13 @@ type ToObservable canLoad exceptions v = ToObservableT canLoad exceptions Identi
 
 toObservable :: ToObservable canLoad exceptions v a => a -> Observable canLoad exceptions v
 toObservable = Observable . toObservableCore
+
+readObservable ::
+  forall exceptions v m a.
+  MonadSTMc NoRetry exceptions m =>
+  Observable NoLoad exceptions v ->
+  m v
+readObservable fx = liftSTMc @NoRetry @exceptions (runIdentity <$> readObservable# fx)
 
 
 type Observable :: CanLoad -> [Type] -> Type -> Type

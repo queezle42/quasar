@@ -7,6 +7,7 @@ module Quasar.Observable.Map (
   ObservableMap(..),
   ToObservableMap,
   toObservableMap,
+  readObservableMap,
   IsObservableMap(..),
   query,
 
@@ -166,6 +167,13 @@ type ToObservableMap canLoad exceptions k v a = ToObservableT canLoad exceptions
 
 toObservableMap :: ToObservableMap canLoad exceptions k v a => a -> ObservableMap canLoad exceptions k v
 toObservableMap x = ObservableMap (toObservableCore x)
+
+readObservableMap ::
+  forall exceptions k v m a.
+  MonadSTMc NoRetry exceptions m =>
+  ObservableMap NoLoad exceptions k v ->
+  m (Map k v)
+readObservableMap fx = liftSTMc @NoRetry @exceptions (readObservable# fx)
 
 newtype ObservableMap canLoad exceptions k v = ObservableMap (ObservableT canLoad exceptions (Map k) v)
 
