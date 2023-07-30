@@ -34,6 +34,8 @@ module Quasar.Observable.Map (
 
   -- ** Traversal
   mapWithKey,
+  mapSTM,
+  attachForEach,
 
   -- ** Filter
   filter,
