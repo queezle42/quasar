@@ -54,6 +54,7 @@ library
     binary,
     containers,
     exceptions,
+    fingertree,
     ghc-prim,
     hashable,
     mtl,

@@ -1,68 +1,89 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE OverloadedLists #-}
 
 module Quasar.Observable.List (
   ObservableList(..),
   ToObservableList,
   toObservableList,
-  ObservableListDelta(..),
-  ObservableListOperation(..),
+  ListDelta(..),
+  ListOperation(..),
+  Length,
 
   -- * Reexports
+  FingerTree,
   Seq,
 ) where
 
-import Data.Binary (Binary)
-import Data.Sequence (Seq(Empty, (:<|), (:|>)))
+import Data.Binary (Binary(get, put))
+import Data.Sequence (Seq(Empty))
 import Data.Sequence qualified as Seq
 import Quasar.Observable.Core
 import Quasar.Prelude
+import Data.FingerTree (FingerTree, Measured(measure), (<|), ViewL(EmptyL, (:<)))
+import Data.FingerTree qualified as FT
+import GHC.IsList (IsList, Item)
+import GHC.IsList qualified as IsList
 
 
-newtype ObservableListDelta v
-  = ObservableListDelta (Seq (ObservableListOperation v))
-  deriving Generic
+instance Measured v a => IsList (FingerTree v a) where
+  type Item (FingerTree v a) = a
+  fromList = FT.fromList
+  toList = toList
 
-instance Binary v => Binary (ObservableListDelta v)
+
+
+newtype ListDelta v
+  = ListDelta (FingerTree Length (ListOperation v))
+  deriving (Eq, Show, Generic)
+
+instance Binary v => Binary (ListDelta v) where
+  get = ListDelta . FT.fromList <$> get
+  put (ListDelta ops) = put (toList ops)
+
+newtype Length = Length Word32
+  deriving (Show, Eq, Ord, Enum, Num, Real, Integral, Binary)
+
+instance Monoid Length where
+  mempty = Length 0
+
+instance Semigroup Length where
+  Length x <> Length y = Length (x + y)
 
 -- Operations are relative to the end of the previous operation.
-data ObservableListOperation v
-  = ObservableListInsert Word32 (Seq v)
-  | ObservableListDelete Word32 Word32
-  deriving Generic
+data ListOperation v
+  = ListInsert (Seq v)
+  | ListDrop Length
+  | ListKeep Length
+  deriving (Eq, Show, Generic)
 
-instance Binary v => Binary (ObservableListOperation v)
+instance Binary v => Binary (ListOperation v)
+
+instance Measured Length (ListOperation v) where
+  measure (ListInsert ins) = fromIntegral (Seq.length ins)
+  measure (ListDrop _) = 0
+  measure (ListKeep n) = n
 
 applyOperations
   :: Seq v
-  -> Seq (ObservableListOperation v)
-  -> Maybe (Seq v)
-applyOperations _x Empty = Nothing
-applyOperations x (ObservableListInsert _off Empty :<| ops) = applyOperations x ops
-applyOperations x (ObservableListDelete _off 0 :<| ops) = applyOperations x ops
-applyOperations x (ObservableListDelete off _ :<| ops)
-  | fromIntegral off >= Seq.length x = applyOperations x ops
-applyOperations x' y' = Just (go x' y')
+  -> [ListOperation v]
+  -> Seq v
+applyOperations _  [] = []
+applyOperations x (ListInsert ins : ops) = ins <> applyOperations x ops
+applyOperations x (ListDrop count : ops) =
+  applyOperations (Seq.drop (fromIntegral count) x) ops
+applyOperations x (ListKeep count : ops) =
+  let (keep, other) = Seq.splitAt (fromIntegral count) x
+  in keep <> applyOperations other ops
   where
-    go
-      :: Seq v
-      -> Seq (ObservableListOperation v)
-      -> Seq v
-    go x Empty = x
-    go x (ObservableListInsert off y :<| ops) =
-      let (pre, post) = Seq.splitAt (fromIntegral off) x
-      in (pre <> y <> go post ops)
-    go x (ObservableListDelete off len :<| ops) =
-      let (pre, post) = Seq.drop (fromIntegral len) <$> Seq.splitAt (fromIntegral off) x
-      in (pre <> go post ops)
 
 instance ObservableContainer Seq v where
   type ContainerConstraint canLoad exceptions Seq v a = IsObservableList canLoad exceptions v a
-  type Delta Seq = ObservableListDelta
-  type DeltaContext Seq = Word32
-  applyDelta (ObservableListDelta ops) state = applyOperations state ops
   mergeDelta _old _new = undefined
   updateDeltaContext = undefined
-  toInitialDeltaContext = undefined
+  type Delta Seq = ListDelta
+  type DeltaContext Seq = Length
+  applyDelta (ListDelta ops) state = Just (applyOperations state (toList ops))
+  toInitialDeltaContext state = fromIntegral (Seq.length state)
   toDelta = fst
   contentFromEvaluatedDelta = snd
 
