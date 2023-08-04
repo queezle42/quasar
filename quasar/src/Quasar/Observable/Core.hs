@@ -102,7 +102,7 @@ import Quasar.Prelude
 import Quasar.Resources.Disposer
 import Quasar.Utils.Fix
 import Data.Void (absurd)
-import Data.Bifunctor (first)
+import Data.Bifunctor (bimap, first)
 import Data.Binary (Binary)
 
 -- * Generalized observables
@@ -221,13 +221,20 @@ class ObservableContainer c v where
   type DeltaContext c
   type instance DeltaContext _c = ()
 
+  type DeltaWithContext c v
+  type instance DeltaWithContext c v = Delta c v
+
   applyDelta :: Delta c v -> c v -> Maybe (c v)
-  mergeDelta :: (DeltaContext c, Delta c v) -> Delta c v -> (DeltaContext c, Delta c v)
+  mergeDelta :: DeltaWithContext c v -> Delta c v -> DeltaWithContext c v
 
 
   updateDeltaContext :: DeltaContext c -> Delta c v -> DeltaContext c
   default updateDeltaContext :: DeltaContext c ~ () => DeltaContext c -> Delta c v -> DeltaContext c
   updateDeltaContext _ _ = ()
+
+  updateDeltaWithContext :: DeltaContext c -> Delta c v -> DeltaWithContext c v
+  default updateDeltaWithContext :: Delta c v ~ DeltaWithContext c v => DeltaContext c -> Delta c v -> DeltaWithContext c v
+  updateDeltaWithContext _ delta = delta
 
   toInitialDeltaContext :: c v -> DeltaContext c
   default toInitialDeltaContext :: DeltaContext c ~ () => c v -> DeltaContext c
@@ -241,25 +248,38 @@ class ObservableContainer c v where
 
   contentFromEvaluatedDelta :: EvaluatedDelta c v -> c v
 
-mergeUpdate :: forall c v. ObservableContainer c v => (DeltaContext c, ObservableUpdate c v) -> ObservableUpdate c v -> (DeltaContext c, ObservableUpdate c v)
-mergeUpdate _ x@(ObservableUpdateReplace content) = (toInitialDeltaContext content, x)
-mergeUpdate old@(_, ObservableUpdateReplace content) (ObservableUpdateDelta delta) =
-  case applyDelta @c delta content of
-    Just new -> (toInitialDeltaContext new, ObservableUpdateReplace new)
-    Nothing -> old
-mergeUpdate (ctx, ObservableUpdateDelta old) (ObservableUpdateDelta new) = ObservableUpdateDelta <$> mergeDelta @c (ctx, old) new
+  -- | Split a 'DeltaWithContext' into its 'Delta' and 'DeltaContext'
+  -- components.
+  --
+  -- Returns 'Nothing' if the delta has no effect given the current context.
+  -- Please note that even a no-op or invalid delta will change a 'Loading'
+  -- observable to 'Live'.
+  splitDeltaAndContext :: DeltaWithContext c v -> Maybe (Delta c v, DeltaContext c)
+  default splitDeltaAndContext ::
+    (DeltaWithContext c v ~ Delta c v, DeltaContext c ~ ()) =>
+    DeltaWithContext c v ->
+    Maybe (Delta c v, DeltaContext c)
+  splitDeltaAndContext delta = Just (delta, ())
 
-updateDeltaContext' :: forall c v. ObservableContainer c v => DeltaContext c -> ObservableUpdate c v -> DeltaContext c
-updateDeltaContext' _ (ObservableUpdateReplace content) = toInitialDeltaContext content
-updateDeltaContext' ctx (ObservableUpdateDelta delta) = updateDeltaContext @c ctx delta
+
+mergeUpdate :: forall c v. ObservableContainer c v => ObservableUpdateWithContext c v -> ObservableUpdate c v -> ObservableUpdateWithContext c v
+mergeUpdate _ (ObservableUpdateReplace content) = ObservableUpdateWithContextReplace content
+mergeUpdate old@(ObservableUpdateWithContextReplace content) (ObservableUpdateDelta delta) =
+  case applyDelta @c delta content of
+    Just new -> ObservableUpdateWithContextReplace new
+    Nothing -> old
+mergeUpdate (ObservableUpdateWithContextDelta old) (ObservableUpdateDelta new) = ObservableUpdateWithContextDelta (mergeDelta @c old new)
+
+updateDeltaContext' :: forall c v. ObservableContainer c v => DeltaContext c -> ObservableUpdate c v -> ObservableUpdateWithContext c v
+updateDeltaContext' _ (ObservableUpdateReplace content) = ObservableUpdateWithContextReplace content
+updateDeltaContext' ctx (ObservableUpdateDelta delta) = ObservableUpdateWithContextDelta (updateDeltaWithContext @c ctx delta)
 
 instance ObservableContainer Identity v where
   type ContainerConstraint _canLoad _exceptions Identity v _a = ()
   type Delta Identity = Void1
   type EvaluatedDelta Identity v = Void
   applyDelta = absurd1
-  mergeDelta _ new = ((), new)
-  updateDeltaContext _ _ = ()
+  mergeDelta _ new = new
   toInitialDeltaContext _ = ()
   toDelta = absurd
   toEvaluatedDelta = absurd1
@@ -326,6 +346,19 @@ instance (Foldable c, Traversable (Delta c)) => Foldable (ObservableUpdate c) wh
 instance (Traversable c, Traversable (Delta c)) => Traversable (ObservableUpdate c) where
   traverse f (ObservableUpdateReplace x) = ObservableUpdateReplace <$> traverse f x
   traverse f (ObservableUpdateDelta delta) = ObservableUpdateDelta <$> traverse f delta
+
+
+type ObservableUpdateWithContext :: (Type -> Type) -> Type -> Type
+data ObservableUpdateWithContext c v where
+  ObservableUpdateWithContextReplace :: c v -> ObservableUpdateWithContext c v
+  ObservableUpdateWithContextDelta :: DeltaWithContext c v -> ObservableUpdateWithContext c v
+
+splitObservableUpdateWithContext :: forall c v. ObservableContainer c v => ObservableUpdateWithContext c v -> Maybe (ObservableUpdate c v, DeltaContext c)
+splitObservableUpdateWithContext (ObservableUpdateWithContextReplace content) =
+  Just (ObservableUpdateReplace content, toInitialDeltaContext content)
+splitObservableUpdateWithContext (ObservableUpdateWithContextDelta deltaWithContext) =
+  first ObservableUpdateDelta <$> splitDeltaAndContext @c deltaWithContext
+
 
 type EvaluatedUpdate :: (Type -> Type) -> Type -> Type
 data EvaluatedUpdate c v where
@@ -575,7 +608,7 @@ fromMaybeL _ (JustL x) = x
 type PendingChange :: CanLoad -> (Type -> Type) -> Type -> Type
 data PendingChange canLoad c v where
   PendingChangeLoadingClear :: PendingChange Load c v
-  PendingChangeAlter :: Loading canLoad -> DeltaContext c -> Maybe (ObservableUpdate c v) -> PendingChange canLoad c v
+  PendingChangeAlter :: Loading canLoad -> Either (DeltaContext c) (ObservableUpdateWithContext c v) -> PendingChange canLoad c v
 
 type LastChange :: CanLoad -> Type
 data LastChange canLoad where
@@ -592,34 +625,36 @@ updatePendingChange :: forall canLoad c v. ObservableContainer c v => Observable
 updatePendingChange ObservableChangeLoadingClear _ = PendingChangeLoadingClear
 updatePendingChange ObservableChangeLoadingUnchanged PendingChangeLoadingClear = PendingChangeLoadingClear
 updatePendingChange ObservableChangeLiveUnchanged PendingChangeLoadingClear = PendingChangeLoadingClear
-updatePendingChange ObservableChangeLoadingUnchanged (PendingChangeAlter _loading ctx delta) = PendingChangeAlter Loading ctx delta
-updatePendingChange ObservableChangeLiveUnchanged (PendingChangeAlter _loading ctx delta) = PendingChangeAlter Live ctx delta
+updatePendingChange ObservableChangeLoadingUnchanged (PendingChangeAlter _loading delta) = PendingChangeAlter Loading delta
+updatePendingChange ObservableChangeLiveUnchanged (PendingChangeAlter _loading delta) = PendingChangeAlter Live delta
 updatePendingChange (ObservableChangeLiveUpdate (ObservableUpdateReplace content)) _ =
-  PendingChangeAlter Live (toInitialDeltaContext content) (Just (ObservableUpdateReplace content))
+  PendingChangeAlter Live (Right (ObservableUpdateWithContextReplace content))
 updatePendingChange (ObservableChangeLiveUpdate (ObservableUpdateDelta _delta)) PendingChangeLoadingClear = PendingChangeLoadingClear
-updatePendingChange (ObservableChangeLiveUpdate update) prev@(PendingChangeAlter _loading ctx (Just prevUpdate)) =
-  let (newCtx, newDelta) = mergeUpdate @c (ctx, prevUpdate) update
-  in PendingChangeAlter Live newCtx (Just newDelta)
-updatePendingChange (ObservableChangeLiveUpdate update) (PendingChangeAlter _loading ctx Nothing) =
-  PendingChangeAlter Live (updateDeltaContext' @c ctx update) (Just update)
+updatePendingChange (ObservableChangeLiveUpdate update) prev@(PendingChangeAlter _loading (Right prevUpdate)) =
+  let newUpdate = mergeUpdate @c prevUpdate update
+  in PendingChangeAlter Live (Right newUpdate)
+updatePendingChange (ObservableChangeLiveUpdate update) (PendingChangeAlter _loading (Left ctx)) =
+  PendingChangeAlter Live (Right (updateDeltaContext' @c ctx update))
 
 initialPendingChange :: ObservableContainer c v => ObservableState canLoad c v -> PendingChange canLoad c v
 initialPendingChange ObservableStateLoading = PendingChangeLoadingClear
-initialPendingChange (ObservableStateLive initial) = PendingChangeAlter Live (toInitialDeltaContext initial) Nothing
+initialPendingChange (ObservableStateLive initial) = PendingChangeAlter Live (Left (toInitialDeltaContext initial))
 
 initialPendingAndLastChange :: ObservableContainer c v => ObservableState canLoad c v -> (PendingChange canLoad c v, LastChange canLoad)
 initialPendingAndLastChange ObservableStateLoading =
   (PendingChangeLoadingClear, LastChangeLoadingCleared)
 initialPendingAndLastChange (ObservableStateLive initial) =
   let ctx = toInitialDeltaContext initial
-  in (PendingChangeAlter Live ctx Nothing, LastChangeLive)
+  in (PendingChangeAlter Live (Left ctx), LastChangeLive)
 
 
-changeFromPending :: forall canLoad c v.
-  Loading canLoad
-  -> PendingChange canLoad c v
-  -> LastChange canLoad
-  -> Maybe (ObservableChange canLoad c v, PendingChange canLoad c v, LastChange canLoad)
+changeFromPending ::
+  forall canLoad c v.
+  ObservableContainer c v =>
+  Loading canLoad ->
+  PendingChange canLoad c v ->
+  LastChange canLoad ->
+  Maybe (ObservableChange canLoad c v, PendingChange canLoad c v, LastChange canLoad)
 changeFromPending loading pendingChange lastChange = do
   (change, newPendingChange) <- changeFromPending' loading pendingChange lastChange
   pure (change, newPendingChange, updateLastChange change lastChange)
@@ -629,17 +664,23 @@ changeFromPending loading pendingChange lastChange = do
     -- Category: Changing to loading or already loading
     changeFromPending' _ PendingChangeLoadingClear LastChangeLoadingCleared = Nothing
     changeFromPending' _ PendingChangeLoadingClear _ = Just (ObservableChangeLoadingClear, PendingChangeLoadingClear)
-    changeFromPending' _ x@(PendingChangeAlter Loading _ _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, x)
-    changeFromPending' _ (PendingChangeAlter Loading _ _) LastChangeLoadingCleared = Nothing
-    changeFromPending' _ (PendingChangeAlter Loading _ _) LastChangeLoading = Nothing
-    changeFromPending' _ (PendingChangeAlter Live _ Nothing) LastChangeLoadingCleared = Nothing
-    changeFromPending' Loading (PendingChangeAlter Live _ _) LastChangeLoadingCleared = Nothing
-    changeFromPending' Loading (PendingChangeAlter Live _ _) LastChangeLoading = Nothing
-    changeFromPending' Loading x@(PendingChangeAlter Live _ _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, x)
+    changeFromPending' _ x@(PendingChangeAlter Loading _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, x)
+    changeFromPending' _ (PendingChangeAlter Loading _) LastChangeLoadingCleared = Nothing
+    changeFromPending' _ (PendingChangeAlter Loading _) LastChangeLoading = Nothing
+    changeFromPending' _ (PendingChangeAlter Live (Left _)) LastChangeLoadingCleared = Nothing
+    changeFromPending' Loading (PendingChangeAlter Live _) LastChangeLoadingCleared = Nothing
+    changeFromPending' Loading (PendingChangeAlter Live _) LastChangeLoading = Nothing
+    changeFromPending' Loading x@(PendingChangeAlter Live _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, x)
     -- Category: Changing to live or already live
-    changeFromPending' Live x@(PendingChangeAlter Live _ Nothing) LastChangeLoading = Just (ObservableChangeLiveUnchanged, x)
-    changeFromPending' Live (PendingChangeAlter Live _ Nothing) LastChangeLive = Nothing
-    changeFromPending' Live (PendingChangeAlter Live ctx (Just update)) _ = Just (ObservableChangeLiveUpdate update, PendingChangeAlter Live ctx Nothing)
+    changeFromPending' Live x@(PendingChangeAlter Live (Left _)) LastChangeLoading = Just (ObservableChangeLiveUnchanged, x)
+    changeFromPending' Live (PendingChangeAlter Live (Left _)) LastChangeLive = Nothing
+    changeFromPending' Live x@(PendingChangeAlter Live (Right updateWC)) lc = do
+      case splitObservableUpdateWithContext updateWC of
+        Just (update, ctx) -> Just (ObservableChangeLiveUpdate update, PendingChangeAlter Live (Left ctx))
+        Nothing -> case lc of
+          LastChangeLoading -> Just (ObservableChangeLiveUnchanged, x)
+          LastChangeLive -> Nothing
+          LastChangeLoadingCleared -> Nothing
 
     updateLastChange :: ObservableChange canLoad c v -> LastChange canLoad -> LastChange canLoad
     updateLastChange ObservableChangeLoadingClear _ = LastChangeLoadingCleared
@@ -1148,18 +1189,24 @@ instance ObservableContainer c v => ObservableContainer (ObservableResult except
   type Delta (ObservableResult exceptions c) = Delta c
   type EvaluatedDelta (ObservableResult exceptions c) v = EvaluatedDelta c v
   type instance DeltaContext (ObservableResult exceptions c) = Maybe (DeltaContext c)
+  type instance DeltaWithContext (ObservableResult exceptions c) v = Maybe (DeltaWithContext c v)
   applyDelta delta (ObservableResultOk content) = ObservableResultOk <$> applyDelta @c delta content
   -- NOTE This rejects deltas that are applied to an exception state. Beware
   -- that regardeless of this fact this still does count as a valid delta
   -- application, so it won't prevent the state transition from Loading to Live.
   applyDelta _delta (ObservableResultEx _ex) = Nothing
-  mergeDelta (Just resultCtx, old) new = first Just (mergeDelta @c (resultCtx, old) new)
-  mergeDelta old@(Nothing, _old) _new = old -- Ignore deltas when in 'Ex' state
+  mergeDelta (Just old) new = Just (mergeDelta @c old new)
+  mergeDelta Nothing _new = Nothing -- Ignore deltas when in 'Ex' state
   updateDeltaContext (Just ctx) delta = Just (updateDeltaContext @c ctx delta)
   updateDeltaContext Nothing _delta = Nothing
+  updateDeltaWithContext (Just ctx) delta = Just (updateDeltaWithContext @c ctx delta)
+  updateDeltaWithContext Nothing _delta = Nothing
   toInitialDeltaContext (ObservableResultOk initial) = Just (toInitialDeltaContext initial)
   toInitialDeltaContext (ObservableResultEx _) = Nothing
   toDelta = toDelta @c
   toEvaluatedDelta delta (ObservableResultOk content) = toEvaluatedDelta delta content
   toEvaluatedDelta _delta (ObservableResultEx _ex) = Nothing
   contentFromEvaluatedDelta delta = ObservableResultOk (contentFromEvaluatedDelta delta)
+  splitDeltaAndContext (Just deltaWithContext) =
+    Just <<$>> splitDeltaAndContext @c deltaWithContext
+  splitDeltaAndContext Nothing = Nothing

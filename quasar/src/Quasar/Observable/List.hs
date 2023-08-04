@@ -6,6 +6,7 @@ module Quasar.Observable.List (
   ToObservableList,
   toObservableList,
   ListDelta(..),
+  ListDeltaCtx(..),
   ListOperation(..),
   Length,
 
@@ -14,7 +15,7 @@ module Quasar.Observable.List (
   Seq,
 ) where
 
-import Data.Binary (Binary(get, put))
+import Data.Binary (Binary)
 import Data.Sequence (Seq(Empty))
 import Data.Sequence qualified as Seq
 import Quasar.Observable.Core
@@ -33,12 +34,12 @@ instance Measured v a => IsList (FingerTree v a) where
 
 
 newtype ListDelta v
-  = ListDelta (FingerTree Length (ListOperation v))
-  deriving (Eq, Show, Generic)
+  = ListDelta [ListOperation v]
+  deriving (Eq, Show, Generic, Binary)
 
-instance Binary v => Binary (ListDelta v) where
-  get = ListDelta . FT.fromList <$> get
-  put (ListDelta ops) = put (toList ops)
+newtype ListDeltaCtx v
+  = ListDeltaCtx (FingerTree Length (ListOperation v))
+  deriving (Eq, Show, Generic)
 
 newtype Length = Length Word32
   deriving (Show, Eq, Ord, Enum, Num, Real, Integral, Binary)
@@ -79,13 +80,16 @@ applyOperations x (ListKeep count : ops) =
 instance ObservableContainer Seq v where
   type ContainerConstraint canLoad exceptions Seq v a = IsObservableList canLoad exceptions v a
   mergeDelta _old _new = undefined
-  updateDeltaContext = undefined
   type Delta Seq = ListDelta
+  type DeltaWithContext Seq v = ListDeltaCtx v
   type DeltaContext Seq = Length
   applyDelta (ListDelta ops) state = Just (applyOperations state (toList ops))
+  updateDeltaContext ctx (ListDelta ops) = undefined -- updateLength ctx ops
+  updateDeltaWithContext ctx (ListDelta ops) = undefined -- updateLength ctx ops
   toInitialDeltaContext state = fromIntegral (Seq.length state)
   toDelta = fst
   contentFromEvaluatedDelta = snd
+  splitDeltaAndContext (ListDeltaCtx x) = Just (ListDelta (toList x), measure x)
 
 instance ContainerCount Seq where
   containerCount# x = fromIntegral (length x)

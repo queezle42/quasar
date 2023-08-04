@@ -64,7 +64,7 @@ spec = parallel do
 
     it "applies complex operations" do
       let
-        ops :: FingerTree Length (ListOperation Int)
+        ops :: [ListOperation Int]
         ops = [
             ListKeep 1,
             ListInsert [42, 43],
