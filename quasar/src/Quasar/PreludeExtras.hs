@@ -17,7 +17,6 @@ import Data.Hashable qualified as Hashable
 import Data.List qualified as List
 import Data.Maybe qualified as Maybe
 import GHC.Stack.Types qualified
-import Data.Functor ((<&>))
 
 io :: IO a -> IO a
 io = id
