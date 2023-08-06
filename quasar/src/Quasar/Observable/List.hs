@@ -85,7 +85,6 @@ instance ObservableContainer Seq v where
   type DeltaContext Seq = Length
   applyDelta (ListDelta ops) state = Just (applyOperations state (toList ops))
   updateDeltaContext ctx (ListDelta ops) = undefined -- updateLength ctx ops
-  updateDeltaWithContext ctx (ListDelta ops) = undefined -- updateLength ctx ops
   toInitialDeltaContext state = fromIntegral (Seq.length state)
   toDelta = fst
   contentFromEvaluatedDelta = snd

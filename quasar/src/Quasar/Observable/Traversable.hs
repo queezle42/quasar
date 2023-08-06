@@ -49,7 +49,7 @@ traverseUpdate fn (ObservableUpdateReplace content) _context = do
   pure (Just (ObservableUpdateReplace newContent, toInitialDeltaContext @c newContent))
 traverseUpdate fn (ObservableUpdateDelta delta) (Just context) = do
   traverseDelta @c fn delta context <<&>> \newDelta ->
-    (ObservableUpdateDelta newDelta, updateDeltaContext @c context delta)
+    (ObservableUpdateDelta newDelta, snd (updateDeltaContext @c context delta))
 traverseUpdate _fn (ObservableUpdateDelta _delta) Nothing = pure Nothing
 
 

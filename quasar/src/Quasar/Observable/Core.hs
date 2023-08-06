@@ -34,7 +34,7 @@ module Quasar.Observable.Core (
   ObservableChange(..),
   mapObservableChange,
   ObservableUpdate(.., ObservableUpdateOk, ObservableUpdateThrow),
-  updateDeltaContext',
+  updateDeltaWithContext',
   EvaluatedObservableChange(..),
   EvaluatedUpdate(.., EvaluatedUpdateOk, EvaluatedUpdateThrow),
   ObservableState(.., ObservableStateLiveOk, ObservableStateLiveEx),
@@ -228,13 +228,9 @@ class ObservableContainer c v where
   mergeDelta :: DeltaWithContext c v -> Delta c v -> DeltaWithContext c v
 
 
-  updateDeltaContext :: DeltaContext c -> Delta c v -> DeltaContext c
-  default updateDeltaContext :: DeltaContext c ~ () => DeltaContext c -> Delta c v -> DeltaContext c
-  updateDeltaContext _ _ = ()
-
-  updateDeltaWithContext :: DeltaContext c -> Delta c v -> DeltaWithContext c v
-  default updateDeltaWithContext :: Delta c v ~ DeltaWithContext c v => DeltaContext c -> Delta c v -> DeltaWithContext c v
-  updateDeltaWithContext _ delta = delta
+  updateDeltaContext :: DeltaContext c -> Delta c v -> (DeltaWithContext c v, DeltaContext c)
+  default updateDeltaContext :: (DeltaContext c ~ (), DeltaWithContext c v ~ Delta c v) => DeltaContext c -> Delta c v -> (DeltaWithContext c v, DeltaContext c)
+  updateDeltaContext _ delta = (delta, ())
 
   toInitialDeltaContext :: c v -> DeltaContext c
   default toInitialDeltaContext :: DeltaContext c ~ () => c v -> DeltaContext c
@@ -270,9 +266,9 @@ mergeUpdate old@(ObservableUpdateWithContextReplace content) (ObservableUpdateDe
     Nothing -> old
 mergeUpdate (ObservableUpdateWithContextDelta old) (ObservableUpdateDelta new) = ObservableUpdateWithContextDelta (mergeDelta @c old new)
 
-updateDeltaContext' :: forall c v. ObservableContainer c v => DeltaContext c -> ObservableUpdate c v -> ObservableUpdateWithContext c v
-updateDeltaContext' _ (ObservableUpdateReplace content) = ObservableUpdateWithContextReplace content
-updateDeltaContext' ctx (ObservableUpdateDelta delta) = ObservableUpdateWithContextDelta (updateDeltaWithContext @c ctx delta)
+updateDeltaWithContext' :: forall c v. ObservableContainer c v => DeltaContext c -> ObservableUpdate c v -> ObservableUpdateWithContext c v
+updateDeltaWithContext' _ (ObservableUpdateReplace content) = ObservableUpdateWithContextReplace content
+updateDeltaWithContext' ctx (ObservableUpdateDelta delta) = ObservableUpdateWithContextDelta (fst (updateDeltaContext @c ctx delta))
 
 instance ObservableContainer Identity v where
   type ContainerConstraint _canLoad _exceptions Identity v _a = ()
@@ -634,7 +630,7 @@ updatePendingChange (ObservableChangeLiveUpdate update) prev@(PendingChangeAlter
   let newUpdate = mergeUpdate @c prevUpdate update
   in PendingChangeAlter Live (Right newUpdate)
 updatePendingChange (ObservableChangeLiveUpdate update) (PendingChangeAlter _loading (Left ctx)) =
-  PendingChangeAlter Live (Right (updateDeltaContext' @c ctx update))
+  PendingChangeAlter Live (Right (updateDeltaWithContext' @c ctx update))
 
 initialPendingChange :: ObservableContainer c v => ObservableState canLoad c v -> PendingChange canLoad c v
 initialPendingChange ObservableStateLoading = PendingChangeLoadingClear
@@ -1197,10 +1193,10 @@ instance ObservableContainer c v => ObservableContainer (ObservableResult except
   applyDelta _delta (ObservableResultEx _ex) = Nothing
   mergeDelta (Just old) new = Just (mergeDelta @c old new)
   mergeDelta Nothing _new = Nothing -- Ignore deltas when in 'Ex' state
-  updateDeltaContext (Just ctx) delta = Just (updateDeltaContext @c ctx delta)
-  updateDeltaContext Nothing _delta = Nothing
-  updateDeltaWithContext (Just ctx) delta = Just (updateDeltaWithContext @c ctx delta)
-  updateDeltaWithContext Nothing _delta = Nothing
+  updateDeltaContext (Just ctx) delta =
+    let (x, y) = updateDeltaContext @c ctx delta
+    in (Just x, Just y)
+  updateDeltaContext Nothing _delta = (Nothing, Nothing)
   toInitialDeltaContext (ObservableResultOk initial) = Just (toInitialDeltaContext initial)
   toInitialDeltaContext (ObservableResultEx _) = Nothing
   toDelta = toDelta @c
