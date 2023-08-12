@@ -210,7 +210,7 @@ instance ObservableContainer Seq v where
   type Delta Seq = ListDelta
   type DeltaWithContext Seq v = ListDeltaCtx v
   type DeltaContext Seq = Length
-  applyDelta (ListDelta ops) state = Just (applyOperations state (toList ops))
+  applyDelta (ListDelta ops) state = applyOperations state (toList ops)
   mergeDelta (ListDeltaCtx x) (ListDelta y) =
     ListDeltaCtx (mergeOperations x (toList y))
   updateDeltaContext ctx (ListDelta ops) =

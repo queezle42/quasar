@@ -92,7 +92,7 @@ instance TraversableObservableContainer c => IsObservableCore l e c v (Traversin
               mapM_ disposeTSimpleDisposer (selectRemoved delta disposers)
               traverseDelta @c fn delta (toInitialDeltaContext disposers) >>=
                 mapM_ \traversedDelta -> do
-                  mapM_ (writeTVar var . Just) (applyDelta (fst <$> traversedDelta) disposers)
+                  writeTVar var (Just (applyDelta (fst <$> traversedDelta) disposers))
                   callback (ObservableChangeLiveUpdate (ObservableUpdateDelta (snd <$> traversedDelta)))
 
       (initialState, initialVar) <- case initial of

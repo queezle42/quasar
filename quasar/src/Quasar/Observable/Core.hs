@@ -224,9 +224,8 @@ class ObservableContainer c v where
   type DeltaWithContext c v
   type instance DeltaWithContext c v = Delta c v
 
-  applyDelta :: Delta c v -> c v -> Maybe (c v)
+  applyDelta :: Delta c v -> c v -> c v
   mergeDelta :: DeltaWithContext c v -> Delta c v -> DeltaWithContext c v
-
 
   updateDeltaContext :: DeltaContext c -> Delta c v -> (DeltaWithContext c v, DeltaContext c)
   default updateDeltaContext :: (DeltaContext c ~ (), DeltaWithContext c v ~ Delta c v) => DeltaContext c -> Delta c v -> (DeltaWithContext c v, DeltaContext c)
@@ -261,10 +260,9 @@ class ObservableContainer c v where
 mergeUpdate :: forall c v. ObservableContainer c v => ObservableUpdateWithContext c v -> ObservableUpdate c v -> ObservableUpdateWithContext c v
 mergeUpdate _ (ObservableUpdateReplace content) = ObservableUpdateWithContextReplace content
 mergeUpdate old@(ObservableUpdateWithContextReplace content) (ObservableUpdateDelta delta) =
-  case applyDelta @c delta content of
-    Just new -> ObservableUpdateWithContextReplace new
-    Nothing -> old
-mergeUpdate (ObservableUpdateWithContextDelta old) (ObservableUpdateDelta new) = ObservableUpdateWithContextDelta (mergeDelta @c old new)
+  ObservableUpdateWithContextReplace (applyDelta @c delta content)
+mergeUpdate (ObservableUpdateWithContextDelta old) (ObservableUpdateDelta new) =
+  ObservableUpdateWithContextDelta (mergeDelta @c old new)
 
 updateDeltaWithContext' :: forall c v. ObservableContainer c v => DeltaContext c -> ObservableUpdate c v -> ObservableUpdateWithContext c v
 updateDeltaWithContext' _ (ObservableUpdateReplace content) = ObservableUpdateWithContextReplace content
@@ -516,8 +514,8 @@ applyObservableUpdate
   :: ObservableContainer c v
   => ObservableUpdate c v
   -> c v
-  -> Maybe (c v)
-applyObservableUpdate (ObservableUpdateReplace new) _ = Just new
+  -> c v
+applyObservableUpdate (ObservableUpdateReplace new) _ = new
 applyObservableUpdate (ObservableUpdateDelta delta) old = applyDelta delta old
 
 applyObservableChange
@@ -539,7 +537,7 @@ applyObservableChange (ObservableChangeLiveUpdate (ObservableUpdateReplace conte
 
 applyObservableChange (ObservableChangeLiveUpdate (ObservableUpdateDelta _delta)) ObserverStateLoadingCleared = Nothing
 applyObservableChange (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) (ObserverStateCached _ old) = do
-  new <- applyDelta delta old
+  new <- Just (applyDelta delta old)
   evaluated <- toEvaluatedDelta delta new
   Just (EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateDelta evaluated), ObserverStateLive new)
 
@@ -1186,11 +1184,11 @@ instance ObservableContainer c v => ObservableContainer (ObservableResult except
   type EvaluatedDelta (ObservableResult exceptions c) v = EvaluatedDelta c v
   type instance DeltaContext (ObservableResult exceptions c) = Maybe (DeltaContext c)
   type instance DeltaWithContext (ObservableResult exceptions c) v = Maybe (DeltaWithContext c v)
-  applyDelta delta (ObservableResultOk content) = ObservableResultOk <$> applyDelta @c delta content
+  applyDelta delta (ObservableResultOk content) = ObservableResultOk (applyDelta @c delta content)
   -- NOTE This rejects deltas that are applied to an exception state. Beware
   -- that regardeless of this fact this still does count as a valid delta
   -- application, so it won't prevent the state transition from Loading to Live.
-  applyDelta _delta (ObservableResultEx _ex) = Nothing
+  applyDelta _delta x@(ObservableResultEx _ex) = x
   mergeDelta (Just old) new = Just (mergeDelta @c old new)
   mergeDelta Nothing _new = Nothing -- Ignore deltas when in 'Ex' state
   updateDeltaContext (Just ctx) delta =

@@ -207,7 +207,7 @@ sendObservableReference observable channel = do
                 Just newDelta -> do
                   let
                     removed = mconcat (selectRemoved newDelta activeDisposers)
-                    newActiveDisposers = fromMaybe activeDisposers  (applyDelta newDelta activeDisposers)
+                    newActiveDisposers = applyDelta newDelta activeDisposers
                     packedUnitChange = PackedChangeLiveUpdateDelta (void newDelta)
                     newCtx = snd (updateDeltaContext @c ctx newDelta)
                   writeTVar ref.activeObjects (Just (newCtx, newActiveDisposers))
