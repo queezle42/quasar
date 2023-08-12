@@ -109,7 +109,9 @@ test-suite quasar-test
     "-with-rtsopts=-N"
   build-depends:
     base >=4.7 && <5,
+    containers,
     exceptions,
+    fingertree,
     hspec,
     quasar,
   main-is: Spec.hs
