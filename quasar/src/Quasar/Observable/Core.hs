@@ -465,6 +465,18 @@ instance Applicative c => Applicative (ObservableState canLoad c) where
   liftA2 _fn ObservableStateLoading _ = ObservableStateLoading
   liftA2 _fn _ ObservableStateLoading = ObservableStateLoading
 
+instance Foldable c => Foldable (ObservableState canLoad c) where
+  foldMap _fn ObservableStateLoading = mempty
+  foldMap fn (ObservableStateLive x) = foldMap fn x
+  foldr _ i ObservableStateLoading = i
+  foldr fn i (ObservableStateLive x) = foldr fn i x
+
+instance Traversable c => Traversable (ObservableState canLoad c) where
+  traverse _fn ObservableStateLoading = pure ObservableStateLoading
+  traverse fn (ObservableStateLive x) = ObservableStateLive <$> traverse fn x
+  sequenceA ObservableStateLoading = pure ObservableStateLoading
+  sequenceA (ObservableStateLive x) = ObservableStateLive <$> sequenceA x
+
 type ObserverState :: CanLoad -> (Type -> Type) -> Type -> Type
 data ObserverState canLoad c v where
   ObserverStateLoadingCleared :: ObserverState Load c v
@@ -484,6 +496,14 @@ pattern ObserverStateLiveOk content = ObserverStateLive (ObservableResultOk cont
 
 pattern ObserverStateLiveEx :: forall canLoad exceptions c v. Ex exceptions -> ObserverState canLoad (ObservableResult exceptions c) v
 pattern ObserverStateLiveEx ex = ObserverStateLive (ObservableResultEx ex)
+
+instance Foldable c => Foldable (ObserverState canLoad c) where
+  foldMap fn ObserverStateLoadingCleared = mempty
+  foldMap fn (ObserverStateLoadingCached x) = foldMap fn x
+  foldMap fn (ObserverStateLive x) = foldMap fn x
+  foldr _ initial ObserverStateLoadingCleared = initial
+  foldr fn i (ObserverStateLoadingCached x) = foldr fn i x
+  foldr fn i (ObserverStateLive x) = foldr fn i x
 
 instance HasField "loading" (ObserverState canLoad c v) (Loading canLoad) where
   getField ObserverStateLoadingCleared = Loading
