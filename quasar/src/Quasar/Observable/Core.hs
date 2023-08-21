@@ -47,6 +47,8 @@ module Quasar.Observable.Core (
   applyObservableChange,
   applyEvaluatedObservableChange,
   toInitialChange,
+  ObserverContext(..),
+  updateObserverContext,
   ObservableFunctor,
 
   MappedObservable(..),
@@ -519,6 +521,39 @@ instance HasField "maybeL" (ObserverState canLoad c v) (MaybeL canLoad (c v)) wh
   getField ObserverStateLoadingCleared = NothingL
   getField (ObserverStateLoadingCached cache) = JustL cache
   getField (ObserverStateLive evaluated) = JustL evaluated
+
+instance ObservableContainer c v => HasField "context" (ObserverState canLoad c v) (ObserverContext canLoad c) where
+  getField ObserverStateLoadingCleared = ObserverContextLoadingCleared
+  getField (ObserverStateLoadingCached cache) = ObserverContextLoadingCached (toInitialDeltaContext cache)
+  getField (ObserverStateLive state) = ObserverContextLive (toInitialDeltaContext state)
+
+type ObserverContext :: CanLoad -> (Type -> Type) -> Type
+data ObserverContext canLoad c where
+  ObserverContextLoadingCleared :: ObserverContext Load c
+  ObserverContextLoadingCached :: DeltaContext c -> ObserverContext Load c
+  ObserverContextLive :: DeltaContext c -> ObserverContext canLoad c
+
+updateObserverContext ::
+  forall canLoad c v.
+  ObservableContainer c v =>
+  ObserverContext canLoad c ->
+  ObservableChange canLoad c v ->
+  ObserverContext canLoad c
+updateObserverContext _ ObservableChangeLoadingClear = ObserverContextLoadingCleared
+updateObserverContext ObserverContextLoadingCleared ObservableChangeLoadingUnchanged = ObserverContextLoadingCleared
+updateObserverContext x@(ObserverContextLoadingCached _ctx) ObservableChangeLoadingUnchanged = x
+updateObserverContext (ObserverContextLive ctx) ObservableChangeLoadingUnchanged = ObserverContextLoadingCached ctx
+updateObserverContext ObserverContextLoadingCleared ObservableChangeLiveUnchanged = ObserverContextLoadingCleared
+updateObserverContext (ObserverContextLoadingCached ctx) ObservableChangeLiveUnchanged = ObserverContextLive ctx
+updateObserverContext x@(ObserverContextLive _ctx) ObservableChangeLiveUnchanged = x
+updateObserverContext _ (ObservableChangeLiveUpdate (ObservableUpdateReplace new)) = ObserverContextLive (toInitialDeltaContext new)
+updateObserverContext ObserverContextLoadingCleared (ObservableChangeLiveUpdate (ObservableUpdateDelta _delta)) =
+  ObserverContextLoadingCleared
+updateObserverContext (ObserverContextLoadingCached deltaContext) (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) =
+  ObserverContextLive (snd (updateDeltaContext @c deltaContext delta))
+updateObserverContext (ObserverContextLive deltaContext) (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) =
+  ObserverContextLive (snd (updateDeltaContext @c deltaContext delta))
+
 
 type Loading :: CanLoad -> Type
 data Loading canLoad where

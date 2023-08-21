@@ -4,7 +4,9 @@
 module Quasar.Observable.Traversable (
   -- * Traversing deltas and selecting removed items
   TraversableObservableContainer(..),
-  traverseUpdate,
+  traverseChange,
+  traverseChangeWithContext,
+  observableChangeSelectRemoved,
 
   -- * Traverse active observable items in STM
   observableTMapSTM,
@@ -35,22 +37,62 @@ class (Traversable c, Functor (Delta c), forall a. ObservableContainer c a) => T
 instance TraversableObservableContainer Identity where
   selectRemoved _update (Identity old) = [old]
 
-instance TraversableObservableContainer c => TraversableObservableContainer (ObservableResult '[SomeException] c) where
+instance TraversableObservableContainer c => TraversableObservableContainer (ObservableResult e c) where
   traverseDelta fn delta (Just x) = traverseDelta @c fn delta x
   traverseDelta _fn _delta Nothing = pure Nothing
 
   selectRemoved delta (ObservableResultOk x) = selectRemoved delta x
   selectRemoved _ (ObservableResultEx _ex) = []
 
+observableChangeSelectRemoved :: TraversableObservableContainer c => ObservableChange l c v -> ObserverState l c a -> [a]
+observableChangeSelectRemoved ObservableChangeLoadingClear state = foldr (:) [] state
+observableChangeSelectRemoved ObservableChangeLoadingUnchanged _ = []
+observableChangeSelectRemoved ObservableChangeLiveUnchanged _ = []
+observableChangeSelectRemoved (ObservableChangeLiveUpdate (ObservableUpdateReplace _new)) state = foldr (:) [] state
+observableChangeSelectRemoved (ObservableChangeLiveUpdate (ObservableUpdateDelta _delta)) ObserverStateLoadingCleared = []
+observableChangeSelectRemoved (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) (ObserverStateLoadingCached state) = selectRemoved delta state
+observableChangeSelectRemoved (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) (ObserverStateLive state) = selectRemoved delta state
 
-traverseUpdate :: forall c v a m. (Applicative m, TraversableObservableContainer c) => (v -> m a) -> ObservableUpdate c v -> Maybe (DeltaContext c) -> m (Maybe (ObservableUpdate c a, DeltaContext c))
+
+traverseUpdate :: forall c v a m. (Applicative m, TraversableObservableContainer c) => (v -> m a) -> ObservableUpdate c v -> Maybe (DeltaContext c) -> m (Maybe (ObservableUpdate c a))
 traverseUpdate fn (ObservableUpdateReplace content) _context = do
   newContent <- traverse fn content
-  pure (Just (ObservableUpdateReplace newContent, toInitialDeltaContext @c newContent))
+  pure (Just (ObservableUpdateReplace newContent))
 traverseUpdate fn (ObservableUpdateDelta delta) (Just context) = do
-  traverseDelta @c fn delta context <<&>> \newDelta ->
-    (ObservableUpdateDelta newDelta, snd (updateDeltaContext @c context delta))
+  ObservableUpdateDelta <<$>> traverseDelta @c fn delta context
 traverseUpdate _fn (ObservableUpdateDelta _delta) Nothing = pure Nothing
+
+traverseChange :: forall canLoad c v a m b. (Applicative m, TraversableObservableContainer c) => (v -> m a) -> ObservableChange canLoad c v -> ObserverState canLoad c b -> m (Maybe (ObservableChange canLoad c a))
+traverseChange _fn ObservableChangeLoadingClear _state = pure (Just ObservableChangeLoadingClear)
+traverseChange _fn ObservableChangeLoadingUnchanged _state = pure (Just ObservableChangeLoadingUnchanged)
+traverseChange _fn ObservableChangeLiveUnchanged _state = pure (Just ObservableChangeLoadingUnchanged)
+traverseChange fn (ObservableChangeLiveUpdate (ObservableUpdateReplace new)) ObserverStateLoadingCleared =
+  Just . ObservableChangeLiveUpdate . ObservableUpdateReplace <$> traverse fn new
+traverseChange fn (ObservableChangeLiveUpdate update) state = do
+  traverseUpdate fn update (toInitialDeltaContext <$> state.maybe) <&> \case
+    Nothing -> case state of
+      -- An invalid delta still signals a change from "cached loading" to "live"
+      ObserverStateLoadingCached _ -> Just ObservableChangeLiveUnchanged
+      _ -> Nothing
+    (Just traversedUpdate) -> Just (ObservableChangeLiveUpdate traversedUpdate)
+
+traverseChangeWithContext :: forall canLoad c v a m b. (Applicative m, TraversableObservableContainer c) => (v -> m a) -> ObservableChange canLoad c v -> ObserverContext canLoad c -> m (Maybe (ObservableChange canLoad c a))
+traverseChangeWithContext _fn ObservableChangeLoadingClear _ctx = pure (Just ObservableChangeLoadingClear)
+traverseChangeWithContext _fn ObservableChangeLoadingUnchanged _ctx = pure (Just ObservableChangeLoadingUnchanged)
+traverseChangeWithContext _fn ObservableChangeLiveUnchanged _ctx = pure (Just ObservableChangeLoadingUnchanged)
+traverseChangeWithContext fn (ObservableChangeLiveUpdate (ObservableUpdateReplace new)) ObserverContextLoadingCleared =
+  Just . ObservableChangeLiveUpdate . ObservableUpdateReplace <$> traverse fn new
+traverseChangeWithContext fn (ObservableChangeLiveUpdate update) ctx = do
+  case ctx of
+    ObserverContextLoadingCleared ->
+      ObservableChangeLiveUpdate <<$>> traverseUpdate fn update Nothing
+    ObserverContextLoadingCached dctx ->
+      traverseUpdate fn update (Just dctx) <&> \case
+        Just x -> Just (ObservableChangeLiveUpdate x)
+        -- An invalid delta still signals a change from "cached loading" to "live"
+        Nothing -> Just ObservableChangeLiveUnchanged
+    ObserverContextLive dctx ->
+      ObservableChangeLiveUpdate <<$>> traverseUpdate fn update (Just dctx)
 
 
 -- * Traverse active observable items in STM
@@ -70,42 +112,25 @@ instance TraversableObservableContainer c => IsObservableCore l e c v (Traversin
   attachObserver# (TraversingObservable fn fx) callback = do
     mfixTVar \var -> do
 
-      (fxDisposer, initial) <- attachObserver# fx \case
-        ObservableChangeLoadingClear -> do
-          mapM_ (mapM_ disposeTSimpleDisposer) =<< swapTVar var Nothing
-          callback ObservableChangeLoadingClear
-        ObservableChangeLoadingUnchanged -> callback ObservableChangeLoadingUnchanged
-        ObservableChangeLiveUnchanged -> callback ObservableChangeLiveUnchanged
-        ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk new)) -> do
-          mapM_ (mapM_ disposeTSimpleDisposer) =<< readTVar var
-          result <- traverse fn new
-          writeTVar var (Just (fst <$> result))
-          callback (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk (snd <$> result))))
-        ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx ex)) -> do
-          mapM_ (mapM_ disposeTSimpleDisposer) =<< swapTVar var Nothing
-          callback (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx ex)))
-        ObservableChangeLiveUpdate (ObservableUpdateDelta delta) -> do
-          readTVar var >>= \case
-            -- Receiving a delta in a 'Cleared' or exception state is a no-op.
-            Nothing -> pure ()
-            Just disposers -> do
-              mapM_ disposeTSimpleDisposer (selectRemoved delta disposers)
-              traverseDelta @c fn delta (toInitialDeltaContext disposers) >>=
-                mapM_ \traversedDelta -> do
-                  writeTVar var (Just (applyDelta (fst <$> traversedDelta) disposers))
-                  callback (ObservableChangeLiveUpdate (ObservableUpdateDelta (snd <$> traversedDelta)))
+      (fxDisposer, initial) <- attachObserver# fx \change -> do
+        -- Var is only set to Nothing when the observer is destructed
+        readTVar var >>= mapM_ \old -> do
+          traverseChange fn change old >>= mapM_ \traversedChange -> do
+            mapM_ disposeTSimpleDisposer (observableChangeSelectRemoved change old)
+            let
+              disposerChange = fst <$> traversedChange
+              downstreamChange = snd <$> traversedChange
+            mapM_ (writeTVar var . Just . snd) (applyObservableChange disposerChange old)
+            callback downstreamChange
 
-      (initialState, initialVar) <- case initial of
-        ObservableStateLoading -> pure (ObservableStateLoading, Nothing)
-        ObservableStateLiveOk initial' -> do
-          result <- traverse fn initial'
-          pure (ObservableStateLiveOk (snd <$> result), Just (fst <$> result))
-        ObservableStateLiveEx ex -> pure (ObservableStateLiveEx ex, Nothing)
+      bar <- traverse fn initial
+      let iVar = createObserverState (fst <$> bar)
+      let iState = snd <$> bar
 
       finalDisposer <- newUnmanagedTSimpleDisposer do
         mapM_ (mapM_ disposeTSimpleDisposer) =<< swapTVar var Nothing
 
-      pure ((fxDisposer <> finalDisposer, initialState), initialVar)
+      pure ((fxDisposer <> finalDisposer, iState), Just iVar)
 
 
 observableTMapSTM ::

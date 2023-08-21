@@ -7,10 +7,8 @@ module Quasar.Network.Runtime.Observable () where
 
 import Control.Monad.Catch
 import Data.Binary (Binary)
-import Data.Functor.Identity (Identity(..))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (mapMaybe)
 import Quasar.Async
 import Quasar.Exceptions
 import Quasar.MonadQuasar
@@ -88,6 +86,28 @@ data PackedChange c where
   PackedChangeLiveUpdateDelta :: Delta c () -> PackedChange c
   deriving Generic
 
+pack :: ObservableChange Load (ObservableResult '[SomeException] c) () -> PackedChange c
+pack ObservableChangeLoadingClear = PackedChangeLoadingClear
+pack ObservableChangeLoadingUnchanged = PackedChangeLoadingUnchanged
+pack ObservableChangeLiveUnchanged = PackedChangeLiveUnchanged
+pack (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx ex))) =
+  PackedChangeLiveUpdateThrow (packException ex)
+pack (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk content))) =
+  PackedChangeLiveUpdateReplace content
+pack (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) =
+  PackedChangeLiveUpdateDelta delta
+
+unpack :: PackedChange c -> ObservableChange Load (ObservableResult '[SomeException] c) ()
+unpack PackedChangeLoadingClear = ObservableChangeLoadingClear
+unpack PackedChangeLoadingUnchanged = ObservableChangeLoadingUnchanged
+unpack PackedChangeLiveUnchanged = ObservableChangeLiveUnchanged
+unpack (PackedChangeLiveUpdateThrow packedException) =
+  ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx (toEx (unpackException packedException))))
+unpack (PackedChangeLiveUpdateReplace packedContent) =
+  ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk packedContent))
+unpack (PackedChangeLiveUpdateDelta packedDelta) =
+  ObservableChangeLiveUpdate (ObservableUpdateDelta packedDelta)
+
 instance (Binary (c ()), Binary (Delta c ())) => Binary (PackedChange c)
 
 
@@ -97,7 +117,7 @@ data ObservableReference c v = ObservableReference {
   observableDisposer :: TVar TSimpleDisposer,
   pendingChange :: TVar (PendingChange Load (ObservableResult '[SomeException] c) v),
   lastChange :: TVar (LastChange Load),
-  activeObjects :: TVar (Maybe (DeltaContext c, c Disposer)),
+  activeObjects :: TVar (ObserverState Load (ObservableResult '[SomeException] c) Disposer),
   pendingDisposal :: TVar (Maybe Disposer)
 }
 
@@ -112,7 +132,7 @@ sendObservableReference observable channel = do
   let (pending, last) = initialPendingAndLastChange @(ObservableResult '[SomeException] c) ObservableStateLoading
   pendingChange <- newTVar pending
   lastChange <- newTVar last
-  activeObjects <- newTVar Nothing
+  activeObjects <- newTVar ObserverStateLoadingCleared
   pendingDisposal <- newTVar Nothing
   let ref = ObservableReference{
     isAttached,
@@ -182,42 +202,13 @@ sendObservableReference observable channel = do
       -> ObservableChange Load (ObservableResult '[SomeException] c) v
       -> STMc NoRetry '[] (Maybe (PackedChange c, Disposer))
     provideAndPackChange ref context change = do
-      case change of
-        ObservableChangeLoadingClear -> do
-          readTVar ref.activeObjects >>= \case
-            Nothing -> pure Nothing
-            Just (_ctx, activeDisposers) -> do
-              writeTVar ref.activeObjects Nothing
-              pure (Just (PackedChangeLoadingClear, fold activeDisposers))
-        ObservableChangeLoadingUnchanged -> pure (Just (PackedChangeLoadingUnchanged, mempty))
-        ObservableChangeLiveUnchanged -> pure (Just (PackedChangeLiveUnchanged, mempty))
-        ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk content)) -> do
-          previousDisposers <- maybe mempty (fold . snd) <$> readTVar ref.activeObjects
-          newContent <- traverse (provideObjectAsDisposableMessagePart context) content
-          writeTVar ref.activeObjects (Just (toInitialDeltaContext newContent, newContent))
-          pure (Just (PackedChangeLiveUpdateReplace (void newContent), previousDisposers))
-        ObservableChangeLiveUpdate (ObservableUpdateDelta delta) -> do
-          readTVar ref.activeObjects >>= \case
-            -- Received a delta in a 'Cleared' or exception state is a no-op.
-            Nothing -> pure Nothing
-            Just (ctx, activeDisposers) -> do
-              traverseDelta @c (provideObjectAsDisposableMessagePart context) delta ctx >>= \case
-                -- `traverseDelta` decided the delta has no effect.
-                Nothing -> pure Nothing
-                Just newDelta -> do
-                  let
-                    removed = mconcat (selectRemoved newDelta activeDisposers)
-                    newActiveDisposers = applyDelta newDelta activeDisposers
-                    packedUnitChange = PackedChangeLiveUpdateDelta (void newDelta)
-                    newCtx = snd (updateDeltaContext @c ctx newDelta)
-                  writeTVar ref.activeObjects (Just (newCtx, newActiveDisposers))
-                  pure (Just (packedUnitChange, removed))
-        ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx ex)) -> do
-          readTVar ref.activeObjects >>= \case
-            Nothing -> pure Nothing
-            Just (_ctx, activeDisposers) -> do
-              writeTVar ref.activeObjects Nothing
-              pure (Just (PackedChangeLiveUpdateThrow (packException ex), fold activeDisposers))
+      state <- readTVar ref.activeObjects
+      traverseChange (provideObjectAsDisposableMessagePart context) change state >>= \case
+        Nothing -> pure Nothing
+        Just disposerChange -> do
+          let removed = observableChangeSelectRemoved change state
+          mapM_ (writeTVar ref.activeObjects . snd) (applyObservableChange disposerChange state)
+          pure (Just (pack (void disposerChange), mconcat removed))
 
     sendThread :: ObservableReference c v -> QuasarIO ()
     sendThread ref = handleDisconnect $ forever do
@@ -265,7 +256,7 @@ data ObservableProxy c v =
     channel :: Channel () ObservableRequest (ObservableResponse c),
     terminated :: TVar Bool,
     observableVar :: ObservableVar Load '[SomeException] c v,
-    deltaContextVar :: TVar (Maybe (DeltaContext c))
+    deltaContextVar :: TVar (ObserverContext Load (ObservableResult '[SomeException] c))
   }
 
 data ProxyState
@@ -280,7 +271,7 @@ receiveObservableReference
 receiveObservableReference channel = do
   observableVar <- newLoadingObservableVar
   terminated <- newTVar False
-  deltaContextVar <- newTVar Nothing
+  deltaContextVar <- newTVar ObserverContextLoadingCleared
   let proxy = ObservableProxy {
       channel,
       terminated,
@@ -297,43 +288,29 @@ receiveObservableReference channel = do
   pure (callback proxy, toObservableCore proxy)
   where
     callback :: ObservableProxy c v -> ReceiveMessageContext -> ObservableResponse c -> QuasarIO ()
-    callback proxy context packed =
-      mapM_ (apply proxy) =<< unpack proxy.deltaContextVar context packed
-
-    unpack :: TVar (Maybe (DeltaContext c)) -> ReceiveMessageContext -> ObservableResponse c -> QuasarIO (Maybe (ObservableChange Load (ObservableResult '[SomeException] c) v))
-    unpack var _context PackedChangeLoadingClear = do
-      atomically $ writeTVar var Nothing
-      pure (Just ObservableChangeLoadingClear)
-    unpack _var _context PackedChangeLoadingUnchanged = pure (Just ObservableChangeLoadingUnchanged)
-    unpack _var _context PackedChangeLiveUnchanged = pure (Just ObservableChangeLiveUnchanged)
-    unpack var _context (PackedChangeLiveUpdateThrow packedException) = do
-      atomically $ writeTVar var Nothing
-      pure (Just (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx (toEx (unpackException packedException))))))
-    unpack var context (PackedChangeLiveUpdateReplace packedContent) = do
-      update <- atomicallyC $ receiveUpdate var context (ObservableUpdateReplace packedContent)
-      pure (ObservableChangeLiveUpdate . ObservableUpdateOk <$> update)
-    unpack var context (PackedChangeLiveUpdateDelta packedDelta) = do
-      update <- atomicallyC $ receiveUpdate var context (ObservableUpdateDelta packedDelta)
-      pure (ObservableChangeLiveUpdate . ObservableUpdateOk <$> update)
+    callback proxy context packed = do
+      -- unpack proxy.deltaContextVar context packed
+      mchange <- atomicallyC $ receiveChangeContents proxy.deltaContextVar context (unpack packed)
+      mapM_ (apply proxy) mchange
 
     apply :: ObservableProxy c v -> ObservableChange Load (ObservableResult '[SomeException] c) v -> QuasarIO ()
     apply proxy change = atomically do
       unlessM (readTVar proxy.terminated) do
         changeObservableVar proxy.observableVar change
 
-receiveUpdate
-  :: forall c v. (NetworkObject v, TraversableObservableContainer c)
-  => TVar (Maybe (DeltaContext c))
+receiveChangeContents
+  :: forall l c v. (NetworkObject v, TraversableObservableContainer c)
+  => TVar (ObserverContext l c)
   -> ReceiveMessageContext
-  -> ObservableUpdate c ()
-  -> STMc NoRetry '[MultiplexerException] (Maybe (ObservableUpdate c v))
-receiveUpdate ctxVar context delta = do
+  -> ObservableChange l c ()
+  -> STMc NoRetry '[MultiplexerException] (Maybe (ObservableChange l c v))
+receiveChangeContents ctxVar context delta = do
   ctx <- readTVar ctxVar
-  traverseUpdate (\() -> receiveObjectFromMessagePart @v context) delta ctx >>= \case
-    Just (update, newCtx) -> do
-      writeTVar ctxVar (Just newCtx)
-      pure (Just update)
-    Nothing -> pure Nothing
+  result <- traverseChangeWithContext (\() -> receiveObjectFromMessagePart @v context) delta ctx
+  case result of
+    Just update -> writeTVar ctxVar (updateObserverContext ctx update)
+    Nothing -> pure ()
+  pure result
 
 instance ContainerConstraint Load '[SomeException] c v (ObservableProxy c v) => ToObservableT Load '[SomeException] c v (ObservableProxy c v) where
   toObservableCore proxy = ObservableT proxy
