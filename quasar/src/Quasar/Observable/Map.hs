@@ -66,7 +66,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
 import Quasar.Observable.Core
 import Quasar.Observable.List (ObservableList)
-import Quasar.Observable.ObservableVar
+import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
 import Quasar.Prelude hiding (filter, lookup)
 import Quasar.Resources.Disposer
@@ -376,43 +376,43 @@ filterWithKey fn fx = ObservableMap (ObservableT (FilteredObservableMap fn fx))
 
 -- * ObservableMapVar
 
-newtype ObservableMapVar k v = ObservableMapVar (ObservableVar NoLoad '[] (Map k) v)
+newtype ObservableMapVar k v = ObservableMapVar (Subject NoLoad '[] (Map k) v)
 
 deriving newtype instance Ord k => IsObservableCore NoLoad '[] (Map k) v (ObservableMapVar k v)
 deriving newtype instance Ord k => IsObservableMap NoLoad '[] k v (ObservableMapVar k v)
 deriving newtype instance Ord k => ToObservableT NoLoad '[] (Map k) v (ObservableMapVar k v)
 
-instance Ord k => IsObservableMap l e k v (ObservableVar l e (Map k) v)
+instance Ord k => IsObservableMap l e k v (Subject l e (Map k) v)
   -- TODO
 
 newObservableMapVar :: MonadSTMc NoRetry '[] m => Map k v -> m (ObservableMapVar k v)
-newObservableMapVar x = liftSTMc @NoRetry @'[] $ ObservableMapVar <$> newObservableVar x
+newObservableMapVar x = liftSTMc @NoRetry @'[] $ ObservableMapVar <$> newSubject x
 
 newObservableMapVarIO :: MonadIO m => Map k v -> m (ObservableMapVar k v)
-newObservableMapVarIO x = liftIO $ ObservableMapVar <$> newObservableVarIO x
+newObservableMapVarIO x = liftIO $ ObservableMapVar <$> newSubjectIO x
 
 insert :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> k -> v -> m ()
 insert (ObservableMapVar var) key value =
-  changeObservableVar var (ObservableChangeLiveUpdate (ObservableUpdateDelta (insertDelta key value)))
+  changeSubject var (ObservableChangeLiveUpdate (ObservableUpdateDelta (insertDelta key value)))
 
 delete :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> k -> m ()
 delete (ObservableMapVar var) key =
-  changeObservableVar var (ObservableChangeLiveUpdate (ObservableUpdateDelta (deleteDelta key)))
+  changeSubject var (ObservableChangeLiveUpdate (ObservableUpdateDelta (deleteDelta key)))
 
 lookupDelete :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> k -> m (Maybe v)
 lookupDelete (ObservableMapVar var) key = do
-  r <- Map.lookup key <$> readObservableVar var
+  r <- Map.lookup key <$> readSubject var
   when (isJust r) do
-    changeObservableVar var (ObservableChangeLiveUpdate (ObservableUpdateDelta (deleteDelta key)))
+    changeSubject var (ObservableChangeLiveUpdate (ObservableUpdateDelta (deleteDelta key)))
   pure r
 
 replace :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> Map k v -> m ()
 replace (ObservableMapVar var) new =
-  changeObservableVar var (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk new)))
+  changeSubject var (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk new)))
 
 clear :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> m ()
 clear (ObservableMapVar var) =
-  changeObservableVar var (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk mempty)))
+  changeSubject var (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk mempty)))
 
 
 instance Ord k => IsObservableMap l e k v (TraversingObservable l e (Map k) v)

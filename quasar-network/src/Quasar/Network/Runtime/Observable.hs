@@ -20,7 +20,7 @@ import Quasar.Network.Runtime.Class
 import Quasar.Network.Runtime.Generic () -- Instances are part of Quasar.Network.Runtime, but that would be an import loop.
 import Quasar.Observable.Core
 import Quasar.Observable.Map
-import Quasar.Observable.ObservableVar
+import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
 import Quasar.Prelude
 import Quasar.Resources
@@ -255,7 +255,7 @@ data ObservableProxy c v =
   ObservableProxy {
     channel :: Channel () ObservableRequest (ObservableResponse c),
     terminated :: TVar Bool,
-    observableVar :: ObservableVar Load '[SomeException] c v,
+    observableVar :: Subject Load '[SomeException] c v,
     deltaContextVar :: TVar (ObserverContext Load (ObservableResult '[SomeException] c))
   }
 
@@ -269,7 +269,7 @@ receiveObservableReference
   => Channel () ObservableRequest (ObservableResponse c)
   -> STMc NoRetry '[MultiplexerException] (ChannelHandler (ObservableResponse c), ObservableT Load '[SomeException] c v)
 receiveObservableReference channel = do
-  observableVar <- newLoadingObservableVar
+  observableVar <- newLoadingSubject
   terminated <- newTVar False
   deltaContextVar <- newTVar ObserverContextLoadingCleared
   let proxy = ObservableProxy {
@@ -296,7 +296,7 @@ receiveObservableReference channel = do
     apply :: ObservableProxy c v -> ObservableChange Load (ObservableResult '[SomeException] c) v -> QuasarIO ()
     apply proxy change = atomically do
       unlessM (readTVar proxy.terminated) do
-        changeObservableVar proxy.observableVar change
+        changeSubject proxy.observableVar change
 
 receiveChangeContents
   :: forall l c v. (NetworkObject v, TraversableObservableContainer c)
@@ -331,14 +331,14 @@ manageObservableProxy proxy = do
   task `catch` \(ex :: Ex '[MultiplexerException, ChannelException]) ->
     atomically do
       writeTVar proxy.terminated True
-      changeObservableVar proxy.observableVar (ObservableChangeLiveUpdate (ObservableUpdateThrow (toEx (ObservableProxyException (toException ex)))))
+      changeSubject proxy.observableVar (ObservableChangeLiveUpdate (ObservableUpdateThrow (toEx (ObservableProxyException (toException ex)))))
   where
     task = bracket (pure proxy.channel) disposeEventuallyIO_ \channel -> do
       forever do
-        atomically $ check =<< observableVarHasObservers proxy.observableVar
+        atomically $ check =<< subjectHasObservers proxy.observableVar
 
         channelSend channel Start
 
-        atomically $ check . not =<< observableVarHasObservers proxy.observableVar
+        atomically $ check . not =<< subjectHasObservers proxy.observableVar
 
         channelSend channel Stop
