@@ -34,7 +34,7 @@ module Quasar.Observable.Core (
   ObservableChange(..),
   mapObservableChange,
   ObservableUpdate(.., ObservableUpdateOk, ObservableUpdateThrow),
-  updateDeltaWithContext',
+  updateValidatedDelta,
   EvaluatedObservableChange(..),
   EvaluatedUpdate(.., EvaluatedUpdateOk, EvaluatedUpdateThrow),
   ObservableState(.., ObservableStateLiveOk, ObservableStateLiveEx),
@@ -223,14 +223,14 @@ class ObservableContainer c v where
   type DeltaContext c
   type instance DeltaContext _c = ()
 
-  type DeltaWithContext c :: Type -> Type
-  type instance DeltaWithContext c = Delta c
+  type ValidatedDelta c :: Type -> Type
+  type instance ValidatedDelta c = Delta c
 
   applyDelta :: Delta c v -> c v -> c v
-  mergeDelta :: DeltaWithContext c v -> Delta c v -> DeltaWithContext c v
+  mergeDelta :: ValidatedDelta c v -> Delta c v -> ValidatedDelta c v
 
-  updateDeltaContext :: DeltaContext c -> Delta c v -> (DeltaWithContext c v, DeltaContext c)
-  default updateDeltaContext :: (DeltaContext c ~ (), DeltaWithContext c v ~ Delta c v) => DeltaContext c -> Delta c v -> (DeltaWithContext c v, DeltaContext c)
+  updateDeltaContext :: DeltaContext c -> Delta c v -> (ValidatedDelta c v, DeltaContext c)
+  default updateDeltaContext :: (DeltaContext c ~ (), ValidatedDelta c v ~ Delta c v) => DeltaContext c -> Delta c v -> (ValidatedDelta c v, DeltaContext c)
   updateDeltaContext _ delta = (delta, ())
 
   toInitialDeltaContext :: c v -> DeltaContext c
@@ -245,30 +245,30 @@ class ObservableContainer c v where
 
   contentFromEvaluatedDelta :: EvaluatedDelta c v -> c v
 
-  -- | Split a 'DeltaWithContext' into its 'Delta' and 'DeltaContext'
+  -- | Split a 'ValidatedDelta' into its 'Delta' and 'DeltaContext'
   -- components.
   --
   -- Returns 'Nothing' if the delta has no effect given the current context.
   -- Please note that even a no-op or invalid delta will change a 'Loading'
   -- observable to 'Live'.
-  splitDeltaAndContext :: DeltaWithContext c v -> Maybe (Delta c v, DeltaContext c)
+  splitDeltaAndContext :: ValidatedDelta c v -> Maybe (Delta c v, DeltaContext c)
   default splitDeltaAndContext ::
-    (DeltaWithContext c v ~ Delta c v, DeltaContext c ~ ()) =>
-    DeltaWithContext c v ->
+    (ValidatedDelta c v ~ Delta c v, DeltaContext c ~ ()) =>
+    ValidatedDelta c v ->
     Maybe (Delta c v, DeltaContext c)
   splitDeltaAndContext delta = Just (delta, ())
 
 
-mergeUpdate :: forall c v. ObservableContainer c v => ObservableUpdateWithContext c v -> ObservableUpdate c v -> ObservableUpdateWithContext c v
-mergeUpdate _ (ObservableUpdateReplace content) = ObservableUpdateWithContextReplace content
-mergeUpdate old@(ObservableUpdateWithContextReplace content) (ObservableUpdateDelta delta) =
-  ObservableUpdateWithContextReplace (applyDelta @c delta content)
-mergeUpdate (ObservableUpdateWithContextDelta old) (ObservableUpdateDelta new) =
-  ObservableUpdateWithContextDelta (mergeDelta @c old new)
+mergeUpdate :: forall c v. ObservableContainer c v => ValidatedObservableUpdate c v -> ObservableUpdate c v -> ValidatedObservableUpdate c v
+mergeUpdate _ (ObservableUpdateReplace content) = ValidatedObservableUpdateReplace content
+mergeUpdate (ValidatedObservableUpdateReplace content) (ObservableUpdateDelta delta) =
+  ValidatedObservableUpdateReplace (applyDelta @c delta content)
+mergeUpdate (ValidatedObservableUpdateDelta old) (ObservableUpdateDelta new) =
+  ValidatedObservableUpdateDelta (mergeDelta @c old new)
 
-updateDeltaWithContext' :: forall c v. ObservableContainer c v => DeltaContext c -> ObservableUpdate c v -> ObservableUpdateWithContext c v
-updateDeltaWithContext' _ (ObservableUpdateReplace content) = ObservableUpdateWithContextReplace content
-updateDeltaWithContext' ctx (ObservableUpdateDelta delta) = ObservableUpdateWithContextDelta (fst (updateDeltaContext @c ctx delta))
+updateValidatedDelta :: forall c v. ObservableContainer c v => DeltaContext c -> ObservableUpdate c v -> ValidatedObservableUpdate c v
+updateValidatedDelta _ (ObservableUpdateReplace content) = ValidatedObservableUpdateReplace content
+updateValidatedDelta ctx (ObservableUpdateDelta delta) = ValidatedObservableUpdateDelta (fst (updateDeltaContext @c ctx delta))
 
 instance ObservableContainer Identity v where
   type ContainerConstraint _canLoad _exceptions Identity v _a = ()
@@ -344,15 +344,15 @@ instance (Traversable c, Traversable (Delta c)) => Traversable (ObservableUpdate
   traverse f (ObservableUpdateDelta delta) = ObservableUpdateDelta <$> traverse f delta
 
 
-type ObservableUpdateWithContext :: (Type -> Type) -> Type -> Type
-data ObservableUpdateWithContext c v where
-  ObservableUpdateWithContextReplace :: c v -> ObservableUpdateWithContext c v
-  ObservableUpdateWithContextDelta :: DeltaWithContext c v -> ObservableUpdateWithContext c v
+type ValidatedObservableUpdate :: (Type -> Type) -> Type -> Type
+data ValidatedObservableUpdate c v where
+  ValidatedObservableUpdateReplace :: c v -> ValidatedObservableUpdate c v
+  ValidatedObservableUpdateDelta :: ValidatedDelta c v -> ValidatedObservableUpdate c v
 
-splitObservableUpdateWithContext :: forall c v. ObservableContainer c v => ObservableUpdateWithContext c v -> Maybe (ObservableUpdate c v, DeltaContext c)
-splitObservableUpdateWithContext (ObservableUpdateWithContextReplace content) =
+splitValidatedUpdate :: forall c v. ObservableContainer c v => ValidatedObservableUpdate c v -> Maybe (ObservableUpdate c v, DeltaContext c)
+splitValidatedUpdate (ValidatedObservableUpdateReplace content) =
   Just (ObservableUpdateReplace content, toInitialDeltaContext content)
-splitObservableUpdateWithContext (ObservableUpdateWithContextDelta deltaWithContext) =
+splitValidatedUpdate (ValidatedObservableUpdateDelta deltaWithContext) =
   first ObservableUpdateDelta <$> splitDeltaAndContext @c deltaWithContext
 
 
@@ -657,7 +657,7 @@ fromMaybeL _ (JustL x) = x
 type PendingChange :: CanLoad -> (Type -> Type) -> Type -> Type
 data PendingChange canLoad c v where
   PendingChangeLoadingClear :: PendingChange Load c v
-  PendingChangeAlter :: Loading canLoad -> Either (DeltaContext c) (ObservableUpdateWithContext c v) -> PendingChange canLoad c v
+  PendingChangeAlter :: Loading canLoad -> Either (DeltaContext c) (ValidatedObservableUpdate c v) -> PendingChange canLoad c v
 
 type LastChange :: CanLoad -> Type
 data LastChange canLoad where
@@ -677,13 +677,13 @@ updatePendingChange ObservableChangeLiveUnchanged PendingChangeLoadingClear = Pe
 updatePendingChange ObservableChangeLoadingUnchanged (PendingChangeAlter _loading delta) = PendingChangeAlter Loading delta
 updatePendingChange ObservableChangeLiveUnchanged (PendingChangeAlter _loading delta) = PendingChangeAlter Live delta
 updatePendingChange (ObservableChangeLiveUpdate (ObservableUpdateReplace content)) _ =
-  PendingChangeAlter Live (Right (ObservableUpdateWithContextReplace content))
+  PendingChangeAlter Live (Right (ValidatedObservableUpdateReplace content))
 updatePendingChange (ObservableChangeLiveUpdate (ObservableUpdateDelta _delta)) PendingChangeLoadingClear = PendingChangeLoadingClear
 updatePendingChange (ObservableChangeLiveUpdate update) prev@(PendingChangeAlter _loading (Right prevUpdate)) =
   let newUpdate = mergeUpdate @c prevUpdate update
   in PendingChangeAlter Live (Right newUpdate)
 updatePendingChange (ObservableChangeLiveUpdate update) (PendingChangeAlter _loading (Left ctx)) =
-  PendingChangeAlter Live (Right (updateDeltaWithContext' @c ctx update))
+  PendingChangeAlter Live (Right (updateValidatedDelta @c ctx update))
 
 initialPendingChange :: ObservableContainer c v => ObservableState canLoad c v -> PendingChange canLoad c v
 initialPendingChange ObservableStateLoading = PendingChangeLoadingClear
@@ -724,7 +724,7 @@ changeFromPending loading pendingChange lastChange = do
     changeFromPending' Live x@(PendingChangeAlter Live (Left _)) LastChangeLoading = Just (ObservableChangeLiveUnchanged, x)
     changeFromPending' Live (PendingChangeAlter Live (Left _)) LastChangeLive = Nothing
     changeFromPending' Live x@(PendingChangeAlter Live (Right updateWC)) lc = do
-      case splitObservableUpdateWithContext updateWC of
+      case splitValidatedUpdate updateWC of
         Just (update, ctx) -> Just (ObservableChangeLiveUpdate update, PendingChangeAlter Live (Left ctx))
         Nothing -> case lc of
           LastChangeLoading -> Just (ObservableChangeLiveUnchanged, x)
@@ -1233,48 +1233,48 @@ mergeObservableResult fn (ObservableResultOk x) (ObservableResultOk y) = Observa
 mergeObservableResult _fn (ObservableResultEx ex) _ = ObservableResultEx ex
 mergeObservableResult _fn _ (ObservableResultEx ex) = ObservableResultEx ex
 
-type ObservableResultDeltaWithContext :: (Type -> Type) -> Type -> Type
-data ObservableResultDeltaWithContext c v
-  = ObservableResultDeltaWithContext (DeltaWithContext c v)
-  | InvalidObservableResultDeltaWithContext
+type ValidatedResultDelta :: (Type -> Type) -> Type -> Type
+data ValidatedResultDelta c v
+  = ResultDeltaValid (ValidatedDelta c v)
+  | ResultDeltaInvalid
 
-instance Functor (DeltaWithContext c) => Functor (ObservableResultDeltaWithContext c) where
-  fmap fn (ObservableResultDeltaWithContext fx) = ObservableResultDeltaWithContext (fmap fn fx)
-  fmap _fn InvalidObservableResultDeltaWithContext = InvalidObservableResultDeltaWithContext
+instance Functor (ValidatedDelta c) => Functor (ValidatedResultDelta c) where
+  fmap fn (ResultDeltaValid fx) = ResultDeltaValid (fmap fn fx)
+  fmap _fn ResultDeltaInvalid = ResultDeltaInvalid
 
-instance Foldable (DeltaWithContext c) => Foldable (ObservableResultDeltaWithContext c) where
-  foldMap fn (ObservableResultDeltaWithContext fx) = foldMap fn fx
-  foldMap _fn InvalidObservableResultDeltaWithContext = mempty
-  foldr fn i (ObservableResultDeltaWithContext fx) = foldr fn i fx
-  foldr _fn i InvalidObservableResultDeltaWithContext = i
+instance Foldable (ValidatedDelta c) => Foldable (ValidatedResultDelta c) where
+  foldMap fn (ResultDeltaValid fx) = foldMap fn fx
+  foldMap _fn ResultDeltaInvalid = mempty
+  foldr fn i (ResultDeltaValid fx) = foldr fn i fx
+  foldr _fn i ResultDeltaInvalid = i
 
-instance Traversable (DeltaWithContext c) => Traversable (ObservableResultDeltaWithContext c) where
-  traverse fn (ObservableResultDeltaWithContext fx) = ObservableResultDeltaWithContext <$> traverse fn fx
-  traverse _fn InvalidObservableResultDeltaWithContext = pure InvalidObservableResultDeltaWithContext
+instance Traversable (ValidatedDelta c) => Traversable (ValidatedResultDelta c) where
+  traverse fn (ResultDeltaValid fx) = ResultDeltaValid <$> traverse fn fx
+  traverse _fn ResultDeltaInvalid = pure ResultDeltaInvalid
 
 instance ObservableContainer c v => ObservableContainer (ObservableResult exceptions c) v where
   type ContainerConstraint canLoad exceptions (ObservableResult exceptions c) v a = ContainerConstraint canLoad exceptions c v a
   type Delta (ObservableResult exceptions c) = Delta c
   type EvaluatedDelta (ObservableResult exceptions c) v = EvaluatedDelta c v
   type instance DeltaContext (ObservableResult exceptions c) = Maybe (DeltaContext c)
-  type instance DeltaWithContext (ObservableResult exceptions c) = ObservableResultDeltaWithContext c
+  type instance ValidatedDelta (ObservableResult exceptions c) = ValidatedResultDelta c
   applyDelta delta (ObservableResultOk content) = ObservableResultOk (applyDelta @c delta content)
   -- NOTE This rejects deltas that are applied to an exception state. Beware
   -- that regardeless of this fact this still does count as a valid delta
   -- application, so it won't prevent the state transition from Loading to Live.
   applyDelta _delta x@(ObservableResultEx _ex) = x
-  mergeDelta (ObservableResultDeltaWithContext old) new = ObservableResultDeltaWithContext (mergeDelta @c old new)
-  mergeDelta InvalidObservableResultDeltaWithContext _new = InvalidObservableResultDeltaWithContext
+  mergeDelta (ResultDeltaValid old) new = ResultDeltaValid (mergeDelta @c old new)
+  mergeDelta ResultDeltaInvalid _new = ResultDeltaInvalid
   updateDeltaContext (Just ctx) delta =
     let (x, y) = updateDeltaContext @c ctx delta
-    in (ObservableResultDeltaWithContext x, Just y)
-  updateDeltaContext Nothing _delta = (InvalidObservableResultDeltaWithContext, Nothing)
+    in (ResultDeltaValid x, Just y)
+  updateDeltaContext Nothing _delta = (ResultDeltaInvalid, Nothing)
   toInitialDeltaContext (ObservableResultOk initial) = Just (toInitialDeltaContext initial)
   toInitialDeltaContext (ObservableResultEx _) = Nothing
   toDelta = toDelta @c
   toEvaluatedDelta delta (ObservableResultOk content) = toEvaluatedDelta delta content
   toEvaluatedDelta _delta (ObservableResultEx _ex) = Nothing
   contentFromEvaluatedDelta delta = ObservableResultOk (contentFromEvaluatedDelta delta)
-  splitDeltaAndContext (ObservableResultDeltaWithContext deltaWithContext) =
+  splitDeltaAndContext (ResultDeltaValid deltaWithContext) =
     Just <<$>> splitDeltaAndContext @c deltaWithContext
-  splitDeltaAndContext InvalidObservableResultDeltaWithContext = Nothing
+  splitDeltaAndContext ResultDeltaInvalid = Nothing

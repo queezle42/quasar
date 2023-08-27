@@ -27,7 +27,7 @@ import Quasar.Utils.Fix
 
 -- * Selecting removals from a delta
 
-class (Traversable c, Functor (Delta c), Traversable (DeltaWithContext c), forall a. ObservableContainer c a) => TraversableObservableContainer c where
+class (Traversable c, Functor (Delta c), Traversable (ValidatedDelta c), forall a. ObservableContainer c a) => TraversableObservableContainer c where
   selectRemoved :: Delta c v -> c a -> [a]
 
 instance TraversableObservableContainer Identity where
