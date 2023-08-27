@@ -27,22 +27,23 @@ import Quasar.Utils.Fix
 
 -- * Selecting removals from a delta
 
-class (Traversable c, Functor (Delta c), forall a. ObservableContainer c a) => TraversableObservableContainer c where
-  traverseDelta :: Applicative m => (v -> m a) -> Delta c v -> DeltaContext c -> m (Maybe (Delta c a))
-  default traverseDelta :: (Traversable (Delta c), Applicative m) => (v -> m a) -> Delta c v -> DeltaContext c -> m (Maybe (Delta c a))
-  traverseDelta fn delta _ = Just <$> traverse fn delta
-
+class (Traversable c, Functor (Delta c), Traversable (DeltaWithContext c), forall a. ObservableContainer c a) => TraversableObservableContainer c where
   selectRemoved :: Delta c v -> c a -> [a]
 
 instance TraversableObservableContainer Identity where
   selectRemoved _update (Identity old) = [old]
 
 instance TraversableObservableContainer c => TraversableObservableContainer (ObservableResult e c) where
-  traverseDelta fn delta (Just x) = traverseDelta @c fn delta x
-  traverseDelta _fn _delta Nothing = pure Nothing
-
   selectRemoved delta (ObservableResultOk x) = selectRemoved delta x
   selectRemoved _ (ObservableResultEx _ex) = []
+
+traverseDelta ::
+  forall c v m a.
+  (TraversableObservableContainer c, Applicative m) =>
+  (v -> m a) -> Delta c v -> DeltaContext c -> m (Maybe (Delta c a))
+traverseDelta fn delta ctx =
+  let deltaWithCtx = fst (updateDeltaContext @c ctx delta)
+  in fmap fst . splitDeltaAndContext @c <$> traverse fn deltaWithCtx
 
 observableChangeSelectRemoved :: TraversableObservableContainer c => ObservableChange l c v -> ObserverState l c a -> [a]
 observableChangeSelectRemoved ObservableChangeLoadingClear state = foldr (:) [] state
