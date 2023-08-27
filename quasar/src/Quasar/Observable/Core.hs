@@ -11,6 +11,7 @@ module Quasar.Observable.Core (
   -- * Generalized observable
   IsObservableCore(..),
   ObservableContainer(..),
+  isEmptyDelta,
   ContainerCount(..),
 
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
@@ -259,6 +260,17 @@ class ObservableContainer c v where
     ValidatedDelta c v ->
     Maybe (Delta c v, DeltaContext c)
   splitDeltaAndContext delta = Just (delta, ())
+
+-- | Test if the delta is empty, i.e. if applying the delta has no effect on the
+-- container.
+--
+-- The result is based on 'splitDeltaAndContext'.
+isEmptyDelta ::
+  forall c v.
+  ObservableContainer c v =>
+  ValidatedDelta c v ->
+  Bool
+isEmptyDelta = isNothing . splitDeltaAndContext @c @v
 
 
 mergeUpdate :: forall c v. ObservableContainer c v => ValidatedObservableUpdate c v -> ObservableUpdate c v -> ValidatedObservableUpdate c v
