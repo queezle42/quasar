@@ -1,12 +1,12 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
-{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE ImpredicativeTypes #-}
 
 module Quasar.Observable.Traversable (
   -- * Traversing deltas and selecting removed items
   TraversableObservableContainer(..),
   traverseChange,
   traverseChangeWithContext,
-  observableChangeSelectRemoved,
+  selectRemovedByChange,
 
   -- * Traverse active observable items in STM
   observableTMapSTM,
@@ -27,7 +27,7 @@ import Quasar.Utils.Fix
 
 -- * Selecting removals from a delta
 
-class (Traversable c, Functor (Delta c), Traversable (ValidatedDelta c), forall a. ObservableContainer c a) => TraversableObservableContainer c where
+class (ObservableFunctor c, Traversable c, Traversable (ValidatedDelta c)) => TraversableObservableContainer c where
   selectRemoved :: Delta c v -> c a -> [a]
 
 instance TraversableObservableContainer Identity where
@@ -39,20 +39,20 @@ instance TraversableObservableContainer c => TraversableObservableContainer (Obs
 
 traverseDelta ::
   forall c v m a.
-  (TraversableObservableContainer c, Applicative m) =>
+  (ObservableFunctor c, Traversable (ValidatedDelta c), Applicative m) =>
   (v -> m a) -> Delta c v -> DeltaContext c -> m (Maybe (Delta c a))
 traverseDelta fn delta ctx =
   let deltaWithCtx = fst (updateDeltaContext @c ctx delta)
   in fmap fst . splitDeltaAndContext @c <$> traverse fn deltaWithCtx
 
-observableChangeSelectRemoved :: TraversableObservableContainer c => ObservableChange l c v -> ObserverState l c a -> [a]
-observableChangeSelectRemoved ObservableChangeLoadingClear state = foldr (:) [] state
-observableChangeSelectRemoved ObservableChangeLoadingUnchanged _ = []
-observableChangeSelectRemoved ObservableChangeLiveUnchanged _ = []
-observableChangeSelectRemoved (ObservableChangeLiveUpdate (ObservableUpdateReplace _new)) state = foldr (:) [] state
-observableChangeSelectRemoved (ObservableChangeLiveUpdate (ObservableUpdateDelta _delta)) ObserverStateLoadingCleared = []
-observableChangeSelectRemoved (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) (ObserverStateLoadingCached state) = selectRemoved delta state
-observableChangeSelectRemoved (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) (ObserverStateLive state) = selectRemoved delta state
+selectRemovedByChange :: TraversableObservableContainer c => ObservableChange l c v -> ObserverState l c a -> [a]
+selectRemovedByChange ObservableChangeLoadingClear state = foldr (:) [] state
+selectRemovedByChange ObservableChangeLoadingUnchanged _ = []
+selectRemovedByChange ObservableChangeLiveUnchanged _ = []
+selectRemovedByChange (ObservableChangeLiveUpdate (ObservableUpdateReplace _new)) state = foldr (:) [] state
+selectRemovedByChange (ObservableChangeLiveUpdate (ObservableUpdateDelta _delta)) ObserverStateLoadingCleared = []
+selectRemovedByChange (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) (ObserverStateLoadingCached state) = selectRemoved delta state
+selectRemovedByChange (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) (ObserverStateLive state) = selectRemoved delta state
 
 
 traverseUpdate :: forall c v a m. (Applicative m, TraversableObservableContainer c) => (v -> m a) -> ObservableUpdate c v -> Maybe (DeltaContext c) -> m (Maybe (ObservableUpdate c a))
@@ -117,7 +117,7 @@ instance TraversableObservableContainer c => IsObservableCore l e c v (Traversin
         -- Var is only set to Nothing when the observer is destructed
         readTVar var >>= mapM_ \old -> do
           traverseChange fn change old >>= mapM_ \traversedChange -> do
-            mapM_ disposeTSimpleDisposer (observableChangeSelectRemoved change old)
+            mapM_ disposeTSimpleDisposer (selectRemovedByChange change old)
             let
               disposerChange = fst <$> traversedChange
               downstreamChange = snd <$> traversedChange

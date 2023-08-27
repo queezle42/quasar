@@ -206,7 +206,7 @@ sendObservableReference observable channel = do
       traverseChange (provideObjectAsDisposableMessagePart context) change state >>= \case
         Nothing -> pure Nothing
         Just disposerChange -> do
-          let removed = observableChangeSelectRemoved change state
+          let removed = selectRemovedByChange change state
           mapM_ (writeTVar ref.activeObjects . snd) (applyObservableChange disposerChange state)
           pure (Just (pack (void disposerChange), mconcat removed))
 
