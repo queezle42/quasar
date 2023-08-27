@@ -219,7 +219,8 @@ class ObservableContainer c v where
   type Delta c :: Type -> Type
   type EvaluatedDelta c v :: Type
   type instance EvaluatedDelta c v = (Delta c v, c v)
-  -- | Enough context to merge deltas.
+
+  -- | Enough information about a container to validate a delta.
   type DeltaContext c
   type instance DeltaContext _c = ()
 
@@ -239,6 +240,7 @@ class ObservableContainer c v where
 
   toDelta :: EvaluatedDelta c v -> Delta c v
 
+  -- | Law: @isJust (toEvaluatedDelta delta content) == isJust (splitDeltaAndContext (fst (updateDeltaContext ctx delta)))@
   toEvaluatedDelta :: Delta c v -> c v -> Maybe (EvaluatedDelta c v)
   default toEvaluatedDelta :: EvaluatedDelta c v ~ (Delta c v, c v) => Delta c v -> c v -> Maybe (EvaluatedDelta c v)
   toEvaluatedDelta delta content = Just (delta, content)
@@ -1275,6 +1277,6 @@ instance ObservableContainer c v => ObservableContainer (ObservableResult except
   toEvaluatedDelta delta (ObservableResultOk content) = toEvaluatedDelta delta content
   toEvaluatedDelta _delta (ObservableResultEx _ex) = Nothing
   contentFromEvaluatedDelta delta = ObservableResultOk (contentFromEvaluatedDelta delta)
-  splitDeltaAndContext (ResultDeltaValid deltaWithContext) =
-    Just <<$>> splitDeltaAndContext @c deltaWithContext
+  splitDeltaAndContext (ResultDeltaValid innerDelta) =
+    Just <<$>> splitDeltaAndContext @c innerDelta
   splitDeltaAndContext ResultDeltaInvalid = Nothing
