@@ -208,7 +208,7 @@ splitOpAt n (ListKeep k)
 instance ObservableContainer Seq v where
   type ContainerConstraint canLoad exceptions Seq v a = IsObservableList canLoad exceptions v a
   type Delta Seq = ListDelta
-  type DeltaWithContext Seq v = ListDeltaCtx v
+  type DeltaWithContext Seq = ListDeltaCtx
   type DeltaContext Seq = Length
   applyDelta (ListDelta ops) state = applyOperations state (toList ops)
   mergeDelta (ListDeltaCtx x) (ListDelta y) =

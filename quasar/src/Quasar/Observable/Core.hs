@@ -223,8 +223,8 @@ class ObservableContainer c v where
   type DeltaContext c
   type instance DeltaContext _c = ()
 
-  type DeltaWithContext c v
-  type instance DeltaWithContext c v = Delta c v
+  type DeltaWithContext c :: Type -> Type
+  type instance DeltaWithContext c = Delta c
 
   applyDelta :: Delta c v -> c v -> c v
   mergeDelta :: DeltaWithContext c v -> Delta c v -> DeltaWithContext c v
@@ -1233,29 +1233,48 @@ mergeObservableResult fn (ObservableResultOk x) (ObservableResultOk y) = Observa
 mergeObservableResult _fn (ObservableResultEx ex) _ = ObservableResultEx ex
 mergeObservableResult _fn _ (ObservableResultEx ex) = ObservableResultEx ex
 
+type ObservableResultDeltaWithContext :: (Type -> Type) -> Type -> Type
+data ObservableResultDeltaWithContext c v
+  = ObservableResultDeltaWithContext (DeltaWithContext c v)
+  | InvalidObservableResultDeltaWithContext
+
+instance Functor (DeltaWithContext c) => Functor (ObservableResultDeltaWithContext c) where
+  fmap fn (ObservableResultDeltaWithContext fx) = ObservableResultDeltaWithContext (fmap fn fx)
+  fmap _fn InvalidObservableResultDeltaWithContext = InvalidObservableResultDeltaWithContext
+
+instance Foldable (DeltaWithContext c) => Foldable (ObservableResultDeltaWithContext c) where
+  foldMap fn (ObservableResultDeltaWithContext fx) = foldMap fn fx
+  foldMap _fn InvalidObservableResultDeltaWithContext = mempty
+  foldr fn i (ObservableResultDeltaWithContext fx) = foldr fn i fx
+  foldr _fn i InvalidObservableResultDeltaWithContext = i
+
+instance Traversable (DeltaWithContext c) => Traversable (ObservableResultDeltaWithContext c) where
+  traverse fn (ObservableResultDeltaWithContext fx) = ObservableResultDeltaWithContext <$> traverse fn fx
+  traverse _fn InvalidObservableResultDeltaWithContext = pure InvalidObservableResultDeltaWithContext
+
 instance ObservableContainer c v => ObservableContainer (ObservableResult exceptions c) v where
   type ContainerConstraint canLoad exceptions (ObservableResult exceptions c) v a = ContainerConstraint canLoad exceptions c v a
   type Delta (ObservableResult exceptions c) = Delta c
   type EvaluatedDelta (ObservableResult exceptions c) v = EvaluatedDelta c v
   type instance DeltaContext (ObservableResult exceptions c) = Maybe (DeltaContext c)
-  type instance DeltaWithContext (ObservableResult exceptions c) v = Maybe (DeltaWithContext c v)
+  type instance DeltaWithContext (ObservableResult exceptions c) = ObservableResultDeltaWithContext c
   applyDelta delta (ObservableResultOk content) = ObservableResultOk (applyDelta @c delta content)
   -- NOTE This rejects deltas that are applied to an exception state. Beware
   -- that regardeless of this fact this still does count as a valid delta
   -- application, so it won't prevent the state transition from Loading to Live.
   applyDelta _delta x@(ObservableResultEx _ex) = x
-  mergeDelta (Just old) new = Just (mergeDelta @c old new)
-  mergeDelta Nothing _new = Nothing -- Ignore deltas when in 'Ex' state
+  mergeDelta (ObservableResultDeltaWithContext old) new = ObservableResultDeltaWithContext (mergeDelta @c old new)
+  mergeDelta InvalidObservableResultDeltaWithContext _new = InvalidObservableResultDeltaWithContext
   updateDeltaContext (Just ctx) delta =
     let (x, y) = updateDeltaContext @c ctx delta
-    in (Just x, Just y)
-  updateDeltaContext Nothing _delta = (Nothing, Nothing)
+    in (ObservableResultDeltaWithContext x, Just y)
+  updateDeltaContext Nothing _delta = (InvalidObservableResultDeltaWithContext, Nothing)
   toInitialDeltaContext (ObservableResultOk initial) = Just (toInitialDeltaContext initial)
   toInitialDeltaContext (ObservableResultEx _) = Nothing
   toDelta = toDelta @c
   toEvaluatedDelta delta (ObservableResultOk content) = toEvaluatedDelta delta content
   toEvaluatedDelta _delta (ObservableResultEx _ex) = Nothing
   contentFromEvaluatedDelta delta = ObservableResultOk (contentFromEvaluatedDelta delta)
-  splitDeltaAndContext (Just deltaWithContext) =
+  splitDeltaAndContext (ObservableResultDeltaWithContext deltaWithContext) =
     Just <<$>> splitDeltaAndContext @c deltaWithContext
-  splitDeltaAndContext Nothing = Nothing
+  splitDeltaAndContext InvalidObservableResultDeltaWithContext = Nothing
