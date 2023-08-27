@@ -16,7 +16,7 @@ module Quasar.Prelude
     Data.Foldable.sequenceA_,
     Data.Foldable.traverse_,
     Data.Foldable.toList,
-    Data.Functor.Identity.Identity,
+    Data.Functor.Identity.Identity(..),
     module Control.Concurrent.MVar,
     Control.Exception.Exception,
     Control.Exception.IOException,
