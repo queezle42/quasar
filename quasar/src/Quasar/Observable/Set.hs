@@ -44,12 +44,12 @@ instance ContainerCount Set where
 type ToObservableSet canLoad exceptions v = ToObservableT canLoad exceptions Set v
 
 toObservableSet :: ToObservableSet canLoad exceptions v a => a -> ObservableSet canLoad exceptions v
-toObservableSet x = ObservableSet (toObservableCore x)
+toObservableSet x = ObservableSet (toObservableT x)
 
 newtype ObservableSet canLoad exceptions v = ObservableSet (ObservableT canLoad exceptions Set v)
 
 instance ToObservableT canLoad exceptions Set v (ObservableSet canLoad exceptions v) where
-  toObservableCore (ObservableSet x) = x
+  toObservableT (ObservableSet x) = x
 
 instance Ord v => IsObservableCore canLoad exceptions Set v (ObservableSet canLoad exceptions v) where
   readObservable# (ObservableSet x) = readObservable# x

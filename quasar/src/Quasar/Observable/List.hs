@@ -229,13 +229,13 @@ instance ContainerCount Seq where
 type ToObservableList canLoad exceptions v a = ToObservableT canLoad exceptions Seq v a
 
 toObservableList :: ToObservableList canLoad exceptions v a => a -> ObservableList canLoad exceptions v
-toObservableList x = ObservableList (toObservableCore x)
+toObservableList x = ObservableList (toObservableT x)
 
 newtype ObservableList canLoad exceptions v
   = ObservableList (ObservableT canLoad exceptions Seq v)
 
 instance ToObservableT canLoad exceptions Seq v (ObservableList canLoad exceptions v) where
-  toObservableCore (ObservableList x) = x
+  toObservableT (ObservableList x) = x
 
 instance IsObservableCore canLoad exceptions Seq v (ObservableList canLoad exceptions v) where
   readObservable# (ObservableList x) = readObservable# x

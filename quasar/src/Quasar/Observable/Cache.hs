@@ -28,7 +28,7 @@ data CacheState canLoad exceptions c v
       (ObserverState canLoad (ObservableResult exceptions c) v)
 
 instance (ObservableContainer c v, ContainerConstraint canLoad exceptions c v (CachedObservable canLoad exceptions c v)) => ToObservableT canLoad exceptions c v (CachedObservable canLoad exceptions c v) where
-  toObservableCore = ObservableT
+  toObservableT = ObservableT
 
 instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (CachedObservable canLoad exceptions c v) where
   readObservable# (CachedObservable var) = do
@@ -78,7 +78,7 @@ cacheObservable (toObservable -> f) =
 newtype CacheObservableOperation canLoad exceptions l e v = CacheObservableOperation (Observable l e v)
 
 instance ToObservableT canLoad exceptions Identity (Observable l e v) (CacheObservableOperation canLoad exceptions l e v) where
-  toObservableCore = ObservableT
+  toObservableT = ObservableT
 
 instance IsObservableCore canLoad exceptions Identity (Observable l e v) (CacheObservableOperation canLoad exceptions l e v) where
   readObservable# (CacheObservableOperation x) = do

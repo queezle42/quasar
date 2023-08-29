@@ -97,7 +97,6 @@ import Control.Applicative
 import Control.Monad.Catch (MonadThrow)
 import Control.Monad.Catch.Pure (MonadThrow(..))
 import Control.Monad.Except
-import Data.Functor.Identity (Identity(..))
 import Data.String (IsString(..))
 import Data.Type.Equality ((:~:)(Refl))
 import GHC.Records (HasField(..))
@@ -208,10 +207,10 @@ instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (Obs
 
 type ToObservableT :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type -> Constraint
 class ToObservableT canLoad exceptions c v a | a -> canLoad, a -> exceptions, a -> c, a -> v where
-  toObservableCore :: a -> ObservableT canLoad exceptions c v
+  toObservableT :: a -> ObservableT canLoad exceptions c v
 
 instance ToObservableT canLoad exceptions c v (ObservableT canLoad exceptions c v) where
-  toObservableCore = id
+  toObservableT = id
 
 
 type ObservableContainer :: (Type -> Type) -> Type -> Constraint
@@ -773,7 +772,7 @@ instance ObservableFunctor c => IsObservableCore canLoad exceptions c v (MappedO
 data EvaluatedObservableCore canLoad exceptions c v = forall a. IsObservableCore canLoad exceptions c v a => EvaluatedObservableCore a
 
 instance ObservableContainer c v => ToObservableT canLoad exceptions Identity (c v) (EvaluatedObservableCore canLoad exceptions c v) where
-  toObservableCore = ObservableT
+  toObservableT = ObservableT
 
 instance ObservableContainer c v => IsObservableCore canLoad exceptions Identity (c v) (EvaluatedObservableCore canLoad exceptions c v) where
   readObservable# (EvaluatedObservableCore observable) = Identity <$> readObservable# observable
@@ -796,7 +795,7 @@ mapObservableStateResult fn (ObservableStateLiveOk content) = ObservableStateLiv
 data LiftA2Observable l e c v = forall va vb a b. (IsObservableCore l e c va a, ObservableContainer c va, IsObservableCore l e c vb b, ObservableContainer c vb) => LiftA2Observable (va -> vb -> v) a b
 
 instance (Applicative c, ObservableContainer c v, ContainerConstraint canLoad exceptions c v (LiftA2Observable canLoad exceptions c v)) => ToObservableT canLoad exceptions c v (LiftA2Observable canLoad exceptions c v) where
-  toObservableCore = ObservableT
+  toObservableT = ObservableT
 
 instance (Applicative c, ObservableContainer c v) => IsObservableCore canLoad exceptions c v (LiftA2Observable canLoad exceptions c v) where
   readObservable# (LiftA2Observable fn fx fy) =
@@ -1144,7 +1143,7 @@ bindObservableT fx fn = ObservableT (BindObservable fx rhsHandler)
 type ToObservable canLoad exceptions v = ToObservableT canLoad exceptions Identity v
 
 toObservable :: ToObservable canLoad exceptions v a => a -> Observable canLoad exceptions v
-toObservable = Observable . toObservableCore
+toObservable = Observable . toObservableT
 
 readObservable ::
   forall exceptions v m a.
@@ -1158,7 +1157,7 @@ type Observable :: CanLoad -> [Type] -> Type -> Type
 newtype Observable canLoad exceptions v = Observable (ObservableT canLoad exceptions Identity v)
 
 instance ToObservableT canLoad exceptions Identity v (Observable canLoad exceptions v) where
-  toObservableCore (Observable x) = ObservableT x
+  toObservableT (Observable x) = ObservableT x
 
 instance Functor (Observable canLoad exceptions) where
   fmap fn (Observable fx) = Observable (ObservableT (mapObservable# fn fx))

@@ -285,7 +285,7 @@ receiveObservableReference channel = do
   handleSTMc @NoRetry @'[FailedToAttachResource] @FailedToAttachResource (throwToExceptionSink channel.quasar.exceptionSink) do
     attachResource channel.quasar.resourceManager ac
 
-  pure (callback proxy, toObservableCore proxy)
+  pure (callback proxy, toObservableT proxy)
   where
     callback :: ObservableProxy c v -> ReceiveMessageContext -> ObservableResponse c -> QuasarIO ()
     callback proxy context packed = do
@@ -313,7 +313,7 @@ receiveChangeContents ctxVar context delta = do
   pure result
 
 instance ContainerConstraint Load '[SomeException] c v (ObservableProxy c v) => ToObservableT Load '[SomeException] c v (ObservableProxy c v) where
-  toObservableCore proxy = ObservableT proxy
+  toObservableT proxy = ObservableT proxy
 
 instance IsObservableCore Load '[SomeException] c v (ObservableProxy c v) where
   readObservable# = absurdLoad

@@ -166,7 +166,7 @@ instance Ord k => IsObservableMap canLoad exceptions k v (MappedObservable canLo
 type ToObservableMap canLoad exceptions k v a = ToObservableT canLoad exceptions (Map k) v a
 
 toObservableMap :: ToObservableMap canLoad exceptions k v a => a -> ObservableMap canLoad exceptions k v
-toObservableMap x = ObservableMap (toObservableCore x)
+toObservableMap x = ObservableMap (toObservableT x)
 
 readObservableMap ::
   forall exceptions k v m a.
@@ -178,7 +178,7 @@ readObservableMap fx = liftSTMc @NoRetry @exceptions (readObservable# fx)
 newtype ObservableMap canLoad exceptions k v = ObservableMap (ObservableT canLoad exceptions (Map k) v)
 
 instance ToObservableT canLoad exceptions (Map k) v (ObservableMap canLoad exceptions k v) where
-  toObservableCore (ObservableMap x) = x
+  toObservableT (ObservableMap x) = x
 
 instance IsObservableCore canLoad exceptions (Map k) v (ObservableMap canLoad exceptions k v) where
   readObservable# (ObservableMap (ObservableT x)) = readObservable# x
