@@ -4,6 +4,7 @@ module Quasar.Utils.CallbackRegistry (
   newCallbackRegistryIO,
   newCallbackRegistryWithEmptyCallback,
   registerCallback,
+  registerCallbackChangeAfterFirstCall,
   callCallbacks,
   callbackRegistryHasCallbacks,
   clearCallbackRegistry,

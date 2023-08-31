@@ -7,6 +7,7 @@ module Quasar.Resources.Core (
   newCallbackRegistryIO,
   newCallbackRegistryWithEmptyCallback,
   registerCallback,
+  registerCallbackChangeAfterFirstCall,
   callCallbacks,
   callbackRegistryHasCallbacks,
   clearCallbackRegistry,
@@ -51,6 +52,30 @@ registerCallback (CallbackRegistry var emptyCallback) callback = do
   newUnmanagedTSimpleDisposer do
     isEmpty <- HM.null <$> stateTVar var (dup . HM.delete key)
     when isEmpty emptyCallback
+
+-- | Registeres a callback (like `registerCallback`) that is replaced with
+-- another callback after the first invocation.
+registerCallbackChangeAfterFirstCall ::
+  forall a.
+  CallbackRegistry a ->
+  (a -> STMc NoRetry '[] ()) ->
+  (a -> STMc NoRetry '[] ()) ->
+  STMc NoRetry '[] TSimpleDisposer
+registerCallbackChangeAfterFirstCall (CallbackRegistry var emptyCallback) firstCallback otherCallback = do
+  key <- newUniqueSTM
+  modifyTVar var (HM.insert key (wrappedCallback key))
+  newUnmanagedTSimpleDisposer do
+    isEmpty <- HM.null <$> stateTVar var (dup . HM.delete key)
+    when isEmpty emptyCallback
+  where
+    wrappedCallback :: Unique -> (a -> STMc NoRetry '[] ())
+    wrappedCallback key value = do
+      oldCallbacks <- readTVar var
+      -- Needs to check for an active membership in case an earlier callback
+      -- called the disposer during the current `callCallbacks`.
+      when (HM.member key oldCallbacks) do
+        writeTVar var (HM.insert key otherCallback oldCallbacks)
+      firstCallback value
 
 callCallbacks :: CallbackRegistry a -> a -> STMc NoRetry '[] ()
 callCallbacks (CallbackRegistry var _) value = liftSTMc do

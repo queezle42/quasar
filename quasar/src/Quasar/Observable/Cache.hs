@@ -43,9 +43,17 @@ instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (Cac
         writeTVar var (CacheAttached upstream upstreamDisposer registry (createObserverState state))
         disposer <- registerCallback registry callback
         pure (disposer, state)
-      CacheAttached _ _ registry value -> do
-        disposer <- registerCallback registry callback
-        pure (disposer, toObservableState value)
+      CacheAttached _ _ registry state -> do
+        case state of
+          -- The cached state can't be propagated downstream, so the first
+          -- callback invocation must not send a Delta or a LiveUnchanged.
+          -- The callback is wrapped to change them to a Replace.
+          ObserverStateLoadingCached cache -> do
+            disposer <- registerCallbackChangeAfterFirstCall registry (callback . fixInvalidCacheState cache) callback
+            pure (disposer, ObservableStateLoading)
+          _ -> do
+            disposer <- registerCallback registry callback
+            pure (disposer, toObservableState state)
     where
       removeCacheListener :: STMc NoRetry '[] ()
       removeCacheListener = do
@@ -65,6 +73,25 @@ instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (Cac
               callCallbacks registry change
 
   isCachedObservable# _ = True
+
+-- Precondition: Observer is in `ObserverStateLoadingCleared` state, but caller
+-- assumes the observer is in `ObserverStateLoadingCached` state.
+fixInvalidCacheState ::
+  (ObservableContainer c v) =>
+  ObservableResult exceptions c v ->
+  EvaluatedObservableChange Load (ObservableResult exceptions c) v ->
+  EvaluatedObservableChange Load (ObservableResult exceptions c) v
+fixInvalidCacheState _cached EvaluatedObservableChangeLoadingClear =
+  EvaluatedObservableChangeLoadingClear
+fixInvalidCacheState cached EvaluatedObservableChangeLiveUnchanged =
+  EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace cached)
+fixInvalidCacheState _cached replace@(EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace _)) =
+  replace
+fixInvalidCacheState _cached (EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateDelta delta)) =
+  EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace (contentFromEvaluatedDelta delta))
+fixInvalidCacheState _cached EvaluatedObservableChangeLoadingUnchanged =
+  -- Filtered by `applyEvaluatedObservableChange` in `updateCache`
+  impossibleCodePath
 
 cacheObservable :: (ToObservable canLoad exceptions v a, MonadSTMc NoRetry '[] m) => a -> m (Observable canLoad exceptions v)
 cacheObservable (toObservable -> f) =
@@ -89,7 +116,7 @@ instance IsObservableCore canLoad exceptions Identity (Observable l e v) (CacheO
     pure (mempty, ObservableStateLive (pure cache))
 
 -- | Cache an observable in the `Observable` monad. Use with care! A new cache
--- is recreated whenever the result of this function is reevaluated.
+-- is created for every outer observable valuation.
 observeCachedObservable :: forall canLoad exceptions e l v a. ToObservable l e v a => a -> Observable canLoad exceptions (Observable l e v)
 observeCachedObservable x =
   toObservable (CacheObservableOperation @canLoad @exceptions (toObservable x))
