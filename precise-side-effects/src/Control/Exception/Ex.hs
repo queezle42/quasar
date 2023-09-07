@@ -6,7 +6,7 @@ module Control.Exception.Ex (
   toEx,
   ExceptionList,
   matchEx,
-  limitEx,
+  relaxEx,
   absurdEx,
   exToException,
 
@@ -144,8 +144,8 @@ matchEx (Ex ex) =
     Nothing -> Left (Ex ex)
 
 -- | Specialized version of `toEx` to limit the list of exceptions to a subset.
-limitEx :: sub :<< super => Ex sub -> Ex super
-limitEx (Ex x) = Ex x
+relaxEx :: sub :<< super => Ex sub -> Ex super
+relaxEx (Ex x) = Ex x
 
 
 absurdEx :: Ex '[] -> a
