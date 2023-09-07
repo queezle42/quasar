@@ -23,7 +23,7 @@ module Control.Exception.Ex (
   (:--),
 
   -- * Implementation helper
-  unsafeToEx
+  unsafeToEx,
 ) where
 
 import Control.Concurrent.STM (STM, throwSTM)
@@ -58,10 +58,11 @@ type family a :< b where
 -- asserted to be in the rhs.
 --
 -- The rhs must not contain `Ex`.
-type (:<<) :: [Type] -> [Type] -> Constraint
-type family a :<< b where
-  '[] :<< _ = ()
-  (n ': ns) :<< as = (n :< as, ns :<< as)
+type  (:<<) :: [Type] -> [Type] -> Constraint
+class a :<< b
+instance {-# INCOHERENT #-} a :<< a
+instance '[] :<< _ns
+instance (n :< as, ns :<< as) => (n ': ns) :<< as
 
 -- | Remove an exception from a type-level list.
 --
