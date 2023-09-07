@@ -6,7 +6,7 @@ module Quasar.Observable.List (
   ToObservableList,
   toObservableList,
   ListDelta(..),
-  ListDeltaCtx(..),
+  ValidatedListDelta(..),
   listDeltaCtxLength,
   ListOperation(..),
   Length,
@@ -29,12 +29,12 @@ newtype ListDelta v
   = ListDelta [ListOperation v]
   deriving (Eq, Show, Generic, Binary)
 
-newtype ListDeltaCtx v
-  = ListDeltaCtx (FingerTree Length (ListOperation v))
+newtype ValidatedListDelta v
+  = ValidatedListDelta (FingerTree Length (ListOperation v))
   deriving (Eq, Show, Generic)
 
-listDeltaCtxLength :: ListDeltaCtx v -> Length
-listDeltaCtxLength (ListDeltaCtx ft) = measure ft
+listDeltaCtxLength :: ValidatedListDelta v -> Length
+listDeltaCtxLength (ValidatedListDelta ft) = measure ft
 
 newtype Length = Length Word32
   deriving (Show, Eq, Ord, Enum, Num, Real, Integral, Binary)
@@ -84,9 +84,9 @@ updateListDeltaContext l (ListDrop n : ops) =
     then prependDrop n (updateListDeltaContext (l - n) ops)
     else prependDrop l (updateListDeltaContext 0 ops)
 
-toListDeltaCtx :: FingerTree Length (ListOperation v) -> ListDeltaCtx v
-toListDeltaCtx ft =
-  ListDeltaCtx case FT.viewr ft of
+toValidatedListDelta :: FingerTree Length (ListOperation v) -> ValidatedListDelta v
+toValidatedListDelta ft =
+  ValidatedListDelta case FT.viewr ft of
     EmptyR -> FT.empty
     (other :> ListDrop _) -> other
     _ -> ft
@@ -208,18 +208,18 @@ splitOpAt n (ListKeep k)
 instance ObservableContainer Seq v where
   type ContainerConstraint canLoad exceptions Seq v a = IsObservableList canLoad exceptions v a
   type Delta Seq = ListDelta
-  type ValidatedDelta Seq = ListDeltaCtx
+  type ValidatedDelta Seq = ValidatedListDelta
   type DeltaContext Seq = Length
   applyDelta (ListDelta ops) state = applyOperations state (toList ops)
-  mergeDelta (ListDeltaCtx x) (ListDelta y) =
-    ListDeltaCtx (mergeOperations x (toList y))
+  mergeDelta (ValidatedListDelta x) (ListDelta y) =
+    ValidatedListDelta (mergeOperations x (toList y))
   updateDeltaContext ctx (ListDelta ops) =
     let ft = updateListDeltaContext ctx ops
-    in (toListDeltaCtx ft, measure ft)
+    in (toValidatedListDelta ft, measure ft)
   toInitialDeltaContext state = fromIntegral (Seq.length state)
   toDelta = fst
   contentFromEvaluatedDelta = snd
-  splitDeltaAndContext (ListDeltaCtx x) = Just (ListDelta (toList x), measure x)
+  splitDeltaAndContext (ValidatedListDelta x) = Just (ListDelta (toList x), measure x)
 
 instance ContainerCount Seq where
   containerCount# x = fromIntegral (length x)

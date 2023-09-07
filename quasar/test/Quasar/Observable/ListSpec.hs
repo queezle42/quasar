@@ -88,97 +88,97 @@ spec = parallel do
 
   describe "updateDeltaContext" do
     it "empty delta" do
-      testUpdateDeltaContext [] (ListDelta []) (ListDeltaCtx [])
+      testUpdateDeltaContext [] (ListDelta []) (ValidatedListDelta [])
 
     it "keep empty list" do
-      testUpdateDeltaContext [] (ListDelta [ListKeep 42]) (ListDeltaCtx [])
+      testUpdateDeltaContext [] (ListDelta [ListKeep 42]) (ValidatedListDelta [])
 
     it "keep empty list" do
-      testUpdateDeltaContext [] (ListDelta [ListKeep 42]) (ListDeltaCtx [])
+      testUpdateDeltaContext [] (ListDelta [ListKeep 42]) (ValidatedListDelta [])
 
     it "keep elements" do
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 3]) (ListDeltaCtx [ListKeep 3])
-      testUpdateDeltaContext [1, 2, 3, 4] (ListDelta [ListKeep 3]) (ListDeltaCtx [ListKeep 3])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 3]) (ValidatedListDelta [ListKeep 3])
+      testUpdateDeltaContext [1, 2, 3, 4] (ListDelta [ListKeep 3]) (ValidatedListDelta [ListKeep 3])
 
     it "keep is clipped to end of list" do
-      testUpdateDeltaContext [1, 2] (ListDelta [ListKeep 3]) (ListDeltaCtx [ListKeep 2])
+      testUpdateDeltaContext [1, 2] (ListDelta [ListKeep 3]) (ValidatedListDelta [ListKeep 2])
 
     it "delete empty list" do
-      testUpdateDeltaContext [] (ListDelta [ListDrop 42]) (ListDeltaCtx [])
+      testUpdateDeltaContext [] (ListDelta [ListDrop 42]) (ValidatedListDelta [])
 
     it "insert to empty list" do
-      testUpdateDeltaContext [] (ListDelta [ListInsert [1]]) (ListDeltaCtx [ListInsert [1]])
+      testUpdateDeltaContext [] (ListDelta [ListInsert [1]]) (ValidatedListDelta [ListInsert [1]])
 
     it "insert" do
-      testUpdateDeltaContext [2, 3] (ListDelta [ListInsert [1]]) (ListDeltaCtx [ListInsert [1]])
-      testUpdateDeltaContext [1, 3] (ListDelta [ListKeep 1, ListInsert [2], ListKeep 1]) (ListDeltaCtx [ListKeep 1, ListInsert [2], ListKeep 1])
-      testUpdateDeltaContext [1, 2, 3, 7] (ListDelta [ListKeep 3, ListInsert [4, 5, 6], ListKeep 1]) (ListDeltaCtx [ListKeep 3, ListInsert [4, 5, 6], ListKeep 1])
+      testUpdateDeltaContext [2, 3] (ListDelta [ListInsert [1]]) (ValidatedListDelta [ListInsert [1]])
+      testUpdateDeltaContext [1, 3] (ListDelta [ListKeep 1, ListInsert [2], ListKeep 1]) (ValidatedListDelta [ListKeep 1, ListInsert [2], ListKeep 1])
+      testUpdateDeltaContext [1, 2, 3, 7] (ListDelta [ListKeep 3, ListInsert [4, 5, 6], ListKeep 1]) (ValidatedListDelta [ListKeep 3, ListInsert [4, 5, 6], ListKeep 1])
 
     it "insert after end of list" do
-      testUpdateDeltaContext [] (ListDelta [ListKeep 42, ListInsert [1]]) (ListDeltaCtx [ListInsert [1]])
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 42, ListInsert [4]]) (ListDeltaCtx [ListKeep 3, ListInsert [4]])
+      testUpdateDeltaContext [] (ListDelta [ListKeep 42, ListInsert [1]]) (ValidatedListDelta [ListInsert [1]])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 42, ListInsert [4]]) (ValidatedListDelta [ListKeep 3, ListInsert [4]])
 
     it "trailing drop is removed" do
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1, ListKeep 2]) (ListDeltaCtx [ListDrop 1, ListKeep 2])
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 2, ListKeep 1]) (ListDeltaCtx [ListDrop 2, ListKeep 1])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1, ListKeep 2]) (ValidatedListDelta [ListDrop 1, ListKeep 2])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 2, ListKeep 1]) (ValidatedListDelta [ListDrop 2, ListKeep 1])
 
     it "trailing drop is removed" do
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 42]) (ListDeltaCtx [])
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 21, ListDrop 21]) (ListDeltaCtx [])
-      testUpdateDeltaContext [1, 2, 3, 4, 5] (ListDelta [ListDrop 1, ListDrop 1, ListDrop 1, ListDrop 1, ListKeep 1]) (ListDeltaCtx [ListDrop 4, ListKeep 1])
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1]) (ListDeltaCtx [])
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 1]) (ListDeltaCtx [ListKeep 1])
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 42]) (ListDeltaCtx [ListKeep 1])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 42]) (ValidatedListDelta [])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 21, ListDrop 21]) (ValidatedListDelta [])
+      testUpdateDeltaContext [1, 2, 3, 4, 5] (ListDelta [ListDrop 1, ListDrop 1, ListDrop 1, ListDrop 1, ListKeep 1]) (ValidatedListDelta [ListDrop 4, ListKeep 1])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1]) (ValidatedListDelta [])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 1]) (ValidatedListDelta [ListKeep 1])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 42]) (ValidatedListDelta [ListKeep 1])
 
     it "duplicate drops are merged" do
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1, ListDrop 1, ListKeep 1]) (ListDeltaCtx [ListDrop 2, ListKeep 1])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1, ListDrop 1, ListKeep 1]) (ValidatedListDelta [ListDrop 2, ListKeep 1])
 
     it "empty drop is removed" do
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 0, ListKeep 2]) (ListDeltaCtx [ListKeep 3])
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 0, ListKeep 42]) (ListDeltaCtx [ListKeep 3])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 0, ListKeep 2]) (ValidatedListDelta [ListKeep 3])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 0, ListKeep 42]) (ValidatedListDelta [ListKeep 3])
 
     it "empty drop is merged" do
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 0, ListDrop 1, ListKeep 1]) (ListDeltaCtx [ListKeep 1, ListDrop 1, ListKeep 1])
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 1, ListDrop 0, ListKeep 1]) (ListDeltaCtx [ListKeep 1, ListDrop 1, ListKeep 1])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 0, ListDrop 1, ListKeep 1]) (ValidatedListDelta [ListKeep 1, ListDrop 1, ListKeep 1])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 1, ListDrop 0, ListKeep 1]) (ValidatedListDelta [ListKeep 1, ListDrop 1, ListKeep 1])
 
     it "duplicate inserts are merged" do
-      testUpdateDeltaContext [] (ListDelta [ListInsert [1, 2], ListInsert [3]]) (ListDeltaCtx [ListInsert [1, 2, 3]])
+      testUpdateDeltaContext [] (ListDelta [ListInsert [1, 2], ListInsert [3]]) (ValidatedListDelta [ListInsert [1, 2, 3]])
 
   describe "mergeDelta" do
     it "keeps keep operation" do
-      mergeDelta @Seq @Int (ListDeltaCtx [ListKeep 42]) (ListDelta [ListKeep 42]) `shouldBe` ListDeltaCtx [ListKeep 42]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListKeep 42]) (ListDelta [ListKeep 42]) `shouldBe` ValidatedListDelta [ListKeep 42]
 
     it "clips original delta" do
-      mergeDelta @Seq @Int (ListDeltaCtx [ListKeep 100]) (ListDelta [ListKeep 42]) `shouldBe` ListDeltaCtx [ListKeep 42]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListKeep 100]) (ListDelta [ListKeep 42]) `shouldBe` ValidatedListDelta [ListKeep 42]
 
     it "clips incoming keep" do
-      mergeDelta @Seq @Int (ListDeltaCtx [ListKeep 42]) (ListDelta [ListKeep 100]) `shouldBe` ListDeltaCtx [ListKeep 42]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListKeep 42]) (ListDelta [ListKeep 100]) `shouldBe` ValidatedListDelta [ListKeep 42]
 
     it "keeps drop operation" do
-      mergeDelta @Seq @Int (ListDeltaCtx [ListDrop 5, ListKeep 42]) (ListDelta [ListKeep 42]) `shouldBe` ListDeltaCtx [ListDrop 5, ListKeep 42]
-      mergeDelta @Seq @Int (ListDeltaCtx [ListKeep 2, ListDrop 5, ListKeep 40]) (ListDelta [ListKeep 42]) `shouldBe` ListDeltaCtx [ListKeep 2, ListDrop 5, ListKeep 40]
-      mergeDelta @Seq @Int (ListDeltaCtx [ListKeep 2, ListDrop 5, ListKeep 100]) (ListDelta [ListKeep 42]) `shouldBe` ListDeltaCtx [ListKeep 2, ListDrop 5, ListKeep 40]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListDrop 5, ListKeep 42]) (ListDelta [ListKeep 42]) `shouldBe` ValidatedListDelta [ListDrop 5, ListKeep 42]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListKeep 2, ListDrop 5, ListKeep 40]) (ListDelta [ListKeep 42]) `shouldBe` ValidatedListDelta [ListKeep 2, ListDrop 5, ListKeep 40]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListKeep 2, ListDrop 5, ListKeep 100]) (ListDelta [ListKeep 42]) `shouldBe` ValidatedListDelta [ListKeep 2, ListDrop 5, ListKeep 40]
 
     it "keeps insert operation" do
-      mergeDelta @Seq @Int (ListDeltaCtx [ListInsert [1, 2, 3], ListKeep 42]) (ListDelta [ListKeep 42]) `shouldBe` ListDeltaCtx [ListInsert [1, 2, 3], ListKeep 39]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListInsert [1, 2, 3], ListKeep 42]) (ListDelta [ListKeep 42]) `shouldBe` ValidatedListDelta [ListInsert [1, 2, 3], ListKeep 39]
 
     it "clips insert operation" do
-      mergeDelta @Seq @Int (ListDeltaCtx [ListInsert [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 3]) `shouldBe` ListDeltaCtx [ListInsert [1, 2, 3]]
-      mergeDelta @Seq @Int (ListDeltaCtx [ListKeep 10, ListInsert [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 13]) `shouldBe` ListDeltaCtx [ListKeep 10, ListInsert [1, 2, 3]]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListInsert [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 3]) `shouldBe` ValidatedListDelta [ListInsert [1, 2, 3]]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListKeep 10, ListInsert [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 13]) `shouldBe` ValidatedListDelta [ListKeep 10, ListInsert [1, 2, 3]]
 
     it "clips incoming keep but applies later insert operation" do
-      mergeDelta @Seq @Int (ListDeltaCtx [ListKeep 42]) (ListDelta [ListKeep 100, ListInsert [1, 2, 3]]) `shouldBe` ListDeltaCtx [ListKeep 42, ListInsert [1, 2, 3]]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListKeep 42]) (ListDelta [ListKeep 100, ListInsert [1, 2, 3]]) `shouldBe` ValidatedListDelta [ListKeep 42, ListInsert [1, 2, 3]]
 
     it "clips deletes at end of delta in complex scenario" do
-      mergeDelta @Seq @Int (ListDeltaCtx [ListDrop 13, ListKeep 1]) (ListDelta [ListKeep 1, ListDrop 42]) `shouldBe` ListDeltaCtx [ListDrop 13, ListKeep 1]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListDrop 13, ListKeep 1]) (ListDelta [ListKeep 1, ListDrop 42]) `shouldBe` ValidatedListDelta [ListDrop 13, ListKeep 1]
 
     it "normalization" do
-      mergeDelta @Seq @Int (ListDeltaCtx [ListInsert [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 3, ListInsert [42]]) `shouldBe` ListDeltaCtx [ListInsert [1, 2, 3, 42]]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListInsert [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 3, ListInsert [42]]) `shouldBe` ValidatedListDelta [ListInsert [1, 2, 3, 42]]
 
     it "normalization 2" do
-      mergeDelta @Seq @Int (ListDeltaCtx [ListInsert [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 100, ListInsert [42]]) `shouldBe` ListDeltaCtx [ListInsert [1, 2, 3, 4, 5, 42]]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListInsert [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 100, ListInsert [42]]) `shouldBe` ValidatedListDelta [ListInsert [1, 2, 3, 4, 5, 42]]
 
-testUpdateDeltaContext :: HasCallStack => Seq Int -> ListDelta Int -> ListDeltaCtx Int -> IO ()
+testUpdateDeltaContext :: HasCallStack => Seq Int -> ListDelta Int -> ValidatedListDelta Int -> IO ()
 testUpdateDeltaContext list delta expectedDelta = withFrozenCallStack do
   let
     expectedLength = listDeltaCtxLength expectedDelta
