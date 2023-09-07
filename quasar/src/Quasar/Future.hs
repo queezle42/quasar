@@ -297,17 +297,16 @@ instance IsFuture a (BindFuture a) where
         Right y -> do
           callback y
           disposeTSimpleDisposer dyWrapper
-    result <- case rx of
+    case rx of
       Left dx -> pure (Left (dx <> dyWrapper))
       -- LHS already completed, so trivially defer to RHS
       Right x -> readOrAttachToFuture# (fn x) callback
-    pure result
 
 
   mapFuture# f (BindFuture fx fn) = toFuture (BindFuture fx (fmap f . fn))
 
 
-data CachedFuture a = CachedFuture (TVar (CacheState a))
+newtype CachedFuture a = CachedFuture (TVar (CacheState a))
 data CacheState a
   = CacheIdle (Future a)
   | CacheAttached (Future a) TSimpleDisposer (CallbackRegistry a)
