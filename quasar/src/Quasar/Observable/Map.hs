@@ -247,8 +247,8 @@ instance ObservableFunctor (Map k) => IsObservableCore canLoad exceptions (Map k
     mapObservableStateResult (Map.mapWithKey fn) <$> readObservable# observable
 
   attachObserver# (MappedObservableMap fn observable) callback =
-    mapObservableState (mapObservableResult (Map.mapWithKey fn)) <<$>> attachObserver# observable \change ->
-      callback (mapObservableChange (mapObservableResult (Map.mapWithKey fn)) (mapDeltaWithKey fn) change)
+    mapObservableStateResult (Map.mapWithKey fn) <<$>> attachObserver# observable \change ->
+      callback (mapObservableChangeResult (Map.mapWithKey fn) (mapDeltaWithKey fn) change)
     where
       mapDeltaWithKey :: (k -> va -> v) -> ObservableMapDelta k va -> ObservableMapDelta k v
       mapDeltaWithKey f (ObservableMapDelta ops) = ObservableMapDelta (Map.mapWithKey (mapOperationWithKey f) ops)
