@@ -27,40 +27,41 @@ liftObservable (Observable fx) = Observable (liftObservableT fx)
 
 type RelaxLoad :: LoadKind -> LoadKind -> Constraint
 class RelaxLoad la l where
-  relaxObservableChange :: ea :<< e => ObservableChange la (ObservableResult ea c) v -> ObservableChange l (ObservableResult e c) v
-  relaxObservableState :: ea :<< e => ObservableState la (ObservableResult ea c) v -> ObservableState l (ObservableResult e c) v
+  relaxObservableChangeLoad :: ObservableChange la c v -> ObservableChange l c v
+  relaxObservableStateLoad :: ObservableState la c v -> ObservableState l c v
+
+relaxObservableChange ::
+  forall la l ea e c v.
+  (ea :<< e, RelaxLoad la l) =>
+  ObservableChange la (ObservableResult ea c) v ->
+  ObservableChange l (ObservableResult e c) v
+relaxObservableChange change =
+  relaxObservableChangeLoad (mapObservableChangeResultEx relaxEx change)
+
+relaxObservableState ::
+  forall la l ea e c v.
+  (ea :<< e, RelaxLoad la l) =>
+  ObservableState la (ObservableResult ea c) v -> ObservableState l (ObservableResult e c) v
+relaxObservableState state =
+  relaxObservableStateLoad @la @l (mapObservableStateResultEx relaxEx state)
 
 instance RelaxLoad l l where
-  relaxObservableChange ObservableChangeLoadingClear = ObservableChangeLoadingClear
-  relaxObservableChange ObservableChangeLoadingUnchanged = ObservableChangeLoadingUnchanged
-  relaxObservableChange ObservableChangeLiveUnchanged = ObservableChangeLiveUnchanged
-  relaxObservableChange (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk content))) = ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk content))
-  relaxObservableChange (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx ex))) = ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx (relaxEx ex)))
-  relaxObservableChange (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) = ObservableChangeLiveUpdate (ObservableUpdateDelta delta)
-
-  relaxObservableState ObservableStateLoading = ObservableStateLoading
-  relaxObservableState (ObservableStateLive (ObservableResultOk ok)) = ObservableStateLive (ObservableResultOk ok)
-  relaxObservableState (ObservableStateLive (ObservableResultEx ex)) = ObservableStateLive (ObservableResultEx (relaxEx ex))
+  relaxObservableChangeLoad = id
+  relaxObservableStateLoad = id
 
 instance {-# INCOHERENT #-} RelaxLoad l Load where
-  relaxObservableChange ObservableChangeLoadingClear = ObservableChangeLoadingClear
-  relaxObservableChange ObservableChangeLoadingUnchanged = ObservableChangeLoadingUnchanged
-  relaxObservableChange ObservableChangeLiveUnchanged = ObservableChangeLiveUnchanged
-  relaxObservableChange (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk content))) = ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk content))
-  relaxObservableChange (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx ex))) = ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx (relaxEx ex)))
-  relaxObservableChange (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) = ObservableChangeLiveUpdate (ObservableUpdateDelta delta)
+  relaxObservableChangeLoad ObservableChangeLoadingClear = ObservableChangeLoadingClear
+  relaxObservableChangeLoad ObservableChangeLoadingUnchanged = ObservableChangeLoadingUnchanged
+  relaxObservableChangeLoad ObservableChangeLiveUnchanged = ObservableChangeLiveUnchanged
+  relaxObservableChangeLoad (ObservableChangeLiveUpdate update) = ObservableChangeLiveUpdate update
 
-  relaxObservableState ObservableStateLoading = ObservableStateLoading
-  relaxObservableState (ObservableStateLive (ObservableResultOk ok)) = ObservableStateLive (ObservableResultOk ok)
-  relaxObservableState (ObservableStateLive (ObservableResultEx ex)) = ObservableStateLive (ObservableResultEx (relaxEx ex))
+  relaxObservableStateLoad ObservableStateLoading = ObservableStateLoading
+  relaxObservableStateLoad (ObservableStateLive result) = ObservableStateLive result
 
 instance {-# INCOHERENT #-} RelaxLoad NoLoad l where
-  relaxObservableChange (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk content))) = ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk content))
-  relaxObservableChange (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx ex))) = ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx (relaxEx ex)))
-  relaxObservableChange (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) = ObservableChangeLiveUpdate (ObservableUpdateDelta delta)
+  relaxObservableChangeLoad (ObservableChangeLiveUpdate update) = ObservableChangeLiveUpdate update
 
-  relaxObservableState (ObservableStateLive (ObservableResultOk ok)) = ObservableStateLive (ObservableResultOk ok)
-  relaxObservableState (ObservableStateLive (ObservableResultEx ex)) = ObservableStateLive (ObservableResultEx (relaxEx ex))
+  relaxObservableStateLoad (ObservableStateLive result) = ObservableStateLive result
 
 
 
