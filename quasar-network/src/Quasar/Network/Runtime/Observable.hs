@@ -312,16 +312,16 @@ receiveChangeContents ctxVar context delta = do
     Nothing -> pure ()
   pure result
 
-instance ContainerConstraint Load '[SomeException] c v (ObservableProxy c v) => ToObservableT Load '[SomeException] c v (ObservableProxy c v) where
+instance (ObservableContainer c v, ContainerConstraint Load '[SomeException] c v (ObservableProxy c v)) => ToObservableT Load '[SomeException] c v (ObservableProxy c v) where
   toObservableT proxy = ObservableT proxy
 
-instance IsObservableCore Load '[SomeException] c v (ObservableProxy c v) where
-  readObservable# = absurdLoad
+instance ObservableContainer c v => IsObservableCore Load '[SomeException] c v (ObservableProxy c v) where
+  readObservable# proxy = readObservable# proxy.observableVar
   attachObserver# proxy callback = attachObserver# proxy.observableVar callback
   attachEvaluatedObserver# proxy callback = attachEvaluatedObserver# proxy.observableVar callback
   -- TODO better count#/isEmpty#
 
-instance IsObservableMap Load '[SomeException] k v (ObservableProxy (Map k) v) where
+instance Ord k => IsObservableMap Load '[SomeException] k v (ObservableProxy (Map k) v) where
   -- TODO
 
 

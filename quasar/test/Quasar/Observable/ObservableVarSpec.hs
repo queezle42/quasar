@@ -19,7 +19,7 @@ spec = parallel do
     it "can be read as an Observable" $ io do
       var <- newObservableVarIO (42 :: Int)
       let observable = toObservable var
-      atomicallyC (readObservable# observable) `shouldReturn` Identity 42
+      atomicallyC (readObservable @'[] observable) `shouldReturn` 42
 
     it "can be written" $ io do
       var <- newObservableVarIO (42 :: Int)

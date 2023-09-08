@@ -10,6 +10,7 @@
 module Quasar.Observable.Core (
   -- * Generalized observable
   IsObservableCore(..),
+  readObservableT,
   ObservableContainer(..),
   isEmptyDelta,
   ContainerCount(..),
@@ -113,10 +114,9 @@ type IsObservableCore :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type -> 
 class IsObservableCore canLoad exceptions c v a | a -> canLoad, a -> exceptions, a -> c, a -> v where
   {-# MINIMAL readObservable#, (attachObserver# | attachEvaluatedObserver#) #-}
 
-  readObservable#
-    :: canLoad ~ NoLoad
-    => a
-    -> STMc NoRetry exceptions (c v)
+  readObservable# ::
+    a ->
+    STMc NoRetry '[] (ObservableState canLoad (ObservableResult exceptions c) v)
 
   attachObserver#
     :: ObservableContainer c v
@@ -206,11 +206,19 @@ instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (Obs
   isEmpty# (ObservableT x) = isEmpty# x
 
 type ToObservableT :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type -> Constraint
-class ToObservableT canLoad exceptions c v a | a -> canLoad, a -> exceptions, a -> c, a -> v where
+class ObservableContainer c v => ToObservableT canLoad exceptions c v a | a -> canLoad, a -> exceptions, a -> c, a -> v where
   toObservableT :: a -> ObservableT canLoad exceptions c v
 
-instance ToObservableT canLoad exceptions c v (ObservableT canLoad exceptions c v) where
+instance ObservableContainer c v => ToObservableT canLoad exceptions c v (ObservableT canLoad exceptions c v) where
   toObservableT = id
+
+readObservableT ::
+  forall exceptions c v m a.
+  (ToObservableT NoLoad exceptions c v a, MonadSTMc NoRetry exceptions m) =>
+  a -> m (c v)
+readObservableT fx = liftSTMc @NoRetry @exceptions do
+  liftSTMc @NoRetry @'[] (readObservable# (toObservableT fx)) >>=
+    \(ObservableStateLive result) -> unwrapObservableResult result
 
 
 type ObservableContainer :: (Type -> Type) -> Type -> Constraint
@@ -449,8 +457,10 @@ data ObservableState canLoad c v where
   ObservableStateLoading :: ObservableState Load c v
   ObservableStateLive :: c v -> ObservableState canLoad c v
 
+deriving instance Show (c v) => Show (ObservableState canLoad c v)
+
 instance IsObservableCore canLoad exceptions c v (ObservableState canLoad (ObservableResult exceptions c) v) where
-  readObservable# (ObservableStateLive result) = unwrapObservableResult result
+  readObservable# = pure
   attachObserver# x _callback = pure (mempty, x)
   isCachedObservable# _ = True
   count# x = constObservable (mapObservableStateResult (Identity . containerCount#) x)
@@ -775,7 +785,7 @@ instance ObservableContainer c v => ToObservableT canLoad exceptions Identity (c
   toObservableT = ObservableT
 
 instance ObservableContainer c v => IsObservableCore canLoad exceptions Identity (c v) (EvaluatedObservableCore canLoad exceptions c v) where
-  readObservable# (EvaluatedObservableCore observable) = Identity <$> readObservable# observable
+  readObservable# (EvaluatedObservableCore observable) = mapObservableStateResult Identity <$> readObservable# observable
   attachEvaluatedObserver# (EvaluatedObservableCore observable) callback =
     mapObservableStateResult Identity <<$>> attachEvaluatedObserver# observable \evaluatedChange ->
       callback case evaluatedChange of
@@ -1033,9 +1043,9 @@ data BindObservable canLoad exceptions va b
 
 instance (IsObservableCore canLoad exceptions c v b, ObservableContainer c v) => IsObservableCore canLoad exceptions c v (BindObservable canLoad exceptions va b) where
   readObservable# (BindObservable fx fn) = do
-    tryExSTMc (readObservable# fx) >>= \case
-      (Left ex) -> readObservable# (fn (ObservableResultEx ex))
-      (Right x) -> readObservable# (fn (ObservableResultOk x))
+    readObservable# fx >>= \case
+      ObservableStateLoading -> pure ObservableStateLoading
+      ObservableStateLive result -> readObservable# (fn result)
 
   attachObserver# (BindObservable fx fn) callback = do
     mfixTVar \var -> do
@@ -1150,7 +1160,7 @@ readObservable ::
   MonadSTMc NoRetry exceptions m =>
   Observable NoLoad exceptions v ->
   m v
-readObservable fx = liftSTMc @NoRetry @exceptions (runIdentity <$> readObservable# fx)
+readObservable (Observable fx) = runIdentity <$> readObservableT fx
 
 
 type Observable :: CanLoad -> [Type] -> Type -> Type
@@ -1214,6 +1224,8 @@ type ObservableResult :: [Type] -> (Type -> Type) -> Type -> Type
 data ObservableResult exceptions c v
   = ObservableResultOk (c v)
   | ObservableResultEx (Ex exceptions)
+
+deriving instance Show (c v) => Show (ObservableResult canLoad c v)
 
 instance Functor c => Functor (ObservableResult exceptions c) where
   fmap fn (ObservableResultOk content) = ObservableResultOk (fn <$> content)

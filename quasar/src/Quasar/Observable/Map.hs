@@ -170,14 +170,14 @@ toObservableMap x = ObservableMap (toObservableT x)
 
 readObservableMap ::
   forall exceptions k v m a.
-  MonadSTMc NoRetry exceptions m =>
+  (Ord k, MonadSTMc NoRetry exceptions m) =>
   ObservableMap NoLoad exceptions k v ->
   m (Map k v)
-readObservableMap fx = liftSTMc @NoRetry @exceptions (readObservable# fx)
+readObservableMap (ObservableMap fx) = readObservableT fx
 
 newtype ObservableMap canLoad exceptions k v = ObservableMap (ObservableT canLoad exceptions (Map k) v)
 
-instance ToObservableT canLoad exceptions (Map k) v (ObservableMap canLoad exceptions k v) where
+instance Ord k => ToObservableT canLoad exceptions (Map k) v (ObservableMap canLoad exceptions k v) where
   toObservableT (ObservableMap x) = x
 
 instance IsObservableCore canLoad exceptions (Map k) v (ObservableMap canLoad exceptions k v) where
@@ -244,7 +244,7 @@ data MappedObservableMap canLoad exceptions k va v = MappedObservableMap (k -> v
 
 instance ObservableFunctor (Map k) => IsObservableCore canLoad exceptions (Map k) v (MappedObservableMap canLoad exceptions k va v) where
   readObservable# (MappedObservableMap fn observable) =
-    Map.mapWithKey fn <$> readObservable# observable
+    mapObservableStateResult (Map.mapWithKey fn) <$> readObservable# observable
 
   attachObserver# (MappedObservableMap fn observable) callback =
     mapObservableState (mapObservableResult (Map.mapWithKey fn)) <<$>> attachObserver# observable \change ->
@@ -280,9 +280,12 @@ data ObservableMapUnionWith l e k v =
 
 instance Ord k => IsObservableCore canLoad exceptions (Map k) v (ObservableMapUnionWith canLoad exceptions k v) where
   readObservable# (ObservableMapUnionWith fn fx fy) = do
-    x <- readObservable# fx
-    y <- readObservable# fy
-    pure (Map.unionWithKey fn x y)
+    readObservable# fx >>= \case
+      ObservableStateLoading -> pure ObservableStateLoading
+      (ObservableStateLive (ObservableResultEx ex)) -> pure (ObservableStateLive (ObservableResultEx ex))
+      (ObservableStateLive (ObservableResultOk x)) -> do
+        y <- readObservable# fy
+        pure (mapObservableStateResult (Map.unionWithKey fn x) y)
 
   attachObserver# (ObservableMapUnionWith fn fx fy) =
     attachMonoidMergeObserver fullMergeFn (deltaFn fn) (deltaFn (flip <$> fn)) fx fy
@@ -345,7 +348,7 @@ data FilteredObservableMap l e k v = FilteredObservableMap (k -> v -> Bool) (Obs
 
 instance IsObservableCore l e (Map k) v (FilteredObservableMap l e k v) where
   readObservable# (FilteredObservableMap fn fx) =
-    Map.filterWithKey fn <$> readObservable# fx
+    mapObservableStateResult (Map.filterWithKey fn) <$> readObservable# fx
 
   attachObserver# (FilteredObservableMap fn fx) callback = do
     (disposer, initial) <- attachObserver# fx \case
