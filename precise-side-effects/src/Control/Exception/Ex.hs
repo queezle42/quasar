@@ -137,6 +137,9 @@ exToException :: Ex exceptions -> SomeException
 exToException (Ex ex) = ex
 
 matchEx ::
+  -- NOTE ExceptionList constraint ensures `exceptions` does not contain an `Ex`
+  -- type. There might be a more elegant way to do this (improved handling for
+  -- Ex in `:<` and `:-`?), but for now it's required.
   (Exception e, ExceptionList exceptions) =>
   Ex exceptions ->
   Either (Ex (exceptions :- e)) e
