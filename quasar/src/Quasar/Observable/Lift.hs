@@ -4,7 +4,14 @@ module Quasar.Observable.Lift (
   liftObservableT,
   liftObservable,
 
-  -- * Operation type
+  -- ** Constraints
+  RelaxLoad(..),
+
+  -- *** Reexports
+  (:<<),
+  (:<),
+
+  -- ** Observable operation type
   LiftedObservable(..),
 ) where
 
@@ -25,25 +32,22 @@ liftObservable ::
 liftObservable (Observable fx) = Observable (liftObservableT fx)
 
 
+newtype LiftedObservable l e la ea c v = LiftedObservable (ObservableT la ea c v)
+
+instance (ea :<< e, RelaxLoad la l, ObservableContainer c v) => IsObservableCore l e c v (LiftedObservable l e la ea c v) where
+  readObservable# (LiftedObservable fx) = undefined
+
+  attachObserver# (LiftedObservable fx) callback =
+    relaxObservableState <<$>> attachObserver# fx (callback . relaxObservableChange)
+
+instance (ea :<< e, RelaxLoad la l, ObservableContainer c v, ContainerConstraint l e c v (LiftedObservable l e la ea c v)) => ToObservableT l e c v (LiftedObservable l e la ea c v) where
+  toObservableT = ObservableT
+
+
 type RelaxLoad :: LoadKind -> LoadKind -> Constraint
 class RelaxLoad la l where
   relaxObservableChangeLoad :: ObservableChange la c v -> ObservableChange l c v
   relaxObservableStateLoad :: ObservableState la c v -> ObservableState l c v
-
-relaxObservableChange ::
-  forall la l ea e c v.
-  (ea :<< e, RelaxLoad la l) =>
-  ObservableChange la (ObservableResult ea c) v ->
-  ObservableChange l (ObservableResult e c) v
-relaxObservableChange change =
-  relaxObservableChangeLoad (mapObservableChangeResultEx relaxEx change)
-
-relaxObservableState ::
-  forall la l ea e c v.
-  (ea :<< e, RelaxLoad la l) =>
-  ObservableState la (ObservableResult ea c) v -> ObservableState l (ObservableResult e c) v
-relaxObservableState state =
-  relaxObservableStateLoad @la @l (mapObservableStateResultEx relaxEx state)
 
 instance RelaxLoad l l where
   relaxObservableChangeLoad = id
@@ -63,15 +67,17 @@ instance {-# INCOHERENT #-} RelaxLoad NoLoad l where
 
   relaxObservableStateLoad (ObservableStateLive result) = ObservableStateLive result
 
+relaxObservableChange ::
+  forall la l ea e c v.
+  (ea :<< e, RelaxLoad la l) =>
+  ObservableChange la (ObservableResult ea c) v ->
+  ObservableChange l (ObservableResult e c) v
+relaxObservableChange change =
+  relaxObservableChangeLoad (mapObservableChangeResultEx relaxEx change)
 
-
-newtype LiftedObservable l e la ea c v = LiftedObservable (ObservableT la ea c v)
-
-instance (ea :<< e, RelaxLoad la l, ObservableContainer c v) => IsObservableCore l e c v (LiftedObservable l e la ea c v) where
-  readObservable# (LiftedObservable fx) = undefined
-
-  attachObserver# (LiftedObservable fx) callback =
-    relaxObservableState <<$>> attachObserver# fx (callback . relaxObservableChange)
-
-instance (ea :<< e, RelaxLoad la l, ObservableContainer c v, ContainerConstraint l e c v (LiftedObservable l e la ea c v)) => ToObservableT l e c v (LiftedObservable l e la ea c v) where
-  toObservableT = ObservableT
+relaxObservableState ::
+  forall la l ea e c v.
+  (ea :<< e, RelaxLoad la l) =>
+  ObservableState la (ObservableResult ea c) v -> ObservableState l (ObservableResult e c) v
+relaxObservableState state =
+  relaxObservableStateLoad @la @l (mapObservableStateResultEx relaxEx state)
