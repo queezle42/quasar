@@ -8,6 +8,7 @@ module Quasar.Observable.Map (
   ToObservableMap,
   toObservableMap,
   readObservableMap,
+  liftObservableMap,
   IsObservableMap(..),
   query,
 
@@ -65,6 +66,7 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
 import Quasar.Observable.Core
+import Quasar.Observable.Lift
 import Quasar.Observable.List (ObservableList)
 import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
@@ -218,6 +220,17 @@ bindObservableMap fx fn = ObservableMap (bindObservableT fx ((\(ObservableMap x)
 
 constObservableMap :: ObservableState canLoad (ObservableResult exceptions (Map k)) v -> ObservableMap canLoad exceptions k v
 constObservableMap = ObservableMap . ObservableT
+
+
+
+instance (ea :<< e, RelaxLoad la l, Ord k) => IsObservableMap l e k v (LiftedObservable l e la ea (Map k) v) where
+  -- TODO
+
+liftObservableMap ::
+  forall la ea l e k v.
+  (ea :<< e, RelaxLoad la l, Ord k) =>
+  ObservableMap la ea k v -> ObservableMap l e k v
+liftObservableMap (ObservableMap fx) = ObservableMap (liftObservableT fx)
 
 
 empty :: ObservableMap canLoad exceptions k v
