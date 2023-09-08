@@ -54,7 +54,7 @@ module Quasar.Observable.Map (
 
   -- * Reexports
   -- ** Observable
-  CanLoad,
+  LoadKind,
 ) where
 
 import Control.Applicative hiding (empty)

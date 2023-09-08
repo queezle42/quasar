@@ -25,7 +25,7 @@ liftObservable ::
 liftObservable (Observable fx) = Observable (liftObservableT fx)
 
 
-type RelaxLoad :: CanLoad -> CanLoad -> Constraint
+type RelaxLoad :: LoadKind -> LoadKind -> Constraint
 class RelaxLoad la l where
   relaxObservableChange :: ea :<< e => ObservableChange la (ObservableResult ea c) v -> ObservableChange l (ObservableResult e c) v
   relaxObservableState :: ea :<< e => ObservableState la (ObservableResult ea c) v -> ObservableState l (ObservableResult e c) v

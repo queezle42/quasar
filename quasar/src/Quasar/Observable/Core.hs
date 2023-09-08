@@ -16,9 +16,9 @@ module Quasar.Observable.Core (
   ContainerCount(..),
 
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
-  CanLoad(..),
+  LoadKind(..),
 #else
-  CanLoad,
+  LoadKind,
   Load,
   NoLoad,
 #endif
@@ -110,7 +110,7 @@ import Data.Binary (Binary)
 
 -- * Generalized observables
 
-type IsObservableCore :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type -> Constraint
+type IsObservableCore :: LoadKind -> [Type] -> (Type -> Type) -> Type -> Type -> Constraint
 class IsObservableCore canLoad exceptions c v a | a -> canLoad, a -> exceptions, a -> c, a -> v where
   {-# MINIMAL readObservable#, (attachObserver# | attachEvaluatedObserver#) #-}
 
@@ -182,9 +182,9 @@ mapObservableContent
 mapObservableContent f x = Observable (ObservableT (mapObservable# f (evaluateObservable x)))
 
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
-type data CanLoad = Load | NoLoad
+type data LoadKind = Load | NoLoad
 #else
-data CanLoad = Load | NoLoad
+data LoadKind = Load | NoLoad
 type Load = 'Load
 type NoLoad = 'NoLoad
 #endif
@@ -205,7 +205,7 @@ instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (Obs
   count# (ObservableT x) = count# x
   isEmpty# (ObservableT x) = isEmpty# x
 
-type ToObservableT :: CanLoad -> [Type] -> (Type -> Type) -> Type -> Type -> Constraint
+type ToObservableT :: LoadKind -> [Type] -> (Type -> Type) -> Type -> Type -> Constraint
 class ObservableContainer c v => ToObservableT canLoad exceptions c v a | a -> canLoad, a -> exceptions, a -> c, a -> v where
   toObservableT :: a -> ObservableT canLoad exceptions c v
 
@@ -223,7 +223,7 @@ readObservableT fx = liftSTMc @NoRetry @exceptions do
 
 type ObservableContainer :: (Type -> Type) -> Type -> Constraint
 class ObservableContainer c v where
-  type ContainerConstraint (canLoad :: CanLoad) (exceptions :: [Type]) c v a :: Constraint
+  type ContainerConstraint (canLoad :: LoadKind) (exceptions :: [Type]) c v a :: Constraint
   type Delta c :: Type -> Type
   type EvaluatedDelta c v :: Type
   type instance EvaluatedDelta c v = (Delta c v, c v)
@@ -405,7 +405,7 @@ instance ObservableContainer c v => HasField "notEvaluated" (EvaluatedUpdate c v
   getField (EvaluatedUpdateReplace content) = ObservableUpdateReplace content
   getField (EvaluatedUpdateDelta delta) = ObservableUpdateDelta (toDelta @c delta)
 
-type ObservableChange :: CanLoad -> (Type -> Type) -> Type -> Type
+type ObservableChange :: LoadKind -> (Type -> Type) -> Type -> Type
 data ObservableChange canLoad c v where
   ObservableChangeLoadingClear :: ObservableChange Load c v
   ObservableChangeLoadingUnchanged :: ObservableChange Load c v
@@ -437,7 +437,7 @@ mapObservableChange fc fd (ObservableChangeLiveUpdate update) = ObservableChange
   ObservableUpdateDelta delta -> ObservableUpdateDelta (fd delta)
 
 
-type EvaluatedObservableChange :: CanLoad -> (Type -> Type) -> Type -> Type
+type EvaluatedObservableChange :: LoadKind -> (Type -> Type) -> Type -> Type
 data EvaluatedObservableChange canLoad c v where
   EvaluatedObservableChangeLoadingUnchanged :: EvaluatedObservableChange Load c v
   EvaluatedObservableChangeLoadingClear :: EvaluatedObservableChange Load c v
@@ -452,7 +452,7 @@ pattern ObservableStateLiveOk content = ObservableStateLive (ObservableResultOk 
 pattern ObservableStateLiveEx :: forall canLoad exceptions c v. Ex exceptions -> ObservableState canLoad (ObservableResult exceptions c) v
 pattern ObservableStateLiveEx ex = ObservableStateLive (ObservableResultEx ex)
 
-type ObservableState :: CanLoad -> (Type -> Type) -> Type -> Type
+type ObservableState :: LoadKind -> (Type -> Type) -> Type -> Type
 data ObservableState canLoad c v where
   ObservableStateLoading :: ObservableState Load c v
   ObservableStateLive :: c v -> ObservableState canLoad c v
@@ -502,7 +502,7 @@ instance Traversable c => Traversable (ObservableState canLoad c) where
   sequenceA ObservableStateLoading = pure ObservableStateLoading
   sequenceA (ObservableStateLive x) = ObservableStateLive <$> sequenceA x
 
-type ObserverState :: CanLoad -> (Type -> Type) -> Type -> Type
+type ObserverState :: LoadKind -> (Type -> Type) -> Type -> Type
 data ObserverState canLoad c v where
   ObserverStateLoadingCleared :: ObserverState Load c v
   ObserverStateLoadingCached :: c v -> ObserverState Load c v
@@ -550,7 +550,7 @@ instance ObservableContainer c v => HasField "context" (ObserverState canLoad c 
   getField (ObserverStateLoadingCached cache) = ObserverContextLoadingCached (toInitialDeltaContext cache)
   getField (ObserverStateLive state) = ObserverContextLive (toInitialDeltaContext state)
 
-type ObserverContext :: CanLoad -> (Type -> Type) -> Type
+type ObserverContext :: LoadKind -> (Type -> Type) -> Type
 data ObserverContext canLoad c where
   ObserverContextLoadingCleared :: ObserverContext Load c
   ObserverContextLoadingCached :: DeltaContext c -> ObserverContext Load c
@@ -578,7 +578,7 @@ updateObserverContext (ObserverContextLive deltaContext) (ObservableChangeLiveUp
   ObserverContextLive (snd (updateDeltaContext @c deltaContext delta))
 
 
-type Loading :: CanLoad -> Type
+type Loading :: LoadKind -> Type
 data Loading canLoad where
   Live :: Loading canLoad
   Loading :: Loading Load
@@ -677,12 +677,12 @@ fromMaybeL x NothingL = x
 fromMaybeL _ (JustL x) = x
 
 
-type PendingChange :: CanLoad -> (Type -> Type) -> Type -> Type
+type PendingChange :: LoadKind -> (Type -> Type) -> Type -> Type
 data PendingChange canLoad c v where
   PendingChangeLoadingClear :: PendingChange Load c v
   PendingChangeAlter :: Loading canLoad -> Either (DeltaContext c) (ValidatedObservableUpdate c v) -> PendingChange canLoad c v
 
-type LastChange :: CanLoad -> Type
+type LastChange :: LoadKind -> Type
 data LastChange canLoad where
   LastChangeLoadingCleared :: LastChange Load
   LastChangeLoading :: LastChange Load
@@ -1163,7 +1163,7 @@ readObservable ::
 readObservable (Observable fx) = runIdentity <$> readObservableT fx
 
 
-type Observable :: CanLoad -> [Type] -> Type -> Type
+type Observable :: LoadKind -> [Type] -> Type -> Type
 newtype Observable canLoad exceptions v = Observable (ObservableT canLoad exceptions Identity v)
 
 instance ToObservableT canLoad exceptions Identity v (Observable canLoad exceptions v) where
