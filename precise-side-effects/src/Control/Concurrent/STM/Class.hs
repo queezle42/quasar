@@ -32,9 +32,9 @@ module Control.Concurrent.STM.Class (
   -- ** Retry
   MonadRetry(..),
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
-  CanRetry(..),
+  RetryKind(..),
 #else
-  CanRetry,
+  RetryKind,
   Retry,
   NoRetry,
 #endif
@@ -175,16 +175,16 @@ instance (MonadRetry m, Monad (t m), MonadTrans t) => MonadRetry (t m) where
 
 
 #if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
-type data CanRetry = Retry | NoRetry
+type data RetryKind = Retry | NoRetry
 #else
-data CanRetry = Retry | NoRetry
+data RetryKind = Retry | NoRetry
 type Retry = 'Retry
 type NoRetry = 'NoRetry
 #endif
 
 
 type role STMc phantom phantom _
-type STMc :: CanRetry -> [Type] -> Type -> Type
+type STMc :: RetryKind -> [Type] -> Type -> Type
 newtype STMc canRetry exceptions a = STMc (STM a)
   deriving newtype (Functor, Applicative, Monad, MonadFix)
 
@@ -235,7 +235,7 @@ instance (Monad (t m), MonadTrans t, MonadSTMcBase m) => MonadSTMcBase (t m) whe
   unsafeLiftSTM = lift . unsafeLiftSTM
 
 
-type MonadSTMc :: CanRetry -> [Type] -> (Type -> Type) -> Constraint
+type MonadSTMc :: RetryKind -> [Type] -> (Type -> Type) -> Constraint
 type MonadSTMc canRetry exceptions m = (If (canRetry == Retry) (MonadRetry m) (() :: Constraint), MonadSTMcBase m, ThrowForAll exceptions m, ThrowForAll exceptions (STMc canRetry exceptions))
 
 
