@@ -67,6 +67,9 @@ module Quasar.Observable.Core (
   unwrapObservableResult,
   mapObservableResult,
   mapObservableStateResult,
+  mapObservableStateResultEx,
+  mapObservableChangeResult,
+  mapObservableChangeResultEx,
   mergeObservableResult,
 
   -- *** Pending change helpers
@@ -436,6 +439,18 @@ mapObservableChange fc fd (ObservableChangeLiveUpdate update) = ObservableChange
   ObservableUpdateReplace content -> ObservableUpdateReplace (fc content)
   ObservableUpdateDelta delta -> ObservableUpdateDelta (fd delta)
 
+mapObservableChangeResult :: (c va -> c v) -> (Delta c va -> Delta c v) -> ObservableChange canLoad (ObservableResult exceptions c) va -> ObservableChange canLoad (ObservableResult exceptions c) v
+mapObservableChangeResult fc = mapObservableChange (mapObservableResult fc)
+
+mapObservableChangeResultEx :: (Ex ea -> Ex eb) -> ObservableChange canLoad (ObservableResult ea c) v -> ObservableChange canLoad (ObservableResult eb c) v
+mapObservableChangeResultEx _ ObservableChangeLoadingClear = ObservableChangeLoadingClear
+mapObservableChangeResultEx _ ObservableChangeLoadingUnchanged = ObservableChangeLoadingUnchanged
+mapObservableChangeResultEx _ ObservableChangeLiveUnchanged = ObservableChangeLiveUnchanged
+mapObservableChangeResultEx fn (ObservableChangeLiveUpdate update) = ObservableChangeLiveUpdate case update of
+  ObservableUpdateReplace (ObservableResultOk content) -> ObservableUpdateReplace (ObservableResultOk content)
+  ObservableUpdateReplace (ObservableResultEx ex) -> ObservableUpdateReplace (ObservableResultEx (fn ex))
+  (ObservableUpdateDelta delta) -> ObservableUpdateDelta delta
+
 
 type EvaluatedObservableChange :: LoadKind -> (Type -> Type) -> Type -> Type
 data EvaluatedObservableChange canLoad c v where
@@ -800,6 +815,11 @@ mapObservableStateResult :: (cp vp -> c v) -> ObservableState canLoad (Observabl
 mapObservableStateResult _fn ObservableStateLoading = ObservableStateLoading
 mapObservableStateResult _fn (ObservableStateLiveEx ex) = ObservableStateLiveEx ex
 mapObservableStateResult fn (ObservableStateLiveOk content) = ObservableStateLiveOk (fn content)
+
+mapObservableStateResultEx :: (Ex ea -> Ex eb) -> ObservableState canLoad (ObservableResult ea c) v -> ObservableState canLoad (ObservableResult eb c) v
+mapObservableStateResultEx _fn ObservableStateLoading = ObservableStateLoading
+mapObservableStateResultEx fn (ObservableStateLiveEx ex) = ObservableStateLiveEx (fn ex)
+mapObservableStateResultEx _fn (ObservableStateLiveOk content) = ObservableStateLiveOk content
 
 
 data LiftA2Observable l e c v = forall va vb a b. (IsObservableCore l e c va a, ObservableContainer c va, IsObservableCore l e c vb b, ObservableContainer c vb) => LiftA2Observable (va -> vb -> v) a b
