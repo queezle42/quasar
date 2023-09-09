@@ -481,6 +481,9 @@ instance IsObservableCore canLoad exceptions c v (ObservableState canLoad (Obser
   count# x = constObservable (mapObservableStateResult (Identity . containerCount#) x)
   isEmpty# x = constObservable (mapObservableStateResult (Identity . containerIsEmpty#) x)
 
+instance (ObservableContainer c v, ContainerConstraint canLoad exceptions c v (ObservableState canLoad (ObservableResult exceptions c) v)) => ToObservableT canLoad exceptions c v (ObservableState canLoad (ObservableResult exceptions c) v) where
+  toObservableT = ObservableT
+
 instance HasField "loading" (ObservableState canLoad c v) (Loading canLoad) where
   getField ObservableStateLoading = Loading
   getField (ObservableStateLive _) = Live
