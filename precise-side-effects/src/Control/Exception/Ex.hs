@@ -121,7 +121,7 @@ toEx = Ex . toException
 unsafeToEx :: SomeException -> Ex exceptions
 unsafeToEx = Ex
 -- Ex is a newtype, so inlining eliminates the call to unsafeToEx
-{-# INLINE unsafeToEx #-}
+{-# INLINE CONLIKE unsafeToEx #-}
 
 instance ExceptionList exceptions => Exception (Ex exceptions) where
   toException (Ex ex) = ex
@@ -152,7 +152,7 @@ matchEx (Ex ex) =
 relaxEx :: sub :<< super => Ex sub -> Ex super
 relaxEx (Ex x) = Ex x
 -- Ex is a newtype, so inlining eliminates the call to relaxEx
-{-# INLINE relaxEx #-}
+{-# INLINE CONLIKE relaxEx #-}
 
 
 absurdEx :: Ex '[] -> a
