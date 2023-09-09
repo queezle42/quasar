@@ -35,7 +35,8 @@ liftObservable (Observable fx) = Observable (liftObservableT fx)
 newtype LiftedObservable l e la ea c v = LiftedObservable (ObservableT la ea c v)
 
 instance (ea :<< e, RelaxLoad la l, ObservableContainer c v) => IsObservableCore l e c v (LiftedObservable l e la ea c v) where
-  readObservable# (LiftedObservable fx) = undefined
+  readObservable# (LiftedObservable fx) =
+    relaxObservableState <$> readObservable# fx
 
   attachObserver# (LiftedObservable fx) callback =
     relaxObservableState <<$>> attachObserver# fx (callback . relaxObservableChange)
