@@ -31,11 +31,38 @@ instance (ContainerConstraint canLoad exceptions c v (Subject canLoad exceptions
 
 instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (Subject canLoad exceptions c v) where
   attachEvaluatedObserver# (Subject var registry) callback = do
-    disposer <- registerCallback registry callback
-    value <- readTVar var
-    pure (disposer, toObservableState value)
+    readTVar var >>= \case
+      ObserverStateLoadingCleared -> do
+        disposer <- registerCallback registry callback
+        pure (disposer, ObservableStateLoading)
+      ObserverStateLoadingCached cache -> do
+        disposer <- registerCallback registry (callback . fixInvalidCacheState cache)
+        pure (disposer, ObservableStateLoading)
+      ObserverStateLive result -> do
+        disposer <- registerCallback registry callback
+        pure (disposer, ObservableStateLive result)
 
   readObservable# (Subject var _registry) = toObservableState <$> readTVar var
+
+
+-- Precondition: Observer is in `ObserverStateLoadingCleared` state, but caller
+-- assumes the observer is in `ObserverStateLoadingCached` state.
+fixInvalidCacheState ::
+  (ObservableContainer c v) =>
+  ObservableResult exceptions c v ->
+  EvaluatedObservableChange Load (ObservableResult exceptions c) v ->
+  EvaluatedObservableChange Load (ObservableResult exceptions c) v
+fixInvalidCacheState _cached EvaluatedObservableChangeLoadingClear =
+  EvaluatedObservableChangeLoadingClear
+fixInvalidCacheState cached EvaluatedObservableChangeLiveUnchanged =
+  EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace cached)
+fixInvalidCacheState _cached replace@(EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace _)) =
+  replace
+fixInvalidCacheState _cached (EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateDelta delta)) =
+  EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace (contentFromEvaluatedDelta delta))
+fixInvalidCacheState _cached EvaluatedObservableChangeLoadingUnchanged =
+  -- Filtered by `applyObservableChange` in `changeSubject`
+  impossibleCodePath
 
 
 newSubject :: MonadSTMc NoRetry '[] m => c v -> m (Subject canLoad exceptions c v)
