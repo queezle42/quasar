@@ -93,6 +93,7 @@ module Quasar.Observable.Core (
   toObservable,
   readObservable,
   constObservable,
+  throwExObservable,
   Void1,
   absurd1,
 ) where
@@ -1274,6 +1275,11 @@ instance IsObservableCore canLoad exceptions Identity v (Observable canLoad exce
 
 constObservable :: ObservableState canLoad (ObservableResult exceptions Identity) v -> Observable canLoad exceptions v
 constObservable state = Observable (ObservableT state)
+
+-- | Can be used instead of `throwEx` when the exception list cannot be
+-- evaluated at compile time.
+throwExObservable :: Ex exceptions -> Observable canLoad exceptions v
+throwExObservable = unsafeThrowEx . exToException
 
 
 -- ** Exception wrapper
