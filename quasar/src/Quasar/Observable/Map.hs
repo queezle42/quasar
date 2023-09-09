@@ -365,10 +365,10 @@ instance IsObservableCore l e (Map k) v (FilteredObservableMap l e k v) where
 
   attachObserver# (FilteredObservableMap fn fx) callback = do
     (disposer, initial) <- attachObserver# fx \case
-      ObservableChangeLiveUpdate (ObservableUpdateOk (ObservableUpdateReplace new)) ->
-        callback (ObservableChangeLiveUpdate (ObservableUpdateOk (ObservableUpdateReplace (Map.filterWithKey fn new))))
-      ObservableChangeLiveUpdate (ObservableUpdateOk (ObservableUpdateDelta delta)) ->
-        callback (ObservableChangeLiveUpdate (ObservableUpdateOk (ObservableUpdateDelta (filterDelta delta))))
+      ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk new)) ->
+        callback (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk (Map.filterWithKey fn new))))
+      ObservableChangeLiveUpdate (ObservableUpdateDelta delta) ->
+        callback (ObservableChangeLiveUpdate (ObservableUpdateDelta (filterDelta delta)))
       -- Exception, loading, cleared or unchanged
       other -> callback other
 

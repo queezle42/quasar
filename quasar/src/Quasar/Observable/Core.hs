@@ -35,7 +35,7 @@ module Quasar.Observable.Core (
   Loading(..),
   ObservableChange(..),
   mapObservableChange,
-  ObservableUpdate(.., ObservableUpdateOk, ObservableUpdateThrow),
+  ObservableUpdate(..),
   updateValidatedDelta,
   EvaluatedObservableChange(..),
   EvaluatedUpdate(.., EvaluatedUpdateOk, EvaluatedUpdateThrow),
@@ -340,21 +340,6 @@ type ObservableUpdate :: (Type -> Type) -> Type -> Type
 data ObservableUpdate c v where
   ObservableUpdateReplace :: c v -> ObservableUpdate c v
   ObservableUpdateDelta :: Delta c v -> ObservableUpdate c v
-
-pattern ObservableUpdateOk :: ObservableUpdate c v -> ObservableUpdate (ObservableResult exceptions c) v
-pattern ObservableUpdateOk update <- (observableUpdateIsOk -> Just update) where
-  ObservableUpdateOk (ObservableUpdateReplace x) = ObservableUpdateReplace (ObservableResultOk x)
-  ObservableUpdateOk (ObservableUpdateDelta delta) = ObservableUpdateDelta delta
-
-pattern ObservableUpdateThrow :: Ex exceptions -> ObservableUpdate (ObservableResult exceptions c) v
-pattern ObservableUpdateThrow ex = (ObservableUpdateReplace (ObservableResultEx ex))
-
-observableUpdateIsOk :: ObservableUpdate (ObservableResult exceptions c) v -> Maybe (ObservableUpdate c v)
-observableUpdateIsOk (ObservableUpdateReplace (ObservableResultOk x)) = Just (ObservableUpdateReplace x)
-observableUpdateIsOk (ObservableUpdateReplace (ObservableResultEx _)) = Nothing
-observableUpdateIsOk (ObservableUpdateDelta delta) = Just (ObservableUpdateDelta delta)
-
-{-# COMPLETE ObservableUpdateOk, ObservableUpdateThrow #-}
 
 instance (Functor c, Functor (Delta c)) => Functor (ObservableUpdate c) where
   fmap fn (ObservableUpdateReplace x) = ObservableUpdateReplace (fn <$> x)
