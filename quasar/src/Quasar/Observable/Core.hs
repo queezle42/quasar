@@ -101,15 +101,16 @@ import Control.Applicative
 import Control.Monad.Catch (MonadThrow)
 import Control.Monad.Catch.Pure (MonadThrow(..))
 import Control.Monad.Except
+import Data.Bifunctor (bimap, first)
+import Data.Binary (Binary)
 import Data.String (IsString(..))
 import Data.Type.Equality ((:~:)(Refl))
+import Data.Void (absurd)
 import GHC.Records (HasField(..))
+import Quasar.Future
 import Quasar.Prelude
 import Quasar.Resources.Disposer
 import Quasar.Utils.Fix
-import Data.Void (absurd)
-import Data.Bifunctor (bimap, first)
-import Data.Binary (Binary)
 
 -- * Generalized observables
 
@@ -1166,6 +1167,45 @@ bindObservableT fx fn = ObservableT (BindObservable fx rhsHandler)
     where
       rhsHandler (ObservableResultOk (Identity x)) = fn x
       rhsHandler (ObservableResultEx ex) = ObservableT (ObservableStateLiveEx ex)
+
+
+instance IsObservableCore Load '[] Identity v (Future v) where
+  readObservable# future = do
+    peekFuture future <&> \case
+      Nothing -> ObservableStateLoading
+      Just value -> ObservableStateLive (ObservableResultOk (Identity value))
+
+  attachObserver# future callback = do
+    initial <- readOrAttachToFuture# future \value ->
+      callback (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk (Identity value))))
+    pure case initial of
+      Left disposer -> (disposer, ObservableStateLoading)
+      Right value -> (mempty, ObservableStateLive (ObservableResultOk (Identity value)))
+
+instance ToObservableT Load '[] Identity v (Future v) where
+  toObservableT = ObservableT
+
+
+instance IsObservableCore Load exceptions Identity v (FutureEx exceptions v) where
+  readObservable# future = do
+    peekFuture future <&> \case
+      Nothing -> ObservableStateLoading
+      Just (Left ex) -> ObservableStateLive (ObservableResultEx ex)
+      Just (Right value) -> ObservableStateLive (ObservableResultOk (Identity value))
+
+  attachObserver# future callback = do
+    initial <- readOrAttachToFuture# (toFuture future) \result ->
+      callback $ ObservableChangeLiveUpdate $ ObservableUpdateReplace $ case result of
+        Left ex -> ObservableResultEx ex
+        Right value -> ObservableResultOk (Identity value)
+    pure case initial of
+      Left disposer -> (disposer, ObservableStateLoading)
+      Right (Right value) -> (mempty, ObservableStateLive (ObservableResultOk (Identity value)))
+      Right (Left ex) -> (mempty, ObservableStateLive (ObservableResultEx ex))
+
+instance ToObservableT Load exceptions Identity v (FutureEx exceptions v) where
+  toObservableT = ObservableT
+
 
 
 -- ** Observable Identity
