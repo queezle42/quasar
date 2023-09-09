@@ -33,7 +33,7 @@ module Quasar.Observable.Core (
 
   -- ** Additional types
   Loading(..),
-  ObservableChange(..),
+  ObservableChange(.., ObservableChangeLiveReplace, ObservableChangeLiveDelta),
   mapObservableChange,
   ObservableUpdate(..),
   updateValidatedDelta,
@@ -401,6 +401,20 @@ data ObservableChange canLoad c v where
   ObservableChangeLiveUnchanged :: ObservableChange Load c v
   ObservableChangeLiveUpdate :: ObservableUpdate c v -> ObservableChange canLoad c v
 
+pattern ObservableChangeLiveReplace :: c v -> ObservableChange canLoad c v
+pattern ObservableChangeLiveReplace content = ObservableChangeLiveUpdate (ObservableUpdateReplace content)
+
+pattern ObservableChangeLiveDelta :: Delta c v -> ObservableChange canLoad c v
+pattern ObservableChangeLiveDelta delta = ObservableChangeLiveUpdate (ObservableUpdateDelta delta)
+
+{-# COMPLETE
+  ObservableChangeLoadingClear,
+  ObservableChangeLoadingUnchanged,
+  ObservableChangeLiveUnchanged,
+  ObservableChangeLiveReplace,
+  ObservableChangeLiveDelta
+  #-}
+
 instance (Functor c, Functor (Delta c)) => Functor (ObservableChange canLoad c) where
   fmap _fn ObservableChangeLoadingUnchanged = ObservableChangeLoadingUnchanged
   fmap _fn ObservableChangeLoadingClear = ObservableChangeLoadingClear
@@ -421,9 +435,8 @@ mapObservableChange :: (ca va -> c v) -> (Delta ca va -> Delta c v) -> Observabl
 mapObservableChange _ _ ObservableChangeLoadingClear = ObservableChangeLoadingClear
 mapObservableChange _ _ ObservableChangeLoadingUnchanged = ObservableChangeLoadingUnchanged
 mapObservableChange _ _ ObservableChangeLiveUnchanged = ObservableChangeLiveUnchanged
-mapObservableChange fc fd (ObservableChangeLiveUpdate update) = ObservableChangeLiveUpdate case update of
-  ObservableUpdateReplace content -> ObservableUpdateReplace (fc content)
-  ObservableUpdateDelta delta -> ObservableUpdateDelta (fd delta)
+mapObservableChange fc _fd (ObservableChangeLiveReplace content) = ObservableChangeLiveReplace (fc content)
+mapObservableChange _fc fd (ObservableChangeLiveDelta delta) = ObservableChangeLiveDelta (fd delta)
 
 mapObservableChangeResult :: (c va -> c v) -> (Delta c va -> Delta c v) -> ObservableChange canLoad (ObservableResult exceptions c) va -> ObservableChange canLoad (ObservableResult exceptions c) v
 mapObservableChangeResult fc = mapObservableChange (mapObservableResult fc)

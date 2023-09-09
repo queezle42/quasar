@@ -331,7 +331,7 @@ manageObservableProxy proxy = do
   task `catch` \(ex :: Ex '[MultiplexerException, ChannelException]) ->
     atomically do
       writeTVar proxy.terminated True
-      changeSubject proxy.observableVar (ObservableChangeLiveUpdate (ObservableUpdateThrow (toEx (ObservableProxyException (toException ex)))))
+      changeSubject proxy.observableVar (ObservableChangeLiveReplace (ObservableResultEx (toEx (ObservableProxyException (toException ex)))))
   where
     task = bracket (pure proxy.channel) disposeEventuallyIO_ \channel -> do
       forever do
