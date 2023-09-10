@@ -361,6 +361,9 @@ instance Foldable Void1 where
 instance Traversable Void1 where
   traverse _ = absurd1
 
+instance Show (Void1 a) where
+  show = absurd1
+
 instance Binary (Void1 a)
 
 
@@ -370,6 +373,8 @@ type ObservableUpdate :: (Type -> Type) -> Type -> Type
 data ObservableUpdate c v where
   ObservableUpdateReplace :: c v -> ObservableUpdate c v
   ObservableUpdateDelta :: Delta c v -> ObservableUpdate c v
+
+deriving instance (Show (c v), Show (Delta c v)) => Show (ObservableUpdate c v)
 
 instance (Functor c, Functor (Delta c)) => Functor (ObservableUpdate c) where
   fmap fn (ObservableUpdateReplace x) = ObservableUpdateReplace (fn <$> x)
@@ -444,6 +449,8 @@ pattern ObservableChangeLiveDelta delta = ObservableChangeLiveUpdate (Observable
   ObservableChangeLiveReplace,
   ObservableChangeLiveDelta
   #-}
+
+deriving instance (Show (c v), Show (Delta c v)) => Show (ObservableChange canLoad c v)
 
 instance (Functor c, Functor (Delta c)) => Functor (ObservableChange canLoad c) where
   fmap _fn ObservableChangeLoadingUnchanged = ObservableChangeLoadingUnchanged
