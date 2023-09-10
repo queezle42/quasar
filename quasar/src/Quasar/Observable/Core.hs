@@ -11,6 +11,7 @@ module Quasar.Observable.Core (
   -- * Generalized observable
   IsObservableCore(..),
   readObservableT,
+  retrieveObservableT,
   ObservableContainer(..),
   isEmptyDelta,
   ContainerCount(..),
@@ -65,6 +66,7 @@ module Quasar.Observable.Core (
   -- *** Exception wrapper container
   ObservableResult(..),
   unwrapObservableResult,
+  unwrapObservableResultIO,
   mapObservableResult,
   mapObservableStateResult,
   mapObservableStateResultEx,
@@ -92,6 +94,7 @@ module Quasar.Observable.Core (
   ToObservable,
   toObservable,
   readObservable,
+  retrieveObservable,
   constObservable,
   throwExObservable,
   Void1,
@@ -99,10 +102,9 @@ module Quasar.Observable.Core (
 ) where
 
 import Control.Applicative
-import Control.Monad.Catch (MonadThrow)
 import Control.Monad.Catch.Pure (MonadThrow(..))
 import Control.Monad.Except
-import Data.Bifunctor (bimap, first)
+import Data.Bifunctor (first)
 import Data.Binary (Binary)
 import Data.String (IsString(..))
 import Data.Type.Equality ((:~:)(Refl))
@@ -112,6 +114,7 @@ import Quasar.Future
 import Quasar.Prelude
 import Quasar.Resources.Disposer
 import Quasar.Utils.Fix
+import Control.Monad.Catch (bracket)
 
 -- * Generalized observables
 
@@ -216,6 +219,32 @@ class ObservableContainer c v => ToObservableT canLoad exceptions c v a | a -> c
 
 instance ObservableContainer c v => ToObservableT canLoad exceptions c v (ObservableT canLoad exceptions c v) where
   toObservableT = id
+
+retrieveObservableT ::
+  forall canLoad exceptions c v.
+  ObservableContainer c v =>
+  ObservableT canLoad exceptions c v ->
+  IO (c v)
+retrieveObservableT fx = do
+  var <- newTVarIO Nothing
+  bracket
+    (atomicallyC (attachObserver# fx (callback var)))
+    (atomicallyC . disposeTSimpleDisposer . fst)
+    \(_, initial) -> do
+      unwrapObservableResultIO =<< case initial of
+        ObservableStateLive initialResult -> pure initialResult
+        ObservableStateLoading -> atomically (maybe retry pure =<< readTVar var)
+  where
+    -- Result is only used when observer is in LoadingCleared state
+    callback ::
+      TVar (Maybe (ObservableResult exceptions c v)) ->
+      ObservableChange canLoad (ObservableResult exceptions c) v ->
+      STMc NoRetry '[] ()
+    callback var (ObservableChangeLiveReplace content) = do
+      readTVar var >>= \case
+        Just _ -> pure () -- Already received a value
+        Nothing -> writeTVar var (Just content)
+    callback _ _ = pure ()
 
 readObservableT ::
   forall exceptions c v m a.
@@ -1224,6 +1253,14 @@ readObservable ::
   m v
 readObservable (Observable fx) = runIdentity <$> readObservableT fx
 
+retrieveObservable ::
+  forall canLoad exceptions v m a.
+  MonadIO m =>
+  Observable canLoad exceptions v ->
+  m v
+retrieveObservable (Observable fx) = liftIO do
+  runIdentity <$> retrieveObservableT fx
+
 
 type Observable :: LoadKind -> [Type] -> Type -> Type
 newtype Observable canLoad exceptions v = Observable (ObservableT canLoad exceptions Identity v)
@@ -1312,9 +1349,13 @@ instance Traversable c => Traversable (ObservableResult exceptions c) where
   traverse f (ObservableResultOk x) = ObservableResultOk <$> traverse f x
   traverse _f (ObservableResultEx ex) = pure (ObservableResultEx ex)
 
-unwrapObservableResult :: ObservableResult exceptions c v -> STMc NoRetry exceptions (c v)
+unwrapObservableResult :: ObservableResult exceptions c v -> STMc canRetry exceptions (c v)
 unwrapObservableResult (ObservableResultOk result) = pure result
 unwrapObservableResult (ObservableResultEx ex) = throwExSTMc ex
+
+unwrapObservableResultIO :: ObservableResult exceptions c v -> IO (c v)
+unwrapObservableResultIO (ObservableResultOk result) = pure result
+unwrapObservableResultIO (ObservableResultEx ex) = throwM (exToException ex)
 
 mapObservableResult :: (ca va -> cb vb) -> ObservableResult exceptions ca va -> ObservableResult exceptions cb vb
 mapObservableResult fn (ObservableResultOk result) = ObservableResultOk (fn result)
