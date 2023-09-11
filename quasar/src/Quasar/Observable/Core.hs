@@ -1088,7 +1088,7 @@ attachMonoidMergeObserver fullMergeFn leftFn rightFn fx fy callback =
 
 data BindState canLoad c v where
   -- LHS cleared
-  BindStateDetached :: BindState canLoad c v
+  BindStateDetached :: BindState Load c v
   -- RHS attached
   BindStateAttached
     :: Loading canLoad -- ^ is LHS loading
@@ -1113,8 +1113,8 @@ instance (IsObservableCore canLoad exceptions c v b, ObservableContainer c v) =>
         ObservableChangeLoadingClear -> lhsClear var
         ObservableChangeLoadingUnchanged -> lhsSetLoading var Loading
         ObservableChangeLiveUnchanged -> lhsSetLoading var Live
-        ObservableChangeLiveUpdate (ObservableUpdateReplace x) -> lhsReplace var x
-        ObservableChangeLiveUpdate (ObservableUpdateDelta delta) -> absurd1 delta
+        ObservableChangeLiveReplace x -> lhsReplace var x
+        ObservableChangeLiveDelta delta -> absurd1 delta
 
       (initial, bindState) <- case initialX of
         ObservableStateLoading -> pure (ObservableStateLoading, BindStateDetached)
@@ -1163,11 +1163,14 @@ instance (IsObservableCore canLoad exceptions c v b, ObservableContainer c v) =>
         -> STMc NoRetry '[] ()
       lhsReplace var x = do
         readTVar var >>= \case
-          BindStateAttached loading disposer (pending, last) -> do
+          BindStateAttached _loading disposer (_pending, last) -> do
             disposeTSimpleDisposer disposer
             (disposerY, initialY) <- attachObserver# (fn x) (rhsCallback var)
-            writeAndSendPending var loading disposerY (initialPendingChange initialY) last
-          _ -> pure () -- Bug. This only happens due to law violations elsewhere: the callback was called after unsubscribing.
+            writeAndSendPending var Live disposerY (initialPendingChange initialY) last
+          BindStateDetached -> do
+            (disposerY, initialY) <- attachObserver# (fn x) (rhsCallback var)
+            let pending = initialPendingChange initialY
+            writeAndSendPending var Live disposerY pending LastChangeLoadingCleared
 
       rhsCallback
         :: TVar (BindState canLoad (ObservableResult exceptions c) v)
@@ -1178,13 +1181,13 @@ instance (IsObservableCore canLoad exceptions c v b, ObservableContainer c v) =>
           BindStateAttached loading disposer (pending, last) -> do
             let newPending = updatePendingChange changeY pending
             writeAndSendPending var loading disposer newPending last
-          _ -> pure ()
+          _ -> pure () -- Bug. This can only happen due to law violations elsewhere: the callback was called after unsubscribing.
 
       writeAndSendPending
         :: TVar (BindState canLoad (ObservableResult exceptions c) v)
-        -> Loading canLoad
+        -> Loading canLoad -- LHS loading state
         -> TSimpleDisposer
-        -> PendingChange canLoad (ObservableResult exceptions c) v
+        -> PendingChange canLoad (ObservableResult exceptions c) v -- RHS pending change
         -> LastChange canLoad
         -> STMc NoRetry '[] ()
       writeAndSendPending var loading disposer pending last =
