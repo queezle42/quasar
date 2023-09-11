@@ -756,7 +756,7 @@ updatePendingChange ObservableChangeLiveUnchanged (PendingChangeAlter _loading d
 updatePendingChange (ObservableChangeLiveUpdate (ObservableUpdateReplace content)) _ =
   PendingChangeAlter Live (Right (ValidatedObservableUpdateReplace content))
 updatePendingChange (ObservableChangeLiveUpdate (ObservableUpdateDelta _delta)) PendingChangeLoadingClear = PendingChangeLoadingClear
-updatePendingChange (ObservableChangeLiveUpdate update) prev@(PendingChangeAlter _loading (Right prevUpdate)) =
+updatePendingChange (ObservableChangeLiveUpdate update) (PendingChangeAlter _loading (Right prevUpdate)) =
   let newUpdate = mergeUpdate @c prevUpdate update
   in PendingChangeAlter Live (Right newUpdate)
 updatePendingChange (ObservableChangeLiveUpdate update) (PendingChangeAlter _loading (Left ctx)) =
