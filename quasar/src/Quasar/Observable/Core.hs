@@ -364,6 +364,9 @@ instance Traversable Void1 where
 instance Show (Void1 a) where
   show = absurd1
 
+instance Eq (Void1 a) where
+  (==) = absurd1
+
 instance Binary (Void1 a)
 
 
@@ -375,6 +378,7 @@ data ObservableUpdate c v where
   ObservableUpdateDelta :: Delta c v -> ObservableUpdate c v
 
 deriving instance (Show (c v), Show (Delta c v)) => Show (ObservableUpdate c v)
+deriving instance (Eq (c v), Eq (Delta c v)) => Eq (ObservableUpdate c v)
 
 instance (Functor c, Functor (Delta c)) => Functor (ObservableUpdate c) where
   fmap fn (ObservableUpdateReplace x) = ObservableUpdateReplace (fn <$> x)
@@ -451,6 +455,7 @@ pattern ObservableChangeLiveDelta delta = ObservableChangeLiveUpdate (Observable
   #-}
 
 deriving instance (Show (c v), Show (Delta c v)) => Show (ObservableChange canLoad c v)
+deriving instance (Eq (c v), Eq (Delta c v)) => Eq (ObservableChange canLoad c v)
 
 instance (Functor c, Functor (Delta c)) => Functor (ObservableChange canLoad c) where
   fmap _fn ObservableChangeLoadingUnchanged = ObservableChangeLoadingUnchanged
@@ -509,6 +514,7 @@ data ObservableState canLoad c v where
   ObservableStateLive :: c v -> ObservableState canLoad c v
 
 deriving instance Show (c v) => Show (ObservableState canLoad c v)
+deriving instance Eq (c v) => Eq (ObservableState canLoad c v)
 
 instance IsObservableCore canLoad exceptions c v (ObservableState canLoad (ObservableResult exceptions c) v) where
   readObservable# = pure
@@ -1339,7 +1345,8 @@ data ObservableResult exceptions c v
   = ObservableResultOk (c v)
   | ObservableResultEx (Ex exceptions)
 
-deriving instance Show (c v) => Show (ObservableResult canLoad c v)
+deriving instance Show (c v) => Show (ObservableResult exceptions c v)
+deriving instance (Eq (c v), Eq (Ex exceptions)) => Eq (ObservableResult exceptions c v)
 
 instance Functor c => Functor (ObservableResult exceptions c) where
   fmap fn (ObservableResultOk content) = ObservableResultOk (fn <$> content)

@@ -131,6 +131,9 @@ instance ExceptionList exceptions => Exception (Ex exceptions) where
 instance Show (Ex exceptions) where
   show (Ex ex) = show ex
 
+instance Eq (Ex '[]) where
+  (==) = absurdEx
+
 -- | Variant of `toException` specifically for `Ex` without the
 -- `Exception (Ex exceptions)`-constraint.
 exToException :: Ex exceptions -> SomeException
