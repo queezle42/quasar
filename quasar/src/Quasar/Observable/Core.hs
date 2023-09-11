@@ -204,7 +204,7 @@ absurdLoad = unreachableCodePath
 data ObservableT canLoad exceptions c v
   = forall a. (IsObservableCore canLoad exceptions c v a, ContainerConstraint canLoad exceptions c v a) => ObservableT a
 
-instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (ObservableT canLoad exceptions c v) where
+instance IsObservableCore canLoad exceptions c v (ObservableT canLoad exceptions c v) where
   readObservable# (ObservableT x) = readObservable# x
   attachObserver# (ObservableT x) = attachObserver# x
   attachEvaluatedObserver# (ObservableT x) = attachEvaluatedObserver# x
@@ -214,10 +214,10 @@ instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (Obs
   isEmpty# (ObservableT x) = isEmpty# x
 
 type ToObservableT :: LoadKind -> [Type] -> (Type -> Type) -> Type -> Type -> Constraint
-class ObservableContainer c v => ToObservableT canLoad exceptions c v a | a -> canLoad, a -> exceptions, a -> c, a -> v where
+class ToObservableT canLoad exceptions c v a | a -> canLoad, a -> exceptions, a -> c, a -> v where
   toObservableT :: a -> ObservableT canLoad exceptions c v
 
-instance ObservableContainer c v => ToObservableT canLoad exceptions c v (ObservableT canLoad exceptions c v) where
+instance ToObservableT canLoad exceptions c v (ObservableT canLoad exceptions c v) where
   toObservableT = id
 
 retrieveObservableT ::
