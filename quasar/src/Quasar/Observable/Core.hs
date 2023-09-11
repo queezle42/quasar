@@ -1172,11 +1172,12 @@ instance (IsObservableCore canLoad exceptions c v b, ObservableContainer c v) =>
           BindStateAttached _loading disposer (_pending, last) -> do
             disposeTSimpleDisposer disposer
             (disposerY, initialY) <- attachObserver# (fn x) (rhsCallback var)
-            writeAndSendPending var Live disposerY (initialPendingChange initialY) last
+            let newPending = initialPendingChange initialY
+            writeAndSendPending var Live disposerY newPending last
           BindStateDetached -> do
             (disposerY, initialY) <- attachObserver# (fn x) (rhsCallback var)
-            let pending = initialPendingChange initialY
-            writeAndSendPending var Live disposerY pending LastChangeLoadingCleared
+            let newPending = initialPendingChange initialY
+            writeAndSendPending var Live disposerY newPending LastChangeLoadingCleared
 
       rhsCallback
         :: TVar (BindState canLoad (ObservableResult exceptions c) v)
