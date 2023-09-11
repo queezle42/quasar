@@ -623,12 +623,12 @@ updateObserverContext (ObserverContextLive ctx) ObservableChangeLoadingUnchanged
 updateObserverContext ObserverContextLoadingCleared ObservableChangeLiveUnchanged = ObserverContextLoadingCleared
 updateObserverContext (ObserverContextLoadingCached ctx) ObservableChangeLiveUnchanged = ObserverContextLive ctx
 updateObserverContext x@(ObserverContextLive _ctx) ObservableChangeLiveUnchanged = x
-updateObserverContext _ (ObservableChangeLiveUpdate (ObservableUpdateReplace new)) = ObserverContextLive (toInitialDeltaContext new)
-updateObserverContext ObserverContextLoadingCleared (ObservableChangeLiveUpdate (ObservableUpdateDelta _delta)) =
+updateObserverContext _ (ObservableChangeLiveReplace new) = ObserverContextLive (toInitialDeltaContext new)
+updateObserverContext ObserverContextLoadingCleared (ObservableChangeLiveDelta _delta) =
   ObserverContextLoadingCleared
-updateObserverContext (ObserverContextLoadingCached deltaContext) (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) =
+updateObserverContext (ObserverContextLoadingCached deltaContext) (ObservableChangeLiveDelta delta) =
   ObserverContextLive (snd (updateDeltaContext @c deltaContext delta))
-updateObserverContext (ObserverContextLive deltaContext) (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) =
+updateObserverContext (ObserverContextLive deltaContext) (ObservableChangeLiveDelta delta) =
   ObserverContextLive (snd (updateDeltaContext @c deltaContext delta))
 
 
@@ -664,11 +664,11 @@ applyObservableChange ObservableChangeLiveUnchanged ObserverStateLoadingCleared 
 applyObservableChange ObservableChangeLiveUnchanged (ObserverStateLoadingCached state) = Just (EvaluatedObservableChangeLiveUnchanged, ObserverStateLive state)
 applyObservableChange ObservableChangeLiveUnchanged (ObserverStateLive _) = Nothing
 
-applyObservableChange (ObservableChangeLiveUpdate (ObservableUpdateReplace content)) _ =
+applyObservableChange (ObservableChangeLiveReplace content) _ =
   Just (EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace content), ObserverStateLive content)
 
-applyObservableChange (ObservableChangeLiveUpdate (ObservableUpdateDelta _delta)) ObserverStateLoadingCleared = Nothing
-applyObservableChange (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) (ObserverStateCached _ old) = do
+applyObservableChange (ObservableChangeLiveDelta _delta) ObserverStateLoadingCleared = Nothing
+applyObservableChange (ObservableChangeLiveDelta delta) (ObserverStateCached _ old) = do
   new <- Just (applyDelta delta old)
   evaluated <- toEvaluatedDelta delta new
   Just (EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateDelta evaluated), ObserverStateLive new)
@@ -753,9 +753,9 @@ updatePendingChange ObservableChangeLoadingUnchanged PendingChangeLoadingClear =
 updatePendingChange ObservableChangeLiveUnchanged PendingChangeLoadingClear = PendingChangeLoadingClear
 updatePendingChange ObservableChangeLoadingUnchanged (PendingChangeAlter _loading delta) = PendingChangeAlter Loading delta
 updatePendingChange ObservableChangeLiveUnchanged (PendingChangeAlter _loading delta) = PendingChangeAlter Live delta
-updatePendingChange (ObservableChangeLiveUpdate (ObservableUpdateReplace content)) _ =
+updatePendingChange (ObservableChangeLiveReplace content) _ =
   PendingChangeAlter Live (Right (ValidatedObservableUpdateReplace content))
-updatePendingChange (ObservableChangeLiveUpdate (ObservableUpdateDelta _delta)) PendingChangeLoadingClear = PendingChangeLoadingClear
+updatePendingChange (ObservableChangeLiveDelta _delta) PendingChangeLoadingClear = PendingChangeLoadingClear
 updatePendingChange (ObservableChangeLiveUpdate update) (PendingChangeAlter _loading (Right prevUpdate)) =
   let newUpdate = mergeUpdate @c prevUpdate update
   in PendingChangeAlter Live (Right newUpdate)
