@@ -80,6 +80,7 @@ module Quasar.Observable.Core (
   updatePendingChange,
   initialPendingChange,
   initialPendingAndLastChange,
+  replacingPendingChange,
   changeFromPending,
 
   -- *** Merging changes
@@ -772,6 +773,10 @@ initialPendingChange :: ObservableContainer c v => ObservableState canLoad c v -
 initialPendingChange ObservableStateLoading = PendingChangeLoadingClear
 initialPendingChange (ObservableStateLive initial) = PendingChangeAlter Live (Left (toInitialDeltaContext initial))
 
+replacingPendingChange :: ObservableState canLoad c v -> PendingChange canLoad c v
+replacingPendingChange ObservableStateLoading = PendingChangeLoadingClear
+replacingPendingChange (ObservableStateLive initial) = PendingChangeAlter Live (Right (ValidatedObservableUpdateReplace initial))
+
 initialPendingAndLastChange :: ObservableContainer c v => ObservableState canLoad c v -> (PendingChange canLoad c v, LastChange canLoad)
 initialPendingAndLastChange ObservableStateLoading =
   (PendingChangeLoadingClear, LastChangeLoadingCleared)
@@ -1172,11 +1177,11 @@ instance (IsObservableCore canLoad exceptions c v b, ObservableContainer c v) =>
           BindStateAttached _loading disposer (_pending, last) -> do
             disposeTSimpleDisposer disposer
             (disposerY, initialY) <- attachObserver# (fn x) (rhsCallback var)
-            let newPending = initialPendingChange initialY
+            let newPending = replacingPendingChange initialY
             writeAndSendPending var Live disposerY newPending last
           BindStateDetached -> do
             (disposerY, initialY) <- attachObserver# (fn x) (rhsCallback var)
-            let newPending = initialPendingChange initialY
+            let newPending = replacingPendingChange initialY
             writeAndSendPending var Live disposerY newPending LastChangeLoadingCleared
 
       rhsCallback
