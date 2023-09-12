@@ -152,7 +152,7 @@ sendObservableReference observable channel = do
     requestCallback :: ObservableReference c v -> ReceiveMessageContext -> ObservableRequest -> QuasarIO ()
     requestCallback ref _context Start = do
       atomicallyC do
-        whenM (readTVar ref.isAttached) do
+        unlessM (readTVar ref.isAttached) do
           (disposer, initial) <- attachObserver# observable (upstreamObservableChanged ref)
           writeTVar ref.observableDisposer disposer
           upstreamObservableChanged ref (toInitialChange initial)
