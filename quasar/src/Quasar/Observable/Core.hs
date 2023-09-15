@@ -644,6 +644,10 @@ data Loading canLoad where
   Live :: Loading canLoad
   Loading :: Loading Load
 
+deriving instance Show (Loading canLoad)
+deriving instance Eq (Loading canLoad)
+deriving instance Ord (Loading canLoad)
+
 instance Semigroup (Loading canLoad) where
   Live <> Live = Live
   Loading <> _ = Loading

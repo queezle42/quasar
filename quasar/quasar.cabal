@@ -76,6 +76,7 @@ library
     Quasar.Observable.Core
     Quasar.Observable.Lift
     Quasar.Observable.List
+    Quasar.Observable.Loading
     Quasar.Observable.Map
     Quasar.Observable.ObservableList
     Quasar.Observable.ObservableMap
