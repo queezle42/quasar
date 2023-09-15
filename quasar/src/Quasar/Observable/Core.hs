@@ -64,7 +64,7 @@ module Quasar.Observable.Core (
   Bound(..),
 
   -- *** Exception wrapper container
-  ObservableResult(..),
+  ObservableResult(.., ObservableResultTrivial),
   unwrapObservableResult,
   unwrapObservableResultIO,
   mapObservableResult,
@@ -1354,6 +1354,16 @@ type ObservableResult :: [Type] -> (Type -> Type) -> Type -> Type
 data ObservableResult exceptions c v
   = ObservableResultOk (c v)
   | ObservableResultEx (Ex exceptions)
+
+pattern ObservableResultTrivial :: c v -> ObservableResult '[] c v
+pattern ObservableResultTrivial x <- (fromTrivialObservableResult -> x) where
+  ObservableResultTrivial x = ObservableResultOk x
+
+{-# COMPLETE ObservableResultTrivial #-}
+
+fromTrivialObservableResult :: ObservableResult '[] c v -> c v
+fromTrivialObservableResult (ObservableResultOk x) = x
+fromTrivialObservableResult (ObservableResultEx ex) = absurdEx ex
 
 deriving instance Show (c v) => Show (ObservableResult exceptions c v)
 deriving instance (Eq (c v), Eq (Ex exceptions)) => Eq (ObservableResult exceptions c v)

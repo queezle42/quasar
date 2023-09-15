@@ -134,8 +134,7 @@ readSubject
   -> m (c v)
 readSubject (Subject var _) = liftSTMc @NoRetry @'[] do
   readTVar var >>= \case
-    ObserverStateLiveOk result -> pure result
-    ObserverStateLiveEx ex -> absurdEx ex
+    ObserverStateLive (ObservableResultTrivial result) -> pure result
 
 readSubjectIO
   :: MonadIO m
