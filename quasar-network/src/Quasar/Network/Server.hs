@@ -1,4 +1,8 @@
 module Quasar.Network.Server (
+  -- * Server configuration
+  ServerConfig(..),
+  simpleServerConfig,
+
   -- * Server
   Server,
   Listener(..),
@@ -15,6 +19,9 @@ module Quasar.Network.Server (
 import Control.Monad.Catch
 import Network.Socket qualified as Socket
 import Quasar
+import Quasar.Observable.Core (NoLoad)
+import Quasar.Observable.List (ObservableList)
+import Quasar.Observable.List qualified as ObservableList
 import Quasar.Network.Channel
 import Quasar.Network.Connection
 import Quasar.Network.Multiplexer
@@ -27,23 +34,45 @@ data Listener =
   UnixSocket FilePath |
   ListenSocket Socket.Socket
 
-data Server a = Server {
-  quasar :: Quasar,
-  root :: a
+data ServerConfig client up down = ServerConfig {
+  root :: down,
+  onOpen :: ServerConnection -> up -> IO (client, down),
+  onClose :: client -> IO ()
 }
 
-instance Disposable (Server a) where
+data ServerConnection = ServerConnection
+
+simpleServerConfig :: down -> ServerConfig () () down
+simpleServerConfig root = ServerConfig {
+  root,
+  onOpen = \_ () -> pure ((), root),
+  onClose = \_ -> pure ()
+}
+
+data Server client up down = Server {
+  quasar :: Quasar,
+  config :: ServerConfig client up down
+  --clients :: ObservableListVar NoLoad client
+}
+
+instance Disposable (Server client up down) where
   getDisposer server = getDisposer server.quasar
 
 
-newServer :: forall a m. (NetworkRootReference a, MonadQuasar m, MonadIO m) => a -> [Listener] -> m (Server a)
-newServer root listeners = do
+newServer ::
+  forall client up down m.
+  (NetworkObject up, NetworkObject down, MonadQuasar m, MonadIO m) =>
+  ServerConfig client up down ->
+  [Listener] ->
+  m (Server client up down)
+newServer config listeners = do
   quasar <- newResourceScopeIO
-  let server = Server { quasar, root }
+  --clients <- undefined
+  let server = Server { quasar, config }
   mapM_ (addListener_ server) listeners
   pure server
 
-addListener :: (NetworkRootReference a, MonadIO m) => Server a -> Listener -> m Disposer
+addListener :: (NetworkObject up, NetworkObject down, MonadIO m) => Server client up down -> Listener -> m Disposer
 addListener server listener = runQuasarIO server.quasar $ getDisposer <$> async (runListener listener)
   where
     runListener :: Listener -> QuasarIO a
@@ -51,19 +80,19 @@ addListener server listener = runQuasarIO server.quasar $ getDisposer <$> async 
     runListener (UnixSocket path) = runUnixSocketListener server path
     runListener (ListenSocket socket) = runListenerOnBoundSocket server socket
 
-addListener_ :: (NetworkRootReference a, MonadIO m) => Server a -> Listener -> m ()
+addListener_ :: (NetworkObject up, NetworkObject down, MonadIO m) => Server client up down -> Listener -> m ()
 addListener_ server listener = void $ addListener server listener
 
-runServer :: forall a m. (NetworkRootReference a, MonadQuasar m, MonadIO m) => a -> [Listener] -> m ()
+runServer :: forall client up down m. (NetworkObject up, NetworkObject down, MonadQuasar m, MonadIO m) => ServerConfig client up down -> [Listener] -> m ()
 runServer _ [] = liftIO $ throwM $ userError "Tried to start a server without any listeners"
 runServer root listener = do
   server <- newServer root listener
   liftIO $ await $ isDisposed server
 
-listenTCP :: forall a m. (NetworkRootReference a, MonadQuasar m, MonadIO m) => a -> Maybe Socket.HostName -> Socket.ServiceName -> m ()
+listenTCP :: forall client up down m. (NetworkObject up, NetworkObject down, MonadQuasar m, MonadIO m) => ServerConfig client up down -> Maybe Socket.HostName -> Socket.ServiceName -> m ()
 listenTCP root mhost port = runServer root [TcpPort mhost port]
 
-runTCPListener :: forall a m b. (NetworkRootReference a, MonadIO m, MonadMask m) => Server a -> Maybe Socket.HostName -> Socket.ServiceName -> m b
+runTCPListener :: forall client up down m b. (NetworkObject up, NetworkObject down, MonadIO m, MonadMask m) => Server client up down -> Maybe Socket.HostName -> Socket.ServiceName -> m b
 runTCPListener server mhost port = do
   addr <- liftIO resolve
   bracket (liftIO (open addr)) (liftIO . Socket.close) (runListenerOnBoundSocket server)
@@ -79,10 +108,10 @@ runTCPListener server mhost port = do
       Socket.bind sock (Socket.addrAddress addr)
       pure sock
 
-listenUnix :: forall a m. (NetworkRootReference a, MonadQuasar m, MonadIO m) => a -> FilePath -> m ()
-listenUnix impl path = runServer @a impl [UnixSocket path]
+listenUnix :: forall client up down m. (NetworkObject up, NetworkObject down, MonadQuasar m, MonadIO m) => ServerConfig client up down -> FilePath -> m ()
+listenUnix config path = runServer config [UnixSocket path]
 
-runUnixSocketListener :: forall a m b. (NetworkRootReference a, MonadIO m, MonadMask m) => Server a -> FilePath -> m b
+runUnixSocketListener :: forall client up down m b. (NetworkObject up, NetworkObject down, MonadIO m, MonadMask m) => Server client up down -> FilePath -> m b
 runUnixSocketListener server socketPath = do
   bracket create (liftIO . Socket.close) (runListenerOnBoundSocket server)
   where
@@ -101,10 +130,10 @@ runUnixSocketListener server socketPath = do
         pure sock
 
 -- | Listen and accept connections on an already bound socket.
-listenOnBoundSocket :: forall a m. (NetworkRootReference a, MonadQuasar m, MonadIO m) => a -> Socket.Socket -> m ()
-listenOnBoundSocket protocolImpl socket = runServer @a protocolImpl [ListenSocket socket]
+listenOnBoundSocket :: forall client up down m. (NetworkObject up, NetworkObject down, MonadQuasar m, MonadIO m) => ServerConfig client up down -> Socket.Socket -> m ()
+listenOnBoundSocket config socket = runServer config [ListenSocket socket]
 
-runListenerOnBoundSocket :: forall a m b. (NetworkRootReference a, MonadIO m, MonadMask m) => Server a -> Socket.Socket -> m b
+runListenerOnBoundSocket :: forall client up down m b. (NetworkObject up, NetworkObject down, MonadIO m, MonadMask m) => Server client up down -> Socket.Socket -> m b
 runListenerOnBoundSocket server sock = do
   liftIO $ Socket.listen sock 1024
   forever $ mask_ $ do
@@ -112,20 +141,21 @@ runListenerOnBoundSocket server sock = do
     connectToServer server connection
 
 -- | Attach an established connection to a server.
-connectToServer :: forall a m. (NetworkRootReference a, MonadIO m) => Server a -> Connection -> m ()
+connectToServer :: forall client up down m. (NetworkObject up, NetworkObject down, MonadIO m) => Server client up down -> Connection -> m ()
 connectToServer server connection =
   -- Attach to server resource manager: When the server is closed, all listeners should be closed.
   runQuasarIO server.quasar do
     catchQuasar (queueLogError . formatException) do
       async_  do
         --logInfo $ mconcat ["Client connected (", connection.description, ")"]
-        runMultiplexer MultiplexerSideB registerChannelServerHandler $ connection
+        runMultiplexer MultiplexerSideB registerChannelServerHandler connection
         --logInfo $ mconcat ["Client connection closed (", connection.description, ")"]
   where
     registerChannelServerHandler :: RawChannel -> QuasarIO ()
     registerChannelServerHandler rawChannel = atomicallyC do
       let channel = castChannel rawChannel
-      handler <- provideRootReference server.root channel
+      -- TODO send `up` (use Request, see obsidian notes)
+      handler <- provideRootReference @(FutureEx '[SomeException] down) (pure server.config.root) channel
       setChannelHandler channel handler
 
     formatException :: SomeException -> String

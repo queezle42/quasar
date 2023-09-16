@@ -16,6 +16,10 @@ module Quasar.Network (
   listenUnix,
   listenOnBoundSocket,
 
+  -- ** Server configuration
+  ServerConfig(..),
+  simpleServerConfig,
+
   -- * NetworkObject implementation strategies
   Binary,
   Generic,
