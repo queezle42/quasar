@@ -14,6 +14,13 @@ module Quasar.Observable.List (
   -- * Reexports
   FingerTree,
   Seq,
+
+  -- * Const construction
+  empty,
+  singleton,
+  fromList,
+  fromSeq,
+  constObservableList,
 ) where
 
 import Data.Binary (Binary)
@@ -260,3 +267,18 @@ class IsObservableCore canLoad exceptions Seq v a => IsObservableList canLoad ex
 
 
 instance IsObservableList canLoad exceptions v (ObservableState canLoad (ObservableResult exceptions Seq) v) where
+
+constObservableList :: ObservableState canLoad (ObservableResult exceptions Seq) v -> ObservableList canLoad exceptions v
+constObservableList = ObservableList . ObservableT
+
+fromList :: [v] -> ObservableList canLoad exceptions v
+fromList = fromSeq . Seq.fromList
+
+fromSeq :: Seq v -> ObservableList canLoad exceptions v
+fromSeq = constObservableList . ObservableStateLive . ObservableResultOk
+
+singleton :: v -> ObservableList canLoad exceptions v
+singleton = ObservableList . ObservableT . fromSeq . Seq.singleton
+
+empty :: ObservableList canLoad exceptions v
+empty = mempty

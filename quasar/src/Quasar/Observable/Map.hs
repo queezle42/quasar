@@ -23,6 +23,7 @@ module Quasar.Observable.Map (
   empty,
   singleton,
   fromList,
+  constObservableMap,
 
   -- ** Query
   lookup,
@@ -350,6 +351,7 @@ unionWithKey fn x y = ObservableMap (ObservableT (ObservableMapUnionWith fn x y)
 unionWith :: Ord k => (v -> v -> v) -> ObservableMap l e k v -> ObservableMap l e k v -> ObservableMap l e k v
 unionWith fn = unionWithKey \_ x y -> fn x y
 
+-- | The left-biased union of two observable maps. The first map is preferred when duplicate keys are encountered.
 union :: Ord k => ObservableMap l e k v -> ObservableMap l e k v -> ObservableMap l e k v
 -- TODO write union variant that only sends updates when needed (i.e. no update for a RHS change when the LHS has a value for that key)
 union = unionWithKey \_ x _ -> x
