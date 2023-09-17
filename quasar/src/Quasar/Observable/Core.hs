@@ -98,13 +98,15 @@ module Quasar.Observable.Core (
   retrieveObservable,
   constObservable,
   throwExObservable,
+  catchObservable,
+  catchAllObservable,
   attachSimpleObserver,
   Void1,
   absurd1,
 ) where
 
 import Control.Applicative
-import Control.Monad.Catch.Pure (MonadThrow(..))
+import Control.Monad.Catch (MonadThrow(..), MonadCatch(..), bracket, fromException)
 import Control.Monad.Except
 import Data.Bifunctor (first)
 import Data.Binary (Binary)
@@ -116,7 +118,6 @@ import Quasar.Future
 import Quasar.Prelude
 import Quasar.Resources.Disposer
 import Quasar.Utils.Fix
-import Control.Monad.Catch (bracket)
 
 -- * Generalized observables
 
@@ -1113,10 +1114,11 @@ data BindState canLoad c v where
     -> BindState canLoad c v
 
 
-data BindObservable canLoad exceptions va b
-  = BindObservable (Observable canLoad exceptions va) (ObservableResult exceptions Identity va -> b)
+type BindObservable :: LoadKind -> [Type] -> [Type] -> Type -> Type -> Type
+data BindObservable canLoad exceptions exceptionsA va b
+  = BindObservable (Observable canLoad exceptionsA va) (ObservableResult exceptionsA Identity va -> b)
 
-instance (IsObservableCore canLoad exceptions c v b, ObservableContainer c v) => IsObservableCore canLoad exceptions c v (BindObservable canLoad exceptions va b) where
+instance (IsObservableCore canLoad exceptions c v b, ObservableContainer c v) => IsObservableCore canLoad exceptions c v (BindObservable canLoad exceptions exceptionsA va b) where
   readObservable# (BindObservable fx fn) = do
     readObservable# fx >>= \case
       ObservableStateLoading -> pure ObservableStateLoading
@@ -1175,7 +1177,7 @@ instance (IsObservableCore canLoad exceptions c v b, ObservableContainer c v) =>
 
       lhsReplace
         :: TVar (BindState canLoad (ObservableResult exceptions c) v)
-        -> ObservableResult exceptions Identity va
+        -> ObservableResult exceptionsA Identity va
         -> STMc NoRetry '[] ()
       lhsReplace var x = do
         readTVar var >>= \case
@@ -1214,14 +1216,15 @@ instance (IsObservableCore canLoad exceptions c v b, ObservableContainer c v) =>
             writeTVar var (BindStateAttached loading disposer (newPending, newLast))
             callback change
 
-bindObservableT
-  :: (
+bindObservableT ::
+  forall canLoad exceptions c v va.
+  (
     ObservableContainer c v,
-    ContainerConstraint canLoad exceptions c v (BindObservable canLoad exceptions va (ObservableT canLoad exceptions c v)),
+    ContainerConstraint canLoad exceptions c v (BindObservable canLoad exceptions exceptions va (ObservableT canLoad exceptions c v)),
     ContainerConstraint canLoad exceptions c v (ObservableState canLoad (ObservableResult exceptions c) v)
   )
   => Observable canLoad exceptions va -> (va -> ObservableT canLoad exceptions c v) -> ObservableT canLoad exceptions c v
-bindObservableT fx fn = ObservableT (BindObservable fx rhsHandler)
+bindObservableT fx fn = ObservableT (BindObservable @canLoad @exceptions fx rhsHandler)
     where
       rhsHandler (ObservableResultOk (Identity x)) = fn x
       rhsHandler (ObservableResultEx ex) = ObservableT (ObservableStateLiveEx ex)
@@ -1330,6 +1333,14 @@ instance (Exception e, e :< exceptions) => Throw e (Observable canLoad exception
 instance (SomeException :< exceptions) => MonadThrow (Observable canLoad exceptions) where
   throwM x = throwEx (toEx @'[SomeException] x)
 
+instance SomeException :< exceptions => MonadCatch (Observable canLoad exceptions) where
+  catch fx fn = Observable (ObservableT (BindObservable fx rhsHandler))
+    where
+      rhsHandler (ObservableResultOk (Identity x)) = pure x
+      rhsHandler (ObservableResultEx ex) =
+        case fromException (exToException ex) of
+          Nothing -> throwExObservable ex
+          Just match -> fn match
 
 instance IsObservableCore canLoad exceptions Identity v (Observable canLoad exceptions v) where
   readObservable# (Observable x) = readObservable# x
@@ -1347,6 +1358,30 @@ constObservable state = Observable (ObservableT state)
 -- evaluated at compile time.
 throwExObservable :: Ex exceptions -> Observable canLoad exceptions v
 throwExObservable = unsafeThrowEx . exToException
+
+catchObservable ::
+  forall canLoad exceptions e v.
+  (Exception e, ExceptionList exceptions) =>
+  Observable canLoad exceptions v ->
+  (e -> Observable canLoad (exceptions :- e) v) ->
+  Observable canLoad (exceptions :- e) v
+catchObservable fx fn = Observable (ObservableT (BindObservable fx rhsHandler))
+  where
+    rhsHandler (ObservableResultOk (Identity x)) = pure x
+    rhsHandler (ObservableResultEx ex) =
+      case matchEx ex of
+        Left unmatched -> throwExObservable unmatched
+        Right match -> fn match
+
+catchAllObservable ::
+  forall canLoad exceptions v.
+  Observable canLoad exceptions v ->
+  (SomeException -> Observable canLoad '[] v) ->
+  Observable canLoad '[] v
+catchAllObservable fx fn = Observable (ObservableT (BindObservable fx rhsHandler))
+  where
+    rhsHandler (ObservableResultOk (Identity x)) = pure x
+    rhsHandler (ObservableResultEx ex) = fn (exToException ex)
 
 attachSimpleObserver ::
   Observable NoLoad '[] v ->

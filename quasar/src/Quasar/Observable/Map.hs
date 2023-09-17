@@ -207,7 +207,7 @@ query x = query# (toObservableMap x)
 
 
 
-instance (Ord k, IsObservableCore l e (Map k) v b) => IsObservableMap l e k v (BindObservable l e va b) where
+instance (Ord k, IsObservableCore l e (Map k) v b) => IsObservableMap l e k v (BindObservable l e ea va b) where
   -- TODO
 
 
