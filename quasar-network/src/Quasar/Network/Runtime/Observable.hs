@@ -155,7 +155,7 @@ sendObservableReference observable channel = do
         unlessM (readTVar ref.isAttached) do
           (disposer, initial) <- attachObserver# observable (upstreamObservableChanged ref)
           writeTVar ref.observableDisposer disposer
-          upstreamObservableChanged ref (toInitialChange initial)
+          upstreamObservableChanged ref (toReplacingChange initial)
           writeTVar ref.isAttached True
     requestCallback ref _context Stop = atomicallyC do
       disposeTSimpleDisposer =<< swapTVar ref.observableDisposer mempty

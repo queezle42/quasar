@@ -49,7 +49,7 @@ module Quasar.Observable.Core (
   applyObservableUpdate,
   applyObservableChange,
   applyEvaluatedObservableChange,
-  toInitialChange,
+  toReplacingChange,
   ObserverContext(..),
   updateObserverContext,
   ObservableFunctor,
@@ -713,9 +713,9 @@ toObservableState ObserverStateLoadingCleared = ObservableStateLoading
 toObservableState (ObserverStateLoadingCached _) = ObservableStateLoading
 toObservableState (ObserverStateLive content) = ObservableStateLive content
 
-toInitialChange :: ObservableState canLoad c v -> ObservableChange canLoad c v
-toInitialChange ObservableStateLoading = ObservableChangeLoadingClear
-toInitialChange (ObservableStateLive x) = ObservableChangeLiveUpdate (ObservableUpdateReplace x)
+toReplacingChange :: ObservableState canLoad c v -> ObservableChange canLoad c v
+toReplacingChange ObservableStateLoading = ObservableChangeLoadingClear
+toReplacingChange (ObservableStateLive x) = ObservableChangeLiveUpdate (ObservableUpdateReplace x)
 
 
 pattern ObserverStateCached :: Loading canLoad -> c v -> ObserverState canLoad c v
