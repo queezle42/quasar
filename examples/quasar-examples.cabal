@@ -61,3 +61,12 @@ executable quasar-web-example
     text,
     warp,
   main-is: Web.hs
+
+executable network-counting
+  import: shared-executable-properties
+  build-depends:
+    base,
+    quasar,
+    quasar-network,
+    optparse-applicative,
+  main-is: NetworkCounting.hs
