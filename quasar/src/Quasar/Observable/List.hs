@@ -254,6 +254,12 @@ instance IsObservableList canLoad exceptions v (ObservableList canLoad exception
   --member# (ObservableList (ObservableT x)) = member# x
   --listLookupValue# (ObservableList x) = listLookupValue# x
 
+instance Semigroup (ObservableList canLoad exceptions v) where
+  (<>) = undefined
+
+instance Monoid (ObservableList canLoad exceptions v) where
+  mempty = fromSeq Seq.empty
+
 
 class IsObservableCore canLoad exceptions Seq v a => IsObservableList canLoad exceptions v a where
   member# :: Ord v => a -> v -> Observable canLoad exceptions Bool

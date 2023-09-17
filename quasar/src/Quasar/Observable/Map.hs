@@ -197,6 +197,14 @@ instance IsObservableMap canLoad exceptions k v (ObservableMap canLoad exception
 instance Ord k => Functor (ObservableMap canLoad exceptions k) where
   fmap fn (ObservableMap x) = ObservableMap (ObservableT (mapObservable# fn x))
 
+-- | `(<>)` is equivalent `union`, which is left-biased.
+instance Ord k => Semigroup (ObservableMap canLoad exceptions k v) where
+  (<>) = union
+
+instance Ord k => Monoid (ObservableMap canLoad exceptions k v) where
+  mempty = empty
+
+
 
 query
   :: ToObservableMap canLoad exceptions k v a
