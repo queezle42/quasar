@@ -98,6 +98,7 @@ module Quasar.Observable.Core (
   retrieveObservable,
   constObservable,
   throwExObservable,
+  attachSimpleObserver,
   Void1,
   absurd1,
 ) where
@@ -1346,6 +1347,17 @@ constObservable state = Observable (ObservableT state)
 -- evaluated at compile time.
 throwExObservable :: Ex exceptions -> Observable canLoad exceptions v
 throwExObservable = unsafeThrowEx . exToException
+
+attachSimpleObserver ::
+  Observable NoLoad '[] v ->
+  (v -> STMc NoRetry '[] ()) ->
+  STMc NoRetry '[] (TSimpleDisposer, v)
+attachSimpleObserver observable callback = do
+  (disposer, initial) <- attachObserver# observable \case
+    ObservableChangeLiveReplace (ObservableResultTrivial (Identity new)) -> callback new
+    ObservableChangeLiveDelta delta -> absurd1 delta
+  case initial of
+    ObservableStateLive (ObservableResultTrivial (Identity x)) -> pure (disposer, x)
 
 
 -- ** Exception wrapper
