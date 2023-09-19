@@ -164,8 +164,6 @@ sendObservableReference observable channel = do
 
     upstreamObservableChanged :: ObservableReference c v -> ObservableChange Load (ObservableResult '[SomeException] c) v -> STMc NoRetry '[] ()
     upstreamObservableChanged ref change = do
-      modifyTVar ref.pendingChange (updatePendingChange change)
-
       pendingChange <- stateTVar ref.pendingChange (dup . updatePendingChange change)
       lastChange <- readTVar ref.lastChange
 
