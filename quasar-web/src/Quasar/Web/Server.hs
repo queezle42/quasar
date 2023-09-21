@@ -9,57 +9,59 @@ import Data.ByteString.Char8 qualified as BS
 import Data.ByteString.Lazy qualified as BSL
 import Data.List qualified as List
 import Data.Map.Strict (Map)
-import Data.Map.Strict qualified as Map
 import Data.Sequence (Seq(..))
 import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Data.Text.Lazy.Builder (Builder)
-import Data.Text.Lazy.Builder qualified as Builder
 import Network.HTTP.Types qualified as HTTP
 import Network.Wai qualified as Wai
 import Network.Wai.Handler.WebSockets qualified as Wai
 import Network.WebSockets qualified as WebSockets
 import Paths_quasar_web (getDataFileName)
 import Quasar
-import Quasar.Observable.ObservableList (ObservableList, ObservableListDelta(..), ObservableListOperation(..))
-import Quasar.Observable.ObservableList qualified as ObservableList
+import Quasar.Observable.AccumulatingObserver
+import Quasar.Observable.Core
+import Quasar.Observable.List (ObservableList, ListDelta(..), ListOperation(..))
+import Quasar.Observable.List qualified as ObservableList
+import Quasar.Observable.Traversable
 import Quasar.Prelude
-import Quasar.Utils.Fix (mfixExtra)
+import Quasar.Utils.Fix (mfixTVar)
 import Quasar.Web
 import System.IO (stderr)
 
 
-type RawHtml = Builder
-
-
-toWaiApplication :: DomElement -> Wai.Application
-toWaiApplication rootElement = Wai.websocketsOr webSocketsOptions (toWebSocketsApp rootElement) waiApp
+toWaiApplication :: DomNode -> Wai.Application
+toWaiApplication rootNode = Wai.websocketsOr webSocketsOptions (toWebSocketsApp rootNode) waiApp
   where
     webSocketsOptions =
       WebSockets.defaultConnectionOptions {
         WebSockets.connectionStrictUnicode = True
       }
 
-toWebSocketsApp :: DomElement -> WebSockets.ServerApp
-toWebSocketsApp rootElement pendingConnection = do
+toWebSocketsApp :: DomNode -> WebSockets.ServerApp
+toWebSocketsApp rootNode pendingConnection = do
   connection <- WebSockets.acceptRequestWith pendingConnection acceptRequestConfig
-  client <- Client <$> newTVarIO 0
+  nextJsRef <- newTVarIO 0
+  let client = Client { nextJsRef }
   handleAll (\ex -> logError (displayException ex)) do
     runQuasarCombineExceptions do
       x <- async $ receiveThread client connection
-      y <- async $ sendThread client rootElement connection
+      y <- async $ sendThread client rootNode connection
       void $ await x <> await y
   where
     acceptRequestConfig :: WebSockets.AcceptRequest
     acceptRequestConfig =
       WebSockets.defaultAcceptRequest {
-        WebSockets.acceptSubprotocol = Just "quasar-web-v1"
+        WebSockets.acceptSubprotocol = Just "quasar-web-dev"
       }
 
 newtype Client = Client {
-  nextSpliceIdVar :: TVar SpliceId
+  nextJsRef :: TVar JsRef
 }
+
+newJsRef :: Client -> STMc NoRetry '[] JsRef
+newJsRef client = do
+  stateTVar client.nextJsRef \i -> (i, i + 1)
 
 receiveThread :: Client -> WebSockets.Connection -> QuasarIO ()
 receiveThread client connection = liftIO do
@@ -68,16 +70,16 @@ receiveThread client connection = liftIO do
         WebSockets.Binary _ -> WebSockets.sendCloseCode connection 1002 ("Client must not send binary data." :: BS.ByteString)
         WebSockets.Text msg _ -> messageHandler connection msg
 
-sendThread :: Client -> DomElement -> WebSockets.Connection -> QuasarIO ()
-sendThread client rootElement connection = do
+sendThread :: Client -> DomNode -> WebSockets.Connection -> QuasarIO ()
+sendThread client rootNode connection = do
   traceIO "[quasar-web] new client"
-  (initialHtml, generateUpdateFn, disposer) <- atomically $ liftSTMc $ foobar client rootElement
-  let initialMessage = [UpdateRoot initialHtml]
+  (wireNode, splice) <- atomically $ liftSTMc $ newDomNodeSplice client rootNode
+  let initialMessage = [SetRoot wireNode]
   liftIO $ WebSockets.sendTextData connection (encode initialMessage)
-  handleAll (\ex -> dispose disposer >> throwM ex) do
+  handleAll (\ex -> atomicallyC (freeSplice splice) >> throwM ex) do
     forever do
       updates <- atomically $ do
-        updates <- liftSTMc generateUpdateFn
+        updates <- liftSTMc $ generateSpliceCommands splice
         check (not (null updates))
         pure updates
       liftIO $ WebSockets.sendTextData connection (encode updates)
@@ -96,180 +98,263 @@ messageHandler connection "ping" = WebSockets.sendTextData connection (encode [P
 messageHandler _ msg = BSL.hPutStr stderr $ "Unhandled message: " <> msg <> "\n"
 
 
-type SpliceId = Word64
+type JsRef = Word64
 
-type GenerateClientUpdate = STMc NoRetry '[] [Command]
 data Command
-  = UpdateRoot RawHtml
-  | UpdateSplice SpliceId RawHtml
-  | ListInsert SpliceId Int RawHtml
-  | ListAppend SpliceId RawHtml
-  | ListRemove SpliceId Int
-  | ListRemoveAll SpliceId
+  = SetRoot WireNode
+  | SetTextNode JsRef Text
+  | InsertChild JsRef Int WireNode
+  | AppendChild JsRef WireNode
+  | RemoveChild JsRef Int
+  | RemoveAllChildren JsRef
+  | FreeRef JsRef
   | Pong
   deriving Show
 
-data WireElement = WireDomElement {
-  ref :: Maybe SpliceId,
+data WireNode
+  = WireNodeElement WireElement
+  | WireNodeTextNode WireText
+  deriving Show
+
+data WireElement = WireElement {
+  ref :: Maybe JsRef,
   tag :: Text,
   attributes :: Map Text (Maybe Text),
-  content :: WireElementContent
+  children :: [WireNode]
 }
+  deriving Show
 
-data WireElementContent
-  = WireChildren [WireElement]
-  | WireInnerText Text
+data WireText = WireText (Maybe JsRef) Text
+  deriving Show
 
 instance ToJSON Command where
-  toJSON (UpdateRoot html) =
-    object ["fn" .= ("root" :: Text), "html" .= Builder.toLazyText html]
-  toJSON (UpdateSplice spliceId html) =
-    object ["fn" .= ("splice" :: Text), "id" .= spliceId, "html" .= Builder.toLazyText html]
-  toJSON (ListInsert listId index html) =
-    object ["fn" .= ("listInsert" :: Text), "id" .= listId, "i" .= index, "html" .= Builder.toLazyText html]
-  toJSON (ListAppend listId html) =
-    object ["fn" .= ("listAppend" :: Text), "id" .= listId, "html" .= Builder.toLazyText html]
-  toJSON (ListRemove listId index) =
-    object ["fn" .= ("listRemove" :: Text), "id" .= listId, "i" .= index]
-  toJSON (ListRemoveAll listId) =
-    object ["fn" .= ("listRemoveAll" :: Text), "id" .= listId]
+  toJSON (SetRoot wire) =
+    object ["fn" .= ("root" :: Text), "node" .= wire]
+  toJSON (SetTextNode ref text) =
+    object ["fn" .= ("text" :: Text), "ref" .= ref, "text" .= text]
+  toJSON (InsertChild ref index node) =
+    object ["fn" .= ("insert" :: Text), "ref" .= ref, "i" .= index, "node" .= node]
+  toJSON (AppendChild ref element) =
+    object ["fn" .= ("append" :: Text), "ref" .= ref, "node" .= element]
+  toJSON (RemoveChild ref index) =
+    object ["fn" .= ("remove" :: Text), "ref" .= ref, "i" .= index]
+  toJSON (RemoveAllChildren ref) =
+    object ["fn" .= ("removeAll" :: Text), "ref" .= ref]
+  toJSON (FreeRef ref) =
+    object ["fn" .= ("free" :: Text), "ref" .= ref]
   toJSON Pong =
     object ["fn" .= ("pong" :: Text)]
 
-  toEncoding (UpdateRoot html) =
-    pairs ("fn" .= ("root" :: Text) <> "html" .= Builder.toLazyText html)
-  toEncoding (UpdateSplice spliceId html) =
-    pairs ("fn" .= ("splice" :: Text) <> "id" .= spliceId <> "html" .= Builder.toLazyText html)
-  toEncoding (ListInsert listId index html) =
-    pairs ("fn" .= ("listInsert" :: Text) <> "id" .= listId <> "i" .= index <> "html" .= Builder.toLazyText html)
-  toEncoding (ListAppend listId html) =
-    pairs ("fn" .= ("listAppend" :: Text) <> "id" .= listId <> "html" .= Builder.toLazyText html)
-  toEncoding (ListRemove listId index) =
-    pairs ("fn" .= ("listRemove" :: Text) <> "id" .= listId <> "i" .= index)
-  toEncoding (ListRemoveAll listId) =
-    pairs ("fn" .= ("listRemoveAll" :: Text) <> "id" .= listId)
+  toEncoding (SetRoot wire) =
+    pairs ("fn" .= ("root" :: Text) <> "node" .= wire)
+  toEncoding (SetTextNode ref text) =
+    pairs ("fn" .= ("text" :: Text) <> "ref" .= ref <> "text" .= text)
+  toEncoding (InsertChild ref index element) =
+    pairs ("fn" .= ("insert" :: Text) <> "ref" .= ref <> "i" .= index <> "node" .= element)
+  toEncoding (AppendChild ref element) =
+    pairs ("fn" .= ("append" :: Text) <> "ref" .= ref <> "node" .= element)
+  toEncoding (RemoveChild ref index) =
+    pairs ("fn" .= ("remove" :: Text) <> "ref" .= ref <> "i" .= index)
+  toEncoding (RemoveAllChildren ref) =
+    pairs ("fn" .= ("removeAll" :: Text) <> "id" .= ref)
+  toEncoding (FreeRef ref) =
+    pairs ("fn" .= ("free" :: Text) <> "ref" .= ref)
   toEncoding Pong =
     pairs ("fn" .= ("pong" :: Text))
 
-instance ToJSON WireElement where
-  toJSON (WireDomElement ref tag attributes content) =
-    object ["ref" .= ref, "tag" .= tag, "attributes" .= attributes, "content" .= toJSON content]
+instance ToJSON WireNode where
+  toJSON (WireNodeElement (WireElement ref tag attributes children)) =
+    object ["type" .= ("element" :: Text), "ref" .= ref, "tag" .= tag, "attributes" .= attributes, "children" .= children]
+  toJSON (WireNodeTextNode (WireText ref text)) =
+    object ["type" .= ("text" :: Text), "ref" .= ref, "text" .= text]
 
-  toEncoding (WireDomElement ref tag attributes content) =
-    pairs ("ref" .= ref <> "tag" .= tag <> "attributes" .= attributes <> "content" .= content)
-
-instance ToJSON WireElementContent where
-  toJSON (WireInnerText text) = object ["type" .= ("text" :: Text), "text" .= text]
-  toJSON (WireChildren children) = object ["type" .= ("children" :: Text), "children" .= toJSON children]
-
-  toEncoding (WireInnerText text) = pairs ("type" .= ("text" :: Text) <> "text" .= text)
-  toEncoding (WireChildren children) = pairs ("type" .= ("children" :: Text) <> "children" .= children)
-
-nextSpliceId :: Client -> STMc NoRetry '[] SpliceId
-nextSpliceId (Client nextSpliceIdVar) = stateTVar nextSpliceIdVar \i -> (i, i + 1)
+  toEncoding (WireNodeElement (WireElement ref tag attributes children)) =
+    pairs ("type" .= ("element" :: Text) <> "ref" .= ref <> "tag" .= tag <> "attributes" .= attributes <> "children" .= children)
+  toEncoding (WireNodeTextNode (WireText ref text)) =
+    pairs ("type" .= ("text" :: Text) <> "ref" .= ref <> "text" .= text)
 
 
-foobar :: Client -> DomElement -> STMc NoRetry '[] (RawHtml, GenerateClientUpdate, TSimpleDisposer)
-foobar client domElement = undefined
---foobar client (WebUiObservable observable) =
---  mfixExtra \splice -> do
---    (disposer, initial) <- attachObserver observable (replaceSpliceContent splice)
---    (html, splice', spliceDisposer) <- newClientSplice client initial
---    let result = (html, generateSpliceUpdate splice', disposer <> spliceDisposer)
---    pure (result, splice')
---foobar _ (WebUiHtmlElement (HtmlElement html)) = pure (Builder.fromLazyText html, pure [], mempty)
---foobar client (WebUiConcat webUis) = mconcat <$> mapM (foobar client) webUis
---foobar client (WebUiObservableList observableList) = setupClientList client observableList
--- foobar client (WebUiButton _ _) = error "not implemented"
+class IsSplice a where
+  freeSplice :: a -> STMc NoRetry '[] [JsRef]
+  generateSpliceCommands :: a -> STMc NoRetry '[] [Command]
+
+instance IsSplice a => IsSplice [a] where
+  freeSplice xs = fold <$> mapM freeSplice xs
+  generateSpliceCommands xs = fold <$> mapM generateSpliceCommands xs
+
+freeSpliceAsCommands :: IsSplice a => a -> STMc NoRetry '[] [Command]
+freeSpliceAsCommands x = FreeRef <<$>> freeSplice x
+
+data Splice = forall a. IsSplice a => Splice a
+
+instance IsSplice Splice where
+  freeSplice (Splice x) = freeSplice x
+  generateSpliceCommands (Splice x) = generateSpliceCommands x
 
 
-data ClientSplice = ClientSplice Client SpliceId (TVar (Either WebUi (GenerateClientUpdate, TSimpleDisposer)))
+newDomNodeSplice :: Client -> DomNode -> STMc NoRetry '[] (WireNode, [Splice])
+newDomNodeSplice client (DomNodeElement element) = newElementSplice client element
+newDomNodeSplice client (DomNodeTextNode text) = newTextNodeSplice client text
 
---newClientSplice :: Client -> WebUi -> STMc NoRetry '[] (RawHtml, ClientSplice, TSimpleDisposer)
---newClientSplice client content = do
---  spliceId <- nextSpliceId client
---  (contentHtml, generateContentUpdates, contentDisposer) <- foobar client content
---  stateVar <- newTVar (Right (generateContentUpdates, contentDisposer))
---  let clientSplice = ClientSplice client spliceId stateVar
---  disposer <- newUnmanagedTSimpleDisposer (disposeClientSplice clientSplice)
---  let html = mconcat ["<quasar-splice id=quasar-splice-", Builder.fromString (show spliceId), ">", contentHtml, "</quasar-splice>"]
---  pure (html, clientSplice, disposer)
---
---disposeClientSplice :: ClientSplice -> STMc NoRetry '[] ()
---disposeClientSplice (ClientSplice _ _ stateVar) = do
---  swapTVar stateVar (Right mempty) >>= \case
---    Left _ -> pure ()
---    Right (_, disposer) -> disposeTSimpleDisposer disposer
---
---replaceSpliceContent :: ClientSplice -> WebUi -> STMc NoRetry '[] ()
---replaceSpliceContent (ClientSplice _ _ stateVar) webUi = do
---  swapTVar stateVar (Left webUi) >>= \case
---    Left _ -> pure ()
---    Right (_, disposer) -> disposeTSimpleDisposer disposer
---
---generateSpliceUpdate :: ClientSplice -> GenerateClientUpdate
---generateSpliceUpdate (ClientSplice client spliceId stateVar) = do
---  readTVar stateVar >>= \case
---    Left webUi -> do
---      (html, newUpdateFn, disposer) <- foobar client webUi
---      writeTVar stateVar (Right (newUpdateFn, disposer))
---      pure [UpdateSplice spliceId html]
---    Right (generateContentUpdatesFn, _) -> generateContentUpdatesFn
---
---
---setupClientList :: Client -> ObservableList WebUi -> STMc NoRetry '[] (RawHtml, GenerateClientUpdate, TSimpleDisposer)
---setupClientList client observableList = do
---  listId <- nextSpliceId client
---  deltas <- newTVar (mempty :: ObservableListDelta WebUi)
---  items <- newTVar (mempty :: Seq (GenerateClientUpdate, TSimpleDisposer))
---
---  (listDisposer, initial) <- ObservableList.attachListDeltaObserver observableList \delta -> modifyTVar deltas (<> delta)
---  initialResults <- mapM (foobar client) initial
---  let (itemHtmls, initialItems) = Seq.unzipWith (\(html, update, disposer) -> (html, (update, disposer))) initialResults
---  writeTVar items initialItems
---
---  itemsDisposer <- newUnmanagedTSimpleDisposer do
---    swapTVar items mempty >>= mapM_ (disposeTSimpleDisposer . snd)
---
---  let
---    initialHtml = mconcat [
---      "<quasar-list id=quasar-list-",
---      Builder.fromString (show listId),
---      ">",
---      fold itemHtmls,
---      "</quasar-list>"]
---    update = generateClientListUpdate client listId deltas items
---    disposer = listDisposer <> itemsDisposer
---
---  pure (initialHtml, update, disposer)
---
---generateClientListUpdate :: Client -> SpliceId -> TVar (ObservableListDelta WebUi) -> TVar (Seq (GenerateClientUpdate, TSimpleDisposer)) -> STMc NoRetry '[] [Command]
---generateClientListUpdate client listId deltas items = do
---  (ObservableListDelta listOperations) <- swapTVar deltas mempty
---  deltaCommands <- forM listOperations \case
---    Insert index webUi -> do
---      itemsLength <- length <$> readTVar items
---      let clampedIndex = min (max index 0) itemsLength
---      (html, update, disposer) <- foobar client webUi
---      modifyTVar items (Seq.insertAt index (update, disposer))
---      pure if clampedIndex == itemsLength
---        then ListAppend listId html
---        else ListInsert listId index html
---    Delete index -> do
---      removed <- stateTVar items \orig ->
---        let
---          removed = Seq.lookup index orig
---          newList = Seq.deleteAt index orig
---        in (removed, newList)
---      forM_ removed \(_, disposer) -> disposeTSimpleDisposer disposer
---      pure (ListRemove listId index)
---    DeleteAll -> do
---      mapM_ (disposeTSimpleDisposer . snd) =<< swapTVar items mempty
---      pure (ListRemoveAll listId)
---
---  itemCommands <- mapM fst =<< readTVar items
---
---  pure (toList deltaCommands <> fold itemCommands)
+
+newtype ElementSplice = ElementSplice (TVar (Maybe (JsRef, [Splice])))
+
+instance IsSplice ElementSplice where
+  freeSplice (ElementSplice var) = do
+    readTVar var >>= \case
+      Nothing -> pure []
+      Just (ref, splices) -> do
+        writeTVar var Nothing
+        childRefs <- fold <$> mapM freeSplice splices
+        pure (ref : childRefs)
+
+  generateSpliceCommands (ElementSplice var) = do
+    readTVar var >>= \case
+      Nothing -> pure []
+      Just (_ref, splices) -> do
+        fold <$> mapM generateSpliceCommands splices
+
+newElementSplice :: Client -> DomElement -> STMc NoRetry '[] (WireNode, [Splice])
+newElementSplice client element = do
+  ref <- newJsRef client
+
+  (children, contentSplice) <- newChildrenSplice client ref element.children
+
+  let wireElement = WireElement {
+      ref = Just ref,
+      tag = element.tagName,
+      attributes = mempty,
+      children
+    }
+
+  var <- newTVar (Just (ref, contentSplice))
+
+  pure (WireNodeElement wireElement, [Splice (ElementSplice var)])
+
+
+newtype TextSplice = TextSplice (TVar (Maybe (TSimpleDisposer, JsRef, TVar (Maybe Text))))
+
+instance IsSplice TextSplice where
+  freeSplice (TextSplice var) = do
+    readTVar var >>= \case
+      Nothing -> pure []
+      Just (disposer, ref, _) -> do
+        writeTVar var Nothing
+        disposeTSimpleDisposer disposer
+        pure [ref]
+
+  generateSpliceCommands (TextSplice var) = do
+    readTVar var >>= \case
+      Nothing -> pure []
+      Just (_disposer, ref, outbox) -> do
+        readTVar outbox >>= \case
+          Nothing -> pure []
+          Just newText -> do
+            writeTVar outbox Nothing
+            pure [SetTextNode ref newText]
+
+newTextNodeSplice :: Client -> DomTextNode -> STMc NoRetry '[] (WireNode, [Splice])
+newTextNodeSplice client (DomTextNode textObservable) = do
+  updateVar <- newTVar Nothing
+  (disposer, initial) <- attachSimpleObserver textObservable (writeTVar updateVar . Just)
+
+  if isTrivialTSimpleDisposer disposer
+    then pure (WireNodeTextNode (WireText Nothing initial), [])
+    else do
+      ref <- newJsRef client
+      var <- newTVar (Just (disposer, ref, updateVar))
+      pure (WireNodeTextNode (WireText (Just ref) initial), [Splice (TextSplice var)])
+
+
+data AttributeMapSplice = AttributeMapSplice
+
+data AttributeSplice
+
+--newAttributeMapSplice :: Client -> JsRef -> ObservableMap NoLoad '[] Text (Maybe Text) -> STMc NoRetry '[] ([WireAttribute], Splice)
+--newAttributeMapSplice = undefined
+
+
+data ChildrenSplice =
+  ChildrenSplice
+    Client
+    JsRef
+    (AccumulatingObserver NoLoad '[] Seq DomNode)
+    (TVar (Maybe (ObserverState NoLoad (ObservableResult '[] Seq) [Splice])))
+
+instance IsSplice ChildrenSplice where
+  freeSplice (ChildrenSplice _ _ accum var) = do
+    disposeAccumulatingObserver accum
+    readTVar var >>= \case
+      Nothing -> pure []
+      Just state -> do
+        writeTVar var Nothing
+        fold <$> mapM freeSplice (toList state)
+
+  generateSpliceCommands (ChildrenSplice client ref accum var) = do
+    containerCommands <- takeAccumulatingObserver accum Live >>= \case
+      Nothing -> pure []
+      Just change -> do
+        readTVar var >>= \case
+          Nothing -> pure []
+          Just state -> do
+
+            let ctx = state.context
+            case validateChange ctx change of
+              Nothing -> pure []
+              Just validatedChange -> do
+                validatedWireAndSpliceChange <- traverse (newDomNodeSplice client) validatedChange
+                let wireAndSpliceChange = validatedWireAndSpliceChange.unvalidated
+                let wireChange = fst <$> wireAndSpliceChange
+                let spliceChange = snd <$> wireAndSpliceChange
+
+                let removedSplices = fold (selectRemovedByChange change state)
+                freeCommands <- fold <$> mapM freeSpliceAsCommands removedSplices
+
+                forM_ (applyObservableChange spliceChange state)
+                  \(_, newState) -> writeTVar var (Just newState)
+
+                pure (freeCommands <> listChangeCommands ref ctx wireChange)
+
+    childCommands <- readTVar var >>= \case
+      Nothing -> pure []
+      Just state -> fold <$> mapM generateSpliceCommands (toList state)
+
+    pure (containerCommands <> childCommands)
+
+newChildrenSplice :: Client -> JsRef -> ObservableList NoLoad '[] DomNode -> STMc NoRetry '[] ([WireNode], [Splice])
+newChildrenSplice client ref childrenObservable = do
+  (maccum, initial) <- attachAccumulatingObserver (toObservableT childrenObservable)
+
+  let ObservableStateLive (ObservableResultTrivial nodes) = initial
+  (initialWireNodes, splices) <- Seq.unzip <$> mapM (newDomNodeSplice client) nodes
+
+  case maccum of
+    Nothing -> pure (toList initialWireNodes, fold splices)
+    Just accum -> do
+      var <- newTVar (Just (ObserverStateLive (ObservableResultOk splices)))
+      pure (toList initialWireNodes, [Splice (ChildrenSplice client ref accum var)])
+
+listChangeCommands ::
+  JsRef ->
+  ObserverContext NoLoad (ObservableResult '[] Seq) ->
+  ObservableChange NoLoad (ObservableResult '[] Seq) WireNode ->
+  [Command]
+listChangeCommands ref _ctx (ObservableChangeLiveReplace (ObservableResultTrivial xs)) =
+  RemoveAllChildren ref : fmap (AppendChild ref) (toList xs)
+listChangeCommands ref ctx (ObservableChangeLiveDelta (ListDelta deltaOps)) =
+  go 0 initialListLength deltaOps
+  where
+    initialListLength = case ctx of
+      (ObserverContextLive (Just len)) -> len
+      (ObserverContextLive Nothing) -> 0
+    go :: ObservableList.Length -> ObservableList.Length -> [ListOperation WireNode] -> [Command]
+    go _offset ((<= 0) -> True) [] = []
+    go offset remaining [] = RemoveChild ref (fromIntegral offset) : go (offset + 1) (remaining -1) []
+    go offset remaining (ListKeep n : ops) = go (offset + n) (remaining - n) ops
+    go offset remaining (ListDrop i : ops) = replicate (fromIntegral i) (RemoveChild ref (fromIntegral offset)) <> go (offset - i) remaining ops
+    go offset 0 (ListInsert xs : ops) = (AppendChild ref <$> toList xs) <> go (offset + fromIntegral (Seq.length xs)) 0 ops
+    go offset remaining (ListInsert Seq.Empty : ops) = go offset remaining ops
+    go offset remaining (ListInsert (x :<| xs) : ops) = InsertChild ref (fromIntegral offset) x : go (offset + 1) remaining (ListInsert xs : ops)
 
 
 -- * Wai

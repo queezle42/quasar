@@ -16,24 +16,21 @@ enum State {
 
 type Command =
   | { fn: "pong" }
-  | { fn: "setRoot", content: WireDomElement }
-  | { fn: "set", id: number, content: WireDomElement }
-  | { fn: "root", html: string }
-  | { fn: "splice", id: number, html: string }
-  | { fn: "listInsert", id: number, i: number, html: string }
-  | { fn: "listAppend", id: number, html: string }
-  | { fn: "listRemove", id: number, i: number }
-  | { fn: "listRemoveAll", id: number }
+  | { fn: "root", node: WireNode }
+  | { fn: "text", ref: number, text: string }
+  | { fn: "insert", ref: number, i: number, node: WireNode }
+  | { fn: "append", ref: number, node: WireNode }
+  | { fn: "remove", ref: number, i: number }
+  | { fn: "removeAll", ref: number }
+  | { fn: "removeAll", ref: number }
+  | { fn: "free", ref: number }
 
 // type Event =
 //   | { fn: "ping" }
 
-type WireDomElement =
-  | { ref: number | null, tag: string, attributes: Map<string, string>, content: DomElementContent }
-
-type DomElementContent =
-  | { type: "text", text: string }
-  | { type: "children", children: [WireDomElement] }
+type WireNode =
+  | { type: "element", ref: number | null, tag: string, attributes: Map<string, string>, children: [WireNode] }
+  | { type: "text", ref: number | null, text: string }
 
 
 class QuasarWebClient {
@@ -44,6 +41,8 @@ class QuasarWebClient {
   private reconnectDelay: number = 0;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private pongTimeout: ReturnType<typeof setTimeout> | null = null;
+  private elements: Map<number, HTMLElement> = new Map();
+  private textNodes: Map<number, Text> = new Map();
 
   constructor(websocketAddress?: string) {
     if (websocketAddress == null) {
@@ -98,7 +97,7 @@ class QuasarWebClient {
     if (this.state === State.Initial || this.state === State.WaitingForReconnect) {
       console.log("[quasar] connecting...");
       this.setState(this.state === State.Initial ? State.Connecting : State.Reconnecting);
-      this.websocket = new WebSocket(this.websocketAddress, ["quasar-web-v1"]);
+      this.websocket = new WebSocket(this.websocketAddress, ["quasar-web-dev"]);
 
       this.websocket.onopen = _event => {
         this.setState(State.Connected);
@@ -149,7 +148,7 @@ class QuasarWebClient {
         let parsed = null;
         try {
           parsed = JSON.parse(event.data);
-          console.log("[quasar] received:", parsed);
+          console.debug("[quasar] received:", parsed);
         }
         catch {
           console.error("[quasar] received invalid message:", event.data);
@@ -188,8 +187,58 @@ class QuasarWebClient {
     }
   }
 
+  private createNode(wireNode: WireNode): Node {
+    if (wireNode.type == "element") {
+      const element = document.createElement(wireNode.tag);
+
+      if (wireNode.ref != null) {
+        console.log(`[quasar] registering element`, wireNode.ref);
+        this.elements.set(wireNode.ref, element);
+      }
+
+      const children = wireNode.children.map(wireChild => this.createNode(wireChild));
+      element.replaceChildren(...children);
+
+      return element;
+    }
+    else {
+      const textNode = document.createTextNode(wireNode.text);
+
+      if (wireNode.ref != null) {
+        console.log(`[quasar] registering text node`, wireNode.ref);
+        this.textNodes.set(wireNode.ref, textNode);
+      }
+
+      return textNode;
+    }
+  }
+
+  private getElement(ref: number): HTMLElement {
+    const element = this.elements.get(ref);
+    if (!element) {
+      throw `[quasar-web] Element with ref ${ref} does not exist`;
+    }
+    return element;
+  }
+
+  private getTextNode(ref: number): Text {
+    const node = this.textNodes.get(ref);
+    if (!node) {
+      throw `[quasar-web] Text node with ref ${ref} does not exist`;
+    }
+    return node;
+  }
+
+
+  private freeRef(ref: number) {
+    console.log(`[quasar] freeing`, ref);
+    this.elements.delete(ref);
+    this.textNodes.delete(ref);
+  }
+
   private receiveMessage(commands: Command[]) {
     for (let command of commands) {
+      console.log("[quasar] handling message", command);
       switch (command.fn) {
         case "pong":
           this.receivePong();
@@ -197,59 +246,51 @@ class QuasarWebClient {
         case "root":
           const root = document.getElementById("quasar-web-root");
           if (root) {
-            root.innerHTML = command.html;
+            const element = this.createNode(command.node);
+            root.replaceChildren(element);
           }
           break;
-        case "splice":
-          const id = "quasar-splice-" + command.id;
-          const splice = document.getElementById(id);
-          if (!splice) {
-              throw `[quasar-web] Splice with id ${id} does not exist`;
-          }
-          splice.innerHTML = command.html;
+        case "text":
+          const element = this.getTextNode(command.ref);
+          element.data = command.text;
           break;
-        case "listInsert":
+        case "insert":
           {
-            const id = "quasar-list-" + command.id;
-            const list = document.getElementById(id);
-            if (!list) {
-              throw `[quasar-web] List with id ${id} does not exist`;
-            }
-            const target = list.children[command.i];
+            const element = this.getElement(command.ref);
+            const target = element.childNodes[command.i];
             if (!target) {
               throw `[quasar-web] List index ${command.i} out of bounds`;
             }
-            target.insertAdjacentHTML("beforebegin", command.html);
+            const newNode = this.createNode(command.element);
+            target.before(newNode);
           }
           break;
-        case "listAppend":
+        case "append":
           {
-            const id = "quasar-list-" + command.id;
-            const list = document.getElementById(id);
-            if (!list) {
-              throw `[quasar-web] List with id ${id} does not exist`;
-            }
-            list.insertAdjacentHTML("beforeend", command.html);
+            const node = this.getElement(command.ref);
+            const newNode = this.createNode(command.node);
+            node.append(newNode);
           }
           break;
-        case "listRemove":
+        case "remove":
           {
-            const id = "quasar-list-" + command.id;
-            const list = document.getElementById(id);
-            if (!list) {
-              throw `[quasar-web] List with id ${id} does not exist`;
+            const element = this.getElement(command.ref);
+            const target = element.childNodes[command.i];
+            if (!target) {
+              throw `[quasar-web] List index ${command.i} out of bounds`;
             }
-            list.children[command.i]?.remove();
+            target.remove();
           }
           break;
-        case "listRemoveAll":
+        case "removeAll":
           {
-            const id = "quasar-list-" + command.id;
-            const list = document.getElementById(id);
-            if (!list) {
-              throw `[quasar-web] List with id ${id} does not exist`;
-            }
-            list.replaceChildren();
+            const element = this.getElement(command.ref);
+            element.replaceChildren();
+          }
+          break;
+        case "free":
+          {
+            this.freeRef(command.ref);
           }
           break;
         default:
