@@ -261,7 +261,7 @@ class QuasarWebClient {
             if (!target) {
               throw `[quasar-web] List index ${command.i} out of bounds`;
             }
-            const newNode = this.createNode(command.element);
+            const newNode = this.createNode(command.node);
             target.before(newNode);
           }
           break;
