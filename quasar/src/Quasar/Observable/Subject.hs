@@ -62,7 +62,7 @@ fixInvalidCacheState _cached (EvaluatedObservableChangeLiveUpdate (EvaluatedUpda
   EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace (contentFromEvaluatedDelta delta))
 fixInvalidCacheState _cached EvaluatedObservableChangeLoadingUnchanged =
   -- Filtered by `applyObservableChange` in `changeSubject`
-  impossibleCodePath
+  unreachableCodePath
 
 
 newSubject :: MonadSTMc NoRetry '[] m => c v -> m (Subject canLoad exceptions c v)
