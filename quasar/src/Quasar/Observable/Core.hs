@@ -595,7 +595,7 @@ instance Foldable c => Foldable (ObserverState canLoad c) where
 
 instance HasField "loading" (ObserverState canLoad c v) (Loading canLoad) where
   getField ObserverStateLoadingCleared = Loading
-  getField ObserverStateLoading = Loading
+  getField (ObserverStateLoadingCached _) = Loading
   getField (ObserverStateLive _) = Live
 
 instance HasField "maybe" (ObserverState canLoad c v) (Maybe (c v)) where
