@@ -7,9 +7,9 @@ module Quasar.Observable.List (
   toObservableList,
   ListDelta(..),
   ValidatedListDelta(..),
-  listDeltaCtxLength,
+  validatedListDeltaLength,
   ListOperation(..),
-  Length,
+  Length(..),
 
   -- * Reexports
   FingerTree,
@@ -24,12 +24,14 @@ module Quasar.Observable.List (
 ) where
 
 import Data.Binary (Binary)
+import Data.FingerTree (FingerTree, Measured(measure), (<|), ViewL(EmptyL, (:<)), ViewR(EmptyR, (:>)))
+import Data.FingerTree qualified as FT
 import Data.Sequence (Seq(Empty))
 import Data.Sequence qualified as Seq
 import Quasar.Observable.Core
 import Quasar.Prelude
-import Data.FingerTree (FingerTree, Measured(measure), (<|), ViewL(EmptyL, (:<)), ViewR(EmptyR, (:>)))
-import Data.FingerTree qualified as FT
+import Quasar.Resources (TSimpleDisposer)
+import Quasar.Observable.Traversable
 
 
 newtype ListDelta v
@@ -40,8 +42,8 @@ newtype ValidatedListDelta v
   = ValidatedListDelta (FingerTree Length (ListOperation v))
   deriving (Eq, Show, Generic)
 
-listDeltaCtxLength :: ValidatedListDelta v -> Length
-listDeltaCtxLength (ValidatedListDelta ft) = measure ft
+validatedListDeltaLength :: ValidatedListDelta v -> Length
+validatedListDeltaLength (ValidatedListDelta ft) = measure ft
 
 newtype Length = Length Word32
   deriving (Show, Eq, Ord, Enum, Num, Real, Integral, Binary)
@@ -91,12 +93,15 @@ updateListDeltaContext l (ListDrop n : ops) =
     then prependDrop n (updateListDeltaContext (l - n) ops)
     else prependDrop l (updateListDeltaContext 0 ops)
 
-toValidatedListDelta :: FingerTree Length (ListOperation v) -> ValidatedListDelta v
+toValidatedListDelta :: FingerTree Length (ListOperation v) -> Maybe (ValidatedListDelta v)
 toValidatedListDelta ft =
-  ValidatedListDelta case FT.viewr ft of
-    EmptyR -> FT.empty
-    (other :> ListDrop _) -> other
-    _ -> ft
+  let normalized = case FT.viewr ft of
+        EmptyR -> FT.empty
+        (other :> ListDrop _) -> other
+        _ -> ft
+  in if FT.null normalized
+    then Nothing
+    else Just (ValidatedListDelta normalized)
 
 
 prependInsert :: Seq v -> FingerTree Length (ListOperation v) -> FingerTree Length (ListOperation v)
@@ -220,13 +225,13 @@ instance ObservableContainer Seq v where
   applyDelta (ListDelta ops) state = applyOperations state (toList ops)
   mergeDelta (ValidatedListDelta x) (ListDelta y) =
     ValidatedListDelta (mergeOperations x (toList y))
-  updateDeltaContext ctx (ListDelta ops) =
-    let ft = updateListDeltaContext ctx ops
-    in (toValidatedListDelta ft, measure ft)
-  toInitialDeltaContext state = fromIntegral (Seq.length state)
+  validateDelta ctx (ListDelta ops) =
+    toValidatedListDelta (updateListDeltaContext ctx ops)
+  validatedDeltaToContext = validatedListDeltaLength
+  validatedDeltaToDelta (ValidatedListDelta x) = ListDelta (toList x)
+  toDeltaContext state = fromIntegral (Seq.length state)
   toDelta = fst
   contentFromEvaluatedDelta = snd
-  splitDeltaAndContext (ValidatedListDelta x) = Just (ListDelta (toList x), measure x)
 
 instance ContainerCount Seq where
   containerCount# x = fromIntegral (length x)

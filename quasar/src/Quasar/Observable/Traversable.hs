@@ -18,7 +18,6 @@ module Quasar.Observable.Traversable (
 
 import Control.Applicative hiding (empty)
 import Control.Monad.Except
-import Data.Functor.Identity (Identity(..))
 import Quasar.Observable.Core
 import Quasar.Prelude hiding (filter, lookup)
 import Quasar.Resources.Disposer
@@ -42,8 +41,9 @@ traverseDelta ::
   (ObservableFunctor c, Traversable (ValidatedDelta c), Applicative m) =>
   (v -> m a) -> Delta c v -> DeltaContext c -> m (Maybe (Delta c a))
 traverseDelta fn delta ctx =
-  let deltaWithCtx = fst (updateDeltaContext @c ctx delta)
-  in fmap fst . splitDeltaAndContext @c <$> traverse fn deltaWithCtx
+  case validateDelta @c ctx delta of
+    Nothing -> pure Nothing
+    Just validated -> Just . validatedDeltaToDelta @c <$> traverse fn validated
 
 selectRemovedByChange :: TraversableObservableContainer c => ObservableChange l c v -> ObserverState l c a -> [a]
 selectRemovedByChange ObservableChangeLoadingClear state = foldr (:) [] state
@@ -70,7 +70,7 @@ traverseChange _fn ObservableChangeLiveUnchanged _state = pure (Just ObservableC
 traverseChange fn (ObservableChangeLiveUpdate (ObservableUpdateReplace new)) ObserverStateLoadingCleared =
   Just . ObservableChangeLiveUpdate . ObservableUpdateReplace <$> traverse fn new
 traverseChange fn (ObservableChangeLiveUpdate update) state = do
-  traverseUpdate fn update (toInitialDeltaContext <$> state.maybe) <&> \case
+  traverseUpdate fn update (toDeltaContext <$> state.maybe) <&> \case
     Nothing -> case state of
       -- An invalid delta still signals a change from "cached loading" to "live"
       ObserverStateLoadingCached _ -> Just ObservableChangeLiveUnchanged

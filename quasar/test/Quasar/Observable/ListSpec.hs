@@ -86,63 +86,63 @@ spec = parallel do
           ]
       applyDelta @Seq @Int (ListDelta ops) [1, 2, 3, 4] `shouldBe` [1, 42, 43, 2, 44, 4]
 
-  describe "updateDeltaContext" do
+  describe "validateDelta" do
     it "empty delta" do
-      testUpdateDeltaContext [] (ListDelta []) (ValidatedListDelta [])
+      testUpdateDeltaContext [] (ListDelta []) Nothing
 
     it "keep empty list" do
-      testUpdateDeltaContext [] (ListDelta [ListKeep 42]) (ValidatedListDelta [])
+      testUpdateDeltaContext [] (ListDelta [ListKeep 42]) Nothing
 
     it "keep empty list" do
-      testUpdateDeltaContext [] (ListDelta [ListKeep 42]) (ValidatedListDelta [])
+      testUpdateDeltaContext [] (ListDelta [ListKeep 42]) Nothing
 
     it "keep elements" do
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 3]) (ValidatedListDelta [ListKeep 3])
-      testUpdateDeltaContext [1, 2, 3, 4] (ListDelta [ListKeep 3]) (ValidatedListDelta [ListKeep 3])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 3]) (Just (ValidatedListDelta [ListKeep 3]))
+      testUpdateDeltaContext [1, 2, 3, 4] (ListDelta [ListKeep 3]) (Just (ValidatedListDelta [ListKeep 3]))
 
     it "keep is clipped to end of list" do
-      testUpdateDeltaContext [1, 2] (ListDelta [ListKeep 3]) (ValidatedListDelta [ListKeep 2])
+      testUpdateDeltaContext [1, 2] (ListDelta [ListKeep 3]) (Just (ValidatedListDelta [ListKeep 2]))
 
     it "delete empty list" do
-      testUpdateDeltaContext [] (ListDelta [ListDrop 42]) (ValidatedListDelta [])
+      testUpdateDeltaContext [] (ListDelta [ListDrop 42]) Nothing
 
     it "insert to empty list" do
-      testUpdateDeltaContext [] (ListDelta [ListInsert [1]]) (ValidatedListDelta [ListInsert [1]])
+      testUpdateDeltaContext [] (ListDelta [ListInsert [1]]) (Just (ValidatedListDelta [ListInsert [1]]))
 
     it "insert" do
-      testUpdateDeltaContext [2, 3] (ListDelta [ListInsert [1]]) (ValidatedListDelta [ListInsert [1]])
-      testUpdateDeltaContext [1, 3] (ListDelta [ListKeep 1, ListInsert [2], ListKeep 1]) (ValidatedListDelta [ListKeep 1, ListInsert [2], ListKeep 1])
-      testUpdateDeltaContext [1, 2, 3, 7] (ListDelta [ListKeep 3, ListInsert [4, 5, 6], ListKeep 1]) (ValidatedListDelta [ListKeep 3, ListInsert [4, 5, 6], ListKeep 1])
+      testUpdateDeltaContext [2, 3] (ListDelta [ListInsert [1]]) (Just (ValidatedListDelta [ListInsert [1]]))
+      testUpdateDeltaContext [1, 3] (ListDelta [ListKeep 1, ListInsert [2], ListKeep 1]) (Just (ValidatedListDelta [ListKeep 1, ListInsert [2], ListKeep 1]))
+      testUpdateDeltaContext [1, 2, 3, 7] (ListDelta [ListKeep 3, ListInsert [4, 5, 6], ListKeep 1]) (Just (ValidatedListDelta [ListKeep 3, ListInsert [4, 5, 6], ListKeep 1]))
 
     it "insert after end of list" do
-      testUpdateDeltaContext [] (ListDelta [ListKeep 42, ListInsert [1]]) (ValidatedListDelta [ListInsert [1]])
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 42, ListInsert [4]]) (ValidatedListDelta [ListKeep 3, ListInsert [4]])
+      testUpdateDeltaContext [] (ListDelta [ListKeep 42, ListInsert [1]]) (Just (ValidatedListDelta [ListInsert [1]]))
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 42, ListInsert [4]]) (Just (ValidatedListDelta [ListKeep 3, ListInsert [4]]))
 
     it "trailing drop is removed" do
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1, ListKeep 2]) (ValidatedListDelta [ListDrop 1, ListKeep 2])
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 2, ListKeep 1]) (ValidatedListDelta [ListDrop 2, ListKeep 1])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1, ListKeep 2]) (Just (ValidatedListDelta [ListDrop 1, ListKeep 2]))
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 2, ListKeep 1]) (Just (ValidatedListDelta [ListDrop 2, ListKeep 1]))
 
     it "trailing drop is removed" do
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 42]) (ValidatedListDelta [])
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 21, ListDrop 21]) (ValidatedListDelta [])
-      testUpdateDeltaContext [1, 2, 3, 4, 5] (ListDelta [ListDrop 1, ListDrop 1, ListDrop 1, ListDrop 1, ListKeep 1]) (ValidatedListDelta [ListDrop 4, ListKeep 1])
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1]) (ValidatedListDelta [])
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 1]) (ValidatedListDelta [ListKeep 1])
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 42]) (ValidatedListDelta [ListKeep 1])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 42]) Nothing
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 21, ListDrop 21]) Nothing
+      testUpdateDeltaContext [1, 2, 3, 4, 5] (ListDelta [ListDrop 1, ListDrop 1, ListDrop 1, ListDrop 1, ListKeep 1]) (Just (ValidatedListDelta [ListDrop 4, ListKeep 1]))
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1]) Nothing
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 1]) (Just (ValidatedListDelta [ListKeep 1]))
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 42]) (Just (ValidatedListDelta [ListKeep 1]))
 
     it "duplicate drops are merged" do
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1, ListDrop 1, ListKeep 1]) (ValidatedListDelta [ListDrop 2, ListKeep 1])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1, ListDrop 1, ListKeep 1]) (Just (ValidatedListDelta [ListDrop 2, ListKeep 1]))
 
     it "empty drop is removed" do
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 0, ListKeep 2]) (ValidatedListDelta [ListKeep 3])
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 0, ListKeep 42]) (ValidatedListDelta [ListKeep 3])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 0, ListKeep 2]) (Just (ValidatedListDelta [ListKeep 3]))
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 0, ListKeep 42]) (Just (ValidatedListDelta [ListKeep 3]))
 
     it "empty drop is merged" do
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 0, ListDrop 1, ListKeep 1]) (ValidatedListDelta [ListKeep 1, ListDrop 1, ListKeep 1])
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 1, ListDrop 0, ListKeep 1]) (ValidatedListDelta [ListKeep 1, ListDrop 1, ListKeep 1])
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 0, ListDrop 1, ListKeep 1]) (Just (ValidatedListDelta [ListKeep 1, ListDrop 1, ListKeep 1]))
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 1, ListDrop 0, ListKeep 1]) (Just (ValidatedListDelta [ListKeep 1, ListDrop 1, ListKeep 1]))
 
     it "duplicate inserts are merged" do
-      testUpdateDeltaContext [] (ListDelta [ListInsert [1, 2], ListInsert [3]]) (ValidatedListDelta [ListInsert [1, 2, 3]])
+      testUpdateDeltaContext [] (ListDelta [ListInsert [1, 2], ListInsert [3]]) (Just (ValidatedListDelta [ListInsert [1, 2, 3]]))
 
   describe "mergeDelta" do
     it "keeps keep operation" do
@@ -178,11 +178,11 @@ spec = parallel do
     it "normalization 2" do
       mergeDelta @Seq @Int (ValidatedListDelta [ListInsert [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 100, ListInsert [42]]) `shouldBe` ValidatedListDelta [ListInsert [1, 2, 3, 4, 5, 42]]
 
-testUpdateDeltaContext :: HasCallStack => Seq Int -> ListDelta Int -> ValidatedListDelta Int -> IO ()
+testUpdateDeltaContext :: HasCallStack => Seq Int -> ListDelta Int -> Maybe (ValidatedListDelta Int) -> IO ()
 testUpdateDeltaContext list delta expectedDelta = withFrozenCallStack do
   let
-    expectedLength = listDeltaCtxLength expectedDelta
-    (normalizedDelta, ctx) = updateDeltaContext @Seq (fromIntegral (Seq.length list)) delta
-  normalizedDelta `shouldBe` expectedDelta
-  ctx `shouldBe` expectedLength
+    expectedLength = maybe 0 validatedListDeltaLength expectedDelta
+    validatedDelta = validateDelta @Seq (fromIntegral (Seq.length list)) delta
+  validatedDelta `shouldBe` expectedDelta
+  maybe 0 validatedListDeltaLength validatedDelta `shouldBe` expectedLength
   Seq.length (applyDelta delta list) `shouldBe` fromIntegral expectedLength
