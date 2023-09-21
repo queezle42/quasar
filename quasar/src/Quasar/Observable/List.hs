@@ -191,7 +191,7 @@ mergeOperations ::
   FingerTree Length (ListOperation v) ->
   [ListOperation v] ->
   FingerTree Length (ListOperation v)
-mergeOperations old [] = FT.empty
+mergeOperations _old [] = FT.empty
 mergeOperations old (ListInsert ins : ops) =
   prependInsert ins (mergeOperations old ops)
 mergeOperations old (ListDrop n : ops)
