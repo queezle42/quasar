@@ -45,6 +45,8 @@ module Quasar.Resources (
   newUnmanagedSTMDisposer,
   newUnmanagedTSimpleDisposer,
   trivialDisposer,
+  isTrivialDisposer,
+  isTrivialTSimpleDisposer,
 
   -- ** Resource manager
   ResourceManager,

@@ -19,6 +19,7 @@ module Quasar.Resources.Core (
   newUnmanagedTSimpleDisposer,
   disposeTSimpleDisposer,
   disposeTSimpleDisposerElement,
+  isTrivialTSimpleDisposer,
 ) where
 
 
@@ -130,3 +131,9 @@ disposeTSimpleDisposerElement (TSimpleDisposerElement _ state) =
       -- Doing nothing results in the documented behavior.
       pure ()
     TSimpleDisposerDisposed -> pure ()
+
+-- | Check if a disposer is a trivial disposer, i.e. a disposer that does not
+-- perform any action when disposed.
+isTrivialTSimpleDisposer :: TSimpleDisposer -> Bool
+isTrivialTSimpleDisposer (TSimpleDisposer []) = True
+isTrivialTSimpleDisposer _ = False

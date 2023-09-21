@@ -9,8 +9,9 @@ module Quasar.Resources.Disposer (
   disposeEventually_,
   newUnmanagedIODisposer,
   newUnmanagedSTMDisposer,
-  trivialDisposer,
   isDisposed,
+  trivialDisposer,
+  isTrivialDisposer,
 
   TDisposer,
   disposeTDisposer,
@@ -18,6 +19,7 @@ module Quasar.Resources.Disposer (
   TSimpleDisposer,
   newUnmanagedTSimpleDisposer,
   disposeTSimpleDisposer,
+  isTrivialTSimpleDisposer,
 
   -- * Resource manager
   ResourceManager,
@@ -158,6 +160,12 @@ instance IsDisposerElement TSimpleDisposerElement where
 -- | A trivial disposer that does not perform any action when disposed.
 trivialDisposer :: Disposer
 trivialDisposer = mempty
+
+-- | Check if a disposer is a trivial disposer, i.e. a disposer that does not
+-- perform any action when disposed.
+isTrivialDisposer :: Disposer -> Bool
+isTrivialDisposer (Disposer []) = True
+isTrivialDisposer _ = False
 
 newUnmanagedIODisposer :: MonadSTMc NoRetry '[] m => IO () -> ExceptionSink -> m Disposer
 newUnmanagedIODisposer fn exChan = do
