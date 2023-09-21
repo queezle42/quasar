@@ -1,15 +1,29 @@
-#!/usr/bin/env -S nix develop . -c zsh
+#!/usr/bin/env -S nix develop -L -c zsh
+
+set -e
+set -u
+set -o pipefail
+
+readonly target=${1:-lib:quasar}
+readonly executable=${2:-}
+
+if [[ -n $executable ]]
+then
+  run_executable="cabal run --disable-optimisation --ghc-option -fdiagnostics-color=always $executable"
+else
+  run_executable=true
+fi
 
 print -P %F{yellow}Cleaning repository%f
-nix develop -c cabal clean
+cabal clean
 
-(git ls-files test; git ls-files '*.cabal'; git ls-files 'flake.*') | \
+(git ls-files 'cabal.project' '*/*.cabal' 'flake.*' '*/test/*') | \
   entr -r \
-    nix develop -c \
+    nix develop -L -c \
       ghcid \
-        "--command=cabal repl lib:quasar" \
+        "--command=cabal repl --disable-optimisation --ghc-option -fdiagnostics-color=always $target" \
         "--test=:! \
-          cabal test --disable-optimisation --enable-debug-info=2 --test-show-details=direct --ghc-option -fdiagnostics-color=always && \
-          cabal build --disable-optimisation --enable-debug-info=2 --ghc-option -fdiagnostics-color=always && \
+          cabal test --disable-optimisation --test-show-details=direct --ghc-option -fdiagnostics-color=always && \
+          $run_executable && \
           zsh -c 'print -P %F{green}Build and tests passed%f' \
         "
