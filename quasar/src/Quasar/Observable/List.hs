@@ -29,18 +29,36 @@ import Data.FingerTree qualified as FT
 import Data.Sequence (Seq(Empty))
 import Data.Sequence qualified as Seq
 import Quasar.Observable.Core
+import Quasar.Observable.Traversable
 import Quasar.Prelude
 import Quasar.Resources (TSimpleDisposer)
-import Quasar.Observable.Traversable
 
 
 newtype ListDelta v
   = ListDelta [ListOperation v]
   deriving (Eq, Show, Generic, Binary)
 
+instance Functor ListDelta where
+  fmap fn (ListDelta ops) = ListDelta (fn <<$>> ops)
+
 newtype ValidatedListDelta v
   = ValidatedListDelta (FingerTree Length (ListOperation v))
   deriving (Eq, Show, Generic)
+
+instance Functor ValidatedListDelta where
+  fmap fn (ValidatedListDelta ops) =
+    -- unsafeFmap is safe here because we don't change the length/structure of
+    -- the operations.
+    ValidatedListDelta (FT.unsafeFmap (fmap fn) ops)
+
+instance Foldable ValidatedListDelta where
+  foldMap fn (ValidatedListDelta ops) = foldMap (foldMap fn) ops
+
+instance Traversable ValidatedListDelta where
+  traverse fn (ValidatedListDelta ft) =
+    -- unsafeTraverse is safe here because we don't change the length/structure
+    -- of the operations.
+    ValidatedListDelta <$> FT.unsafeTraverse (traverse fn) ft
 
 validatedListDeltaLength :: ValidatedListDelta v -> Length
 validatedListDeltaLength (ValidatedListDelta ft) = measure ft
@@ -61,6 +79,24 @@ data ListOperation v
   | ListKeep Length
   deriving (Eq, Show, Generic)
 
+instance Functor ListOperation where
+  fmap fn (ListInsert xs) = ListInsert (fn <$> xs)
+  fmap _fn (ListDrop l) = ListDrop l
+  fmap _fn (ListKeep l) = ListKeep l
+
+instance Foldable ListOperation where
+  foldMap fn (ListInsert xs) = foldMap fn xs
+  foldMap _fn (ListDrop _) = mempty
+  foldMap _fn (ListKeep _) = mempty
+  foldr fn initial (ListInsert xs) = foldr fn initial xs
+  foldr _fn initial (ListDrop _) = initial
+  foldr _fn initial (ListKeep _) = initial
+
+instance Traversable ListOperation where
+  traverse fn (ListInsert xs) = ListInsert <$> traverse fn xs
+  traverse _fn (ListDrop l) = pure (ListDrop l)
+  traverse _fn (ListKeep l) = pure (ListKeep l)
+
 instance Binary v => Binary (ListOperation v)
 
 instance Measured Length (ListOperation v) where
@@ -79,6 +115,21 @@ applyOperations x (ListDrop count : ops) =
 applyOperations x (ListKeep count : ops) =
   let (keep, other) = Seq.splitAt (fromIntegral count) x
   in keep <> applyOperations other ops
+
+instance TraversableObservableContainer Seq where
+  selectRemoved (ListDelta deltaOps) old = toList (go old deltaOps)
+    where
+      go
+        :: Seq a
+        -> [ListOperation v]
+        -> Seq a
+      go _  [] = []
+      go x (ListInsert _ins : ops) = go x ops
+      go x (ListDrop count : ops) =
+        let (remove, other) = Seq.splitAt (fromIntegral count) x
+        in remove <> go other ops
+      go x (ListKeep count : ops) =
+        go (Seq.drop (fromIntegral count) x) ops
 
 updateListDeltaContext :: Length -> [ListOperation v] -> FingerTree Length (ListOperation v)
 updateListDeltaContext _l [] = FT.empty
