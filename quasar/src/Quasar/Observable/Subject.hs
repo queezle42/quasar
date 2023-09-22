@@ -14,6 +14,7 @@ module Quasar.Observable.Subject (
   readSubject,
   readSubjectIO,
   changeSubject,
+  updateSimpleSubject,
   subjectHasObservers,
 ) where
 
@@ -101,6 +102,20 @@ changeSubject (Subject var registry) change = liftSTMc do
   forM_ (applyObservableChange change state) \(evaluatedChange, newState) -> do
     writeTVar var newState
     callCallbacks registry evaluatedChange
+
+updateSimpleSubject
+  :: (MonadSTMc NoRetry '[] m, ObservableContainer c v)
+  => Subject NoLoad '[] c v
+  -> (c v -> Maybe (ObservableUpdate c v))
+  -> m ()
+updateSimpleSubject (Subject var registry) mkUpdate = liftSTMc do
+  state <- readTVar var
+  let (ObserverStateLive (ObservableResultTrivial content)) = state
+  forM_ (mkUpdate content) \update -> do
+    let change = mapObservableChange ObservableResultOk id (ObservableChangeLiveUpdate update)
+    forM_ (applyObservableChange change state) \(evaluatedChange, newState) -> do
+      writeTVar var newState
+      callCallbacks registry evaluatedChange
 
 -- | Replace the subjects content.
 --

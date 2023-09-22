@@ -22,6 +22,17 @@ module Quasar.Observable.List (
   fromList,
   fromSeq,
   constObservableList,
+
+  -- * ObservableListVar (mutable observable var)
+  ObservableListVar,
+  newObservableListVar,
+  newObservableListVarIO,
+  insert,
+  append,
+  delete,
+  lookupDelete,
+  replace,
+  clear,
 ) where
 
 import Data.Binary (Binary)
@@ -30,6 +41,7 @@ import Data.FingerTree qualified as FT
 import Data.Sequence (Seq(Empty))
 import Data.Sequence qualified as Seq
 import Quasar.Observable.Core
+import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
 import Quasar.Prelude
 import Quasar.Resources (TSimpleDisposer)
@@ -356,3 +368,70 @@ singleton = ObservableList . ObservableT . fromSeq . Seq.singleton
 
 empty :: ObservableList canLoad exceptions v
 empty = mempty
+
+
+-- * ObservableListVar
+
+newtype ObservableListVar v = ObservableListVar (Subject NoLoad '[] Seq v)
+
+deriving newtype instance IsObservableCore NoLoad '[] Seq v (ObservableListVar v)
+deriving newtype instance IsObservableList NoLoad '[] v (ObservableListVar v)
+deriving newtype instance ToObservableT NoLoad '[] Seq v (ObservableListVar v)
+
+instance IsObservableList l e v (Subject l e Seq v)
+  -- TODO
+
+newObservableListVar :: MonadSTMc NoRetry '[] m => Seq v -> m (ObservableListVar v)
+newObservableListVar x = liftSTMc @NoRetry @'[] $ ObservableListVar <$> newSubject x
+
+newObservableListVarIO :: MonadIO m => Seq v -> m (ObservableListVar v)
+newObservableListVarIO x = liftIO $ ObservableListVar <$> newSubjectIO x
+
+insert :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Length -> v -> m ()
+insert (ObservableListVar var) pos value =
+  updateSimpleSubject var selectChange
+    where
+      selectChange list =
+        let len = fromIntegral (Seq.length list)
+        in Just if len > 0
+          then ObservableUpdateDelta $ ListDelta $
+            if pos < len
+              then [ListKeep pos, ListInsert [value], ListKeep (len - pos)]
+              else [ListKeep len, ListInsert [value]]
+          else ObservableUpdateReplace [value]
+
+append :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> v -> m ()
+append (ObservableListVar var) value =
+  updateSimpleSubject var selectChange
+    where
+      selectChange list =
+        let len = fromIntegral (Seq.length list)
+        in Just if len > 0
+          then ObservableUpdateDelta (ListDelta [ListKeep len, ListInsert [value]])
+          else ObservableUpdateReplace [value]
+
+delete :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Length -> m ()
+delete (ObservableListVar var) pos =
+  updateSimpleSubject var selectChange
+    where
+      selectChange list =
+        let len = fromIntegral (Seq.length list)
+        in if pos < len
+          then Just $ ObservableUpdateDelta $ ListDelta $
+            if pos == (len - 1)
+              then  [ListKeep pos]
+              else [ListKeep pos, ListDrop 1, ListKeep (len - pos)]
+          else Nothing
+
+lookupDelete :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Length -> m (Maybe v)
+lookupDelete var@(ObservableListVar subject) pos = do
+  state <- readSubject subject
+  let r = Seq.lookup (fromIntegral pos) state
+  when (isJust r) $ delete var pos
+  pure r
+
+replace :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Seq v -> m ()
+replace (ObservableListVar var) new = replaceSubject var new
+
+clear :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> m ()
+clear var = replace var mempty

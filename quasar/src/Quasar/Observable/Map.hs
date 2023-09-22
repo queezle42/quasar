@@ -44,7 +44,7 @@ module Quasar.Observable.Map (
   filter,
   filterWithKey,
 
-  -- * ObservableMapVar
+  -- * ObservableMapVar (mutable observable var)
   ObservableMapVar,
   newObservableMapVar,
   newObservableMapVarIO,
@@ -432,13 +432,11 @@ lookupDelete (ObservableMapVar var) key = do
     changeSubject var (ObservableChangeLiveUpdate (ObservableUpdateDelta (deleteDelta key)))
   pure r
 
-replace :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> Map k v -> m ()
-replace (ObservableMapVar var) new =
-  changeSubject var (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk new)))
+replace :: (MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> Map k v -> m ()
+replace (ObservableMapVar var) new = replaceSubject var new
 
 clear :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> m ()
-clear (ObservableMapVar var) =
-  changeSubject var (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk mempty)))
+clear var = replace var mempty
 
 
 instance Ord k => IsObservableMap l e k v (TraversingObservable l e (Map k) v)
