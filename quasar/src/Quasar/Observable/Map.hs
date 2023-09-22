@@ -13,8 +13,8 @@ module Quasar.Observable.Map (
   query,
 
   -- ** Delta types
-  ObservableMapDelta(..),
-  ObservableMapOperation(..),
+  MapDelta(..),
+  MapOperation(..),
 
   -- * Observable interaction
   bindObservableMap,
@@ -66,6 +66,7 @@ import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
+import GHC.Records (HasField (..))
 import Quasar.Observable.Core
 import Quasar.Observable.Lift
 import Quasar.Observable.List (ObservableList)
@@ -75,62 +76,62 @@ import Quasar.Prelude hiding (filter, lookup)
 import Quasar.Resources.Disposer
 
 
-newtype ObservableMapDelta k v
-  = ObservableMapDelta (Map k (ObservableMapOperation v))
+newtype MapDelta k v
+  = MapDelta (Map k (MapOperation v))
   deriving Generic
 
-instance (Binary k, Binary v) => Binary (ObservableMapDelta k v)
+instance (Binary k, Binary v) => Binary (MapDelta k v)
 
-instance Functor (ObservableMapDelta k) where
-  fmap f (ObservableMapDelta x) = ObservableMapDelta (f <<$>> x)
+instance Functor (MapDelta k) where
+  fmap f (MapDelta x) = MapDelta (f <<$>> x)
 
-instance Foldable (ObservableMapDelta k) where
-  foldMap f (ObservableMapDelta x) = foldMap (foldMap f) x
+instance Foldable (MapDelta k) where
+  foldMap f (MapDelta x) = foldMap (foldMap f) x
 
-instance Traversable (ObservableMapDelta k) where
-  traverse f (ObservableMapDelta ops) = ObservableMapDelta <$> traverse (traverse f) ops
+instance Traversable (MapDelta k) where
+  traverse f (MapDelta ops) = MapDelta <$> traverse (traverse f) ops
 
-data ObservableMapOperation v = ObservableMapInsert v | ObservableMapDelete
+data MapOperation v = Insert v | Delete
   deriving Generic
 
-instance Binary v => Binary (ObservableMapOperation v)
+instance Binary v => Binary (MapOperation v)
 
-instance Functor ObservableMapOperation where
-  fmap f (ObservableMapInsert x) = ObservableMapInsert (f x)
-  fmap _f ObservableMapDelete = ObservableMapDelete
+instance Functor MapOperation where
+  fmap f (Insert x) = Insert (f x)
+  fmap _f Delete = Delete
 
-instance Foldable ObservableMapOperation where
-  foldMap f (ObservableMapInsert x) = f x
-  foldMap _f ObservableMapDelete = mempty
+instance Foldable MapOperation where
+  foldMap f (Insert x) = f x
+  foldMap _f Delete = mempty
 
-instance Traversable ObservableMapOperation where
-  traverse f (ObservableMapInsert x) = ObservableMapInsert <$> f x
-  traverse _f ObservableMapDelete = pure ObservableMapDelete
+instance Traversable MapOperation where
+  traverse f (Insert x) = Insert <$> f x
+  traverse _f Delete = pure Delete
 
-insertDelta :: k -> v -> ObservableMapDelta k v
-insertDelta key value = ObservableMapDelta (Map.singleton key (ObservableMapInsert value))
+insertDelta :: k -> v -> MapDelta k v
+insertDelta key value = MapDelta (Map.singleton key (Insert value))
 
-deleteDelta :: k -> ObservableMapDelta k v
-deleteDelta key = ObservableMapDelta (Map.singleton key ObservableMapDelete)
+deleteDelta :: k -> MapDelta k v
+deleteDelta key = MapDelta (Map.singleton key Delete)
 
-observableMapOperationToMaybe :: ObservableMapOperation v -> Maybe v
-observableMapOperationToMaybe (ObservableMapInsert x) = Just x
-observableMapOperationToMaybe ObservableMapDelete = Nothing
+instance HasField "maybe" (MapOperation v) (Maybe v) where
+  getField (Insert x) = Just x
+  getField Delete = Nothing
 
-applyObservableMapOperations :: Ord k => Map k (ObservableMapOperation v) -> Map k v -> Map k v
-applyObservableMapOperations ops old =
+applyOperations :: Ord k => Map k (MapOperation v) -> Map k v -> Map k v
+applyOperations ops old =
   Map.merge
     Map.preserveMissing'
-    (Map.mapMaybeMissing \_ -> observableMapOperationToMaybe)
-    (Map.zipWithMaybeMatched \_ _ -> observableMapOperationToMaybe)
+    (Map.mapMaybeMissing \_ op -> op.maybe)
+    (Map.zipWithMaybeMatched \_ _ op -> op.maybe)
     old
     ops
 
 instance Ord k => ObservableContainer (Map k) v where
   type ContainerConstraint canLoad exceptions (Map k) v a = IsObservableMap canLoad exceptions k v a
-  type Delta (Map k) = (ObservableMapDelta k)
-  applyDelta (ObservableMapDelta ops) old = applyObservableMapOperations ops old
-  mergeDelta (ObservableMapDelta old) (ObservableMapDelta new) = ObservableMapDelta (Map.union new old)
+  type Delta (Map k) = (MapDelta k)
+  applyDelta (MapDelta ops) old = applyOperations ops old
+  mergeDelta (MapDelta old) (MapDelta new) = MapDelta (Map.union new old)
   toDelta = fst
   contentFromEvaluatedDelta = snd
 
@@ -139,7 +140,7 @@ instance ContainerCount (Map k) where
   containerIsEmpty# x = Map.null x
 
 instance Ord k => TraversableObservableContainer (Map k) where
-  selectRemoved (ObservableMapDelta ops) old = mapMaybe (\key -> Map.lookup key old) (Map.keys ops)
+  selectRemoved (MapDelta ops) old = mapMaybe (\key -> Map.lookup key old) (Map.keys ops)
 
 
 
@@ -272,11 +273,11 @@ instance ObservableFunctor (Map k) => IsObservableCore canLoad exceptions (Map k
     mapObservableStateResult (Map.mapWithKey fn) <<$>> attachObserver# observable \change ->
       callback (mapObservableChangeResult (Map.mapWithKey fn) (mapDeltaWithKey fn) change)
     where
-      mapDeltaWithKey :: (k -> va -> v) -> ObservableMapDelta k va -> ObservableMapDelta k v
-      mapDeltaWithKey f (ObservableMapDelta ops) = ObservableMapDelta (Map.mapWithKey (mapOperationWithKey f) ops)
-      mapOperationWithKey :: (k -> va -> v) -> k -> ObservableMapOperation va -> ObservableMapOperation v
-      mapOperationWithKey f key (ObservableMapInsert x) = ObservableMapInsert (f key x)
-      mapOperationWithKey _f _key ObservableMapDelete = ObservableMapDelete
+      mapDeltaWithKey :: (k -> va -> v) -> MapDelta k va -> MapDelta k v
+      mapDeltaWithKey f (MapDelta ops) = MapDelta (Map.mapWithKey (mapOperationWithKey f) ops)
+      mapOperationWithKey :: (k -> va -> v) -> k -> MapOperation va -> MapOperation v
+      mapOperationWithKey f key (Insert x) = Insert (f key x)
+      mapOperationWithKey _f _key Delete = Delete
 
   count# (MappedObservableMap _ upstream) = count# upstream
   isEmpty# (MappedObservableMap _ upstream) = isEmpty# upstream
@@ -315,16 +316,16 @@ instance Ord k => IsObservableCore canLoad exceptions (Map k) v (ObservableMapUn
       fullMergeFn :: Map k v -> Map k v -> Map k v
       fullMergeFn = Map.unionWithKey fn
       deltaFn :: (k -> v -> v -> v) -> ObservableUpdate (Map k) v -> Map k v -> Map k v -> Maybe (ObservableUpdate (Map k) v)
-      deltaFn f (ObservableUpdateDelta (ObservableMapDelta ops)) _prev other =
-        Just (ObservableUpdateDelta (ObservableMapDelta (Map.fromList ((\(k, v) -> (k, helper k v)) <$> Map.toList ops))))
+      deltaFn f (ObservableUpdateDelta (MapDelta ops)) _prev other =
+        Just (ObservableUpdateDelta (MapDelta (Map.fromList ((\(k, v) -> (k, helper k v)) <$> Map.toList ops))))
         where
-          helper :: k -> ObservableMapOperation v -> ObservableMapOperation v
-          helper key (ObservableMapInsert x) = ObservableMapInsert do
+          helper :: k -> MapOperation v -> MapOperation v
+          helper key (Insert x) = Insert do
             maybe x (f key x) (Map.lookup key other)
-          helper key ObservableMapDelete =
-            maybe ObservableMapDelete ObservableMapInsert (Map.lookup key other)
+          helper key Delete =
+            maybe Delete Insert (Map.lookup key other)
       deltaFn f (ObservableUpdateReplace new) prev other =
-        deltaFn f (ObservableUpdateDelta (ObservableMapDelta (Map.union (ObservableMapInsert <$> new) (ObservableMapDelete <$ prev)))) prev other
+        deltaFn f (ObservableUpdateDelta (MapDelta (Map.union (Insert <$> new) (Delete <$ prev)))) prev other
 
   isEmpty# (ObservableMapUnionWith _ x y) = liftA2 (||) (isEmpty# x) (isEmpty# y)
 
@@ -384,12 +385,12 @@ instance IsObservableCore l e (Map k) v (FilteredObservableMap l e k v) where
 
     pure (disposer, mapObservableStateResult (Map.filterWithKey fn) initial)
     where
-      filterDelta :: ObservableMapDelta k v -> ObservableMapDelta k v
-      filterDelta (ObservableMapDelta ops) = ObservableMapDelta (Map.mapWithKey filterOperation ops)
-      filterOperation :: k -> ObservableMapOperation v -> ObservableMapOperation v
-      filterOperation key ins@(ObservableMapInsert value) =
-        if fn key value then ins else ObservableMapDelete
-      filterOperation _key ObservableMapDelete = ObservableMapDelete
+      filterDelta :: MapDelta k v -> MapDelta k v
+      filterDelta (MapDelta ops) = MapDelta (Map.mapWithKey filterOperation ops)
+      filterOperation :: k -> MapOperation v -> MapOperation v
+      filterOperation key ins@(Insert value) =
+        if fn key value then ins else Delete
+      filterOperation _key Delete = Delete
 
 instance IsObservableMap l e k v (FilteredObservableMap l e k v) where
 
@@ -438,6 +439,8 @@ replace (ObservableMapVar var) new = replaceSubject var new
 clear :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> m ()
 clear var = replace var mempty
 
+
+-- * Traversal
 
 instance Ord k => IsObservableMap l e k v (TraversingObservable l e (Map k) v)
 
