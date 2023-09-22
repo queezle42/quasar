@@ -3,6 +3,7 @@
 
 module Quasar.Observable.List (
   ObservableList(..),
+  attachSimpleListObserver,
   ToObservableList,
   toObservableList,
   ListDelta(..),
@@ -329,6 +330,17 @@ class IsObservableCore canLoad exceptions Seq v a => IsObservableList canLoad ex
 
 
 instance IsObservableList canLoad exceptions v (ObservableState canLoad (ObservableResult exceptions Seq) v) where
+
+attachSimpleListObserver ::
+  ObservableList NoLoad '[] v ->
+  (ObservableUpdate Seq v -> STMc NoRetry '[] ()) ->
+  STMc NoRetry '[] (TSimpleDisposer, Seq v)
+attachSimpleListObserver observable callback = do
+  (disposer, initial) <- attachObserver# observable \case
+    ObservableChangeLiveReplace (ObservableResultTrivial new) -> callback (ObservableUpdateReplace new)
+    ObservableChangeLiveDelta delta -> callback (ObservableUpdateDelta delta)
+  case initial of
+    ObservableStateLive (ObservableResultTrivial x) -> pure (disposer, x)
 
 constObservableList :: ObservableState canLoad (ObservableResult exceptions Seq) v -> ObservableList canLoad exceptions v
 constObservableList = ObservableList . ObservableT
