@@ -323,6 +323,11 @@ instance IsObservableList canLoad exceptions v (ObservableList canLoad exception
   --member# (ObservableList (ObservableT x)) = member# x
   --listLookupValue# (ObservableList x) = listLookupValue# x
 
+instance IsObservableList canLoad exceptions v (MappedObservable canLoad exceptions Seq v) where
+
+instance Functor (ObservableList canLoad exceptions) where
+  fmap fn (ObservableList fx) = ObservableList (ObservableT (mapObservable# fn fx))
+
 instance Semigroup (ObservableList canLoad exceptions v) where
   (<>) = undefined
 
