@@ -132,8 +132,6 @@ instance Ord k => ObservableContainer (Map k) v where
   type Delta (Map k) = (MapDelta k)
   applyDelta (MapDelta ops) old = applyOperations ops old
   mergeDelta (MapDelta old) (MapDelta new) = MapDelta (Map.union new old)
-  toDelta = fst
-  contentFromEvaluatedDelta = snd
 
 instance ContainerCount (Map k) where
   containerCount# x = fromIntegral (Map.size x)

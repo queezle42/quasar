@@ -294,8 +294,6 @@ instance ObservableContainer Seq v where
   validatedDeltaToContext = validatedListDeltaLength
   validatedDeltaToDelta (ValidatedListDelta x) = ListDelta (toList x)
   toDeltaContext state = fromIntegral (Seq.length state)
-  toDelta = fst
-  contentFromEvaluatedDelta = snd
 
 instance ContainerCount Seq where
   containerCount# x = fromIntegral (length x)

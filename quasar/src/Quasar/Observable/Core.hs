@@ -40,6 +40,7 @@ module Quasar.Observable.Core (
   ObservableUpdate(..),
   EvaluatedObservableChange(..),
   EvaluatedUpdate(.., EvaluatedUpdateOk, EvaluatedUpdateThrow),
+  contentFromEvaluatedDelta,
   ObservableState(.., ObservableStateLiveOk, ObservableStateLiveEx),
   mapObservableState,
   mergeObservableState,
@@ -257,13 +258,26 @@ readObservableT fx = liftSTMc @NoRetry @exceptions do
   liftSTMc @NoRetry @'[] (readObservable# (toObservableT fx)) >>=
     \(ObservableStateLive result) -> unwrapObservableResult result
 
+type EvaluatedDelta :: (Type -> Type) -> Type -> Type
+type EvaluatedDelta c v = (Delta c v, c v)
+
+toDelta :: EvaluatedDelta c v -> Delta c v
+toDelta (delta, _) = delta
+
+contentFromEvaluatedDelta :: EvaluatedDelta c v -> c v
+contentFromEvaluatedDelta (_, content) = content
+
+-- | Law: @isJust (toEvaluatedDelta delta content) == isJust (validateDelta (toDeltaContext content) delta)@
+toEvaluatedDelta :: Delta c v -> c v -> Maybe (EvaluatedDelta c v)
+--default toEvaluatedDelta :: EvaluatedDelta c v ~ (Delta c v, c v) => Delta c v -> c v -> Maybe (EvaluatedDelta c v)
+toEvaluatedDelta delta content = Just (delta, content)
 
 type ObservableContainer :: (Type -> Type) -> Type -> Constraint
 class ObservableContainer c v where
   type ContainerConstraint (canLoad :: LoadKind) (exceptions :: [Type]) c v a :: Constraint
+  type instance ContainerConstraint _canLoad _exceptions _c _v _a = ()
+
   type Delta c :: Type -> Type
-  type EvaluatedDelta c v :: Type
-  type instance EvaluatedDelta c v = (Delta c v, c v)
 
   -- | Enough information about a container to validate a delta.
   type DeltaContext c
@@ -310,15 +324,6 @@ class ObservableContainer c v where
   default toDeltaContext :: DeltaContext c ~ () => c v -> DeltaContext c
   toDeltaContext _ = ()
 
-  toDelta :: EvaluatedDelta c v -> Delta c v
-
-  -- | Law: @isJust (toEvaluatedDelta delta content) == isJust (validateDelta (toDeltaContext content) delta)@
-  toEvaluatedDelta :: Delta c v -> c v -> Maybe (EvaluatedDelta c v)
-  default toEvaluatedDelta :: EvaluatedDelta c v ~ (Delta c v, c v) => Delta c v -> c v -> Maybe (EvaluatedDelta c v)
-  toEvaluatedDelta delta content = Just (delta, content)
-
-  contentFromEvaluatedDelta :: EvaluatedDelta c v -> c v
-
 updateDeltaContext ::
   forall c v.
   ObservableContainer c v =>
@@ -342,13 +347,9 @@ splitDeltaAndContext delta =
 instance ObservableContainer Identity v where
   type ContainerConstraint _canLoad _exceptions Identity v _a = ()
   type Delta Identity = Void1
-  type EvaluatedDelta Identity v = Void
   applyDelta = absurd1
   mergeDelta _ new = new
   toDeltaContext _ = ()
-  toDelta = absurd
-  toEvaluatedDelta = absurd1
-  contentFromEvaluatedDelta = absurd
 
 class ContainerCount c where
   containerCount# :: c v -> Int64
@@ -1585,7 +1586,6 @@ mergeObservableResult _fn _ (ObservableResultEx ex) = ObservableResultEx ex
 instance ObservableContainer c v => ObservableContainer (ObservableResult exceptions c) v where
   type ContainerConstraint canLoad exceptions (ObservableResult exceptions c) v a = ContainerConstraint canLoad exceptions c v a
   type Delta (ObservableResult exceptions c) = Delta c
-  type EvaluatedDelta (ObservableResult exceptions c) v = EvaluatedDelta c v
   type instance DeltaContext (ObservableResult exceptions c) = Maybe (DeltaContext c)
   type instance ValidatedDelta (ObservableResult exceptions c) = ValidatedDelta c
   applyDelta delta (ObservableResultOk content) = ObservableResultOk (applyDelta @c delta content)
@@ -1600,7 +1600,3 @@ instance ObservableContainer c v => ObservableContainer (ObservableResult except
   validatedDeltaToDelta delta = validatedDeltaToDelta @c delta
   toDeltaContext (ObservableResultOk initial) = Just (toDeltaContext initial)
   toDeltaContext (ObservableResultEx _) = Nothing
-  toDelta = toDelta @c
-  toEvaluatedDelta delta (ObservableResultOk content) = toEvaluatedDelta delta content
-  toEvaluatedDelta _delta (ObservableResultEx _ex) = Nothing
-  contentFromEvaluatedDelta delta = ObservableResultOk (contentFromEvaluatedDelta delta)

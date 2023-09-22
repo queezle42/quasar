@@ -33,8 +33,6 @@ instance Ord v => ObservableContainer Set v where
   type Delta Set = ObservableSetDelta
   applyDelta (ObservableSetDelta ops) old = applyObservableSetOperations ops old
   mergeDelta (ObservableSetDelta old) (ObservableSetDelta new) = ObservableSetDelta (Set.union new old)
-  toDelta = fst
-  contentFromEvaluatedDelta = snd
 
 instance ContainerCount Set where
   containerCount# x = fromIntegral (Set.size x)
