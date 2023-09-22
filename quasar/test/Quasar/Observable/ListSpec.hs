@@ -36,25 +36,25 @@ spec = parallel do
       applyDelta @Seq @Int (ListDelta [ListKeep 3]) [1, 2, 3, 42] `shouldBe` [1, 2, 3]
 
     it "empty insert" do
-      applyDelta @Seq @Int (ListDelta [ListInsert []]) [] `shouldBe` []
-      applyDelta @Seq @Int (ListDelta [ListInsert []]) [1, 2, 3] `shouldBe` []
+      applyDelta @Seq @Int (ListDelta [ListSplice []]) [] `shouldBe` []
+      applyDelta @Seq @Int (ListDelta [ListSplice []]) [1, 2, 3] `shouldBe` []
 
     it "can insert element to empty list" do
-      applyDelta @Seq @Int (ListDelta [ListInsert [42]]) [] `shouldBe` [42]
+      applyDelta @Seq @Int (ListDelta [ListSplice [42]]) [] `shouldBe` [42]
 
     it "can insert element at end of list" do
-      applyDelta @Seq @Int (ListDelta [ListKeep 3, ListInsert [42]]) [1, 2, 3] `shouldBe` [1, 2, 3, 42]
+      applyDelta @Seq @Int (ListDelta [ListKeep 3, ListSplice [42]]) [1, 2, 3] `shouldBe` [1, 2, 3, 42]
 
     it "can insert element after end of list" do
-      applyDelta @Seq @Int (ListDelta [ListKeep 21, ListInsert [42]]) [] `shouldBe` [42]
-      applyDelta @Seq @Int (ListDelta [ListKeep 21, ListInsert [42]]) [1, 2, 3] `shouldBe` [1, 2, 3, 42]
+      applyDelta @Seq @Int (ListDelta [ListKeep 21, ListSplice [42]]) [] `shouldBe` [42]
+      applyDelta @Seq @Int (ListDelta [ListKeep 21, ListSplice [42]]) [1, 2, 3] `shouldBe` [1, 2, 3, 42]
 
     it "can insert element at start of list" do
-      applyDelta @Seq @Int (ListDelta [ListInsert [42], ListKeep 3]) [1, 2, 3] `shouldBe` [42, 1, 2, 3]
+      applyDelta @Seq @Int (ListDelta [ListSplice [42], ListKeep 3]) [1, 2, 3] `shouldBe` [42, 1, 2, 3]
 
     it "can insert element in the middle of the list" do
-      applyDelta @Seq @Int (ListDelta [ListKeep 2, ListInsert [42], ListKeep 2]) [1, 2, 3, 4] `shouldBe` [1, 2, 42, 3, 4]
-      applyDelta @Seq @Int (ListDelta [ListKeep 2, ListInsert [41, 42], ListKeep 2]) [1, 2, 3, 4] `shouldBe` [1, 2, 41, 42, 3, 4]
+      applyDelta @Seq @Int (ListDelta [ListKeep 2, ListSplice [42], ListKeep 2]) [1, 2, 3, 4] `shouldBe` [1, 2, 42, 3, 4]
+      applyDelta @Seq @Int (ListDelta [ListKeep 2, ListSplice [41, 42], ListKeep 2]) [1, 2, 3, 4] `shouldBe` [1, 2, 41, 42, 3, 4]
 
     it "empty delete" do
       applyDelta @Seq @Int (ListDelta [ListDrop 0, ListKeep 100]) [1, 2, 3] `shouldBe` [1, 2, 3]
@@ -77,10 +77,10 @@ spec = parallel do
         ops :: [ListOperation Int]
         ops = [
             ListKeep 1,
-            ListInsert [42, 43],
+            ListSplice [42, 43],
             ListKeep 1,
             ListDrop 1,
-            ListInsert [44],
+            ListSplice [44],
             ListKeep 42, -- clipped to length of list
             ListDrop 2 -- no-op
           ]
@@ -107,16 +107,16 @@ spec = parallel do
       testUpdateDeltaContext [] (ListDelta [ListDrop 42]) Nothing
 
     it "insert to empty list" do
-      testUpdateDeltaContext [] (ListDelta [ListInsert [1]]) (Just (ValidatedListDelta [ListInsert [1]]))
+      testUpdateDeltaContext [] (ListDelta [ListSplice [1]]) (Just (ValidatedListDelta [ListSplice [1]]))
 
     it "insert" do
-      testUpdateDeltaContext [2, 3] (ListDelta [ListInsert [1]]) (Just (ValidatedListDelta [ListInsert [1]]))
-      testUpdateDeltaContext [1, 3] (ListDelta [ListKeep 1, ListInsert [2], ListKeep 1]) (Just (ValidatedListDelta [ListKeep 1, ListInsert [2], ListKeep 1]))
-      testUpdateDeltaContext [1, 2, 3, 7] (ListDelta [ListKeep 3, ListInsert [4, 5, 6], ListKeep 1]) (Just (ValidatedListDelta [ListKeep 3, ListInsert [4, 5, 6], ListKeep 1]))
+      testUpdateDeltaContext [2, 3] (ListDelta [ListSplice [1]]) (Just (ValidatedListDelta [ListSplice [1]]))
+      testUpdateDeltaContext [1, 3] (ListDelta [ListKeep 1, ListSplice [2], ListKeep 1]) (Just (ValidatedListDelta [ListKeep 1, ListSplice [2], ListKeep 1]))
+      testUpdateDeltaContext [1, 2, 3, 7] (ListDelta [ListKeep 3, ListSplice [4, 5, 6], ListKeep 1]) (Just (ValidatedListDelta [ListKeep 3, ListSplice [4, 5, 6], ListKeep 1]))
 
     it "insert after end of list" do
-      testUpdateDeltaContext [] (ListDelta [ListKeep 42, ListInsert [1]]) (Just (ValidatedListDelta [ListInsert [1]]))
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 42, ListInsert [4]]) (Just (ValidatedListDelta [ListKeep 3, ListInsert [4]]))
+      testUpdateDeltaContext [] (ListDelta [ListKeep 42, ListSplice [1]]) (Just (ValidatedListDelta [ListSplice [1]]))
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 42, ListSplice [4]]) (Just (ValidatedListDelta [ListKeep 3, ListSplice [4]]))
 
     it "trailing drop is removed" do
       testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1, ListKeep 2]) (Just (ValidatedListDelta [ListDrop 1, ListKeep 2]))
@@ -142,7 +142,7 @@ spec = parallel do
       testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 1, ListDrop 0, ListKeep 1]) (Just (ValidatedListDelta [ListKeep 1, ListDrop 1, ListKeep 1]))
 
     it "duplicate inserts are merged" do
-      testUpdateDeltaContext [] (ListDelta [ListInsert [1, 2], ListInsert [3]]) (Just (ValidatedListDelta [ListInsert [1, 2, 3]]))
+      testUpdateDeltaContext [] (ListDelta [ListSplice [1, 2], ListSplice [3]]) (Just (ValidatedListDelta [ListSplice [1, 2, 3]]))
 
   describe "mergeDelta" do
     it "keeps keep operation" do
@@ -160,23 +160,23 @@ spec = parallel do
       mergeDelta @Seq @Int (ValidatedListDelta [ListKeep 2, ListDrop 5, ListKeep 100]) (ListDelta [ListKeep 42]) `shouldBe` ValidatedListDelta [ListKeep 2, ListDrop 5, ListKeep 40]
 
     it "keeps insert operation" do
-      mergeDelta @Seq @Int (ValidatedListDelta [ListInsert [1, 2, 3], ListKeep 42]) (ListDelta [ListKeep 42]) `shouldBe` ValidatedListDelta [ListInsert [1, 2, 3], ListKeep 39]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListSplice [1, 2, 3], ListKeep 42]) (ListDelta [ListKeep 42]) `shouldBe` ValidatedListDelta [ListSplice [1, 2, 3], ListKeep 39]
 
     it "clips insert operation" do
-      mergeDelta @Seq @Int (ValidatedListDelta [ListInsert [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 3]) `shouldBe` ValidatedListDelta [ListInsert [1, 2, 3]]
-      mergeDelta @Seq @Int (ValidatedListDelta [ListKeep 10, ListInsert [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 13]) `shouldBe` ValidatedListDelta [ListKeep 10, ListInsert [1, 2, 3]]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListSplice [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 3]) `shouldBe` ValidatedListDelta [ListSplice [1, 2, 3]]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListKeep 10, ListSplice [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 13]) `shouldBe` ValidatedListDelta [ListKeep 10, ListSplice [1, 2, 3]]
 
     it "clips incoming keep but applies later insert operation" do
-      mergeDelta @Seq @Int (ValidatedListDelta [ListKeep 42]) (ListDelta [ListKeep 100, ListInsert [1, 2, 3]]) `shouldBe` ValidatedListDelta [ListKeep 42, ListInsert [1, 2, 3]]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListKeep 42]) (ListDelta [ListKeep 100, ListSplice [1, 2, 3]]) `shouldBe` ValidatedListDelta [ListKeep 42, ListSplice [1, 2, 3]]
 
     it "clips deletes at end of delta in complex scenario" do
       mergeDelta @Seq @Int (ValidatedListDelta [ListDrop 13, ListKeep 1]) (ListDelta [ListKeep 1, ListDrop 42]) `shouldBe` ValidatedListDelta [ListDrop 13, ListKeep 1]
 
     it "normalization" do
-      mergeDelta @Seq @Int (ValidatedListDelta [ListInsert [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 3, ListInsert [42]]) `shouldBe` ValidatedListDelta [ListInsert [1, 2, 3, 42]]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListSplice [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 3, ListSplice [42]]) `shouldBe` ValidatedListDelta [ListSplice [1, 2, 3, 42]]
 
     it "normalization 2" do
-      mergeDelta @Seq @Int (ValidatedListDelta [ListInsert [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 100, ListInsert [42]]) `shouldBe` ValidatedListDelta [ListInsert [1, 2, 3, 4, 5, 42]]
+      mergeDelta @Seq @Int (ValidatedListDelta [ListSplice [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 100, ListSplice [42]]) `shouldBe` ValidatedListDelta [ListSplice [1, 2, 3, 4, 5, 42]]
 
 testUpdateDeltaContext :: HasCallStack => Seq Int -> ListDelta Int -> Maybe (ValidatedListDelta Int) -> IO ()
 testUpdateDeltaContext list delta expectedDelta = withFrozenCallStack do

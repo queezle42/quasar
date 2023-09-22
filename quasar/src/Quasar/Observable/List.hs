@@ -87,33 +87,33 @@ instance Semigroup Length where
 
 -- Operations are relative to the end of the previous operation.
 data ListOperation v
-  = ListInsert (Seq v)
+  = ListSplice (Seq v)
   | ListDrop Length
   | ListKeep Length
   deriving (Eq, Show, Generic)
 
 instance Functor ListOperation where
-  fmap fn (ListInsert xs) = ListInsert (fn <$> xs)
+  fmap fn (ListSplice xs) = ListSplice (fn <$> xs)
   fmap _fn (ListDrop l) = ListDrop l
   fmap _fn (ListKeep l) = ListKeep l
 
 instance Foldable ListOperation where
-  foldMap fn (ListInsert xs) = foldMap fn xs
+  foldMap fn (ListSplice xs) = foldMap fn xs
   foldMap _fn (ListDrop _) = mempty
   foldMap _fn (ListKeep _) = mempty
-  foldr fn initial (ListInsert xs) = foldr fn initial xs
+  foldr fn initial (ListSplice xs) = foldr fn initial xs
   foldr _fn initial (ListDrop _) = initial
   foldr _fn initial (ListKeep _) = initial
 
 instance Traversable ListOperation where
-  traverse fn (ListInsert xs) = ListInsert <$> traverse fn xs
+  traverse fn (ListSplice xs) = ListSplice <$> traverse fn xs
   traverse _fn (ListDrop l) = pure (ListDrop l)
   traverse _fn (ListKeep l) = pure (ListKeep l)
 
 instance Binary v => Binary (ListOperation v)
 
 instance Measured Length (ListOperation v) where
-  measure (ListInsert ins) = fromIntegral (Seq.length ins)
+  measure (ListSplice ins) = fromIntegral (Seq.length ins)
   measure (ListDrop _) = 0
   measure (ListKeep n) = n
 
@@ -122,7 +122,7 @@ applyOperations
   -> [ListOperation v]
   -> Seq v
 applyOperations _  [] = []
-applyOperations x (ListInsert ins : ops) = ins <> applyOperations x ops
+applyOperations x (ListSplice ins : ops) = ins <> applyOperations x ops
 applyOperations x (ListDrop count : ops) =
   applyOperations (Seq.drop (fromIntegral count) x) ops
 applyOperations x (ListKeep count : ops) =
@@ -137,7 +137,7 @@ instance TraversableObservableContainer Seq where
         -> [ListOperation v]
         -> Seq a
       go _  [] = []
-      go x (ListInsert _ins : ops) = go x ops
+      go x (ListSplice _ins : ops) = go x ops
       go x (ListDrop count : ops) =
         let (remove, other) = Seq.splitAt (fromIntegral count) x
         in remove <> go other ops
@@ -147,7 +147,7 @@ instance TraversableObservableContainer Seq where
 updateListDeltaContext :: Length -> [ListOperation v] -> FingerTree Length (ListOperation v)
 updateListDeltaContext _l [] = FT.empty
 updateListDeltaContext 0 ops = mergeOperationsEmpty ops
-updateListDeltaContext l (ListInsert ins : ops) = prependInsert ins (updateListDeltaContext l ops)
+updateListDeltaContext l (ListSplice ins : ops) = prependInsert ins (updateListDeltaContext l ops)
 updateListDeltaContext l (ListKeep n : ops) =
   if l > n
     then prependKeep n (updateListDeltaContext (l - n) ops)
@@ -172,8 +172,8 @@ prependInsert :: Seq v -> FingerTree Length (ListOperation v) -> FingerTree Leng
 prependInsert Empty ft = ft
 prependInsert new ft =
   case FT.viewl ft of
-    (ListInsert ins :< others) -> ListInsert (new <> ins) <| others
-    _ -> ListInsert new <| ft
+    (ListSplice ins :< others) -> ListSplice (new <> ins) <| others
+    _ -> ListSplice new <| ft
 
 prependKeep :: Length -> FingerTree Length (ListOperation v) -> FingerTree Length (ListOperation v)
 prependKeep 0 ft = ft
@@ -194,7 +194,7 @@ joinOps x y =
   case (FT.viewr x, FT.viewl y) of
     (_, EmptyL) -> x
     (EmptyR, _) -> y
-    (xs :> ListInsert xi, ListInsert yi :< ys) -> xs <> (ListInsert (xi <> yi) <| ys)
+    (xs :> ListSplice xi, ListSplice yi :< ys) -> xs <> (ListSplice (xi <> yi) <| ys)
     (xs :> ListKeep xi, ListKeep yi :< ys) -> xs <> (ListKeep (xi + yi) <| ys)
     (xs :> ListDrop xi, ListDrop yi :< ys) -> xs <> (ListDrop (xi + yi) <| ys)
     _ -> x <> y
@@ -205,7 +205,7 @@ mergeOperations ::
   [ListOperation v] ->
   FingerTree Length (ListOperation v)
 mergeOperations _old [] = FT.empty
-mergeOperations old (ListInsert ins : ops) =
+mergeOperations old (ListSplice ins : ops) =
   prependInsert ins (mergeOperations old ops)
 mergeOperations old (ListDrop n : ops)
   | n > FT.measure old =
@@ -226,11 +226,11 @@ mergeOperationsEmpty ::
 mergeOperationsEmpty x =
   case go x of
     Empty -> FT.empty
-    finalIns -> FT.singleton (ListInsert finalIns)
+    finalIns -> FT.singleton (ListSplice finalIns)
   where
     go :: [ListOperation v] -> Seq v
     go [] = Empty
-    go (ListInsert ins : ops) = ins <> go ops
+    go (ListSplice ins : ops) = ins <> go ops
     go (_ : ops) = go ops
 
 
@@ -242,11 +242,11 @@ dropN 0 ops = ops
 dropN n ops =
   case FT.viewl ops of
     EmptyL -> FT.empty
-    ListInsert ins :< other ->
+    ListSplice ins :< other ->
       let insLength = fromIntegral (length ins)
       in if n >= insLength
         then dropN (n - insLength) other
-        else ListInsert (Seq.drop (fromIntegral n) ins) <| other
+        else ListSplice (Seq.drop (fromIntegral n) ins) <| other
     x@(ListDrop _) :< other -> x <| dropN n other
     ListKeep k :< other ->
       if n >= k
@@ -272,10 +272,10 @@ splitOpAt ::
   (FingerTree Length (ListOperation v), FingerTree Length (ListOperation v))
 splitOpAt _ (ListDrop d) = (FT.singleton (ListDrop d), FT.empty)
 splitOpAt 0 op = (FT.empty, FT.singleton op)
-splitOpAt n (ListInsert ins) =
+splitOpAt n (ListSplice ins) =
   case Seq.splitAt (fromIntegral n) ins of
-    (pre, Empty) -> (FT.singleton (ListInsert pre), FT.empty)
-    (pre, post) -> (FT.singleton (ListInsert pre), FT.singleton (ListInsert post))
+    (pre, Empty) -> (FT.singleton (ListSplice pre), FT.empty)
+    (pre, post) -> (FT.singleton (ListSplice pre), FT.singleton (ListSplice post))
 splitOpAt n (ListKeep k)
   | n >= k = (FT.singleton (ListKeep k), FT.empty)
   | otherwise = (FT.singleton (ListKeep n), FT.singleton (ListKeep (k - n)))
@@ -392,16 +392,14 @@ newObservableListVarIO x = liftIO $ ObservableListVar <$> newSubjectIO x
 
 insert :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Length -> v -> m ()
 insert (ObservableListVar var) pos value =
-  updateSimpleSubject var selectChange
-    where
-      selectChange list =
-        let len = fromIntegral (Seq.length list)
-        in Just if len > 0
-          then ObservableUpdateDelta $ ListDelta $
-            if pos < len
-              then [ListKeep pos, ListInsert [value], ListKeep (len - pos)]
-              else [ListKeep len, ListInsert [value]]
-          else ObservableUpdateReplace [value]
+  updateSimpleSubject var \list ->
+    let len = fromIntegral (Seq.length list)
+    in Just if len > 0
+      then ObservableUpdateDelta $ ListDelta $
+        if pos < len
+          then [ListKeep pos, ListSplice [value], ListKeep (len - pos)]
+          else [ListKeep len, ListSplice [value]]
+      else ObservableUpdateReplace [value]
 
 append :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> v -> m ()
 append (ObservableListVar var) value =
@@ -410,7 +408,7 @@ append (ObservableListVar var) value =
       selectChange list =
         let len = fromIntegral (Seq.length list)
         in Just if len > 0
-          then ObservableUpdateDelta (ListDelta [ListKeep len, ListInsert [value]])
+          then ObservableUpdateDelta (ListDelta [ListKeep len, ListSplice [value]])
           else ObservableUpdateReplace [value]
 
 delete :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Length -> m ()
