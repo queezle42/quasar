@@ -173,14 +173,14 @@ toObservableMap x = ObservableMap (toObservableT x)
 
 readObservableMap ::
   forall exceptions k v m a.
-  (Ord k, MonadSTMc NoRetry exceptions m) =>
+  (MonadSTMc NoRetry exceptions m) =>
   ObservableMap NoLoad exceptions k v ->
   m (Map k v)
 readObservableMap (ObservableMap fx) = readObservableT fx
 
 newtype ObservableMap canLoad exceptions k v = ObservableMap (ObservableT canLoad exceptions (Map k) v)
 
-instance Ord k => ToObservableT canLoad exceptions (Map k) v (ObservableMap canLoad exceptions k v) where
+instance ToObservableT canLoad exceptions (Map k) v (ObservableMap canLoad exceptions k v) where
   toObservableT (ObservableMap x) = x
 
 instance IsObservableCore canLoad exceptions (Map k) v (ObservableMap canLoad exceptions k v) where
