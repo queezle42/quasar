@@ -261,8 +261,6 @@ readObservableT fx = liftSTMc @NoRetry @exceptions do
 type EvaluatedDelta :: (Type -> Type) -> Type -> Type
 type EvaluatedDelta c v = (Delta c v, c v)
 
-toDelta :: EvaluatedDelta c v -> Delta c v
-toDelta (delta, _) = delta
 
 contentFromEvaluatedDelta :: EvaluatedDelta c v -> c v
 contentFromEvaluatedDelta (_, content) = content
@@ -482,7 +480,7 @@ instance HasField "content" (EvaluatedUpdate c v) (c v) where
 
 instance HasField "notEvaluated" (EvaluatedUpdate c v) (ObservableUpdate c v) where
   getField (EvaluatedUpdateReplace content) = ObservableUpdateReplace content
-  getField (EvaluatedUpdateDelta delta) = ObservableUpdateDelta (toDelta @c delta)
+  getField (EvaluatedUpdateDelta (delta, _)) = ObservableUpdateDelta delta
 
 
 type ObservableChange :: LoadKind -> (Type -> Type) -> Type -> Type
