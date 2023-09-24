@@ -90,11 +90,11 @@ pack :: ObservableChange Load (ObservableResult '[SomeException] c) () -> Packed
 pack ObservableChangeLoadingClear = PackedChangeLoadingClear
 pack ObservableChangeLoadingUnchanged = PackedChangeLoadingUnchanged
 pack ObservableChangeLiveUnchanged = PackedChangeLiveUnchanged
-pack (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx ex))) =
+pack (ObservableChangeLiveReplace (ObservableResultEx ex)) =
   PackedChangeLiveUpdateThrow (packException ex)
-pack (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk content))) =
+pack (ObservableChangeLiveReplace (ObservableResultOk content)) =
   PackedChangeLiveUpdateReplace content
-pack (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) =
+pack (ObservableChangeLiveDelta delta) =
   PackedChangeLiveUpdateDelta delta
 
 unpack :: PackedChange c -> ObservableChange Load (ObservableResult '[SomeException] c) ()
@@ -102,11 +102,11 @@ unpack PackedChangeLoadingClear = ObservableChangeLoadingClear
 unpack PackedChangeLoadingUnchanged = ObservableChangeLoadingUnchanged
 unpack PackedChangeLiveUnchanged = ObservableChangeLiveUnchanged
 unpack (PackedChangeLiveUpdateThrow packedException) =
-  ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultEx (toEx (unpackException packedException))))
+  ObservableChangeLiveReplace (ObservableResultEx (toEx (unpackException packedException)))
 unpack (PackedChangeLiveUpdateReplace packedContent) =
-  ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk packedContent))
+  ObservableChangeLiveReplace (ObservableResultOk packedContent)
 unpack (PackedChangeLiveUpdateDelta packedDelta) =
-  ObservableChangeLiveUpdate (ObservableUpdateDelta packedDelta)
+  ObservableChangeLiveDelta packedDelta
 
 instance (Binary (c ()), Binary (Delta c ())) => Binary (PackedChange c)
 

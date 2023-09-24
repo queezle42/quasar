@@ -56,11 +56,11 @@ fixInvalidCacheState ::
 fixInvalidCacheState _cached EvaluatedObservableChangeLoadingClear =
   EvaluatedObservableChangeLoadingClear
 fixInvalidCacheState cached EvaluatedObservableChangeLiveUnchanged =
-  EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace cached)
-fixInvalidCacheState _cached replace@(EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace _)) =
+  EvaluatedObservableChangeLiveReplace cached
+fixInvalidCacheState _cached replace@(EvaluatedObservableChangeLiveReplace _) =
   replace
-fixInvalidCacheState _cached (EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateDelta delta)) =
-  EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace (contentFromEvaluatedDelta delta))
+fixInvalidCacheState _cached (EvaluatedObservableChangeLiveDelta delta) =
+  EvaluatedObservableChangeLiveReplace (contentFromEvaluatedDelta delta)
 fixInvalidCacheState _cached EvaluatedObservableChangeLoadingUnchanged =
   -- Filtered by `applyObservableChange` in `changeSubject`
   unreachableCodePath
@@ -103,16 +103,17 @@ changeSubject (Subject var registry) change = liftSTMc do
     writeTVar var newState
     callCallbacks registry evaluatedChange
 
-updateSimpleSubject
-  :: (MonadSTMc NoRetry '[] m, ObservableContainer c v)
-  => Subject NoLoad '[] c v
-  -> (c v -> Maybe (ObservableUpdate c v))
-  -> m ()
+updateSimpleSubject ::
+  forall c v m.
+  (MonadSTMc NoRetry '[] m, ObservableContainer c v) =>
+  Subject NoLoad '[] c v ->
+  (c v -> Maybe (ObservableUpdate c v)) ->
+  m ()
 updateSimpleSubject (Subject var registry) mkUpdate = liftSTMc do
   state <- readTVar var
   let (ObserverStateLive (ObservableResultTrivial content)) = state
-  forM_ (mkUpdate content) \update -> do
-    let change = mapObservableChange ObservableResultOk id (ObservableChangeLiveUpdate update)
+  forM_ (observableUpdateToChange (ObserverContextLive (toDeltaContext @c content)) (mkUpdate content)) \containerChange -> do
+    let change = mapObservableChange ObservableResultOk id containerChange
     forM_ (applyObservableChange change state) \(evaluatedChange, newState) -> do
       writeTVar var newState
       callCallbacks registry evaluatedChange
@@ -124,7 +125,7 @@ updateSimpleSubject (Subject var registry) mkUpdate = liftSTMc do
 replaceSubject :: (MonadSTMc NoRetry '[] m) => Subject canLoad exceptions c v -> c v -> m ()
 replaceSubject (Subject var registry) value = liftSTMc $ do
   writeTVar var (ObserverStateLiveOk value)
-  callCallbacks registry (EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace (ObservableResultOk value)))
+  callCallbacks registry (EvaluatedObservableChangeLiveReplace (ObservableResultOk value))
 
 -- | Set the subjects state to @Loading@.
 clearSubject :: (MonadSTMc NoRetry '[] m) => Subject Load exceptions c v -> m ()
@@ -140,7 +141,7 @@ failSubject :: (MonadSTMc NoRetry '[] m, Exception e, e :< exceptions) => Subjec
 failSubject (Subject var registry) exception = liftSTMc $ do
   let ex = toEx exception
   writeTVar var (ObserverStateLiveEx ex)
-  callCallbacks registry (EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace (ObservableResultEx ex)))
+  callCallbacks registry (EvaluatedObservableChangeLiveReplace (ObservableResultEx ex))
 
 
 readSubject

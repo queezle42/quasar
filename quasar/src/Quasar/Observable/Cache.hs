@@ -78,18 +78,17 @@ instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (Cac
 -- Precondition: Observer is in `ObserverStateLoadingCleared` state, but caller
 -- assumes the observer is in `ObserverStateLoadingCached` state.
 fixInvalidCacheState ::
-  (ObservableContainer c v) =>
   ObservableResult exceptions c v ->
   EvaluatedObservableChange Load (ObservableResult exceptions c) v ->
   EvaluatedObservableChange Load (ObservableResult exceptions c) v
 fixInvalidCacheState _cached EvaluatedObservableChangeLoadingClear =
   EvaluatedObservableChangeLoadingClear
 fixInvalidCacheState cached EvaluatedObservableChangeLiveUnchanged =
-  EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace cached)
-fixInvalidCacheState _cached replace@(EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace _)) =
+  EvaluatedObservableChangeLiveReplace cached
+fixInvalidCacheState _cached replace@(EvaluatedObservableChangeLiveReplace _) =
   replace
-fixInvalidCacheState _cached (EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateDelta delta)) =
-  EvaluatedObservableChangeLiveUpdate (EvaluatedUpdateReplace (contentFromEvaluatedDelta delta))
+fixInvalidCacheState _cached (EvaluatedObservableChangeLiveDelta delta) =
+  EvaluatedObservableChangeLiveReplace (contentFromEvaluatedDelta delta)
 fixInvalidCacheState _cached EvaluatedObservableChangeLoadingUnchanged =
   -- Filtered by `applyEvaluatedObservableChange` in `updateCache`
   impossibleCodePath

@@ -374,10 +374,10 @@ instance IsObservableCore l e (Map k) v (FilteredObservableMap l e k v) where
 
   attachObserver# (FilteredObservableMap fn fx) callback = do
     (disposer, initial) <- attachObserver# fx \case
-      ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk new)) ->
-        callback (ObservableChangeLiveUpdate (ObservableUpdateReplace (ObservableResultOk (Map.filterWithKey fn new))))
-      ObservableChangeLiveUpdate (ObservableUpdateDelta delta) ->
-        callback (ObservableChangeLiveUpdate (ObservableUpdateDelta (filterDelta delta)))
+      ObservableChangeLiveReplace (ObservableResultOk new) ->
+        callback (ObservableChangeLiveReplace (ObservableResultOk (Map.filterWithKey fn new)))
+      ObservableChangeLiveDelta delta ->
+        callback (ObservableChangeLiveDelta (filterDelta delta))
       -- Exception, loading, cleared or unchanged
       other -> callback other
 
@@ -418,17 +418,17 @@ newObservableMapVarIO x = liftIO $ ObservableMapVar <$> newSubjectIO x
 
 insert :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> k -> v -> m ()
 insert (ObservableMapVar var) key value =
-  changeSubject var (ObservableChangeLiveUpdate (ObservableUpdateDelta (insertDelta key value)))
+  changeSubject var (ObservableChangeLiveDelta (insertDelta key value))
 
 delete :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> k -> m ()
 delete (ObservableMapVar var) key =
-  changeSubject var (ObservableChangeLiveUpdate (ObservableUpdateDelta (deleteDelta key)))
+  changeSubject var (ObservableChangeLiveDelta (deleteDelta key))
 
 lookupDelete :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> k -> m (Maybe v)
 lookupDelete (ObservableMapVar var) key = do
   r <- Map.lookup key <$> readSubject var
   when (isJust r) do
-    changeSubject var (ObservableChangeLiveUpdate (ObservableUpdateDelta (deleteDelta key)))
+    changeSubject var (ObservableChangeLiveDelta (deleteDelta key))
   pure r
 
 replace :: (MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> Map k v -> m ()

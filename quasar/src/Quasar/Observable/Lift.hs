@@ -58,13 +58,15 @@ instance {-# INCOHERENT #-} RelaxLoad l Load where
   relaxObservableChangeLoad ObservableChangeLoadingClear = ObservableChangeLoadingClear
   relaxObservableChangeLoad ObservableChangeLoadingUnchanged = ObservableChangeLoadingUnchanged
   relaxObservableChangeLoad ObservableChangeLiveUnchanged = ObservableChangeLiveUnchanged
-  relaxObservableChangeLoad (ObservableChangeLiveUpdate update) = ObservableChangeLiveUpdate update
+  relaxObservableChangeLoad (ObservableChangeLiveReplace new) = ObservableChangeLiveReplace new
+  relaxObservableChangeLoad (ObservableChangeLiveDelta delta) = ObservableChangeLiveDelta delta
 
   relaxObservableStateLoad ObservableStateLoading = ObservableStateLoading
   relaxObservableStateLoad (ObservableStateLive result) = ObservableStateLive result
 
 instance {-# INCOHERENT #-} RelaxLoad NoLoad l where
-  relaxObservableChangeLoad (ObservableChangeLiveUpdate update) = ObservableChangeLiveUpdate update
+  relaxObservableChangeLoad (ObservableChangeLiveReplace new) = ObservableChangeLiveReplace new
+  relaxObservableChangeLoad (ObservableChangeLiveDelta delta) = ObservableChangeLiveDelta delta
 
   relaxObservableStateLoad (ObservableStateLive result) = ObservableStateLive result
 

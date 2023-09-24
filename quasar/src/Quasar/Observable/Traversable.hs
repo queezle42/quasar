@@ -22,6 +22,7 @@ import Quasar.Observable.Core
 import Quasar.Prelude hiding (filter, lookup)
 import Quasar.Resources.Disposer
 import Quasar.Utils.Fix
+import Data.Traversable (for)
 
 
 -- * Selecting removals from a delta
@@ -49,10 +50,10 @@ selectRemovedByChange :: TraversableObservableContainer c => ObservableChange l 
 selectRemovedByChange ObservableChangeLoadingClear state = foldr (:) [] state
 selectRemovedByChange ObservableChangeLoadingUnchanged _ = []
 selectRemovedByChange ObservableChangeLiveUnchanged _ = []
-selectRemovedByChange (ObservableChangeLiveUpdate (ObservableUpdateReplace _new)) state = foldr (:) [] state
-selectRemovedByChange (ObservableChangeLiveUpdate (ObservableUpdateDelta _delta)) ObserverStateLoadingCleared = []
-selectRemovedByChange (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) (ObserverStateLoadingCached state) = selectRemoved delta state
-selectRemovedByChange (ObservableChangeLiveUpdate (ObservableUpdateDelta delta)) (ObserverStateLive state) = selectRemoved delta state
+selectRemovedByChange (ObservableChangeLiveReplace _new) state = foldr (:) [] state
+selectRemovedByChange (ObservableChangeLiveDelta _delta) ObserverStateLoadingCleared = []
+selectRemovedByChange (ObservableChangeLiveDelta delta) (ObserverStateLoadingCached state) = selectRemoved delta state
+selectRemovedByChange (ObservableChangeLiveDelta delta) (ObserverStateLive state) = selectRemoved delta state
 
 
 traverseUpdate :: forall c v a m. (Applicative m, TraversableObservableContainer c) => (v -> m a) -> ObservableUpdate c v -> Maybe (DeltaContext c) -> m (Maybe (ObservableUpdate c a))
@@ -64,36 +65,12 @@ traverseUpdate fn (ObservableUpdateDelta delta) (Just context) = do
 traverseUpdate _fn (ObservableUpdateDelta _delta) Nothing = pure Nothing
 
 traverseChange :: forall canLoad c v a m b. (Applicative m, TraversableObservableContainer c) => (v -> m a) -> ObservableChange canLoad c v -> ObserverState canLoad c b -> m (Maybe (ObservableChange canLoad c a))
-traverseChange _fn ObservableChangeLoadingClear _state = pure (Just ObservableChangeLoadingClear)
-traverseChange _fn ObservableChangeLoadingUnchanged _state = pure (Just ObservableChangeLoadingUnchanged)
-traverseChange _fn ObservableChangeLiveUnchanged _state = pure (Just ObservableChangeLoadingUnchanged)
-traverseChange fn (ObservableChangeLiveUpdate (ObservableUpdateReplace new)) ObserverStateLoadingCleared =
-  Just . ObservableChangeLiveUpdate . ObservableUpdateReplace <$> traverse fn new
-traverseChange fn (ObservableChangeLiveUpdate update) state = do
-  traverseUpdate fn update (toDeltaContext <$> state.maybe) <&> \case
-    Nothing -> case state of
-      -- An invalid delta still signals a change from "cached loading" to "live"
-      ObserverStateLoadingCached _ -> Just ObservableChangeLiveUnchanged
-      _ -> Nothing
-    (Just traversedUpdate) -> Just (ObservableChangeLiveUpdate traversedUpdate)
+traverseChange fn change state = traverseChangeWithContext fn change state.context
 
 traverseChangeWithContext :: forall canLoad c v a m b. (Applicative m, TraversableObservableContainer c) => (v -> m a) -> ObservableChange canLoad c v -> ObserverContext canLoad c -> m (Maybe (ObservableChange canLoad c a))
-traverseChangeWithContext _fn ObservableChangeLoadingClear _ctx = pure (Just ObservableChangeLoadingClear)
-traverseChangeWithContext _fn ObservableChangeLoadingUnchanged _ctx = pure (Just ObservableChangeLoadingUnchanged)
-traverseChangeWithContext _fn ObservableChangeLiveUnchanged _ctx = pure (Just ObservableChangeLoadingUnchanged)
-traverseChangeWithContext fn (ObservableChangeLiveUpdate (ObservableUpdateReplace new)) ObserverContextLoadingCleared =
-  Just . ObservableChangeLiveUpdate . ObservableUpdateReplace <$> traverse fn new
-traverseChangeWithContext fn (ObservableChangeLiveUpdate update) ctx = do
-  case ctx of
-    ObserverContextLoadingCleared ->
-      ObservableChangeLiveUpdate <<$>> traverseUpdate fn update Nothing
-    ObserverContextLoadingCached dctx ->
-      traverseUpdate fn update (Just dctx) <&> \case
-        Just x -> Just (ObservableChangeLiveUpdate x)
-        -- An invalid delta still signals a change from "cached loading" to "live"
-        Nothing -> Just ObservableChangeLiveUnchanged
-    ObserverContextLive dctx ->
-      ObservableChangeLiveUpdate <<$>> traverseUpdate fn update (Just dctx)
+traverseChangeWithContext fn change ctx = do
+  for (validateChange ctx change) \valid ->
+    (.unvalidated) <$> traverse fn valid
 
 
 -- * Traverse active observable items in STM
