@@ -9,7 +9,7 @@ module Quasar.Observable.List (
   ListDelta(..),
   ValidatedListDelta(..),
   validatedListDeltaLength,
-  ListOperation(..),
+  ListDeltaOperation(..),
   Length(..),
 
   -- * Reexports
@@ -48,14 +48,14 @@ import Quasar.Resources (TSimpleDisposer)
 
 
 newtype ListDelta v
-  = ListDelta [ListOperation v]
+  = ListDelta [ListDeltaOperation v]
   deriving (Eq, Show, Generic, Binary)
 
 instance Functor ListDelta where
   fmap fn (ListDelta ops) = ListDelta (fn <<$>> ops)
 
 newtype ValidatedListDelta v
-  = ValidatedListDelta (FingerTree Length (ListOperation v))
+  = ValidatedListDelta (FingerTree Length (ListDeltaOperation v))
   deriving (Eq, Show, Generic)
 
 instance Functor ValidatedListDelta where
@@ -86,18 +86,18 @@ instance Semigroup Length where
   Length x <> Length y = Length (x + y)
 
 -- Operations are relative to the end of the previous operation.
-data ListOperation v
+data ListDeltaOperation v
   = ListSplice (Seq v)
   | ListDrop Length
   | ListKeep Length
   deriving (Eq, Show, Generic)
 
-instance Functor ListOperation where
+instance Functor ListDeltaOperation where
   fmap fn (ListSplice xs) = ListSplice (fn <$> xs)
   fmap _fn (ListDrop l) = ListDrop l
   fmap _fn (ListKeep l) = ListKeep l
 
-instance Foldable ListOperation where
+instance Foldable ListDeltaOperation where
   foldMap fn (ListSplice xs) = foldMap fn xs
   foldMap _fn (ListDrop _) = mempty
   foldMap _fn (ListKeep _) = mempty
@@ -105,21 +105,21 @@ instance Foldable ListOperation where
   foldr _fn initial (ListDrop _) = initial
   foldr _fn initial (ListKeep _) = initial
 
-instance Traversable ListOperation where
+instance Traversable ListDeltaOperation where
   traverse fn (ListSplice xs) = ListSplice <$> traverse fn xs
   traverse _fn (ListDrop l) = pure (ListDrop l)
   traverse _fn (ListKeep l) = pure (ListKeep l)
 
-instance Binary v => Binary (ListOperation v)
+instance Binary v => Binary (ListDeltaOperation v)
 
-instance Measured Length (ListOperation v) where
+instance Measured Length (ListDeltaOperation v) where
   measure (ListSplice ins) = fromIntegral (Seq.length ins)
   measure (ListDrop _) = 0
   measure (ListKeep n) = n
 
 applyOperations
   :: Seq v
-  -> [ListOperation v]
+  -> [ListDeltaOperation v]
   -> Seq v
 applyOperations _  [] = []
 applyOperations x (ListSplice ins : ops) = ins <> applyOperations x ops
@@ -134,7 +134,7 @@ instance TraversableObservableContainer Seq where
     where
       go
         :: Seq a
-        -> [ListOperation v]
+        -> [ListDeltaOperation v]
         -> Seq a
       go _  [] = []
       go x (ListSplice _ins : ops) = go x ops
@@ -144,7 +144,7 @@ instance TraversableObservableContainer Seq where
       go x (ListKeep count : ops) =
         go (Seq.drop (fromIntegral count) x) ops
 
-updateListDeltaContext :: Length -> [ListOperation v] -> FingerTree Length (ListOperation v)
+updateListDeltaContext :: Length -> [ListDeltaOperation v] -> FingerTree Length (ListDeltaOperation v)
 updateListDeltaContext _l [] = FT.empty
 updateListDeltaContext 0 ops = mergeOperationsEmpty ops
 updateListDeltaContext l (ListSplice ins : ops) = prependInsert ins (updateListDeltaContext l ops)
@@ -157,7 +157,7 @@ updateListDeltaContext l (ListDrop n : ops) =
     then prependDrop n (updateListDeltaContext (l - n) ops)
     else prependDrop l (updateListDeltaContext 0 ops)
 
-toValidatedListDelta :: FingerTree Length (ListOperation v) -> Maybe (ValidatedListDelta v)
+toValidatedListDelta :: FingerTree Length (ListDeltaOperation v) -> Maybe (ValidatedListDelta v)
 toValidatedListDelta ft =
   let normalized = case FT.viewr ft of
         EmptyR -> FT.empty
@@ -168,28 +168,28 @@ toValidatedListDelta ft =
     else Just (ValidatedListDelta normalized)
 
 
-prependInsert :: Seq v -> FingerTree Length (ListOperation v) -> FingerTree Length (ListOperation v)
+prependInsert :: Seq v -> FingerTree Length (ListDeltaOperation v) -> FingerTree Length (ListDeltaOperation v)
 prependInsert Empty ft = ft
 prependInsert new ft =
   case FT.viewl ft of
     (ListSplice ins :< others) -> ListSplice (new <> ins) <| others
     _ -> ListSplice new <| ft
 
-prependKeep :: Length -> FingerTree Length (ListOperation v) -> FingerTree Length (ListOperation v)
+prependKeep :: Length -> FingerTree Length (ListDeltaOperation v) -> FingerTree Length (ListDeltaOperation v)
 prependKeep 0 ft = ft
 prependKeep l ft =
   case FT.viewl ft of
     (ListKeep d :< others) -> ListKeep (l + d) <| others
     _ -> ListKeep l <| ft
 
-prependDrop :: Length -> FingerTree Length (ListOperation v) -> FingerTree Length (ListOperation v)
+prependDrop :: Length -> FingerTree Length (ListDeltaOperation v) -> FingerTree Length (ListDeltaOperation v)
 prependDrop 0 ft = ft
 prependDrop l ft =
   case FT.viewl ft of
     (ListDrop d :< others) -> ListDrop (l + d) <| others
     _ -> ListDrop l <| ft
 
-joinOps :: FingerTree Length (ListOperation v) -> FingerTree Length (ListOperation v) -> FingerTree Length (ListOperation v)
+joinOps :: FingerTree Length (ListDeltaOperation v) -> FingerTree Length (ListDeltaOperation v) -> FingerTree Length (ListDeltaOperation v)
 joinOps x y =
   case (FT.viewr x, FT.viewl y) of
     (_, EmptyL) -> x
@@ -200,35 +200,35 @@ joinOps x y =
     _ -> x <> y
 
 
-mergeOperations ::
-  FingerTree Length (ListOperation v) ->
-  [ListOperation v] ->
-  FingerTree Length (ListOperation v)
-mergeOperations _old [] = FT.empty
-mergeOperations old (ListSplice ins : ops) =
-  prependInsert ins (mergeOperations old ops)
-mergeOperations old (ListDrop n : ops)
+mergeDeltaOperations ::
+  FingerTree Length (ListDeltaOperation v) ->
+  [ListDeltaOperation v] ->
+  FingerTree Length (ListDeltaOperation v)
+mergeDeltaOperations _old [] = FT.empty
+mergeDeltaOperations old (ListSplice ins : ops) =
+  prependInsert ins (mergeDeltaOperations old ops)
+mergeDeltaOperations old (ListDrop n : ops)
   | n > FT.measure old =
     -- Dropping (at least) the remainder of the input list.
     mergeOperationsEmpty ops
-  | otherwise = mergeOperations (dropN n old) ops
-mergeOperations old (ListKeep n : ops)
+  | otherwise = mergeDeltaOperations (dropN n old) ops
+mergeDeltaOperations old (ListKeep n : ops)
   | n > FT.measure old =
     -- Keeping the remainder of the input list.
     old `joinOps` mergeOperationsEmpty ops
   | otherwise =
     let (pre, post) = splitOpsAt n old
-    in pre `joinOps`  mergeOperations post ops
+    in pre `joinOps`  mergeDeltaOperations post ops
 
 mergeOperationsEmpty ::
-  [ListOperation v] ->
-  FingerTree Length (ListOperation v)
+  [ListDeltaOperation v] ->
+  FingerTree Length (ListDeltaOperation v)
 mergeOperationsEmpty x =
   case go x of
     Empty -> FT.empty
     finalIns -> FT.singleton (ListSplice finalIns)
   where
-    go :: [ListOperation v] -> Seq v
+    go :: [ListDeltaOperation v] -> Seq v
     go [] = Empty
     go (ListSplice ins : ops) = ins <> go ops
     go (_ : ops) = go ops
@@ -236,8 +236,8 @@ mergeOperationsEmpty x =
 
 dropN ::
   Length ->
-  FingerTree Length (ListOperation v) ->
-  FingerTree Length (ListOperation v)
+  FingerTree Length (ListDeltaOperation v) ->
+  FingerTree Length (ListDeltaOperation v)
 dropN 0 ops = ops
 dropN n ops =
   case FT.viewl ops of
@@ -256,8 +256,8 @@ dropN n ops =
 
 splitOpsAt ::
   Length ->
-  FingerTree Length (ListOperation v) ->
-  (FingerTree Length (ListOperation v), FingerTree Length (ListOperation v))
+  FingerTree Length (ListDeltaOperation v) ->
+  (FingerTree Length (ListDeltaOperation v), FingerTree Length (ListDeltaOperation v))
 splitOpsAt n ops =
   let (pre, curr) = FT.split (>= n) ops
   in case FT.viewl curr of
@@ -268,8 +268,8 @@ splitOpsAt n ops =
 
 splitOpAt ::
   Length ->
-  ListOperation v ->
-  (FingerTree Length (ListOperation v), FingerTree Length (ListOperation v))
+  ListDeltaOperation v ->
+  (FingerTree Length (ListDeltaOperation v), FingerTree Length (ListDeltaOperation v))
 splitOpAt _ (ListDrop d) = (FT.singleton (ListDrop d), FT.empty)
 splitOpAt 0 op = (FT.empty, FT.singleton op)
 splitOpAt n (ListSplice ins) =
@@ -288,7 +288,7 @@ instance ObservableContainer Seq v where
   type DeltaContext Seq = Length
   applyDelta (ListDelta ops) state = applyOperations state (toList ops)
   mergeDelta (ValidatedListDelta x) (ListDelta y) =
-    ValidatedListDelta (mergeOperations x (toList y))
+    ValidatedListDelta (mergeDeltaOperations x (toList y))
   validateDelta ctx (ListDelta ops) =
     toValidatedListDelta (updateListDeltaContext ctx ops)
   validatedDeltaToContext = validatedListDeltaLength

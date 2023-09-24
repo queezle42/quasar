@@ -21,7 +21,7 @@ import Paths_quasar_web (getDataFileName)
 import Quasar
 import Quasar.Observable.AccumulatingObserver
 import Quasar.Observable.Core
-import Quasar.Observable.List (ObservableList, ListDelta(..), ListOperation(..))
+import Quasar.Observable.List (ObservableList, ListDelta(..), ListDeltaOperation(..))
 import Quasar.Observable.List qualified as ObservableList
 import Quasar.Observable.Traversable
 import Quasar.Prelude
@@ -347,14 +347,14 @@ listChangeCommands ref ctx (ObservableChangeLiveDelta (ListDelta deltaOps)) =
     initialListLength = case ctx of
       (ObserverContextLive (Just len)) -> len
       (ObserverContextLive Nothing) -> 0
-    go :: ObservableList.Length -> ObservableList.Length -> [ListOperation WireNode] -> [Command]
+    go :: ObservableList.Length -> ObservableList.Length -> [ListDeltaOperation WireNode] -> [Command]
     go _offset ((<= 0) -> True) [] = []
     go offset remaining [] = RemoveChild ref (fromIntegral offset) : go (offset + 1) (remaining -1) []
     go offset remaining (ListKeep n : ops) = go (offset + n) (remaining - n) ops
-    go offset remaining (ListDrop i : ops) = replicate (fromIntegral i) (RemoveChild ref (fromIntegral offset)) <> go (offset - i) remaining ops
-    go offset 0 (ListInsert xs : ops) = (AppendChild ref <$> toList xs) <> go (offset + fromIntegral (Seq.length xs)) 0 ops
-    go offset remaining (ListInsert Seq.Empty : ops) = go offset remaining ops
-    go offset remaining (ListInsert (x :<| xs) : ops) = InsertChild ref (fromIntegral offset) x : go (offset + 1) remaining (ListInsert xs : ops)
+    go offset remaining (ListDrop i : ops) = replicate (fromIntegral i) (RemoveChild ref (fromIntegral offset)) <> go offset (remaining - i) ops
+    go offset 0 (ListSplice xs : ops) = (AppendChild ref <$> toList xs) <> go (offset + fromIntegral (Seq.length xs)) 0 ops
+    go offset remaining (ListSplice Seq.Empty : ops) = go offset remaining ops
+    go offset remaining (ListSplice (x :<| xs) : ops) = InsertChild ref (fromIntegral offset) x : go (offset + 1) remaining (ListSplice xs : ops)
 
 
 -- * Wai

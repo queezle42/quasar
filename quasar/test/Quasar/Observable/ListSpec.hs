@@ -74,7 +74,7 @@ spec = parallel do
 
     it "applies complex operations" do
       let
-        ops :: [ListOperation Int]
+        ops :: [ListDeltaOperation Int]
         ops = [
             ListKeep 1,
             ListSplice [42, 43],
