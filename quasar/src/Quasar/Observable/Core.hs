@@ -55,6 +55,10 @@ module Quasar.Observable.Core (
 
   ObservableUpdate(..),
   observableUpdateToChange,
+  ValidatedUpdate(..),
+  mergeValidatedUpdate,
+  validatedUpdateToContext,
+  unvalidatedUpdate,
   EvaluatedUpdate(.., EvaluatedUpdateOk, EvaluatedUpdateThrow),
 
   MappedObservable(..),
@@ -115,7 +119,6 @@ import Data.Bifunctor (first)
 import Data.Binary (Binary)
 import Data.String (IsString(..))
 import Data.Type.Equality ((:~:)(Refl))
-import Data.Void (absurd)
 import GHC.Records (HasField(..))
 import Quasar.Future
 import Quasar.Prelude
@@ -261,7 +264,6 @@ readObservableT fx = liftSTMc @NoRetry @exceptions do
 
 type EvaluatedDelta :: (Type -> Type) -> Type -> Type
 type EvaluatedDelta c v = (Delta c v, c v)
-
 
 contentFromEvaluatedDelta :: EvaluatedDelta c v -> c v
 contentFromEvaluatedDelta (_, content) = content
@@ -431,6 +433,12 @@ instance ObservableContainer c v => HasField "unvalidated" (ValidatedUpdate c v)
   getField (ValidatedUpdateReplace new) = ObservableUpdateReplace new
   getField (ValidatedUpdateDelta delta) = ObservableUpdateDelta (validatedDeltaToDelta @c delta)
 
+unvalidatedUpdate ::
+  ObservableContainer c v =>
+  Either (DeltaContext c) (ValidatedUpdate c v) -> Maybe (ObservableUpdate c v)
+unvalidatedUpdate (Left _) = Nothing
+unvalidatedUpdate (Right update) = Just update.unvalidated
+
 instance (Functor c, Functor (ValidatedDelta c)) => Functor (ValidatedUpdate c) where
   fmap fn (ValidatedUpdateReplace new) = ValidatedUpdateReplace (fn <$> new)
   fmap fn (ValidatedUpdateDelta delta) = ValidatedUpdateDelta (fn <$> delta)
@@ -442,6 +450,32 @@ instance (Foldable c, Traversable (ValidatedDelta c)) => Foldable (ValidatedUpda
 instance (Traversable c, Traversable (ValidatedDelta c)) => Traversable (ValidatedUpdate c) where
   traverse f (ValidatedUpdateReplace x) = ValidatedUpdateReplace <$> traverse f x
   traverse f (ValidatedUpdateDelta delta) = ValidatedUpdateDelta <$> traverse f delta
+
+validatedUpdateToContext ::
+  forall c v.
+  ObservableContainer c v =>
+  Either (DeltaContext c) (ValidatedUpdate c v) -> DeltaContext c
+validatedUpdateToContext (Left ctx) = ctx
+validatedUpdateToContext (Right (ValidatedUpdateReplace content)) = toDeltaContext @c content
+validatedUpdateToContext (Right (ValidatedUpdateDelta delta)) = validatedDeltaToContext @c delta
+
+mergeValidatedUpdate ::
+  forall c v.
+  ObservableContainer c v =>
+  Either (DeltaContext c) (ValidatedUpdate c v) ->
+  Maybe (ObservableUpdate c v) ->
+  Either (DeltaContext c) (ValidatedUpdate c v)
+mergeValidatedUpdate _ (Just (ObservableUpdateReplace new)) = Right (ValidatedUpdateReplace new)
+mergeValidatedUpdate old Nothing = old
+mergeValidatedUpdate (Left ctx) (Just (ObservableUpdateDelta delta)) =
+  case validateDelta @c ctx delta of
+    Nothing -> Left ctx
+    Just validated -> Right (ValidatedUpdateDelta validated)
+mergeValidatedUpdate (Right (ValidatedUpdateReplace old)) (Just (ObservableUpdateDelta delta)) = do
+  Right (ValidatedUpdateReplace (applyDelta @c delta old))
+mergeValidatedUpdate (Right (ValidatedUpdateDelta oldDelta)) (Just (ObservableUpdateDelta delta)) =
+  Right (ValidatedUpdateDelta (mergeDelta @c oldDelta delta))
+
 
 
 splitValidatedUpdate :: forall c v. ObservableContainer c v => ValidatedUpdate c v -> Maybe (ObservableUpdate c v, DeltaContext c)

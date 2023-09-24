@@ -23,6 +23,11 @@ module Quasar.Observable.List (
   fromSeq,
   constObservableList,
 
+  -- * List operations with absolute addressing
+  ListOperation(..),
+  updateToOperations,
+  operationsToUpdate,
+
   -- * ObservableListVar (mutable observable var)
   ObservableListVar,
   newObservableListVar,
@@ -45,6 +50,7 @@ import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
 import Quasar.Prelude
 import Quasar.Resources (TSimpleDisposer)
+import Data.Foldable (foldl')
 
 
 newtype ListDelta v
@@ -85,11 +91,22 @@ instance Monoid Length where
 instance Semigroup Length where
   Length x <> Length y = Length (x + y)
 
--- Operations are relative to the end of the previous operation.
+-- | Parts of a `ListDelta`. Together they represent instructions to generate
+-- a new list from an input list.
+--
+-- The operations are optimized for efficient implementations of `applyDelta`
+-- and `mergeDelta`. For construction from classical list operations
+-- (`ListOperation`) see `updateToOperations`.
+--
+-- Notes:
+--
+-- - Operations are relative to the end of the previous operation.
+-- - The remainder of the input list (everything not taken by a `ListKeep`) is
+--   dropped when applying the delta.
 data ListDeltaOperation v
-  = ListSplice (Seq v)
-  | ListDrop Length
-  | ListKeep Length
+  = ListSplice (Seq v) -- ^ Append the provided list to the end of the result list.
+  | ListDrop Length -- ^ Skip @n@ elements from the start of the input list.
+  | ListKeep Length -- ^ Take @n@ elements from the start of the input list and append them to the result list.
   deriving (Eq, Show, Generic)
 
 instance Functor ListDeltaOperation where
@@ -117,17 +134,17 @@ instance Measured Length (ListDeltaOperation v) where
   measure (ListDrop _) = 0
   measure (ListKeep n) = n
 
-applyOperations
+applyDeltaOperations
   :: Seq v
   -> [ListDeltaOperation v]
   -> Seq v
-applyOperations _  [] = []
-applyOperations x (ListSplice ins : ops) = ins <> applyOperations x ops
-applyOperations x (ListDrop count : ops) =
-  applyOperations (Seq.drop (fromIntegral count) x) ops
-applyOperations x (ListKeep count : ops) =
+applyDeltaOperations _  [] = []
+applyDeltaOperations x (ListSplice ins : ops) = ins <> applyDeltaOperations x ops
+applyDeltaOperations x (ListDrop count : ops) =
+  applyDeltaOperations (Seq.drop (fromIntegral count) x) ops
+applyDeltaOperations x (ListKeep count : ops) =
   let (keep, other) = Seq.splitAt (fromIntegral count) x
-  in keep <> applyOperations other ops
+  in keep <> applyDeltaOperations other ops
 
 instance TraversableObservableContainer Seq where
   selectRemoved (ListDelta deltaOps) old = toList (go old deltaOps)
@@ -286,7 +303,7 @@ instance ObservableContainer Seq v where
   type Delta Seq = ListDelta
   type ValidatedDelta Seq = ValidatedListDelta
   type DeltaContext Seq = Length
-  applyDelta (ListDelta ops) state = applyOperations state (toList ops)
+  applyDelta (ListDelta ops) state = applyDeltaOperations state (toList ops)
   mergeDelta (ValidatedListDelta x) (ListDelta y) =
     ValidatedListDelta (mergeDeltaOperations x (toList y))
   validateDelta ctx (ListDelta ops) =
@@ -373,6 +390,69 @@ empty :: ObservableList canLoad exceptions v
 empty = mempty
 
 
+data ListOperation v
+  = ListInsert Length v -- ^ Insert before element n.
+  | ListAppend v -- ^ Append at the end of the list.
+  | ListDelete Length -- ^ Delete element with index n.
+  | ListReplaceAll (Seq v)
+
+updateToOperations :: Length -> ObservableUpdate Seq v -> [ListOperation v]
+updateToOperations _initialLength (ObservableUpdateReplace new) = [ListReplaceAll new]
+updateToOperations initialLength (ObservableUpdateDelta (ListDelta initialOps)) = go 0 initialLength initialOps
+  where
+    go :: Length -> Length -> [ListDeltaOperation v] -> [ListOperation v]
+    -- Delete remainder, if there is any
+    go _offset 0 [] = []
+    go offset remaining [] = ListDelete offset : go (offset + 1) (remaining -1) []
+
+    go offset 0 (ListSplice xs : ops) = (ListAppend <$> toList xs) <> go (offset + fromIntegral (Seq.length xs)) 0 ops
+    go offset remaining (ListSplice Seq.Empty : ops) = go offset remaining ops
+    go offset remaining (ListSplice (x Seq.:<| xs) : ops) = ListInsert offset x : go (offset + 1) remaining (ListSplice xs : ops)
+
+    go offset remaining (ListKeep n : ops) = go (offset + n) (remaining - n) ops
+
+    go offset remaining (ListDrop count : ops)
+      | count < remaining = replicate (fromIntegral count) (ListDelete offset) <> go offset (remaining - count) ops
+      | otherwise = replicate (fromIntegral remaining) (ListDelete offset) <> go offset 0 ops
+
+
+operationsToUpdate :: Length -> [ListOperation v] -> Maybe (ObservableUpdate Seq v)
+operationsToUpdate _initialLength [] = Nothing
+operationsToUpdate initialLength (op:ops) =
+  let initial = operationToValidatedUpdate initialLength op
+  in unvalidatedUpdate (foldl' applyListOperationToUpdate initial ops)
+
+applyListOperationToUpdate ::
+  Either (DeltaContext Seq) (ValidatedUpdate Seq v) ->
+  ListOperation v ->
+  Either (DeltaContext Seq) (ValidatedUpdate Seq v)
+applyListOperationToUpdate oldUpdate op =
+  let newUpdate = operationToValidatedUpdate (validatedUpdateToContext oldUpdate) op
+  in mergeValidatedUpdate oldUpdate (unvalidatedUpdate newUpdate)
+
+operationToValidatedUpdate :: Length -> ListOperation v -> Either Length (ValidatedUpdate Seq v)
+operationToValidatedUpdate len (ListInsert pos value) = Right
+  if len > 0
+    then ValidatedUpdateDelta $ ValidatedListDelta $ FT.fromList
+      if pos < len
+        then [ListKeep pos, ListSplice [value], ListKeep (len - pos)]
+        else [ListKeep len, ListSplice [value]]
+    else ValidatedUpdateReplace [value]
+operationToValidatedUpdate len (ListAppend value) = Right
+  if len > 0
+    then ValidatedUpdateDelta $ ValidatedListDelta $ FT.fromList [ListKeep len, ListSplice [value]]
+    else ValidatedUpdateReplace [value]
+operationToValidatedUpdate len (ListDelete pos) =
+  if pos < len
+    then Right $ ValidatedUpdateDelta $ ValidatedListDelta
+      if pos == (len - 1)
+        then FT.singleton (ListKeep pos)
+        else FT.fromList [ListKeep pos, ListDrop 1, ListKeep (len - pos)]
+    else Left len
+operationToValidatedUpdate 0 (ListReplaceAll []) = Left 0
+operationToValidatedUpdate _len (ListReplaceAll new) = Right (ValidatedUpdateReplace new)
+
+
 -- * ObservableListVar
 
 newtype ObservableListVar v = ObservableListVar (Subject NoLoad '[] Seq v)
@@ -390,39 +470,20 @@ newObservableListVar x = liftSTMc @NoRetry @'[] $ ObservableListVar <$> newSubje
 newObservableListVarIO :: MonadIO m => Seq v -> m (ObservableListVar v)
 newObservableListVarIO x = liftIO $ ObservableListVar <$> newSubjectIO x
 
-insert :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Length -> v -> m ()
-insert (ObservableListVar var) pos value =
+-- | Apply a list of `AbsoluteListDeltaOperation`s as a single change.
+apply :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> [ListOperation v] -> m ()
+apply (ObservableListVar var) ops =
   updateSimpleSubject var \list ->
-    let len = fromIntegral (Seq.length list)
-    in Just if len > 0
-      then ObservableUpdateDelta $ ListDelta $
-        if pos < len
-          then [ListKeep pos, ListSplice [value], ListKeep (len - pos)]
-          else [ListKeep len, ListSplice [value]]
-      else ObservableUpdateReplace [value]
+    operationsToUpdate (fromIntegral (Seq.length list)) ops
+
+insert :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Length -> v -> m ()
+insert var pos value = apply var [ListInsert pos value]
 
 append :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> v -> m ()
-append (ObservableListVar var) value =
-  updateSimpleSubject var selectChange
-    where
-      selectChange list =
-        let len = fromIntegral (Seq.length list)
-        in Just if len > 0
-          then ObservableUpdateDelta (ListDelta [ListKeep len, ListSplice [value]])
-          else ObservableUpdateReplace [value]
+append var value = apply var [ListAppend value]
 
 delete :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Length -> m ()
-delete (ObservableListVar var) pos =
-  updateSimpleSubject var selectChange
-    where
-      selectChange list =
-        let len = fromIntegral (Seq.length list)
-        in if pos < len
-          then Just $ ObservableUpdateDelta $ ListDelta $
-            if pos == (len - 1)
-              then  [ListKeep pos]
-              else [ListKeep pos, ListDrop 1, ListKeep (len - pos)]
-          else Nothing
+delete var pos = apply var [ListDelete pos]
 
 lookupDelete :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Length -> m (Maybe v)
 lookupDelete var@(ObservableListVar subject) pos = do
@@ -432,7 +493,7 @@ lookupDelete var@(ObservableListVar subject) pos = do
   pure r
 
 replace :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Seq v -> m ()
-replace (ObservableListVar var) new = replaceSubject var new
+replace var new = apply var [ListReplaceAll new]
 
 clear :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> m ()
 clear var = replace var mempty
