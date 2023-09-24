@@ -37,10 +37,7 @@ module Quasar.Observable.Core (
   mapObservableChange,
   ValidatedChange(..),
   validateChange,
-  ObservableUpdate(..),
-  observableUpdateToChange,
   EvaluatedObservableChange(..),
-  EvaluatedUpdate(.., EvaluatedUpdateOk, EvaluatedUpdateThrow),
   contentFromEvaluatedDelta,
   ObservableState(.., ObservableStateLiveOk, ObservableStateLiveEx),
   mapObservableState,
@@ -55,6 +52,10 @@ module Quasar.Observable.Core (
   ObserverContext(..),
   updateObserverContext,
   ObservableFunctor,
+
+  ObservableUpdate(..),
+  observableUpdateToChange,
+  EvaluatedUpdate(.., EvaluatedUpdateOk, EvaluatedUpdateThrow),
 
   MappedObservable(..),
   BindObservable(..),
