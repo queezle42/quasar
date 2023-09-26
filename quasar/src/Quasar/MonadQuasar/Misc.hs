@@ -6,6 +6,7 @@ module Quasar.MonadQuasar.Misc (
 
   -- ** High-level initialization
   runQuasarAndExit,
+  QuasarExitState(..),
   runQuasarAndExitWith,
   runQuasarCollectExceptions,
   runQuasarCombineExceptions,
