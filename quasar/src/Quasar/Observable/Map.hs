@@ -140,7 +140,7 @@ applyOperations ops old =
 instance Ord k => ObservableContainer (Map k) v where
   type ContainerConstraint canLoad exceptions (Map k) v a = IsObservableMap canLoad exceptions k v a
   type Delta (Map k) = (MapDelta k)
-  applyDelta (MapDelta ops) old = applyOperations ops old
+  applyDelta (MapDelta ops) old = Just (applyOperations ops old)
   mergeDelta (MapDelta old) (MapDelta new) = MapDelta (Map.union new old)
 
 instance ContainerCount (Map k) where

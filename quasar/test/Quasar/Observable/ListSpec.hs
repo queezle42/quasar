@@ -25,52 +25,52 @@ spec :: Spec
 spec = parallel do
   describe "applyDelta" do
     it "empty delta" do
-      applyDelta @Seq @Int (ListDelta mempty) [] `shouldBe` []
-      applyDelta @Seq @Int (ListDelta mempty) [1, 2, 3] `shouldBe` []
+      applyDelta @Seq @Int (ListDelta mempty) [] `shouldBe` Just []
+      applyDelta @Seq @Int (ListDelta mempty) [1, 2, 3] `shouldBe` Just []
 
     it "keep elements" do
-      applyDelta @Seq @Int (ListDelta [ListKeep 3]) [1, 2, 3] `shouldBe` [1, 2, 3]
-      applyDelta @Seq @Int (ListDelta [ListKeep 100]) [1, 2, 3] `shouldBe` [1, 2, 3]
+      applyDelta @Seq @Int (ListDelta [ListKeep 3]) [1, 2, 3] `shouldBe` Just [1, 2, 3]
+      applyDelta @Seq @Int (ListDelta [ListKeep 100]) [1, 2, 3] `shouldBe` Just [1, 2, 3]
 
     it "discards elements that are not kept" do
-      applyDelta @Seq @Int (ListDelta [ListKeep 3]) [1, 2, 3, 42] `shouldBe` [1, 2, 3]
+      applyDelta @Seq @Int (ListDelta [ListKeep 3]) [1, 2, 3, 42] `shouldBe` Just [1, 2, 3]
 
     it "empty insert" do
-      applyDelta @Seq @Int (ListDelta [ListSplice []]) [] `shouldBe` []
-      applyDelta @Seq @Int (ListDelta [ListSplice []]) [1, 2, 3] `shouldBe` []
+      applyDelta @Seq @Int (ListDelta [ListSplice []]) [] `shouldBe` Just []
+      applyDelta @Seq @Int (ListDelta [ListSplice []]) [1, 2, 3] `shouldBe` Just []
 
     it "can insert element to empty list" do
-      applyDelta @Seq @Int (ListDelta [ListSplice [42]]) [] `shouldBe` [42]
+      applyDelta @Seq @Int (ListDelta [ListSplice [42]]) [] `shouldBe` Just [42]
 
     it "can insert element at end of list" do
-      applyDelta @Seq @Int (ListDelta [ListKeep 3, ListSplice [42]]) [1, 2, 3] `shouldBe` [1, 2, 3, 42]
+      applyDelta @Seq @Int (ListDelta [ListKeep 3, ListSplice [42]]) [1, 2, 3] `shouldBe` Just [1, 2, 3, 42]
 
     it "can insert element after end of list" do
-      applyDelta @Seq @Int (ListDelta [ListKeep 21, ListSplice [42]]) [] `shouldBe` [42]
-      applyDelta @Seq @Int (ListDelta [ListKeep 21, ListSplice [42]]) [1, 2, 3] `shouldBe` [1, 2, 3, 42]
+      applyDelta @Seq @Int (ListDelta [ListKeep 21, ListSplice [42]]) [] `shouldBe` Just [42]
+      applyDelta @Seq @Int (ListDelta [ListKeep 21, ListSplice [42]]) [1, 2, 3] `shouldBe` Just [1, 2, 3, 42]
 
     it "can insert element at start of list" do
-      applyDelta @Seq @Int (ListDelta [ListSplice [42], ListKeep 3]) [1, 2, 3] `shouldBe` [42, 1, 2, 3]
+      applyDelta @Seq @Int (ListDelta [ListSplice [42], ListKeep 3]) [1, 2, 3] `shouldBe` Just [42, 1, 2, 3]
 
     it "can insert element in the middle of the list" do
-      applyDelta @Seq @Int (ListDelta [ListKeep 2, ListSplice [42], ListKeep 2]) [1, 2, 3, 4] `shouldBe` [1, 2, 42, 3, 4]
-      applyDelta @Seq @Int (ListDelta [ListKeep 2, ListSplice [41, 42], ListKeep 2]) [1, 2, 3, 4] `shouldBe` [1, 2, 41, 42, 3, 4]
+      applyDelta @Seq @Int (ListDelta [ListKeep 2, ListSplice [42], ListKeep 2]) [1, 2, 3, 4] `shouldBe` Just [1, 2, 42, 3, 4]
+      applyDelta @Seq @Int (ListDelta [ListKeep 2, ListSplice [41, 42], ListKeep 2]) [1, 2, 3, 4] `shouldBe` Just [1, 2, 41, 42, 3, 4]
 
     it "empty delete" do
-      applyDelta @Seq @Int (ListDelta [ListDrop 0, ListKeep 100]) [1, 2, 3] `shouldBe` [1, 2, 3]
+      applyDelta @Seq @Int (ListDelta [ListDrop 0, ListKeep 100]) [1, 2, 3] `shouldBe` Just [1, 2, 3]
 
     it "can delete elements" do
-      applyDelta @Seq @Int (ListDelta [ListDrop 1, ListKeep 100]) [42, 1, 2, 3, 4] `shouldBe` [1, 2, 3, 4]
-      applyDelta @Seq @Int (ListDelta [ListKeep 2, ListDrop 1, ListKeep 100]) [1, 2, 42, 3, 4] `shouldBe` [1, 2, 3, 4]
-      applyDelta @Seq @Int (ListDelta [ListKeep 2, ListDrop 2, ListKeep 100]) [1, 2, 42, 43, 3, 4] `shouldBe` [1, 2, 3, 4]
-      applyDelta @Seq @Int (ListDelta [ListKeep 4, ListDrop 1, ListKeep 100]) [1, 2, 3, 4, 42] `shouldBe` [1, 2, 3, 4]
+      applyDelta @Seq @Int (ListDelta [ListDrop 1, ListKeep 100]) [42, 1, 2, 3, 4] `shouldBe` Just [1, 2, 3, 4]
+      applyDelta @Seq @Int (ListDelta [ListKeep 2, ListDrop 1, ListKeep 100]) [1, 2, 42, 3, 4] `shouldBe` Just [1, 2, 3, 4]
+      applyDelta @Seq @Int (ListDelta [ListKeep 2, ListDrop 2, ListKeep 100]) [1, 2, 42, 43, 3, 4] `shouldBe` Just [1, 2, 3, 4]
+      applyDelta @Seq @Int (ListDelta [ListKeep 4, ListDrop 1, ListKeep 100]) [1, 2, 3, 4, 42] `shouldBe` Just [1, 2, 3, 4]
 
     it "can clip delete operations at the end of the list" do
-      applyDelta @Seq @Int (ListDelta [ListKeep 4, ListDrop 21]) [1, 2, 3, 4, 42] `shouldBe` [1, 2, 3, 4]
+      applyDelta @Seq @Int (ListDelta [ListKeep 4, ListDrop 21]) [1, 2, 3, 4, 42] `shouldBe` Just [1, 2, 3, 4]
 
     it "ignores delete operations after the end of the list" do
-      applyDelta @Seq @Int (ListDelta [ListKeep 42, ListDrop 21]) [1, 2, 3, 4] `shouldBe` [1, 2, 3, 4]
-      applyDelta @Seq @Int (ListDelta [ListDrop 13]) [] `shouldBe` []
+      applyDelta @Seq @Int (ListDelta [ListKeep 42, ListDrop 21]) [1, 2, 3, 4] `shouldBe` Just [1, 2, 3, 4]
+      applyDelta @Seq @Int (ListDelta [ListDrop 13]) [] `shouldBe` Just []
 
     it "applies complex operations" do
       let
@@ -84,17 +84,17 @@ spec = parallel do
             ListKeep 42, -- clipped to length of list
             ListDrop 2 -- no-op
           ]
-      applyDelta @Seq @Int (ListDelta ops) [1, 2, 3, 4] `shouldBe` [1, 42, 43, 2, 44, 4]
+      applyDelta @Seq @Int (ListDelta ops) [1, 2, 3, 4] `shouldBe` Just [1, 42, 43, 2, 44, 4]
 
   describe "validateDelta" do
     it "empty delta" do
-      testUpdateDeltaContext [] (ListDelta []) Nothing
+      testUpdateDeltaContext [] (ListDelta []) (Just (ValidatedListDelta []))
 
     it "keep empty list" do
-      testUpdateDeltaContext [] (ListDelta [ListKeep 42]) Nothing
+      testUpdateDeltaContext [] (ListDelta [ListKeep 42]) (Just (ValidatedListDelta []))
 
     it "keep empty list" do
-      testUpdateDeltaContext [] (ListDelta [ListKeep 42]) Nothing
+      testUpdateDeltaContext [] (ListDelta [ListKeep 42]) (Just (ValidatedListDelta []))
 
     it "keep elements" do
       testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 3]) (Just (ValidatedListDelta [ListKeep 3]))
@@ -102,9 +102,6 @@ spec = parallel do
 
     it "keep is clipped to end of list" do
       testUpdateDeltaContext [1, 2] (ListDelta [ListKeep 3]) (Just (ValidatedListDelta [ListKeep 2]))
-
-    it "delete empty list" do
-      testUpdateDeltaContext [] (ListDelta [ListDrop 42]) Nothing
 
     it "insert to empty list" do
       testUpdateDeltaContext [] (ListDelta [ListSplice [1]]) (Just (ValidatedListDelta [ListSplice [1]]))
@@ -123,10 +120,10 @@ spec = parallel do
       testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 2, ListKeep 1]) (Just (ValidatedListDelta [ListDrop 2, ListKeep 1]))
 
     it "trailing drop is removed" do
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 42]) Nothing
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 21, ListDrop 21]) Nothing
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 42]) (Just (ValidatedListDelta []))
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 21, ListDrop 21]) (Just (ValidatedListDelta []))
       testUpdateDeltaContext [1, 2, 3, 4, 5] (ListDelta [ListDrop 1, ListDrop 1, ListDrop 1, ListDrop 1, ListKeep 1]) (Just (ValidatedListDelta [ListDrop 4, ListKeep 1]))
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1]) Nothing
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1]) (Just (ValidatedListDelta []))
       testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 1]) (Just (ValidatedListDelta [ListKeep 1]))
       testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 42]) (Just (ValidatedListDelta [ListKeep 1]))
 
@@ -185,4 +182,6 @@ testUpdateDeltaContext list delta expectedDelta = withFrozenCallStack do
     validatedDelta = validateDelta @Seq (fromIntegral (Seq.length list)) delta
   validatedDelta `shouldBe` expectedDelta
   maybe 0 validatedListDeltaLength validatedDelta `shouldBe` expectedLength
-  Seq.length (applyDelta delta list) `shouldBe` fromIntegral expectedLength
+  case applyDelta delta list of
+    Nothing -> pure ()
+    Just new -> Seq.length new `shouldBe` fromIntegral expectedLength

@@ -288,7 +288,13 @@ class ObservableContainer c v where
   type ValidatedDelta c :: Type -> Type
   type instance ValidatedDelta c = Delta c
 
-  applyDelta :: Delta c v -> c v -> c v
+  -- | Apply a delta to a container.
+  --
+  -- TODO swap delta and state arguments
+  --
+  -- Law: When the result is `Nothing`, validateDelta the delta must return
+  -- Nothing as well for the same inputs.
+  applyDelta :: Delta c v -> c v -> Maybe (c v)
 
   -- | Validate a delta. A validated delta may contain some information about
   -- the current container state.
@@ -296,10 +302,6 @@ class ObservableContainer c v where
   -- Returns 'Nothing' if the delta has no effect on the container described in
   -- the `DelteContext`. Please note that even a no-op or invalid delta will
   -- change a 'Loading' observable to 'Live'.
-  --
-  -- Law: When the result is `Nothing`, applying the delta must have no effect:
-  --
-  -- @validateDelta x == Nothing => `applyDelta` x == id@
   validateDelta :: DeltaContext c -> Delta c v -> Maybe (ValidatedDelta c v)
   default validateDelta ::
     (ValidatedDelta c v ~ Delta c v) =>
@@ -308,7 +310,6 @@ class ObservableContainer c v where
     Maybe (ValidatedDelta c v)
   validateDelta _ = Just
 
-  -- TODO Invalid merged delta
   mergeDelta :: ValidatedDelta c v -> Delta c v -> ValidatedDelta c v
 
   -- | Get a description of a container state from a validated delta. The
@@ -472,8 +473,10 @@ mergeValidatedUpdate (Left ctx) (Just (ObservableUpdateDelta delta)) =
   case validateDelta @c ctx delta of
     Nothing -> Left ctx
     Just validated -> Right (ValidatedUpdateDelta validated)
-mergeValidatedUpdate (Right (ValidatedUpdateReplace old)) (Just (ObservableUpdateDelta delta)) = do
-  Right (ValidatedUpdateReplace (applyDelta @c delta old))
+mergeValidatedUpdate oldUpdate@(Right (ValidatedUpdateReplace old)) (Just (ObservableUpdateDelta delta)) = do
+  case applyDelta @c delta old of
+    Nothing -> oldUpdate
+    Just new -> Right (ValidatedUpdateReplace new)
 mergeValidatedUpdate (Right (ValidatedUpdateDelta oldDelta)) (Just (ObservableUpdateDelta delta)) =
   Right (ValidatedUpdateDelta (mergeDelta @c oldDelta delta))
 
@@ -561,7 +564,7 @@ mapObservableChange _ _ ObservableChangeLiveUnchanged = ObservableChangeLiveUnch
 mapObservableChange fc _fd (ObservableChangeLiveReplace content) = ObservableChangeLiveReplace (fc content)
 mapObservableChange _fc fd (ObservableChangeLiveDelta delta) = ObservableChangeLiveDelta (fd delta)
 
-mapObservableChangeResult :: (c va -> c v) -> (Delta c va -> Delta c v) -> ObservableChange canLoad (ObservableResult exceptions c) va -> ObservableChange canLoad (ObservableResult exceptions c) v
+mapObservableChangeResult :: (ca va -> c v) -> (Delta ca va -> Delta c v) -> ObservableChange canLoad (ObservableResult exceptions ca) va -> ObservableChange canLoad (ObservableResult exceptions c) v
 mapObservableChangeResult fc = mapObservableChange (mapObservableResult fc)
 
 mapObservableChangeResultEx :: (Ex ea -> Ex eb) -> ObservableChange canLoad (ObservableResult ea c) v -> ObservableChange canLoad (ObservableResult eb c) v
@@ -813,14 +816,6 @@ instance Semigroup (Loading canLoad) where
   Loading <> _ = Loading
   _ <> Loading = Loading
 
-applyObservableUpdate
-  :: ObservableContainer c v
-  => ObservableUpdate c v
-  -> c v
-  -> c v
-applyObservableUpdate (ObservableUpdateReplace new) _ = new
-applyObservableUpdate (ObservableUpdateDelta delta) old = applyDelta delta old
-
 applyObservableChange
   :: ObservableContainer c v
   => ObservableChange canLoad c v
@@ -840,14 +835,13 @@ applyObservableChange (ObservableChangeLiveReplace content) _ =
 
 applyObservableChange (ObservableChangeLiveDelta _delta) ObserverStateLoadingCleared = Nothing
 applyObservableChange (ObservableChangeLiveDelta delta) (ObserverStateCached loading old) =
-  let new = applyDelta delta old
-  in case toEvaluatedDelta delta new of
+  case applyDelta delta old of
     Nothing -> case loading of
       -- Delta has no effect except to change to Live
       Loading -> Just (EvaluatedObservableChangeLiveUnchanged, ObserverStateLive old)
       -- Already live
       Live -> Nothing
-    Just evaluated -> Just (EvaluatedObservableChangeLiveDelta evaluated, ObserverStateLive new)
+    Just new -> Just (EvaluatedObservableChangeLiveDelta (delta, new), ObserverStateLive new)
 
 applyEvaluatedObservableChange ::
   EvaluatedObservableChange canLoad c v ->
@@ -935,7 +929,9 @@ updatePendingChange (ObservableChangeLiveReplace content) _ =
 updatePendingChange (ObservableChangeLiveDelta _delta) PendingChangeLoadingClear =
   PendingChangeLoadingClear
 updatePendingChange (ObservableChangeLiveDelta delta) (PendingChangeAlter _loading (Right (ValidatedUpdateReplace prevReplace))) =
-  PendingChangeAlter Live (Right (ValidatedUpdateReplace (applyDelta @c delta prevReplace)))
+  case applyDelta @c delta prevReplace of
+    Nothing -> PendingChangeAlter Live (Right (ValidatedUpdateReplace prevReplace))
+    Just new -> PendingChangeAlter Live (Right (ValidatedUpdateReplace new))
 updatePendingChange (ObservableChangeLiveDelta delta) (PendingChangeAlter _loading (Right (ValidatedUpdateDelta prevDelta))) =
   PendingChangeAlter Live (Right (ValidatedUpdateDelta (mergeDelta @c prevDelta delta)))
 updatePendingChange (ObservableChangeLiveDelta delta) (PendingChangeAlter _loading (Left ctx)) =
@@ -1722,11 +1718,11 @@ instance ObservableContainer c v => ObservableContainer (ObservableResult except
   type Delta (ObservableResult exceptions c) = Delta c
   type instance DeltaContext (ObservableResult exceptions c) = Maybe (DeltaContext c)
   type instance ValidatedDelta (ObservableResult exceptions c) = ValidatedDelta c
-  applyDelta delta (ObservableResultOk content) = ObservableResultOk (applyDelta @c delta content)
+  applyDelta delta (ObservableResultOk content) = ObservableResultOk <$> applyDelta @c delta content
   -- NOTE This rejects deltas that are applied to an exception state. Beware
   -- that regardeless of this fact this still does count as a valid delta
   -- application, so it won't prevent the state transition from Loading to Live.
-  applyDelta _delta x@(ObservableResultEx _ex) = x
+  applyDelta _delta x@(ObservableResultEx _ex) = Nothing
   mergeDelta old new = mergeDelta @c old new
   validateDelta (Just ctx) delta = validateDelta @c ctx delta
   validateDelta Nothing _delta = Nothing
