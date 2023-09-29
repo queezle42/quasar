@@ -6,6 +6,7 @@ module Quasar.Observable.ListSpec (spec) where
 import Data.FingerTree (Measured)
 import Data.FingerTree qualified as FT
 import Data.Sequence qualified as Seq
+import Data.Text (Text)
 import GHC.IsList (IsList, Item)
 import GHC.IsList qualified as IsList
 import GHC.Stack (withFrozenCallStack)
@@ -115,6 +116,15 @@ spec = parallel do
       testUpdateDeltaContext [] (ListDelta [ListKeep 42, ListSplice [1]]) (Just (ValidatedListDelta [ListSplice [1]]))
       testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 42, ListSplice [4]]) (Just (ValidatedListDelta [ListKeep 3, ListSplice [4]]))
 
+    it "drop an element" do
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 1, ListKeep 1]) (Just (ValidatedListDelta [ListKeep 1, ListDrop 1, ListKeep 1]))
+
+    it "drop empty list" do
+      testUpdateDeltaContext [] (ListDelta [ListDrop 42]) (Just (ValidatedListDelta []))
+
+    it "drop all" do
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 42]) (Just (ValidatedListDelta []))
+
     it "trailing drop is removed" do
       testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1, ListKeep 2]) (Just (ValidatedListDelta [ListDrop 1, ListKeep 2]))
       testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 2, ListKeep 1]) (Just (ValidatedListDelta [ListDrop 2, ListKeep 1]))
@@ -174,6 +184,46 @@ spec = parallel do
 
     it "normalization 2" do
       mergeDelta @Seq @Int (ValidatedListDelta [ListSplice [1, 2, 3, 4, 5]]) (ListDelta [ListKeep 100, ListSplice [42]]) `shouldBe` ValidatedListDelta [ListSplice [1, 2, 3, 4, 5, 42]]
+
+  describe "operationsToUpdate" do
+    it "can insert" do
+      operationsToUpdate @Text 4 [ListInsert 2 "a"] `shouldBe` Just (ObservableUpdateDelta (ListDelta [ListKeep 2, ListSplice ["a"], ListKeep 2]))
+
+    it "can insert to empty list" do
+      operationsToUpdate @Text 0 [ListInsert 2 "a"] `shouldBe` Just (ObservableUpdateReplace ["a"])
+
+    it "can insert at end of list" do
+      operationsToUpdate @Text 4 [ListInsert 4 "a"] `shouldBe` Just (ObservableUpdateDelta (ListDelta [ListKeep 4, ListSplice ["a"]]))
+
+    it "can insert after end of list" do
+      operationsToUpdate @Text 1 [ListInsert 5 "a"] `shouldBe` Just (ObservableUpdateDelta (ListDelta [ListKeep 1, ListSplice ["a"]]))
+
+    it "can append" do
+      operationsToUpdate @Text 4 [ListAppend "a"] `shouldBe` Just (ObservableUpdateDelta (ListDelta [ListKeep 4, ListSplice ["a"]]))
+
+    it "can append to empty list" do
+      operationsToUpdate @Text 0 [ListAppend "a"] `shouldBe` Just (ObservableUpdateReplace ["a"])
+
+    it "can delete" do
+      operationsToUpdate @Text 4 [ListDelete 2] `shouldBe` Just (ObservableUpdateDelta (ListDelta [ListKeep 2, ListDrop 1, ListKeep 1]))
+
+    it "can delete first element" do
+      operationsToUpdate @Text 4 [ListDelete 0] `shouldBe` Just (ObservableUpdateDelta (ListDelta [ListDrop 1, ListKeep 3]))
+
+    it "can delete last element" do
+      operationsToUpdate @Text 4 [ListDelete 3] `shouldBe` Just (ObservableUpdateDelta (ListDelta [ListKeep 3]))
+
+    it "can delete the only element" do
+      operationsToUpdate @Text 1 [ListDelete 0] `shouldBe` Just (ObservableUpdateReplace [])
+
+    it "ignores delete after end" do
+      operationsToUpdate @Text 4 [ListDelete 42] `shouldBe` Nothing
+
+    it "can replace" do
+      operationsToUpdate @Text 4 [ListDelete 2, ListInsert 2 "a"] `shouldBe` Just (ObservableUpdateDelta (ListDelta [ListKeep 2, ListSplice ["a"], ListDrop 1, ListKeep 1]))
+
+    it "can replace all" do
+      operationsToUpdate @Text 4 [ListReplaceAll ["a"]] `shouldBe` Just (ObservableUpdateReplace ["a"])
 
 testUpdateDeltaContext :: HasCallStack => Seq Int -> ListDelta Int -> Maybe (ValidatedListDelta Int) -> IO ()
 testUpdateDeltaContext list delta expectedDelta = withFrozenCallStack do

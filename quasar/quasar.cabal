@@ -118,6 +118,7 @@ test-suite quasar-test
     fingertree,
     hspec,
     quasar,
+    text,
   main-is: Spec.hs
   other-modules:
     Quasar.AsyncSpec
