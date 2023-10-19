@@ -108,6 +108,7 @@ module Quasar.Observable.Core (
   catchObservable,
   catchAllObservable,
   attachSimpleObserver,
+  skipRedundantUpdates,
   Void1,
   absurd1,
 ) where
@@ -1489,6 +1490,49 @@ attachDeltaRemappingObserver x resetFn deltaFn callback =
           callback (ObservableChangeLiveReplace (ObservableResultOk newContent))
         Just (ObservableUpdateDelta newDelta) ->
           callback (ObservableChangeLiveDelta newDelta)
+
+
+
+newtype SkipRedundantUpdates canLoad exceptions c v = SkipRedundantUpdates (ObservableT canLoad exceptions c v)
+
+instance Eq (c v) => IsObservableCore canLoad exceptions c v (SkipRedundantUpdates canLoad exceptions c v) where
+  readObservable# (SkipRedundantUpdates fx) = readObservable# fx
+
+  attachEvaluatedObserver# (SkipRedundantUpdates fx) callback = do
+    mfixTVar \var -> do
+      (disposer, initial) <- attachEvaluatedObserver# fx \change -> do
+        oldState <- readTVar var
+        forM_ (applyEvaluatedObservableChange change oldState) \newState ->
+          case (oldState, newState) of
+            (ObserverStateLive (ObservableResultOk oldContent), ObserverStateLive (ObservableResultOk newContent)) -> do
+              unless (oldContent == newContent) do
+                writeTVar var newState
+                callback change
+            (ObserverStateLoadingCached (ObservableResultOk oldContent), ObserverStateLive (ObservableResultOk newContent)) -> do
+              writeTVar var newState
+              callback case change of
+                EvaluatedObservableChangeLiveUnchanged -> EvaluatedObservableChangeLiveUnchanged
+                _ | oldContent == newContent -> EvaluatedObservableChangeLiveUnchanged
+                _ -> change
+            (_, ObserverStateLive (ObservableResultEx _ex)) | otherwise -> do
+              case change of
+                EvaluatedObservableChangeLiveDelta _ -> pure ()
+                _ -> do
+                  writeTVar var newState
+                  callback change
+            _ -> do
+              writeTVar var newState
+              callback change
+
+      pure ((disposer, initial), createObserverState initial)
+
+
+-- TODO move to Observable module
+skipRedundantUpdates ::
+  Eq v =>
+  Observable canLoad exceptions v ->
+  Observable canLoad exceptions v
+skipRedundantUpdates (Observable fx) = Observable (ObservableT (SkipRedundantUpdates fx))
 
 
 
