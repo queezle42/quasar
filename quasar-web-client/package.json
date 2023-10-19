@@ -10,12 +10,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && publint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "watch": "tsc --noEmit --watch"
   },
   "devDependencies": {
     "@types/node": "^18.14.6",
     "publint": "^0.1.10",
     "typescript": "^4.9.3",
-    "vite": "^4.1.4"
+    "vite": "^4.1.4",
+    "vite-plugin-checker": "^0.6.2"
   }
 }

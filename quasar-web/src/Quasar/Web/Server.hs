@@ -3,12 +3,15 @@ module Quasar.Web.Server (
 ) where
 
 import Control.Monad.Catch
-import Data.Aeson
+import Data.Aeson (Value, ToJSON, FromJSON, object, (.=), pairs, (.:))
+import Data.Aeson qualified as Aeson
 import Data.Binary.Builder qualified as Binary
 import Data.ByteString.Char8 qualified as BS
 import Data.ByteString.Lazy qualified as BSL
 import Data.List qualified as List
 import Data.Map.Strict (Map)
+import Data.HashMap.Strict (HashMap)
+import Data.HashMap.Strict qualified as HM
 import Data.Sequence (Seq(..))
 import Data.Sequence qualified as Seq
 import Data.Text (Text)
@@ -21,7 +24,7 @@ import Paths_quasar_web (getDataFileName)
 import Quasar
 import Quasar.Observable.AccumulatingObserver
 import Quasar.Observable.Core
-import Quasar.Observable.List (ObservableList, ListDelta(..), ListDeltaOperation(..))
+import Quasar.Observable.List (ObservableList, ListDelta(..), ListDeltaOperation(..), ListOperation(..), updateToOperations)
 import Quasar.Observable.List qualified as ObservableList
 import Quasar.Observable.Traversable
 import Quasar.Prelude
@@ -41,8 +44,9 @@ toWaiApplication rootNode = Wai.websocketsOr webSocketsOptions (toWebSocketsApp 
 toWebSocketsApp :: DomNode -> WebSockets.ServerApp
 toWebSocketsApp rootNode pendingConnection = do
   connection <- WebSockets.acceptRequestWith pendingConnection acceptRequestConfig
-  nextJsRef <- newTVarIO 0
-  let client = Client { nextJsRef }
+  nextComponentRef <- newTVarIO 0
+  componentInstances <- newTVarIO mempty
+  let client = Client { nextComponentRef, componentInstances }
   handleAll (\ex -> logError (displayException ex)) do
     runQuasarCombineExceptions do
       x <- async $ receiveThread client connection
@@ -55,34 +59,35 @@ toWebSocketsApp rootNode pendingConnection = do
         WebSockets.acceptSubprotocol = Just "quasar-web-dev"
       }
 
-newtype Client = Client {
-  nextJsRef :: TVar JsRef
+data Client = Client {
+  nextComponentRef :: TVar ComponentRef,
+  componentInstances :: TVar (HashMap ComponentRef ComponentInstance)
 }
 
-newJsRef :: Client -> STMc NoRetry '[] JsRef
-newJsRef client = do
-  stateTVar client.nextJsRef \i -> (i, i + 1)
+newComponentRef :: Client -> STMc NoRetry '[] ComponentRef
+newComponentRef client = do
+  stateTVar client.nextComponentRef \i -> (i, i + 1)
 
 receiveThread :: Client -> WebSockets.Connection -> QuasarIO ()
 receiveThread client connection = liftIO do
   handleWebsocketException connection $ forever do
       WebSockets.receiveDataMessage connection >>= \case
         WebSockets.Binary _ -> WebSockets.sendCloseCode connection 1002 ("Client must not send binary data." :: BS.ByteString)
-        WebSockets.Text msg _ -> messageHandler connection msg
+        WebSockets.Text msg _ -> messageHandler client connection msg
 
 sendThread :: Client -> DomNode -> WebSockets.Connection -> QuasarIO ()
 sendThread client rootNode connection = do
   traceIO "[quasar-web] new client"
   (wireNode, splice) <- atomically $ liftSTMc $ newDomNodeSplice client rootNode
   let initialMessage = [SetRoot wireNode]
-  liftIO $ WebSockets.sendTextData connection (encode initialMessage)
+  liftIO $ WebSockets.sendTextData connection (Aeson.encode initialMessage)
   handleAll (\ex -> atomicallyC (freeSplice splice) >> throwM ex) do
     forever do
       updates <- atomically $ do
         updates <- liftSTMc $ generateSpliceCommands splice
         check (not (null updates))
         pure updates
-      liftIO $ WebSockets.sendTextData connection (encode updates)
+      liftIO $ WebSockets.sendTextData connection (Aeson.encode (SpliceCommand <$> updates))
 
 
 handleWebsocketException :: WebSockets.Connection -> IO () -> IO ()
@@ -93,268 +98,138 @@ handleWebsocketException connection =
     WebSockets.ParseException _ -> WebSockets.sendCloseCode connection 1001 ("WebSocket communication error." :: BS.ByteString)
     WebSockets.UnicodeException _ -> WebSockets.sendCloseCode connection 1001 ("Client sent invalid UTF-8." :: BS.ByteString)
 
-messageHandler :: WebSockets.Connection -> BSL.ByteString -> IO ()
-messageHandler connection "ping" = WebSockets.sendTextData connection (encode [Pong])
-messageHandler _ msg = BSL.hPutStr stderr $ "Unhandled message: " <> msg <> "\n"
+messageHandler :: Client -> WebSockets.Connection -> BSL.ByteString -> IO ()
+messageHandler client connection msg = do
+  events :: [Event] <- Aeson.throwDecode msg
+  mapM_ eventHandler events
+  where
+    eventHandler :: Event -> IO ()
+    eventHandler Ping = WebSockets.sendTextData connection (Aeson.encode [Pong])
+    eventHandler (ComponentEvent ref cmd) = do
+      componentInstances <- readTVarIO client.componentInstances
+      -- Ignores invalid refs, which is required because messages might still be in
+      -- flight while a ref is freed.
+      forM_ (HM.lookup ref componentInstances) \(ComponentInstance var) ->
+        readTVarIO var >>= mapM_ \content ->
+          atomicallyC $ content.eventHandler cmd
+    eventHandler (AckFree ref) = pure ()
 
 
-type JsRef = Word64
 
 data Command
   = SetRoot WireNode
-  | SetTextNode JsRef Text
-  | InsertChild JsRef Int WireNode
-  | AppendChild JsRef WireNode
-  | RemoveChild JsRef Int
-  | RemoveAllChildren JsRef
-  | FreeRef JsRef
+  | SpliceCommand SpliceCommand
   | Pong
   deriving Show
 
-data WireNode
-  = WireNodeElement WireElement
-  | WireNodeTextNode WireText
+data Event
+  = Ping
+  | ComponentEvent ComponentRef Value
+  | AckFree ComponentRef
   deriving Show
 
+--data WireNode
+--  = WireNodeElement WireElement
+--  | WireNodeComponent WireComponent
+--  deriving Show
+
 data WireElement = WireElement {
-  ref :: Maybe JsRef,
+  ref :: Maybe ComponentRef,
   tag :: Text,
-  attributes :: Map Text (Maybe Text),
-  children :: [WireNode]
+  children :: [WireNode],
+  components :: [WireComponent]
 }
   deriving Show
 
-data WireText = WireText (Maybe JsRef) Text
+data WireText = WireText (Maybe ComponentRef) Text
   deriving Show
 
 instance ToJSON Command where
   toJSON (SetRoot wire) =
     object ["fn" .= ("root" :: Text), "node" .= wire]
-  toJSON (SetTextNode ref text) =
-    object ["fn" .= ("text" :: Text), "ref" .= ref, "text" .= text]
-  toJSON (InsertChild ref index node) =
-    object ["fn" .= ("insert" :: Text), "ref" .= ref, "i" .= index, "node" .= node]
-  toJSON (AppendChild ref element) =
-    object ["fn" .= ("append" :: Text), "ref" .= ref, "node" .= element]
-  toJSON (RemoveChild ref index) =
-    object ["fn" .= ("remove" :: Text), "ref" .= ref, "i" .= index]
-  toJSON (RemoveAllChildren ref) =
-    object ["fn" .= ("removeAll" :: Text), "ref" .= ref]
-  toJSON (FreeRef ref) =
+  toJSON (SpliceCommand (SpliceFreeRef ref)) =
     object ["fn" .= ("free" :: Text), "ref" .= ref]
+  toJSON (SpliceCommand (SpliceComponentCommand ref cmdData)) =
+    object ["fn" .= ("component" :: Text), "ref" .= ref, "data" .= cmdData]
   toJSON Pong =
     object ["fn" .= ("pong" :: Text)]
 
   toEncoding (SetRoot wire) =
     pairs ("fn" .= ("root" :: Text) <> "node" .= wire)
-  toEncoding (SetTextNode ref text) =
-    pairs ("fn" .= ("text" :: Text) <> "ref" .= ref <> "text" .= text)
-  toEncoding (InsertChild ref index element) =
-    pairs ("fn" .= ("insert" :: Text) <> "ref" .= ref <> "i" .= index <> "node" .= element)
-  toEncoding (AppendChild ref element) =
-    pairs ("fn" .= ("append" :: Text) <> "ref" .= ref <> "node" .= element)
-  toEncoding (RemoveChild ref index) =
-    pairs ("fn" .= ("remove" :: Text) <> "ref" .= ref <> "i" .= index)
-  toEncoding (RemoveAllChildren ref) =
-    pairs ("fn" .= ("removeAll" :: Text) <> "id" .= ref)
-  toEncoding (FreeRef ref) =
+  toEncoding (SpliceCommand (SpliceFreeRef ref)) =
     pairs ("fn" .= ("free" :: Text) <> "ref" .= ref)
+  toEncoding (SpliceCommand (SpliceComponentCommand ref cmdData)) =
+    pairs ("fn" .= ("component" :: Text) <> "ref" .= ref <> "data" .= cmdData)
   toEncoding Pong =
     pairs ("fn" .= ("pong" :: Text))
 
-instance ToJSON WireNode where
-  toJSON (WireNodeElement (WireElement ref tag attributes children)) =
-    object ["type" .= ("element" :: Text), "ref" .= ref, "tag" .= tag, "attributes" .= attributes, "children" .= children]
-  toJSON (WireNodeTextNode (WireText ref text)) =
-    object ["type" .= ("text" :: Text), "ref" .= ref, "text" .= text]
-
-  toEncoding (WireNodeElement (WireElement ref tag attributes children)) =
-    pairs ("type" .= ("element" :: Text) <> "ref" .= ref <> "tag" .= tag <> "attributes" .= attributes <> "children" .= children)
-  toEncoding (WireNodeTextNode (WireText ref text)) =
-    pairs ("type" .= ("text" :: Text) <> "ref" .= ref <> "text" .= text)
-
-
-class IsSplice a where
-  freeSplice :: a -> STMc NoRetry '[] [JsRef]
-  generateSpliceCommands :: a -> STMc NoRetry '[] [Command]
-
-instance IsSplice a => IsSplice [a] where
-  freeSplice xs = fold <$> mapM freeSplice xs
-  generateSpliceCommands xs = fold <$> mapM generateSpliceCommands xs
-
-freeSpliceAsCommands :: IsSplice a => a -> STMc NoRetry '[] [Command]
-freeSpliceAsCommands x = FreeRef <<$>> freeSplice x
-
-data Splice = forall a. IsSplice a => Splice a
-
-instance IsSplice Splice where
-  freeSplice (Splice x) = freeSplice x
-  generateSpliceCommands (Splice x) = generateSpliceCommands x
+instance FromJSON Event where
+  parseJSON = Aeson.withObject "Event" \obj ->
+    obj .: "fn" >>= \case
+      "ping" -> pure Ping
+      "component" -> ComponentEvent <$> obj .: "ref" <*> obj .: "data"
+      "ackFree" -> AckFree <$> obj .: "ref"
+      (fn :: Text) -> fail $ "Invalid event name: " <> show fn
 
 
 newDomNodeSplice :: Client -> DomNode -> STMc NoRetry '[] (WireNode, [Splice])
-newDomNodeSplice client (DomNodeElement element) = newElementSplice client element
-newDomNodeSplice client (DomNodeTextNode text) = newTextNodeSplice client text
+newDomNodeSplice client (CreateNodeComponent component) = do
+  (wireComponent, splices) <- newComponentInstance client component
+  pure (wireComponent, Splice <$> splices)
 
 
-newtype ElementSplice = ElementSplice (TVar (Maybe (JsRef, [Splice])))
+newtype ComponentInstance = ComponentInstance (TVar (Maybe ComponentInstanceContent))
 
-instance IsSplice ElementSplice where
-  freeSplice (ElementSplice var) = do
+data ComponentInstanceContent = ComponentInstanceContent {
+  ref :: ComponentRef,
+  freeInstanceRefs :: STMc NoRetry '[] [ComponentRef],
+  commandSource :: ComponentCommandSource,
+  eventHandler :: ComponentEventHandler
+}
+
+instance IsSplice ComponentInstance where
+  freeSplice (ComponentInstance var) = do
     readTVar var >>= \case
       Nothing -> pure []
-      Just (ref, splices) -> do
+      Just content -> do
         writeTVar var Nothing
-        childRefs <- fold <$> mapM freeSplice splices
-        pure (ref : childRefs)
+        content.freeInstanceRefs
 
-  generateSpliceCommands (ElementSplice var) = do
+  generateSpliceCommands (ComponentInstance var) = do
     readTVar var >>= \case
       Nothing -> pure []
-      Just (_ref, splices) -> do
-        fold <$> mapM generateSpliceCommands splices
+      Just content -> do
+        content.commandSource <<&>> \case
+          Left spliceCommand -> spliceCommand
+          Right componentCommand -> SpliceComponentCommand content.ref componentCommand
 
-newElementSplice :: Client -> DomElement -> STMc NoRetry '[] (WireNode, [Splice])
-newElementSplice client element = do
-  ref <- newJsRef client
-
-  (children, contentSplice) <- newChildrenSplice client ref element.children
-
-  let wireElement = WireElement {
-      ref = Just ref,
-      tag = element.tagName,
-      attributes = mempty,
-      children
-    }
-
-  var <- newTVar (Just (ref, contentSplice))
-
-  pure (WireNodeElement wireElement, [Splice (ElementSplice var)])
-
-
-newtype TextSplice = TextSplice (TVar (Maybe (TSimpleDisposer, JsRef, TVar (Maybe Text))))
-
-instance IsSplice TextSplice where
-  freeSplice (TextSplice var) = do
-    readTVar var >>= \case
-      Nothing -> pure []
-      Just (disposer, ref, _) -> do
-        writeTVar var Nothing
-        disposeTSimpleDisposer disposer
-        pure [ref]
-
-  generateSpliceCommands (TextSplice var) = do
-    readTVar var >>= \case
-      Nothing -> pure []
-      Just (_disposer, ref, outbox) -> do
-        readTVar outbox >>= \case
-          Nothing -> pure []
-          Just newText -> do
-            writeTVar outbox Nothing
-            pure [SetTextNode ref newText]
-
-newTextNodeSplice :: Client -> DomTextNode -> STMc NoRetry '[] (WireNode, [Splice])
-newTextNodeSplice client (DomTextNode textObservable) = do
-  updateVar <- newTVar Nothing
-  (disposer, initial) <- attachSimpleObserver textObservable (writeTVar updateVar . Just)
-
-  if isTrivialTSimpleDisposer disposer
-    then pure (WireNodeTextNode (WireText Nothing initial), [])
-    else do
-      ref <- newJsRef client
-      var <- newTVar (Just (disposer, ref, updateVar))
-      pure (WireNodeTextNode (WireText (Just ref) initial), [Splice (TextSplice var)])
-
-
-data AttributeMapSplice = AttributeMapSplice
-
-data AttributeSplice
-
---newAttributeMapSplice :: Client -> JsRef -> ObservableMap NoLoad '[] Text (Maybe Text) -> STMc NoRetry '[] ([WireAttribute], Splice)
---newAttributeMapSplice = undefined
-
-
-data ChildrenSplice =
-  ChildrenSplice
-    Client
-    JsRef
-    (AccumulatingObserver NoLoad '[] Seq DomNode)
-    (TVar (Maybe (ObserverState NoLoad (ObservableResult '[] Seq) [Splice])))
-
-instance IsSplice ChildrenSplice where
-  freeSplice (ChildrenSplice _ _ accum var) = do
-    disposeAccumulatingObserver accum
-    readTVar var >>= \case
-      Nothing -> pure []
-      Just state -> do
-        writeTVar var Nothing
-        fold <$> mapM freeSplice (toList state)
-
-  generateSpliceCommands (ChildrenSplice client ref accum var) = do
-    containerCommands <- takeAccumulatingObserver accum Live >>= \case
-      Nothing -> pure []
-      Just change -> do
-        readTVar var >>= \case
-          Nothing -> pure []
-          Just state -> do
-
-            let ctx = state.context
-            case validateChange ctx change of
-              Nothing -> pure []
-              Just validatedChange -> do
-                validatedWireAndSpliceChange <- traverse (newDomNodeSplice client) validatedChange
-                let wireAndSpliceChange = validatedWireAndSpliceChange.unvalidated
-                let wireChange = fst <$> wireAndSpliceChange
-                let spliceChange = snd <$> wireAndSpliceChange
-
-                let removedSplices = fold (selectRemovedByChange change state)
-                freeCommands <- fold <$> mapM freeSpliceAsCommands removedSplices
-
-                forM_ (applyObservableChange spliceChange state)
-                  \(_, newState) -> writeTVar var (Just newState)
-
-                pure (freeCommands <> listChangeCommands ref ctx wireChange)
-
-    childCommands <- readTVar var >>= \case
-      Nothing -> pure []
-      Just state -> fold <$> mapM generateSpliceCommands (toList state)
-
-    pure (containerCommands <> childCommands)
-
-newChildrenSplice :: Client -> JsRef -> ObservableList NoLoad '[] DomNode -> STMc NoRetry '[] ([WireNode], [Splice])
-newChildrenSplice client ref childrenObservable = do
-  (maccum, initial) <- attachAccumulatingObserver (toObservableT childrenObservable)
-
-  let ObservableStateLive (ObservableResultTrivial nodes) = initial
-  (initialWireNodes, splices) <- Seq.unzip <$> mapM (newDomNodeSplice client) nodes
-
-  case maccum of
-    Nothing -> pure (toList initialWireNodes, fold splices)
-    Just accum -> do
-      var <- newTVar (Just (ObserverStateLive (ObservableResultOk splices)))
-      pure (toList initialWireNodes, [Splice (ChildrenSplice client ref accum var)])
-
-listChangeCommands ::
-  JsRef ->
-  ObserverContext NoLoad (ObservableResult '[] Seq) ->
-  ObservableChange NoLoad (ObservableResult '[] Seq) WireNode ->
-  [Command]
-listChangeCommands ref _ctx (ObservableChangeLiveReplace (ObservableResultTrivial xs)) =
-  RemoveAllChildren ref : fmap (AppendChild ref) (toList xs)
-listChangeCommands ref ctx (ObservableChangeLiveDelta (ListDelta deltaOps)) =
-  go 0 initialListLength deltaOps
+newComponentInstance :: Client -> Component -> STMc NoRetry '[] (WireComponent, [Splice])
+newComponentInstance client (Component name componentInitFn) = do
+  let componentApi = ComponentApi {
+        newCreateNodeComponentInstance = \(CreateNodeComponent component) -> newComponentInstance client component,
+        newModifyElementComponentInstance = \(ModifyElementComponent component) -> newComponentInstance client component
+      }
+  componentInitFn componentApi >>= \(result, splices) -> case result of
+    Left initData -> do
+      pure (WireComponent name Nothing initData, splices)
+    Right (freeFn, initData, commandSource, eventHandler) -> do
+      ref <- newComponentRef client
+      let content = ComponentInstanceContent {
+        ref,
+        freeInstanceRefs = freeHandler freeFn ref,
+        commandSource,
+        eventHandler
+      }
+      componentInstance <- ComponentInstance <$> newTVar (Just content)
+      modifyTVar client.componentInstances (HM.insert ref componentInstance)
+      pure (WireComponent name (Just ref) initData, Splice componentInstance : splices)
   where
-    initialListLength = case ctx of
-      (ObserverContextLive (Just len)) -> len
-      (ObserverContextLive Nothing) -> 0
-    go :: ObservableList.Length -> ObservableList.Length -> [ListDeltaOperation WireNode] -> [Command]
-    go _offset ((<= 0) -> True) [] = []
-    go offset remaining [] = RemoveChild ref (fromIntegral offset) : go (offset + 1) (remaining -1) []
-    go offset remaining (ListKeep n : ops) = go (offset + n) (remaining - n) ops
-    go offset remaining (ListDrop i : ops) = replicate (fromIntegral i) (RemoveChild ref (fromIntegral offset)) <> go offset (remaining - i) ops
-    go offset 0 (ListSplice xs : ops) = (AppendChild ref <$> toList xs) <> go (offset + fromIntegral (Seq.length xs)) 0 ops
-    go offset remaining (ListSplice Seq.Empty : ops) = go offset remaining ops
-    go offset remaining (ListSplice (x :<| xs) : ops) = InsertChild ref (fromIntegral offset) x : go (offset + 1) remaining (ListSplice xs : ops)
+    freeHandler :: STMc NoRetry '[] [ComponentRef] -> ComponentRef -> STMc NoRetry '[] [ComponentRef]
+    freeHandler freeFn ref = do
+        refs <- freeFn
+        modifyTVar client.componentInstances (HM.delete ref)
+        pure (ref:refs)
+
 
 
 -- * Wai

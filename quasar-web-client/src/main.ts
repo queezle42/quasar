@@ -1,6 +1,20 @@
 // Package entry point
 // Reexport public api here
 
+import {
+  Component,
+  ComponentApi,
+  Extension,
+  Ref,
+  TypedComponent,
+  Unsubscriber,
+  WireComponent,
+  WireNode,
+  toCreateNodeComponent,
+  toModifyElementComponent,
+} from "./components/api"
+import { coreComponents } from "./components/core"
+
 const maxReconnectDelayMs = 10_000;
 const pingIntervalMs = 2_000;
 const pingTimeoutMs = 1_000;
@@ -17,21 +31,160 @@ enum State {
 type Command =
   | { fn: "pong" }
   | { fn: "root", node: WireNode }
-  | { fn: "text", ref: number, text: string }
-  | { fn: "insert", ref: number, i: number, node: WireNode }
-  | { fn: "append", ref: number, node: WireNode }
-  | { fn: "remove", ref: number, i: number }
-  | { fn: "removeAll", ref: number }
-  | { fn: "removeAll", ref: number }
-  | { fn: "free", ref: number }
+  | { fn: "insert", ref: Ref, i: number, node: WireNode }
+  | { fn: "append", ref: Ref, node: WireNode }
+  | { fn: "remove", ref: Ref, i: number }
+  | { fn: "replace", ref: Ref, nodes: [WireNode] }
+  | { fn: "free", ref: Ref }
+  | { fn: "component", ref: Ref, data: unknown }
 
-// type Event =
-//   | { fn: "ping" }
+type Event =
+  | { fn: "ping" }
+  | { fn: "component", ref: Ref, data: unknown }
+  | { fn: "ackFree", ref: Ref }
 
-type WireNode =
-  | { type: "element", ref: number | null, tag: string, attributes: Map<string, string>, children: [WireNode] }
-  | { type: "text", ref: number | null, text: string }
+class ComponentInstance {
+  private alive: boolean = true;
+  private unsubscribers: Unsubscriber[] = [];
+  private _commandHandler: ((data: unknown) => void) | null = null;
+  public get commandHandler(): ((data: unknown) => void) | null {
+    return this._commandHandler;
+  }
+  public set commandHandler(receive: ((data: unknown) => void) | null) {
+    if (this.alive) {
+      this._commandHandler = receive;
+    }
+  }
 
+  constructor(private client: QuasarWebClient, private ref: Ref, readonly component: Component) {
+  }
+
+  addUnsubscriber(unsubscribe: Unsubscriber) {
+    if (this.alive) {
+      this.unsubscribers.push(unsubscribe);
+    }
+    else {
+      unsubscribe();
+    }
+  }
+
+  sendComponentEvent(data: unknown) {
+    if (!this.alive) {
+      throw `[quasar] Cannot send event for component ${this.ref} because its ref has been freed.`;
+    }
+    this.client.sendComponentEvent(this.ref, data);
+  }
+
+  /**
+  * Only to be called by ComponentInstanceRegistry (the instance has to be removed
+  * from the registry on free)
+  */
+  freeRef() {
+    if (this.alive) {
+      this.alive = false;
+      this._commandHandler = null;
+      for (let unsubscriber of this.unsubscribers) {
+        unsubscriber();
+      }
+      this.unsubscribers = [];
+    }
+  }
+}
+
+class ComponentRegistry {
+  private components: Map<string, Component> = new Map();
+  private instances: Map<Ref, ComponentInstance> = new Map();
+  private componentApi: ComponentApi;
+
+  constructor(private client: QuasarWebClient) {
+    this.componentApi = {
+      createNode: wireNode => client.createNode(wireNode),
+      attachModifyElementComponent: (wireComponent, element) => this.initializeModifyElementComponent(wireComponent, element),
+    };
+  }
+
+  registerComponent(component: Component, force: boolean = false) {
+    if (!force && this.components.get(component.name)) {
+      throw `[quasar] Cannot register a component with name '${component.name}' because another component with that name was already registered`;
+    }
+    this.components.set(component.name, component);
+  }
+
+  registerComponents(components: readonly Component[], force: boolean = false) {
+    for (const component of components) {
+      this.registerComponent(component, force);
+    }
+  }
+
+  initializeCreateNodeComponent(wire: WireComponent<null, Node>): Node {
+    return this.initializeComponent(wire, null, toCreateNodeComponent);
+  }
+
+  initializeModifyElementComponent(wire: WireComponent<HTMLElement, null>, element: HTMLElement): void {
+    this.initializeComponent(wire, element, toModifyElementComponent);
+  }
+
+  private initializeComponent<t, i, o>(wire: WireComponent<i, o>, target: i, verifyComponent: ((component: Component) => TypedComponent<t, i, o>)): o {
+    const component = this.components.get(wire.name);
+    if (!component) {
+      throw `[quasar] Invalid component name: ${wire.name}`
+    }
+
+    const ref = wire.ref;
+
+    const typedComponent = verifyComponent(component);
+    const init = typedComponent.init({ initData: wire.data, target, componentApi: this.componentApi });
+
+    if (ref !== null) {
+      const instance = new ComponentInstance(this.client, ref, component);
+      this.instances.set(ref, instance);
+
+      const { output, unsubscribe, receive } = init.initConnected(instance.sendComponentEvent);
+
+      if (receive) {
+        instance.commandHandler = receive;
+      }
+      if (unsubscribe) {
+        instance.addUnsubscriber(unsubscribe);
+      }
+
+      return output;
+    }
+    else {
+      return init.initStatic();
+    }
+
+  }
+
+  freeInstanceRef(ref: Ref) {
+    const instance = this.instances.get(ref);
+    if (instance) {
+      instance.freeRef();
+      this.instances.delete(ref);
+    }
+  }
+
+  freeAllInstanceRefs() {
+    for (const instance of this.instances.values()) {
+      instance.freeRef();
+    }
+    this.instances.clear();
+  }
+
+  handleComponentCommand(ref: Ref, data: unknown) {
+    const instance = this.instances.get(ref);
+    if (!instance) {
+      throw `[quasar] Invalid component ref ${ref}`;
+    }
+    const commandHandler = instance.commandHandler;
+    if (commandHandler) {
+      commandHandler(data);
+    }
+    else {
+      console.error(`[quasar] Received command for component "${instance.component.name}" (${ref}) but handler is null`);
+    }
+  }
+}
 
 class QuasarWebClient {
   private websocketAddress: string;
@@ -42,12 +195,18 @@ class QuasarWebClient {
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private pongTimeout: ReturnType<typeof setTimeout> | null = null;
   private elements: Map<number, HTMLElement> = new Map();
-  private textNodes: Map<number, Text> = new Map();
 
-  constructor(websocketAddress?: string) {
+  private componentRegistry: ComponentRegistry = new ComponentRegistry(this);
+
+  constructor(extensions: Extension[], websocketAddress?: string) {
+    this.componentRegistry.registerComponents(coreComponents);
+    for (const extension of extensions) {
+      this.componentRegistry.registerComponents(extension.components);
+    }
+
     if (websocketAddress == null) {
       const protocol = window.location.protocol == "https:" ? "wss" : "ws";
-      this.websocketAddress = `${protocol}://${window.location.host}`;
+      this.websocketAddress = `${protocol}://${window.location.host}:${window.location.port}/ws`;
     }
     else {
       this.websocketAddress = websocketAddress;
@@ -97,6 +256,7 @@ class QuasarWebClient {
     if (this.state === State.Initial || this.state === State.WaitingForReconnect) {
       console.log("[quasar] connecting...");
       this.setState(this.state === State.Initial ? State.Connecting : State.Reconnecting);
+      this.websocket?.close();
       this.websocket = new WebSocket(this.websocketAddress, ["quasar-web-dev"]);
 
       this.websocket.onopen = _event => {
@@ -119,7 +279,8 @@ class QuasarWebClient {
         if (target) {
           target.innerHTML = "";
         }
-        console.debug(`[quasar] cleanup complete`);
+        this.componentRegistry.freeAllInstanceRefs();
+        console.debug("[quasar] cleanup complete");
 
         // Reconnect in case of a clean server-side disconnect.
         // (The `close`-function and the `onerror`-handler would clear the
@@ -127,7 +288,7 @@ class QuasarWebClient {
         // only happens when the connection is closed by the server.
         if (this.state === State.Connected) {
           this.setState(State.WaitingForReconnect);
-          this.connect();
+          setTimeout(() => this.connect(), 1_000);
         }
       };
 
@@ -164,12 +325,24 @@ class QuasarWebClient {
     }
   }
 
-  private sendPing() {
+  private send(events: Event | Event[]) {
     if (this.state === State.Connected && this.websocket !== null) {
       this.pongTimeout = setTimeout(() => this.pingFailed(), pingTimeoutMs);
-      this.websocket.send("ping");
-      console.debug("[quasar] ping");
+      console.debug("[quasar] sending", events);
+      if (!Array.isArray(events)) {
+        events = [events];
+      }
+      this.websocket.send(JSON.stringify(events));
     }
+  }
+
+  private sendPing() {
+    this.send({ fn: "ping" });
+    console.debug("[quasar] ping");
+  }
+
+  public sendComponentEvent(ref: Ref, data: unknown) {
+    this.send({ fn: "component", ref, data });
   }
 
   private pingFailed() {
@@ -187,33 +360,31 @@ class QuasarWebClient {
     }
   }
 
-  private createNode(wireNode: WireNode): Node {
-    if (wireNode.type == "element") {
-      const element = document.createElement(wireNode.tag);
+  public createNode(wireNode: WireNode): Node {
+    return this.componentRegistry.initializeCreateNodeComponent(wireNode);
+    //if (wireNode.type === "element") {
+    //  const element = document.createElement(wireNode.tag);
 
-      if (wireNode.ref != null) {
-        console.log(`[quasar] registering element`, wireNode.ref);
-        this.elements.set(wireNode.ref, element);
-      }
+    //  if (wireNode.ref !== null) {
+    //    console.log(`[quasar] registering element`, wireNode.ref);
+    //    this.elements.set(wireNode.ref, element);
+    //  }
 
-      const children = wireNode.children.map(wireChild => this.createNode(wireChild));
-      element.replaceChildren(...children);
+    //  const children = wireNode.children.map(wireNode => this.createNode(wireNode));
+    //  element.replaceChildren(...children);
 
-      return element;
-    }
-    else {
-      const textNode = document.createTextNode(wireNode.text);
+    //  for (let wireComponent of wireNode.components) {
+    //    this.componentRegistry.initializeModifyElementComponent(wireComponent, element);
+    //  }
 
-      if (wireNode.ref != null) {
-        console.log(`[quasar] registering text node`, wireNode.ref);
-        this.textNodes.set(wireNode.ref, textNode);
-      }
-
-      return textNode;
-    }
+    //  return element;
+    //}
+    //else {
+    //  return this.componentRegistry.initializeCreateNodeComponent(wireNode);
+    //}
   }
 
-  private getElement(ref: number): HTMLElement {
+  private getElement(ref: Ref): HTMLElement {
     const element = this.elements.get(ref);
     if (!element) {
       throw `[quasar-web] Element with ref ${ref} does not exist`;
@@ -221,19 +392,10 @@ class QuasarWebClient {
     return element;
   }
 
-  private getTextNode(ref: number): Text {
-    const node = this.textNodes.get(ref);
-    if (!node) {
-      throw `[quasar-web] Text node with ref ${ref} does not exist`;
-    }
-    return node;
-  }
-
-
-  private freeRef(ref: number) {
+  private freeRef(ref: Ref) {
     console.log(`[quasar] freeing`, ref);
+    this.componentRegistry.freeInstanceRef(ref);
     this.elements.delete(ref);
-    this.textNodes.delete(ref);
   }
 
   private receiveMessage(commands: Command[]) {
@@ -249,10 +411,6 @@ class QuasarWebClient {
             const element = this.createNode(command.node);
             root.replaceChildren(element);
           }
-          break;
-        case "text":
-          const element = this.getTextNode(command.ref);
-          element.data = command.text;
           break;
         case "insert":
           {
@@ -282,15 +440,21 @@ class QuasarWebClient {
             target.remove();
           }
           break;
-        case "removeAll":
+        case "replace":
           {
             const element = this.getElement(command.ref);
-            element.replaceChildren();
+            const nodes = command.nodes.map(node => this.createNode(node));
+            element.replaceChildren(...nodes);
           }
           break;
         case "free":
           {
             this.freeRef(command.ref);
+          }
+          break;
+        case "component":
+          {
+            this.componentRegistry.handleComponentCommand(command.ref, command.data);
           }
           break;
         default:
@@ -305,5 +469,5 @@ let globalClient: QuasarWebClient | null = null;
 
 export function initializeQuasarWebClient(websocketAddress?: string): void {
   globalClient?.close("reinitialized");
-  globalClient = new QuasarWebClient(websocketAddress);
+  globalClient = new QuasarWebClient([], websocketAddress);
 }

@@ -52,8 +52,8 @@ common shared-properties
 library
   import: shared-properties
   build-depends:
-    base <5,
     aeson,
+    base <5,
     binary,
     bytestring,
     containers,
@@ -62,6 +62,7 @@ library
     quasar,
     quasar-timer,
     text,
+    unordered-containers,
     wai,
     wai-websockets,
     websockets,

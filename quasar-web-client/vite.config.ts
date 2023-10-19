@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import checker from 'vite-plugin-checker';
 
 export default defineConfig({
   build: {
@@ -11,4 +12,9 @@ export default defineConfig({
       formats: [ 'es' ],
     },
   },
+  plugins: [
+    checker({
+      typescript: true,
+    }),
+  ],
 });

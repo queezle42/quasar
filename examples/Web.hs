@@ -1,6 +1,10 @@
+{-# LANGUAGE OverloadedLists #-}
+
 module Main (main) where
 
 import Control.Concurrent (forkIO, threadDelay)
+import Data.String (fromString)
+import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Lazy qualified as TL
 import Network.Wai.Handler.Warp
@@ -20,13 +24,33 @@ main :: IO ()
 main = runQuasarAndExit do
   var <- newObservableVarIO (0 :: Int)
   async_ $ forever do
-    atomically $ modifyObservableVar var (+ 1)
+    atomically $ modifyObservableVar var (\x -> x `mod` 100 + 1)
     liftIO $ threadDelay 1_000_000
+
+  let
+    squirrelFn :: Int -> Observable NoLoad '[] Text
+    squirrelFn x = do
+        isSquirrel <- skipRedundantUpdates ((== x) <$> toObservable var)
+        if isSquirrel
+          then "🐿"
+          else fromString (show x)
+
+  mapVar <- newObservableMapVarIO mempty
+  async_ $ forever do
+    x <- randomRIO @Int (1, 100)
+    atomically do
+      ObservableMap.insert mapVar x (squirrelFn x)
+    liftIO $ threadDelay 1_000_000
+    y <- randomRIO @Int (1, 100)
+    atomically do
+      ObservableMap.delete mapVar y
+    liftIO $ threadDelay 700_000
 
   let rootDiv = domElement "div" mempty (ObservableList.fromList [
           "hello world!",
           domElement "br" mempty mempty,
-          textNode (liftObservable (T.pack . show <$> toObservable var))
+          textNode (liftObservable (T.pack . show <$> toObservable var)),
+          domElement "ul" mempty (textElement "li" mempty <$> ObservableMap.values (toObservableMap mapVar))
         ])
 
   liftIO $ runSettings settings $ toWaiApplication rootDiv
@@ -37,4 +61,3 @@ main = runQuasarAndExit do
       setBeforeMainLoop (hPutStrLn stderr ("Listening on port " <> show port)) $
       setPort port
       defaultSettings
-
