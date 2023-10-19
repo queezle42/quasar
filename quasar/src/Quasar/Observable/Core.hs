@@ -45,7 +45,6 @@ module Quasar.Observable.Core (
   ObserverState(.., ObserverStateLoading, ObserverStateLiveOk, ObserverStateLiveEx),
   createObserverState,
   toObservableState,
-  applyObservableUpdate,
   applyObservableChange,
   applyEvaluatedObservableChange,
   toReplacingChange,
@@ -96,6 +95,7 @@ module Quasar.Observable.Core (
   attachMergeObserver,
   attachMonoidMergeObserver,
   attachEvaluatedMergeObserver,
+  attachDeltaRemappingObserver,
 
   -- * Identity observable (single value without partial updates)
   Observable(..),
@@ -1439,6 +1439,56 @@ instance IsObservableCore Load exceptions Identity v (FutureEx exceptions v) whe
 
 instance ToObservableT Load exceptions Identity v (FutureEx exceptions v) where
   toObservableT = ObservableT
+
+
+
+attachDeltaRemappingObserver ::
+  forall canLoad exceptions ca va c v.
+  ObservableContainer ca va =>
+  ObservableT canLoad exceptions ca va ->
+  (ca va -> c v) -> -- ^ Content remap function. The first argument ist the current container state.
+  (ca va -> Delta ca va -> Maybe (ObservableUpdate c v)) -> -- ^ Delta remap function. The first argument is the previous container state.
+  (ObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ()) ->
+  STMc NoRetry '[] (TSimpleDisposer, ObservableState canLoad (ObservableResult exceptions c) v)
+attachDeltaRemappingObserver x resetFn deltaFn callback =
+  mfixTVar \var -> do
+    (disposer, initial) <- attachEvaluatedObserver# x \case
+      EvaluatedObservableChangeLoadingClear -> do
+        writeTVar var ObserverStateLoadingCleared
+        callback ObservableChangeLoadingClear
+      EvaluatedObservableChangeLoadingUnchanged -> callback ObservableChangeLoadingUnchanged
+      EvaluatedObservableChangeLiveUnchanged -> callback ObservableChangeLiveUnchanged
+      EvaluatedObservableChangeLiveReplace (ObservableResultOk new) -> do
+        writeTVar var (ObserverStateLive (ObservableResultOk new))
+        callback (ObservableChangeLiveReplace (ObservableResultOk (resetFn new)))
+      EvaluatedObservableChangeLiveReplace result@(ObservableResultEx ex) -> do
+          writeTVar var (ObserverStateLive result)
+          callback (ObservableChangeLiveReplace (ObservableResultEx ex))
+      EvaluatedObservableChangeLiveDelta (delta, result) ->
+        readTVar var >>= \case
+          ObserverStateLoadingCleared -> pure () -- no effect
+          ObserverStateLoadingCached (ObservableResultOk cached) -> do
+            writeTVar var (ObserverStateLive result)
+            handleDelta var cached delta
+          ObserverStateLoadingCached (ObservableResultEx ex) -> do
+            writeTVar var (ObserverStateLive (ObservableResultEx ex))
+            callback ObservableChangeLiveUnchanged
+          ObserverStateLive (ObservableResultOk content) -> do
+            writeTVar var (ObserverStateLive result)
+            handleDelta var content delta
+          ObserverStateLive (ObservableResultEx _ex) -> pure () -- no effect
+
+    pure ((disposer, mapObservableStateResult resetFn initial), createObserverState initial)
+  where
+    handleDelta :: TVar (ObserverState canLoad (ObservableResult exceptions ca) va) -> ca va -> Delta ca va -> STMc NoRetry '[] ()
+    handleDelta var content delta = do
+      let update = deltaFn content delta
+      case update of
+        Nothing -> pure ()
+        Just (ObservableUpdateReplace newContent) ->
+          callback (ObservableChangeLiveReplace (ObservableResultOk newContent))
+        Just (ObservableUpdateDelta newDelta) ->
+          callback (ObservableChangeLiveDelta newDelta)
 
 
 

@@ -3,6 +3,7 @@
 
 module Quasar.Observable.List (
   ObservableList(..),
+  IsObservableList(..),
   attachSimpleListObserver,
   ToObservableList,
   toObservableList,

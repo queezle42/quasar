@@ -40,6 +40,11 @@ module Quasar.Observable.Map (
   mapSTM,
   attachForEach,
 
+  -- ** Conversions
+  keys,
+  values,
+  items,
+
   -- ** Filter
   filter,
   filterWithKey,
@@ -66,14 +71,19 @@ import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
+import Data.Sequence (Seq)
+import Data.Sequence qualified as Seq
 import GHC.Records (HasField (..))
 import Quasar.Observable.Core
 import Quasar.Observable.Lift
-import Quasar.Observable.List (ObservableList)
+import Quasar.Observable.List (ObservableList(..), IsObservableList, ListDelta, ListOperation(..))
+import Quasar.Observable.List qualified as ObservableList
 import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
 import Quasar.Prelude hiding (filter, lookup)
 import Quasar.Resources.Disposer
+import Quasar.Utils.Map qualified as MapUtils
+import Data.Foldable (foldl')
 
 
 newtype MapDelta k v
@@ -397,6 +407,53 @@ filter fn = filterWithKey (const fn)
 
 filterWithKey :: (k -> v -> Bool) -> ObservableMap l e k v -> ObservableMap l e k v
 filterWithKey fn fx = ObservableMap (ObservableT (FilteredObservableMap fn fx))
+
+
+-- * Convert to list of values/items
+
+newtype ObservableMapValues canLoad exceptions k v = ObservableMapValues (ObservableMap canLoad exceptions k v)
+
+instance Ord k => IsObservableList canLoad exceptions v (ObservableMapValues canLoad exceptions k v) where
+
+instance Ord k => IsObservableCore canLoad exceptions Seq v (ObservableMapValues canLoad exceptions k v) where
+  isEmpty# (ObservableMapValues x) = isEmpty# x
+
+  count# (ObservableMapValues x) = count# x
+
+  readObservable# (ObservableMapValues x) =
+    mapObservableStateResult (Seq.fromList . Map.elems) <$> readObservable# x
+
+  attachObserver# (ObservableMapValues (ObservableMap x)) =
+    attachDeltaRemappingObserver x (Seq.fromList . Map.elems) convertDelta
+    where
+      convertDelta :: Map k v -> MapDelta k v -> Maybe (ObservableUpdate Seq v)
+      convertDelta m (MapDelta ops) =
+        let (_finalMap, listOps) = foldl' addOperation (m, []) (Map.toList ops)
+        in ObservableList.operationsToUpdate (fromIntegral (Map.size m)) listOps
+
+      addOperation :: (Map k v, [ListOperation v]) -> (k, MapOperation v) -> (Map k v, [ListOperation v])
+      addOperation (m, listOps) mapOp = (listOps <>) <$> convertOperation m mapOp
+
+      convertOperation :: Map k v -> (k, MapOperation v) -> (Map k v, [ListOperation v])
+      convertOperation m (key, Insert value) =
+        let (replaced, newMap) = MapUtils.insertCheckReplace key value m
+        in case fromIntegral <$> Map.lookupIndex key newMap of
+          Nothing -> unreachableCodePath
+          Just index -> (newMap,) if replaced
+            then [ListDelete index, ListInsert index value]
+            else [ListInsert index value]
+      convertOperation m (key, Delete) =
+        let i = maybeToList (Map.lookupIndex key m)
+        in (Map.delete key m, ListDelete . fromIntegral <$> i)
+
+values :: Ord k => ObservableMap canLoad exceptions k v -> ObservableList canLoad exceptions v
+values x = ObservableList (ObservableT (ObservableMapValues (toObservableMap x)))
+
+items :: Ord k => ObservableMap canLoad exceptions k v -> ObservableList canLoad exceptions (k, v)
+items x = values $ mapWithKey (,) x
+
+keys :: Ord k => ObservableMap canLoad exceptions k v -> ObservableList canLoad exceptions k
+keys x = values $ mapWithKey const x
 
 
 -- * ObservableMapVar
