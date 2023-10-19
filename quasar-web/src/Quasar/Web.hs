@@ -7,6 +7,7 @@ module Quasar.Web (
 
   ComponentCommandSource,
   ComponentEventHandler,
+  ComponentInit(..),
   Component(..),
 
   CreateNodeComponent(..),
@@ -18,7 +19,6 @@ module Quasar.Web (
   ComponentRef,
   WireNode,
   WireComponent(..),
-  IsSplice(..),
   Splice(..),
   SpliceCommand(..),
 ) where
@@ -81,9 +81,15 @@ data ComponentApi = ComponentApi {
   newModifyElementComponentInstance :: ModifyElementComponent -> STMc NoRetry '[] (WireComponent, [Splice])
 }
 
-type ComponentCommandSource = STMc NoRetry '[] [Either SpliceCommand Aeson.Value]
+type ComponentCommandSource = (Aeson.Value -> SpliceCommand) -> STMc NoRetry '[] [SpliceCommand]
 type ComponentEventHandler =  Aeson.Value -> STMc NoRetry '[] ()
-data Component = Component Text (ComponentApi -> STMc NoRetry '[] (Either Aeson.Value (STMc NoRetry '[] [ComponentRef], Aeson.Value, ComponentCommandSource, ComponentEventHandler), [Splice]))
+data ComponentInit = ComponentInit {
+  free :: STMc NoRetry '[] [SpliceCommand],
+  initData :: Aeson.Value,
+  commandSource :: ComponentCommandSource,
+  eventHandler :: ComponentEventHandler
+}
+data Component = Component Text (ComponentApi -> STMc NoRetry '[] (Either (Aeson.Value, [Splice]) ComponentInit))
 
 newtype CreateNodeComponent = CreateNodeComponent Component
 
@@ -95,27 +101,10 @@ data SpliceCommand
   | SpliceComponentCommand ComponentRef Aeson.Value
   deriving Show
 
-class IsSplice a where
-  freeSplice :: a -> STMc NoRetry '[] [ComponentRef]
-  generateSpliceCommands :: a -> STMc NoRetry '[] [SpliceCommand]
-
-instance IsSplice a => IsSplice [a] where
-  freeSplice xs = fold <$> mapM freeSplice xs
-  generateSpliceCommands xs = fold <$> mapM generateSpliceCommands xs
-
-instance IsSplice TSimpleDisposer where
-  freeSplice disposer = [] <$ disposeTSimpleDisposer disposer
-  generateSpliceCommands _ = pure []
-
-data Splice = forall a. IsSplice a => Splice a
-
-instance IsSplice Splice where
-  freeSplice (Splice x) = freeSplice x
-  generateSpliceCommands (Splice x) = generateSpliceCommands x
-
-
-freeSpliceAsCommands :: IsSplice a => a -> STMc NoRetry '[] [SpliceCommand]
-freeSpliceAsCommands x = SpliceFreeRef <<$>> freeSplice x
+data Splice = Splice {
+  freeSplice :: STMc NoRetry '[] [SpliceCommand],
+  generateSpliceCommands :: STMc NoRetry '[] [SpliceCommand]
+}
 
 
 -- | Create a DOM element.
@@ -133,38 +122,43 @@ domElement' ::
   DomNode
 domElement' tag components = CreateNodeComponent (Component "element" initializeComponent)
   where
-    initializeComponent :: ComponentApi -> STMc NoRetry '[] (Either Aeson.Value (STMc NoRetry '[] [ComponentRef], Aeson.Value, ComponentCommandSource, ComponentEventHandler), [Splice])
+    initializeComponent :: ComponentApi -> STMc NoRetry '[] (Either (Aeson.Value, [Splice]) ComponentInit)
     initializeComponent api = do
       (wireComponents, splices) <- mapAndUnzipM api.newModifyElementComponentInstance components
-      pure (Left (Aeson.toJSON (WireElement tag wireComponents)), join splices)
+      pure (Left (Aeson.toJSON (WireElement tag wireComponents), join splices))
 
 -- | Create a text node.
 textNode :: Observable NoLoad '[] Text -> DomNode
 textNode text = CreateNodeComponent (Component "text" initializeTextComponent)
   where
-    initializeTextComponent :: ComponentApi -> STMc NoRetry '[] (Either Aeson.Value (STMc NoRetry '[] [ComponentRef], Aeson.Value, ComponentCommandSource, ComponentEventHandler), [Splice])
+    initializeTextComponent :: ComponentApi -> STMc NoRetry '[] (Either (Aeson.Value, [Splice]) ComponentInit)
     initializeTextComponent api = do
       updateVar <- newTVar Nothing
       (disposer, initial) <- attachSimpleObserver text (writeTVar updateVar . Just)
       let initData = Aeson.toJSON initial
 
       if isTrivialTSimpleDisposer disposer
-        then pure (Left initData, [])
-        else pure (Right ([] <$ disposeTSimpleDisposer disposer, initData, commandSource updateVar, const (pure ())), [])
+        then pure (Left (initData, []))
+        else pure (Right ComponentInit {
+          free = [] <$ disposeTSimpleDisposer disposer,
+          initData,
+          commandSource = commandSource updateVar,
+          eventHandler = const (pure ())
+        })
 
     commandSource :: TVar (Maybe Text) -> ComponentCommandSource
-    commandSource var = do
+    commandSource var packSpliceCommand = do
       readTVar var >>= \case
         Nothing -> pure []
         Just update -> do
           writeTVar var Nothing
-          pure [Right (Aeson.toJSON update)]
+          pure [packSpliceCommand (Aeson.toJSON update)]
 
 
 childrenComponent :: ObservableList NoLoad '[] DomNode -> ModifyElementComponent
 childrenComponent children = ModifyElementComponent (Component "children" initializeComponent)
   where
-    initializeComponent :: ComponentApi -> STMc NoRetry '[] (Either Aeson.Value (STMc NoRetry '[] [ComponentRef], Aeson.Value, ComponentCommandSource, ComponentEventHandler), [Splice])
+    initializeComponent :: ComponentApi -> STMc NoRetry '[] (Either (Aeson.Value, [Splice]) ComponentInit)
     initializeComponent api = do
       (maccum, initial) <- attachAccumulatingObserver (toObservableT children)
 
@@ -173,11 +167,16 @@ childrenComponent children = ModifyElementComponent (Component "children" initia
 
       let initData = Aeson.toJSON (toList initialWireNodes)
       case maccum of
-        Nothing -> pure (Left initData, fold splices)
+        Nothing -> pure (Left (initData, fold splices))
         Just accum -> do
           var <- newTVar (Just (ObserverStateLive (ObservableResultOk splices)))
           let childrenSplice = ChildrenSplice api accum var
-          pure (Right (freeChildrenSplice childrenSplice, initData, generateChildrenSpliceCommands childrenSplice, undefined), [])
+          pure (Right ComponentInit {
+            free = freeChildrenSplice childrenSplice,
+            initData,
+            commandSource = generateChildrenSpliceCommands childrenSplice,
+            eventHandler = const (pure ())
+          })
 
 data ChildrenSplice =
   ChildrenSplice
@@ -211,17 +210,17 @@ instance ToJSON ChildrenCommand where
   toEncoding (ReplaceAllChildren nodes) =
     pairs ("fn" .= ("replace" :: Text) <> "nodes" .= nodes)
 
-freeChildrenSplice :: ChildrenSplice -> STMc NoRetry '[] [ComponentRef]
+freeChildrenSplice :: ChildrenSplice -> STMc NoRetry '[] [SpliceCommand]
 freeChildrenSplice (ChildrenSplice _ accum var) = do
   disposeAccumulatingObserver accum
   readTVar var >>= \case
     Nothing -> pure []
     Just state -> do
       writeTVar var Nothing
-      fold <$> mapM freeSplice (toList state)
+      fold <$> mapM freeSplice (fold state)
 
-generateChildrenSpliceCommands :: ChildrenSplice -> STMc NoRetry '[] [Either SpliceCommand Aeson.Value]
-generateChildrenSpliceCommands (ChildrenSplice api accum var) = do
+generateChildrenSpliceCommands :: ChildrenSplice -> ComponentCommandSource
+generateChildrenSpliceCommands (ChildrenSplice api accum var) packSpliceCommand = do
   containerCommands <- takeAccumulatingObserver accum Live >>= \case
     Nothing -> pure []
     Just change -> do
@@ -239,18 +238,18 @@ generateChildrenSpliceCommands (ChildrenSplice api accum var) = do
               let spliceChange = snd <$> wireAndSpliceChange
 
               let removedSplices = fold (selectRemovedByChange change state)
-              freeCommands <- fold <$> mapM freeSpliceAsCommands removedSplices
+              freeCommands <- fold <$> mapM freeSplice removedSplices
 
               forM_ (applyObservableChange spliceChange state)
                 \(_, newState) -> writeTVar var (Just newState)
 
-              pure ((Left <$> freeCommands) <> (Right . Aeson.toJSON <$> listChangeCommands ctx wireChange))
+              pure (freeCommands <> (packSpliceCommand . Aeson.toJSON <$> listChangeCommands ctx wireChange))
 
   childCommands <- readTVar var >>= \case
     Nothing -> pure []
-    Just state -> fold <$> mapM generateSpliceCommands (toList state)
+    Just state -> fold <$> mapM generateSpliceCommands (fold state)
 
-  pure (containerCommands <> (Left <$> childCommands))
+  pure (containerCommands <> childCommands)
 
 listChangeCommands ::
   ObserverContext NoLoad (ObservableResult '[] Seq) ->

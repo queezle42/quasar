@@ -9,11 +9,8 @@ import Data.Binary.Builder qualified as Binary
 import Data.ByteString.Char8 qualified as BS
 import Data.ByteString.Lazy qualified as BSL
 import Data.List qualified as List
-import Data.Map.Strict (Map)
 import Data.HashMap.Strict (HashMap)
 import Data.HashMap.Strict qualified as HM
-import Data.Sequence (Seq(..))
-import Data.Sequence qualified as Seq
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Network.HTTP.Types qualified as HTTP
@@ -22,15 +19,8 @@ import Network.Wai.Handler.WebSockets qualified as Wai
 import Network.WebSockets qualified as WebSockets
 import Paths_quasar_web (getDataFileName)
 import Quasar
-import Quasar.Observable.AccumulatingObserver
-import Quasar.Observable.Core
-import Quasar.Observable.List (ObservableList, ListDelta(..), ListDeltaOperation(..), ListOperation(..), updateToOperations)
-import Quasar.Observable.List qualified as ObservableList
-import Quasar.Observable.Traversable
 import Quasar.Prelude
-import Quasar.Utils.Fix (mfixTVar)
 import Quasar.Web
-import System.IO (stderr)
 
 
 toWaiApplication :: DomNode -> Wai.Application
@@ -45,8 +35,8 @@ toWebSocketsApp :: DomNode -> WebSockets.ServerApp
 toWebSocketsApp rootNode pendingConnection = do
   connection <- WebSockets.acceptRequestWith pendingConnection acceptRequestConfig
   nextComponentRef <- newTVarIO 0
-  componentInstances <- newTVarIO mempty
-  let client = Client { nextComponentRef, componentInstances }
+  componentEventHandlers <- newTVarIO mempty
+  let client = Client { nextComponentRef, componentEventHandlers }
   handleAll (\ex -> logError (displayException ex)) do
     runQuasarCombineExceptions do
       x <- async $ receiveThread client connection
@@ -61,7 +51,7 @@ toWebSocketsApp rootNode pendingConnection = do
 
 data Client = Client {
   nextComponentRef :: TVar ComponentRef,
-  componentInstances :: TVar (HashMap ComponentRef ComponentInstance)
+  componentEventHandlers :: TVar (HashMap ComponentRef ComponentEventHandler)
 }
 
 newComponentRef :: Client -> STMc NoRetry '[] ComponentRef
@@ -81,10 +71,10 @@ sendThread client rootNode connection = do
   (wireNode, splice) <- atomically $ liftSTMc $ newDomNodeSplice client rootNode
   let initialMessage = [SetRoot wireNode]
   liftIO $ WebSockets.sendTextData connection (Aeson.encode initialMessage)
-  handleAll (\ex -> atomicallyC (freeSplice splice) >> throwM ex) do
+  handleAll (\ex -> atomicallyC (fold <$> mapM freeSplice splice) >> throwM ex) do
     forever do
       updates <- atomically $ do
-        updates <- liftSTMc $ generateSpliceCommands splice
+        updates <- liftSTMc $ fold <$> mapM generateSpliceCommands splice
         check (not (null updates))
         pure updates
       liftIO $ WebSockets.sendTextData connection (Aeson.encode (SpliceCommand <$> updates))
@@ -106,12 +96,11 @@ messageHandler client connection msg = do
     eventHandler :: Event -> IO ()
     eventHandler Ping = WebSockets.sendTextData connection (Aeson.encode [Pong])
     eventHandler (ComponentEvent ref cmd) = do
-      componentInstances <- readTVarIO client.componentInstances
+      componentEventHandlers <- readTVarIO client.componentEventHandlers
       -- Ignores invalid refs, which is required because messages might still be in
       -- flight while a ref is freed.
-      forM_ (HM.lookup ref componentInstances) \(ComponentInstance var) ->
-        readTVarIO var >>= mapM_ \content ->
-          atomicallyC $ content.eventHandler cmd
+      forM_ (HM.lookup ref componentEventHandlers) \componentHandler ->
+        atomicallyC $ componentHandler cmd
     eventHandler (AckFree ref) = pure ()
 
 
@@ -175,33 +164,29 @@ instance FromJSON Event where
 newDomNodeSplice :: Client -> DomNode -> STMc NoRetry '[] (WireNode, [Splice])
 newDomNodeSplice client (CreateNodeComponent component) = do
   (wireComponent, splices) <- newComponentInstance client component
-  pure (wireComponent, Splice <$> splices)
+  pure (wireComponent, splices)
 
 
 newtype ComponentInstance = ComponentInstance (TVar (Maybe ComponentInstanceContent))
 
 data ComponentInstanceContent = ComponentInstanceContent {
-  ref :: ComponentRef,
-  freeInstanceRefs :: STMc NoRetry '[] [ComponentRef],
-  commandSource :: ComponentCommandSource,
-  eventHandler :: ComponentEventHandler
+  freeInstanceRefs :: STMc NoRetry '[] [SpliceCommand],
+  generateComponentSpliceCommands :: STMc NoRetry '[] [SpliceCommand]
 }
 
-instance IsSplice ComponentInstance where
-  freeSplice (ComponentInstance var) = do
-    readTVar var >>= \case
-      Nothing -> pure []
-      Just content -> do
-        writeTVar var Nothing
-        content.freeInstanceRefs
+freeComponentInstance :: ComponentInstance -> STMc NoRetry '[] [SpliceCommand]
+freeComponentInstance (ComponentInstance var) = do
+  readTVar var >>= \case
+    Nothing -> pure []
+    Just content -> do
+      writeTVar var Nothing
+      content.freeInstanceRefs
 
-  generateSpliceCommands (ComponentInstance var) = do
-    readTVar var >>= \case
-      Nothing -> pure []
-      Just content -> do
-        content.commandSource <<&>> \case
-          Left spliceCommand -> spliceCommand
-          Right componentCommand -> SpliceComponentCommand content.ref componentCommand
+generateComponentInstanceCommands :: ComponentInstance -> STMc NoRetry '[] [SpliceCommand]
+generateComponentInstanceCommands (ComponentInstance var) = do
+  readTVar var >>= \case
+    Nothing -> pure []
+    Just content -> content.generateComponentSpliceCommands
 
 newComponentInstance :: Client -> Component -> STMc NoRetry '[] (WireComponent, [Splice])
 newComponentInstance client (Component name componentInitFn) = do
@@ -209,27 +194,28 @@ newComponentInstance client (Component name componentInitFn) = do
         newCreateNodeComponentInstance = \(CreateNodeComponent component) -> newComponentInstance client component,
         newModifyElementComponentInstance = \(ModifyElementComponent component) -> newComponentInstance client component
       }
-  componentInitFn componentApi >>= \(result, splices) -> case result of
-    Left initData -> do
+  componentInitFn componentApi >>= \case
+    Left (initData, splices) -> do
       pure (WireComponent name Nothing initData, splices)
-    Right (freeFn, initData, commandSource, eventHandler) -> do
+    Right (ComponentInit{free, initData, commandSource, eventHandler}) -> do
       ref <- newComponentRef client
       let content = ComponentInstanceContent {
-        ref,
-        freeInstanceRefs = freeHandler freeFn ref,
-        commandSource,
-        eventHandler
+        freeInstanceRefs = freeHandler free ref,
+        generateComponentSpliceCommands = commandSource (SpliceComponentCommand ref)
       }
       componentInstance <- ComponentInstance <$> newTVar (Just content)
-      modifyTVar client.componentInstances (HM.insert ref componentInstance)
-      pure (WireComponent name (Just ref) initData, Splice componentInstance : splices)
+      modifyTVar client.componentEventHandlers (HM.insert ref eventHandler)
+      let splice = Splice {
+        freeSplice = freeComponentInstance componentInstance,
+        generateSpliceCommands = generateComponentInstanceCommands componentInstance
+      }
+      pure (WireComponent name (Just ref) initData, [splice])
   where
-    freeHandler :: STMc NoRetry '[] [ComponentRef] -> ComponentRef -> STMc NoRetry '[] [ComponentRef]
+    freeHandler :: STMc NoRetry '[] [SpliceCommand] -> ComponentRef -> STMc NoRetry '[] [SpliceCommand]
     freeHandler freeFn ref = do
         refs <- freeFn
-        modifyTVar client.componentInstances (HM.delete ref)
-        pure (ref:refs)
-
+        modifyTVar client.componentEventHandlers (HM.delete ref)
+        pure (SpliceFreeRef ref:refs)
 
 
 -- * Wai
