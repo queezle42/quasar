@@ -49,7 +49,6 @@ instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (Sub
 -- Precondition: Observer is in `ObserverStateLoadingCleared` state, but caller
 -- assumes the observer is in `ObserverStateLoadingCached` state.
 fixInvalidCacheState ::
-  (ObservableContainer c v) =>
   ObservableResult exceptions c v ->
   EvaluatedObservableChange Load (ObservableResult exceptions c) v ->
   EvaluatedObservableChange Load (ObservableResult exceptions c) v

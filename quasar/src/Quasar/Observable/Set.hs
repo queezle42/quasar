@@ -46,7 +46,7 @@ toObservableSet x = ObservableSet (toObservableT x)
 
 newtype ObservableSet canLoad exceptions v = ObservableSet (ObservableT canLoad exceptions Set v)
 
-instance Ord v => ToObservableT canLoad exceptions Set v (ObservableSet canLoad exceptions v) where
+instance ToObservableT canLoad exceptions Set v (ObservableSet canLoad exceptions v) where
   toObservableT (ObservableSet x) = x
 
 instance Ord v => IsObservableCore canLoad exceptions Set v (ObservableSet canLoad exceptions v) where
