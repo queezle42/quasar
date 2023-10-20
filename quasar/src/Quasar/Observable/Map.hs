@@ -88,7 +88,7 @@ import Data.Foldable (foldl')
 
 newtype MapDelta k v
   = MapDelta (Map k (MapOperation v))
-  deriving Generic
+  deriving (Generic, Show, Eq, Ord)
 
 instance (Binary k, Binary v) => Binary (MapDelta k v)
 
@@ -102,7 +102,7 @@ instance Traversable (MapDelta k) where
   traverse f (MapDelta ops) = MapDelta <$> traverse (traverse f) ops
 
 data MapOperation v = Insert v | Delete
-  deriving Generic
+  deriving (Generic, Show, Eq, Ord)
 
 instance Binary v => Binary (MapOperation v)
 

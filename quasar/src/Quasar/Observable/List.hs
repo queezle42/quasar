@@ -392,6 +392,7 @@ data ListOperation v
   | ListAppend v -- ^ Append at the end of the list.
   | ListDelete Length -- ^ Delete element with index n.
   | ListReplaceAll (Seq v)
+  deriving (Show, Eq, Ord)
 
 updateToOperations :: Length -> ObservableUpdate Seq v -> [ListOperation v]
 updateToOperations _initialLength (ObservableUpdateReplace new) = [ListReplaceAll new]

@@ -746,6 +746,10 @@ pattern ObserverStateLiveOk content = ObserverStateLive (ObservableResultOk cont
 pattern ObserverStateLiveEx :: forall canLoad exceptions c v. Ex exceptions -> ObserverState canLoad (ObservableResult exceptions c) v
 pattern ObserverStateLiveEx ex = ObserverStateLive (ObservableResultEx ex)
 
+deriving instance Show (c v) => Show (ObserverState canLoad c v)
+deriving instance Eq (c v) => Eq (ObserverState canLoad c v)
+deriving instance Ord (c v) => Ord (ObserverState canLoad c v)
+
 instance Foldable c => Foldable (ObserverState canLoad c) where
   foldMap fn ObserverStateLoadingCleared = mempty
   foldMap fn (ObserverStateLoadingCached x) = foldMap fn x
