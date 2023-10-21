@@ -31,10 +31,6 @@ enum State {
 type Command =
   | { fn: "pong" }
   | { fn: "root", node: WireNode }
-  | { fn: "insert", ref: Ref, i: number, node: WireNode }
-  | { fn: "append", ref: Ref, node: WireNode }
-  | { fn: "remove", ref: Ref, i: number }
-  | { fn: "replace", ref: Ref, nodes: [WireNode] }
   | { fn: "free", ref: Ref }
   | { fn: "component", ref: Ref, data: unknown }
 
@@ -194,7 +190,6 @@ class QuasarWebClient {
   private reconnectDelay: number = 0;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private pongTimeout: ReturnType<typeof setTimeout> | null = null;
-  private elements: Map<number, HTMLElement> = new Map();
 
   private componentRegistry: ComponentRegistry = new ComponentRegistry(this);
 
@@ -362,40 +357,11 @@ class QuasarWebClient {
 
   public createNode(wireNode: WireNode): Node {
     return this.componentRegistry.initializeCreateNodeComponent(wireNode);
-    //if (wireNode.type === "element") {
-    //  const element = document.createElement(wireNode.tag);
-
-    //  if (wireNode.ref !== null) {
-    //    console.log(`[quasar] registering element`, wireNode.ref);
-    //    this.elements.set(wireNode.ref, element);
-    //  }
-
-    //  const children = wireNode.children.map(wireNode => this.createNode(wireNode));
-    //  element.replaceChildren(...children);
-
-    //  for (let wireComponent of wireNode.components) {
-    //    this.componentRegistry.initializeModifyElementComponent(wireComponent, element);
-    //  }
-
-    //  return element;
-    //}
-    //else {
-    //  return this.componentRegistry.initializeCreateNodeComponent(wireNode);
-    //}
-  }
-
-  private getElement(ref: Ref): HTMLElement {
-    const element = this.elements.get(ref);
-    if (!element) {
-      throw `[quasar-web] Element with ref ${ref} does not exist`;
-    }
-    return element;
   }
 
   private freeRef(ref: Ref) {
     console.log(`[quasar] freeing`, ref);
     this.componentRegistry.freeInstanceRef(ref);
-    this.elements.delete(ref);
   }
 
   private receiveMessage(commands: Command[]) {
@@ -410,41 +376,6 @@ class QuasarWebClient {
           if (root) {
             const element = this.createNode(command.node);
             root.replaceChildren(element);
-          }
-          break;
-        case "insert":
-          {
-            const element = this.getElement(command.ref);
-            const target = element.childNodes[command.i];
-            if (!target) {
-              throw `[quasar-web] List index ${command.i} out of bounds`;
-            }
-            const newNode = this.createNode(command.node);
-            target.before(newNode);
-          }
-          break;
-        case "append":
-          {
-            const node = this.getElement(command.ref);
-            const newNode = this.createNode(command.node);
-            node.append(newNode);
-          }
-          break;
-        case "remove":
-          {
-            const element = this.getElement(command.ref);
-            const target = element.childNodes[command.i];
-            if (!target) {
-              throw `[quasar-web] List index ${command.i} out of bounds`;
-            }
-            target.remove();
-          }
-          break;
-        case "replace":
-          {
-            const element = this.getElement(command.ref);
-            const nodes = command.nodes.map(node => this.createNode(node));
-            element.replaceChildren(...nodes);
           }
           break;
         case "free":
