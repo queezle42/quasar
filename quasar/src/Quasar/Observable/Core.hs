@@ -1168,19 +1168,17 @@ attachMergeObserver fullMergeFn leftFn rightFn clearLeftFn clearRightFn fx fy ca
     wrapMergeChange (MergeChangeUpdate (ObservableUpdateReplace content)) = MergeChangeUpdate (ObservableUpdateReplace (ObservableResultOk content))
     wrapMergeChange (MergeChangeUpdate (ObservableUpdateDelta delta)) = MergeChangeUpdate (ObservableUpdateDelta delta)
 
-mergeCallback
-  :: forall canLoad c v ca va cb vb. (
-    ObservableContainer c v,
-    ObservableContainer ca va
-  )
-  => TVar (ObserverState canLoad ca va)
-  -> TVar (ObserverState canLoad cb vb)
-  -> TVar (PendingChange canLoad c v, LastChange canLoad)
-  -> (ca va -> cb vb -> c v)
-  -> (EvaluatedUpdate ca va -> Maybe (ca va) -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v))
-  -> (canLoad :~: Load -> ca va -> cb vb -> Maybe (MergeChange canLoad c v))
-  -> (ObservableChange canLoad c v -> STMc NoRetry '[] ())
-  -> EvaluatedObservableChange canLoad ca va -> STMc NoRetry '[] ()
+mergeCallback ::
+  forall canLoad c v ca va cb vb.
+  ObservableContainer c v =>
+  TVar (ObserverState canLoad ca va) ->
+  TVar (ObserverState canLoad cb vb) ->
+  TVar (PendingChange canLoad c v, LastChange canLoad) ->
+  (ca va -> cb vb -> c v) ->
+  (EvaluatedUpdate ca va -> Maybe (ca va) -> MaybeL canLoad (cb vb) -> Maybe (MergeChange canLoad c v)) ->
+  (canLoad :~: Load -> ca va -> cb vb -> Maybe (MergeChange canLoad c v)) ->
+  (ObservableChange canLoad c v -> STMc NoRetry '[] ()) ->
+  EvaluatedObservableChange canLoad ca va -> STMc NoRetry '[] ()
 mergeCallback ourStateVar otherStateVar mergeStateVar fullMergeFn fn clearFn callback inChange = do
   oldState <- readTVar ourStateVar
   forM_ (applyEvaluatedObservableChange inChange oldState) \state -> do
