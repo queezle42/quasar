@@ -372,11 +372,12 @@ class QuasarWebClient {
           this.receivePong();
           break;
         case "root":
-          const root = document.getElementById("quasar-web-root");
-          if (root) {
-            const element = this.createNode(command.node);
-            root.replaceChildren(element);
+          const root = globalRoot;
+          if (root === null) {
+            throw "[quasar] No root registered";
           }
+          const element = this.createNode(command.node);
+          root.replaceChildren(element);
           break;
         case "free":
           {
@@ -395,6 +396,38 @@ class QuasarWebClient {
     }
   }
 }
+
+let globalRoot: ShadowRoot | null = null;
+
+function registerRoot(shadowRoot: ShadowRoot) {
+  if (globalRoot !== null) {
+    throw "[quasar-web] Duplicate <quasar-root> detected";
+  }
+  globalRoot = shadowRoot;
+}
+
+function deregisterRoot() {
+  globalRoot = null;
+}
+
+
+class QuasarRoot extends HTMLElement {
+  private registered: boolean = false;
+
+  connectedCallback() {
+    registerRoot(this.attachShadow({ mode: "closed" }));
+    this.registered = true;
+  }
+
+  disconnectedCallback() {
+    if (this.registered) {
+      deregisterRoot();
+      this.registered = false;
+    }
+  }
+}
+
+customElements.define("quasar-root", QuasarRoot);
 
 let globalClient: QuasarWebClient | null = null;
 
