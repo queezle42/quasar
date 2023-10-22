@@ -419,32 +419,32 @@ operationsToUpdate :: Length -> [ListOperation v] -> Maybe (ObservableUpdate Seq
 operationsToUpdate _initialLength [] = Nothing
 operationsToUpdate initialLength (op:ops) =
   let initial = operationToValidatedUpdate initialLength op
-  in unvalidatedUpdate (foldl applyListOperationToUpdate initial ops)
+  in (foldl applyListOperationToUpdate initial ops).unvalidated
 
 
 applyListOperationToUpdate ::
-  Either (DeltaContext Seq) (ValidatedUpdate Seq v) ->
+  ValidatedUpdate Seq v ->
   ListOperation v ->
-  Either (DeltaContext Seq) (ValidatedUpdate Seq v)
+  ValidatedUpdate Seq v
 applyListOperationToUpdate oldUpdate op =
   let newUpdate = operationToValidatedUpdate (validatedUpdateToContext oldUpdate) op
-  in mergeValidatedUpdate oldUpdate (unvalidatedUpdate newUpdate)
+  in mergeValidatedUpdate oldUpdate newUpdate.unvalidated
 
-operationToValidatedUpdate :: Length -> ListOperation v -> Either Length (ValidatedUpdate Seq v)
-operationToValidatedUpdate len (ListInsert pos value) = Right
+operationToValidatedUpdate :: Length -> ListOperation v -> ValidatedUpdate Seq v
+operationToValidatedUpdate len (ListInsert pos value) =
   if len > 0
     then ValidatedUpdateDelta $ ValidatedListDelta $ FT.fromList
       if pos < len
         then [ListKeep pos, ListSplice [value], ListKeep (len - pos)]
         else [ListKeep len, ListSplice [value]]
     else ValidatedUpdateReplace [value]
-operationToValidatedUpdate len (ListAppend value) = Right
+operationToValidatedUpdate len (ListAppend value) =
   if len > 0
     then ValidatedUpdateDelta $ ValidatedListDelta $ FT.fromList [ListKeep len, ListSplice [value]]
     else ValidatedUpdateReplace [value]
 operationToValidatedUpdate len (ListDelete pos) =
   if pos < len
-    then Right if len == 1
+    then if len == 1
       then ValidatedUpdateReplace []
       else ValidatedUpdateDelta $ ValidatedListDelta
         if pos == 0
@@ -452,9 +452,9 @@ operationToValidatedUpdate len (ListDelete pos) =
           else if pos == (len - 1)
             then FT.singleton (ListKeep pos)
             else FT.fromList [ListKeep pos, ListDrop 1, ListKeep (len - pos - 1)]
-    else Left len
-operationToValidatedUpdate 0 (ListReplaceAll []) = Left 0
-operationToValidatedUpdate _len (ListReplaceAll new) = Right (ValidatedUpdateReplace new)
+    else ValidatedUpdateUnchanged len
+operationToValidatedUpdate 0 (ListReplaceAll []) = ValidatedUpdateUnchanged 0
+operationToValidatedUpdate _len (ListReplaceAll new) = ValidatedUpdateReplace new
 
 
 -- * ObservableListVar
