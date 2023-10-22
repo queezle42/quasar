@@ -99,7 +99,7 @@ spec = parallel do
 
     it "keep elements" do
       testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 3]) (Just (ValidatedListDelta [ListKeep 3]))
-      testUpdateDeltaContext [1, 2, 3, 4] (ListDelta [ListKeep 3]) (Just (ValidatedListDelta [ListKeep 3]))
+      testUpdateDeltaContext [1, 2, 3, 4] (ListDelta [ListKeep 3]) (Just (ValidatedListDelta [ListKeep 3, ListDrop 1]))
 
     it "keep is clipped to end of list" do
       testUpdateDeltaContext [1, 2] (ListDelta [ListKeep 3]) (Just (ValidatedListDelta [ListKeep 2]))
@@ -108,7 +108,7 @@ spec = parallel do
       testUpdateDeltaContext [] (ListDelta [ListSplice [1]]) (Just (ValidatedListDelta [ListSplice [1]]))
 
     it "insert" do
-      testUpdateDeltaContext [2, 3] (ListDelta [ListSplice [1]]) (Just (ValidatedListDelta [ListSplice [1]]))
+      testUpdateDeltaContext [2, 3] (ListDelta [ListSplice [1]]) (Just (ValidatedListDelta [ListSplice [1], ListDrop 2]))
       testUpdateDeltaContext [1, 3] (ListDelta [ListKeep 1, ListSplice [2], ListKeep 1]) (Just (ValidatedListDelta [ListKeep 1, ListSplice [2], ListKeep 1]))
       testUpdateDeltaContext [1, 2, 3, 7] (ListDelta [ListKeep 3, ListSplice [4, 5, 6], ListKeep 1]) (Just (ValidatedListDelta [ListKeep 3, ListSplice [4, 5, 6], ListKeep 1]))
 
@@ -123,19 +123,22 @@ spec = parallel do
       testUpdateDeltaContext [] (ListDelta [ListDrop 42]) (Just (ValidatedListDelta []))
 
     it "drop all" do
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 42]) (Just (ValidatedListDelta []))
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 42]) (Just (ValidatedListDelta [ListDrop 3]))
 
-    it "trailing drop is removed" do
+    it "drop" do
       testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1, ListKeep 2]) (Just (ValidatedListDelta [ListDrop 1, ListKeep 2]))
       testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 2, ListKeep 1]) (Just (ValidatedListDelta [ListDrop 2, ListKeep 1]))
 
-    it "trailing drop is removed" do
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 42]) (Just (ValidatedListDelta []))
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 21, ListDrop 21]) (Just (ValidatedListDelta []))
+    it "trailing drop is clamped" do
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 42]) (Just (ValidatedListDelta [ListDrop 3]))
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 21, ListDrop 21]) (Just (ValidatedListDelta [ListDrop 3]))
       testUpdateDeltaContext [1, 2, 3, 4, 5] (ListDelta [ListDrop 1, ListDrop 1, ListDrop 1, ListDrop 1, ListKeep 1]) (Just (ValidatedListDelta [ListDrop 4, ListKeep 1]))
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1]) (Just (ValidatedListDelta []))
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 1]) (Just (ValidatedListDelta [ListKeep 1]))
-      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 42]) (Just (ValidatedListDelta [ListKeep 1]))
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1]) (Just (ValidatedListDelta [ListDrop 3]))
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 1]) (Just (ValidatedListDelta [ListKeep 1, ListDrop 2]))
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListKeep 1, ListDrop 42]) (Just (ValidatedListDelta [ListKeep 1, ListDrop 2]))
+
+    it "drops" do
+      testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 42, ListSplice [7]]) (Just (ValidatedListDelta [ListDrop 3, ListSplice [7]]))
 
     it "duplicate drops are merged" do
       testUpdateDeltaContext [1, 2, 3] (ListDelta [ListDrop 1, ListDrop 1, ListKeep 1]) (Just (ValidatedListDelta [ListDrop 2, ListKeep 1]))

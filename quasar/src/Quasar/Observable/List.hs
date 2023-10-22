@@ -51,7 +51,6 @@ import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
 import Quasar.Prelude
 import Quasar.Resources (TSimpleDisposer)
-import Data.Foldable (foldl')
 
 
 newtype ListDelta v
@@ -162,9 +161,10 @@ instance TraversableObservableContainer Seq where
       go x (ListKeep count : ops) =
         go (Seq.drop (fromIntegral count) x) ops
 
+-- | Validates a list delta.
 updateListDeltaContext :: Length -> [ListDeltaOperation v] -> FingerTree Length (ListDeltaOperation v)
-updateListDeltaContext _l [] = FT.empty
 updateListDeltaContext 0 ops = mergeOperationsEmpty ops
+updateListDeltaContext l [] = FT.singleton (ListDrop l)
 updateListDeltaContext l (ListSplice ins : ops) = prependInsert ins (updateListDeltaContext l ops)
 updateListDeltaContext l (ListKeep n : ops) =
   if l > n
@@ -175,12 +175,6 @@ updateListDeltaContext l (ListDrop n : ops) =
     then prependDrop n (updateListDeltaContext (l - n) ops)
     else prependDrop l (updateListDeltaContext 0 ops)
 
-toValidatedListDelta :: FingerTree Length (ListDeltaOperation v) -> Maybe (ValidatedListDelta v)
-toValidatedListDelta ft = Just $ ValidatedListDelta
-  case FT.viewr ft of
-    (other :> ListDrop _) -> other
-    _ -> ft
-
 
 prependInsert :: Seq v -> FingerTree Length (ListDeltaOperation v) -> FingerTree Length (ListDeltaOperation v)
 prependInsert Empty ft = ft
@@ -188,6 +182,10 @@ prependInsert new ft =
   case FT.viewl ft of
     (ListSplice ins :< others) -> ListSplice (new <> ins) <| others
     _ -> ListSplice new <| ft
+
+insertFt :: Seq v -> FingerTree Length (ListDeltaOperation v)
+insertFt Empty = FT.empty
+insertFt new = FT.singleton (ListSplice new)
 
 prependKeep :: Length -> FingerTree Length (ListDeltaOperation v) -> FingerTree Length (ListDeltaOperation v)
 prependKeep 0 ft = ft
@@ -303,10 +301,12 @@ instance ObservableContainer Seq v where
   applyDelta (ListDelta ops) state = Just (applyDeltaOperations state (toList ops))
   mergeDelta (ValidatedListDelta x) (ListDelta y) =
     ValidatedListDelta (mergeDeltaOperations x (toList y))
-  validateDelta ctx (ListDelta ops) =
-    toValidatedListDelta (updateListDeltaContext ctx ops)
+  validateDelta ctx (ListDelta ops) = Just (ValidatedListDelta (updateListDeltaContext ctx ops))
   validatedDeltaToContext = validatedListDeltaLength
-  validatedDeltaToDelta (ValidatedListDelta x) = ListDelta (toList x)
+  validatedDeltaToDelta (ValidatedListDelta ft) = ListDelta $ toList
+    case FT.viewr ft of
+      (other :> ListDrop _) -> other
+      _ -> ft
   toDeltaContext state = fromIntegral (Seq.length state)
 
 instance ContainerCount Seq where
