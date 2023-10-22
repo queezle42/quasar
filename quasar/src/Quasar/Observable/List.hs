@@ -341,7 +341,7 @@ instance Functor (ObservableList canLoad exceptions) where
   fmap fn (ObservableList fx) = ObservableList (ObservableT (mapObservable# fn fx))
 
 instance Semigroup (ObservableList canLoad exceptions v) where
-  (<>) = undefined
+  fx <> fy = ObservableList (ObservableT (Concat fx fy))
 
 instance Monoid (ObservableList canLoad exceptions v) where
   mempty = fromSeq Seq.empty
@@ -456,6 +456,32 @@ operationToValidatedUpdate len (ListDelete pos) =
 operationToValidatedUpdate 0 (ListReplaceAll []) = ValidatedUpdateUnchanged 0
 operationToValidatedUpdate _len (ListReplaceAll new) = ValidatedUpdateReplace new
 
+
+data ConcatList canLoad exceptions v = Concat (ObservableList canLoad exceptions v) (ObservableList canLoad exceptions v)
+
+instance IsObservableCore canLoad exceptions Seq v (ConcatList canLoad exceptions v) where
+  readObservable# (Concat fx fy) = do
+    x <- readObservable# fx
+    y <- readObservable# fy
+    pure (x <> y)
+
+  attachObserver# (Concat fx fy) callback =
+    attachContextMergeObserver (<>) merge fx fy callback
+    where
+      merge ::
+        (ValidatedUpdate Seq v, Length) ->
+        (ValidatedUpdate Seq v, Length) ->
+        Maybe (MergeChange canLoad Seq v)
+      merge lhs rhs =
+        let delta = validatedDeltaToDelta @Seq (ValidatedListDelta (joinOps (toFt lhs) (toFt rhs)))
+        in Just (MergeChangeUpdate (ObservableUpdateDelta delta))
+
+      toFt :: (ValidatedUpdate Seq v, Length) -> FingerTree Length (ListDeltaOperation v)
+      toFt (ValidatedUpdateUnchanged ctx, _) = FT.singleton (ListKeep ctx)
+      toFt (ValidatedUpdateReplace new, prevLength) = prependDrop prevLength (insertFt new)
+      toFt (ValidatedUpdateDelta (ValidatedListDelta ft), _) = ft
+
+instance IsObservableList canLoad exceptions v (ConcatList canLoad exceptions v) where
 
 -- * ObservableListVar
 

@@ -93,6 +93,7 @@ module Quasar.Observable.Core (
   MaybeL(..),
   attachMergeObserver,
   attachMonoidMergeObserver,
+  attachContextMergeObserver,
   attachEvaluatedMergeObserver,
   attachDeltaRemappingObserver,
 
@@ -661,6 +662,11 @@ pattern ObservableStateLiveEx ex = ObservableStateLive (ObservableResultEx ex)
 
 deriving instance Show (c v) => Show (ObservableState canLoad c v)
 deriving instance Eq (c v) => Eq (ObservableState canLoad c v)
+
+instance Semigroup (c v) => Semigroup (ObservableState canLoad c v) where
+  ObservableStateLive x <> ObservableStateLive y = ObservableStateLive (x <> y)
+  ObservableStateLoading <> _ = ObservableStateLoading
+  _ <> ObservableStateLoading = ObservableStateLoading
 
 instance IsObservableCore canLoad exceptions c v (ObservableState canLoad (ObservableResult exceptions c) v) where
   readObservable# = pure
@@ -1257,6 +1263,30 @@ attachMonoidMergeObserver fullMergeFn leftFn rightFn fx fy callback =
     clearRightFn _refl prev other = wrappedRightFn (EvaluatedUpdateReplace mempty) (Just prev) (JustL other)
 
 
+attachContextMergeObserver ::
+  forall canLoad exceptions c v ca va cb vb a b.
+  (
+    IsObservableCore canLoad exceptions ca va a,
+    IsObservableCore canLoad exceptions cb vb b,
+    ObservableContainer ca va,
+    ObservableContainer cb vb,
+    ObservableContainer c v
+  ) =>
+  -- Function to merge the container during (re)initialisation.
+  (ca va -> cb vb -> c v) ->
+  -- Function to merge updates. Provides a validated update and the previous context for each side.
+  ((ValidatedUpdate ca va, DeltaContext ca) -> (ValidatedUpdate cb vb, DeltaContext cb ) -> Maybe (MergeChange canLoad c v)) ->
+  -- LHS observable input.
+  a ->
+  -- RHS observable input.
+  b ->
+  -- The remainder of the signature matches `attachObserver`, so it can be used
+  -- as an implementation for it.
+  (ObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ()) ->
+  STMc NoRetry '[] (TSimpleDisposer, ObservableState canLoad (ObservableResult exceptions c) v)
+attachContextMergeObserver containerMergeFn mergeFn fx fy callback = undefined
+
+
 
 data BindState canLoad c v where
   -- LHS cleared
@@ -1680,6 +1710,11 @@ instance Foldable c => Foldable (ObservableResult exceptions c) where
 instance Traversable c => Traversable (ObservableResult exceptions c) where
   traverse f (ObservableResultOk x) = ObservableResultOk <$> traverse f x
   traverse _f (ObservableResultEx ex) = pure (ObservableResultEx ex)
+
+instance Semigroup (c v) => Semigroup (ObservableResult canLoad c v) where
+  ObservableResultOk x <> ObservableResultOk y = ObservableResultOk (x <> y)
+  ObservableResultEx ex <> _fy = ObservableResultEx ex
+  _fx <> ObservableResultEx ex = ObservableResultEx ex
 
 unwrapObservableResult :: ObservableResult exceptions c v -> STMc canRetry exceptions (c v)
 unwrapObservableResult (ObservableResultOk result) = pure result
