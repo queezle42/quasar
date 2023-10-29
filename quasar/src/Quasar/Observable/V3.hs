@@ -50,8 +50,7 @@ data LastChange canLoad where
 type data LoadKind = Load | NoLoad
 type data ContextKind = NoContext | Validated | Evaluated
 type data PendingKind = Pending | NotPending
-type data ChangeKind = Unchanged | NoUnchanged
-type data DeltaKind = NoDelta | YesDelta
+type data ChangeKind = Change | NoChange
 
 #else
 
@@ -68,13 +67,9 @@ data PendingKind = Pending | NotPending
 type Pending = 'Pending
 type NotPending = 'NotPending
 
-data ChangeKind = Unchanged | NoUnchanged
-type Unchanged = 'Unchanged
-type NoUnchanged = 'NoUnchanged
-
-data DeltaKind = NoDelta | YesDelta
-type NoDelta = 'NoDelta
-type YesDelta = 'YesDelta
+data ChangeKind = Change | NoChange
+type Change = 'Change
+type NoChange = 'NoChange
 
 #endif
 
@@ -96,26 +91,26 @@ data ObservableInfo ctx c v where
   ValidatedInfo :: DeltaContext c -> ObservableInfo Validated c v
   EvaluatedInfo :: c v -> ObservableInfo Evaluated c v
 
-type ObservableChange :: ContextKind -> PendingKind -> ChangeKind -> DeltaKind -> LoadKind -> (Type -> Type) -> Type -> Type
-data ObservableChange ctx pending change canDelta canLoad c v where
-  ObservableUnchanged :: Loading canLoad -> ObservableInfo ctx c v -> ObservableChange ctx pending Unchanged canDelta Load c v
-  ObservableCleared :: ObservableChange ctx pending change canDelta Load c v
-  ObservablePendingReplace :: c v -> ObservableChange ctx Pending change canDelta Load c v
-  ObservablePendingDelta :: ObservableDelta ctx c v -> ObservableChange ctx Pending change YesDelta Load c v
-  ObservableLiveReplace :: c v -> ObservableChange ctx pending change canDelta canLoad c v
-  ObservableLiveDelta :: ObservableDelta ctx c v -> ObservableChange ctx pending change YesDelta canLoad c v
+type ObservableData :: ChangeKind -> PendingKind -> ContextKind -> LoadKind -> (Type -> Type) -> Type -> Type
+data ObservableData change pending ctx canLoad c v where
+  ObservableUnchanged :: Loading canLoad -> ObservableInfo ctx c v -> ObservableData change pending ctx Load c v
+  ObservableCleared :: ObservableData change pending ctx Load c v
+  ObservablePendingReplace :: c v -> ObservableData change Pending ctx Load c v
+  ObservablePendingDelta :: ObservableDelta ctx c v -> ObservableData Change Pending ctx Load c v
+  ObservableLiveReplace :: c v -> ObservableData change pending ctx canLoad c v
+  ObservableLiveDelta :: ObservableDelta ctx c v -> ObservableData Change pending ctx canLoad c v
 
-  --ObservableReplace :: Loading (canLoad && pending) -> c v -> ObservableChange ctx Pending change canDelta Load c v
-  --ObservableEx :: Loading (canLoad && pending) -> Ex exceptions -> ObservableChange ctx Pending change canDelta Load c v
-  --ObservableDelta :: Loading (canLoad && pending) -> ObservableDelta ctx c v -> ObservableChange ctx pending change YesDelta canLoad c v
+  --ObservableReplace :: Loading (canLoad && pending) -> c v -> ObservableData change ctx Pending Load c v
+  --ObservableEx :: Loading (canLoad && pending) -> Ex exceptions -> ObservableData change ctx Pending Load c v
+  --ObservableDelta :: Loading (canLoad && pending) -> ObservableDelta ctx c v -> ObservableData Change ctx pending canLoad c v
 
 
 -- | A "normal" change that can be applied to an observer.
-type PlainChange = ObservableChange NoContext NotPending Unchanged YesDelta
-type EvaluatedChange = ObservableChange Evaluated NotPending Unchanged YesDelta
-type ValidatedChange = ObservableChange Validated NotPending Unchanged YesDelta
-type PendingChange = ObservableChange NoContext Pending Unchanged YesDelta
-type PlainUpdate = ObservableChange NoContext NotPending NoUnchanged YesDelta NoLoad
-type ValidatedUpdate = ObservableChange Validated NotPending NoUnchanged YesDelta NoLoad
-type ObservableState = ObservableChange NoContext NotPending NoUnchanged NoDelta
-type ObserverState = ObservableChange NoContext Pending NoUnchanged NoDelta
+type PlainChange = ObservableData Change NotPending NoContext
+type EvaluatedChange = ObservableData Change NotPending Evaluated
+type ValidatedChange = ObservableData Change NotPending Validated
+type PendingChange = ObservableData Change Pending NoContext
+type PlainUpdate = ObservableData Change NotPending NoContext NoLoad
+type ValidatedUpdate = ObservableData Change NotPending Validated NoLoad
+type ObservableState = ObservableData NoChange NotPending NoContext
+type ObserverState = ObservableData NoChange Pending NoContext
