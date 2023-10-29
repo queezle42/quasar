@@ -93,8 +93,8 @@ data ObservableInfo ctx c v where
 
 type ObservableData :: ChangeKind -> PendingKind -> ContextKind -> LoadKind -> (Type -> Type) -> Type -> Type
 data ObservableData change pending ctx canLoad c v where
-  ObservableUnchanged :: Loading canLoad -> ObservableInfo ctx c v -> ObservableData change pending ctx Load c v
   ObservableCleared :: ObservableData change pending ctx Load c v
+  ObservableUnchanged :: Loading canLoad -> ObservableInfo ctx c v -> ObservableData Change pending ctx Load c v
   ObservablePendingReplace :: c v -> ObservableData change Pending ctx Load c v
   ObservablePendingDelta :: ObservableDelta ctx c v -> ObservableData Change Pending ctx Load c v
   ObservableLiveReplace :: c v -> ObservableData change pending ctx canLoad c v
@@ -107,9 +107,9 @@ data ObservableData change pending ctx canLoad c v where
 
 -- | A "normal" change that can be applied to an observer.
 type PlainChange = ObservableData Change NotPending NoContext
-type EvaluatedChange = ObservableData Change NotPending Evaluated
 type ValidatedChange = ObservableData Change NotPending Validated
-type PendingChange = ObservableData Change Pending NoContext
+type EvaluatedChange = ObservableData Change NotPending Evaluated
+type PendingChange = ObservableData Change Pending Validated
 type PlainUpdate = ObservableData Change NotPending NoContext NoLoad
 type ValidatedUpdate = ObservableData Change NotPending Validated NoLoad
 type ObservableState = ObservableData NoChange NotPending NoContext
