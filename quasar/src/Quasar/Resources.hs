@@ -53,6 +53,10 @@ module Quasar.Resources (
   newUnmanagedResourceManagerSTM,
   attachResource,
   tryAttachResource,
+
+  -- * Implementing disposers
+  IsDisposerElement(..),
+  toDisposer,
 ) where
 
 
