@@ -1589,6 +1589,12 @@ instance Monad (Observable canLoad exceptions) where
       rhsHandler (ObservableResultOk (Identity x)) = fn x
       rhsHandler (ObservableResultEx ex) = constObservable (ObservableStateLiveEx ex)
 
+instance Semigroup v => Semigroup (Observable canLoad exceptions v) where
+  fx <> fy = liftA2 (<>) fx fy
+
+instance Monoid v => Monoid (Observable canLoad exceptions v) where
+  mempty = pure mempty
+
 instance IsString v => IsString (Observable canLoad exceptions v) where
   fromString x = constObservable (pure (fromString x))
 
