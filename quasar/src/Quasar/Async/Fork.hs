@@ -17,6 +17,7 @@ module Quasar.Async.Fork (
   forkFutureSTM,
   forkFutureWithUnmaskSTM,
   forkOnRetry,
+  forkSTMcOnRetry,
 ) where
 
 import Control.Concurrent (ThreadId, forkIO, forkIOWithUnmask)
@@ -66,6 +67,16 @@ forkSTM fn = forkWithUnmaskSTM (\unmask -> unmask fn)
 forkSTM_ :: MonadSTMc NoRetry '[] m => IO () -> ExceptionSink -> m ()
 forkSTM_ fn = forkWithUnmaskSTM_ (\unmask -> unmask fn)
 
+forkSTMcSTM ::
+  MonadSTMc NoRetry '[] m =>
+  STMc Retry '[] () -> m (Future ThreadId)
+forkSTMcSTM fn = queueForkIOWithUnmaskSTM (\unmask -> unmask (atomicallyC fn))
+
+forkSTMcSTM_ ::
+  MonadSTMc NoRetry '[] m =>
+  STMc Retry '[] () -> m ()
+forkSTMcSTM_ fn = queueForkIOWithUnmaskSTM_ (\unmask -> unmask (atomicallyC fn))
+
 
 forkWithUnmaskSTM ::
   MonadSTMc NoRetry '[] m =>
@@ -93,6 +104,14 @@ forkFutureWithUnmaskSTM fn sink = do
   forkWithUnmaskSTM_ (runAndPut fn sink resultVar) sink
   pure $ toFutureEx resultVar
 
+forkSTMcFutureSTM ::
+  MonadSTMc NoRetry '[] m =>
+  STMc Retry '[] a -> m (FutureEx '[] a)
+forkSTMcFutureSTM fn = do
+  resultVar <- newPromise
+  forkSTMcSTM (tryFulfillPromise_ resultVar . Right =<< fn)
+  pure $ toFutureEx resultVar
+
 
 forkOnRetry :: forall m a. MonadSTMc NoRetry '[] m => STM a -> ExceptionSink -> m (FutureEx '[AsyncException] a)
 forkOnRetry f sink = liftSTMc $ fx `orElseC` fy
@@ -106,6 +125,14 @@ forkOnRetry f sink = liftSTMc $ fx `orElseC` fy
           pure (throwC (AsyncException ex))
     fy :: STMc NoRetry '[] (FutureEx '[AsyncException] a)
     fy = forkFutureSTM (atomically f) sink
+
+forkSTMcOnRetry :: forall m a. MonadSTMc NoRetry '[] m => STMc Retry '[] a -> m (FutureEx '[] a)
+forkSTMcOnRetry f = liftSTMc $ fx `orElseC` fy
+  where
+    fx :: STMc Retry '[] (FutureEx '[] a)
+    fx = pure <$> f
+    fy :: STMc NoRetry '[] (FutureEx '[] a)
+    fy = forkSTMcFutureSTM f
 
 
 -- * Fork in IO, redirecting errors to an ExceptionSink

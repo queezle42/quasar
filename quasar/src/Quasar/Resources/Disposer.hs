@@ -9,6 +9,7 @@ module Quasar.Resources.Disposer (
   disposeEventually_,
   newUnmanagedIODisposer,
   newUnmanagedSTMDisposer,
+  newUnmanagedTDisposer,
   isDisposed,
   trivialDisposer,
   isTrivialDisposer,
@@ -113,37 +114,50 @@ wrapDisposeException fn = (fn `catchAll` \ex -> throwM (DisposeException ex))
 type DisposeFnIO = IO ()
 
 
-type STMDisposerState = TOnce (STM ()) (Future ())
+type STMDisposerState = TOnce (STMc Retry '[] ()) (Future ())
 
-data TDisposerElement = TDisposerElement Unique ExceptionSink STMDisposerState
+data TDisposerElement = TDisposerElement Unique STMDisposerState
 
 instance ToFuture () TDisposerElement where
-  toFuture (TDisposerElement _ _ state) = join (toFuture state)
+  toFuture (TDisposerElement _ state) = join (toFuture state)
 
 instance IsDisposerElement TDisposerElement where
-  disposerElementKey (TDisposerElement key _ _) = key
-  disposeEventually# (TDisposerElement _ sink state) =
+  disposerElementKey (TDisposerElement key _) = key
+  disposeEventually# (TDisposerElement _ state) =
     mapFinalizeTOnce state \fn ->
-      void . toFuture <$> forkOnRetry (wrapDisposeException fn) sink
+      void . toFuture <$> forkSTMcOnRetry fn
+
+wrapSTM :: ExceptionSink -> STM () -> STMc Retry '[] ()
+wrapSTM sink fn =
+  catchAllSTMc @Retry @'[SomeException]
+    (liftSTM fn)
+    \ex -> throwToExceptionSink sink (DisposeException ex)
+
 
 newUnmanagedSTMDisposer :: MonadSTMc NoRetry '[] m => STM () -> ExceptionSink -> m TDisposer
 newUnmanagedSTMDisposer fn sink = do
   key <- newUniqueSTM
-  element <-  TDisposerElement key sink <$> newTOnce fn
+  element <-  TDisposerElement key <$> newTOnce (wrapSTM sink fn)
+  pure $ TDisposer [element]
+
+newUnmanagedTDisposer :: MonadSTMc NoRetry '[] m => STMc Retry '[] () -> m TDisposer
+newUnmanagedTDisposer fn = do
+  key <- newUniqueSTM
+  element <-  TDisposerElement key <$> newTOnce fn
   pure $ TDisposer [element]
 
 disposeTDisposer :: MonadSTM m => TDisposer -> m ()
-disposeTDisposer (TDisposer elements) = liftSTM $ mapM_ go elements
+disposeTDisposer (TDisposer elements) = liftSTMc $ mapM_ go elements
   where
-    go (TDisposerElement _ sink state) = do
+    go (TDisposerElement _ state) = do
       future <- mapFinalizeTOnce state startDisposeFn
       -- Elements can also be disposed by a resource manager (on a dedicated thread).
       -- In that case that thread has to be awaited (otherwise this is a no-op).
       readFuture future
       where
-        startDisposeFn :: STM () -> STM (Future ())
+        startDisposeFn :: STMc Retry '[] () -> STMc Retry '[] (Future ())
         startDisposeFn disposeFn = do
-          disposeFn `catchAll` \ex -> throwToExceptionSink sink (DisposeException ex)
+          disposeFn
           pure (pure ())
 
 -- NOTE TSimpleDisposer is moved to it's own module due to module dependencies
