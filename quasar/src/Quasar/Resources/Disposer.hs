@@ -2,21 +2,27 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Quasar.Resources.Disposer (
+  -- * Disposer api
   Disposable(..),
   Disposer,
   dispose,
   disposeEventually,
   disposeEventually_,
   newUnmanagedIODisposer,
-  newUnmanagedSTMDisposer,
-  newUnmanagedTDisposer,
   isDisposed,
   trivialDisposer,
   isTrivialDisposer,
 
+  -- ** STM variants
+  TDisposable(..),
   TDisposer,
-  disposeTDisposer,
+  disposeSTM,
+  newUnmanagedSTMDisposer,
+  newUnmanagedNoRetryTDisposer,
+  newUnmanagedRetryTDisposer,
+  isTrivialTDisposer,
 
+  -- ** Legacy/internal STM variants
   TSimpleDisposer,
   newUnmanagedTSimpleDisposer,
   disposeTSimpleDisposer,
@@ -35,6 +41,8 @@ module Quasar.Resources.Disposer (
   -- * Implementing disposers
   IsDisposerElement(..),
   toDisposer,
+  IsTDisposerElement(..),
+  toTDisposer,
 ) where
 
 import Control.Monad (foldM)
@@ -78,12 +86,6 @@ instance Disposable Disposer where
 instance ToFuture () Disposer where
   toFuture (Disposer ds) = foldMap toFuture ds
 
-newtype TDisposer = TDisposer [TDisposerElement]
-  deriving newtype (Semigroup, Monoid)
-
-instance Disposable TDisposer where
-  getDisposer (TDisposer tds) = toDisposer tds
-
 
 type DisposerState = TOnce DisposeFnIO (Future ())
 
@@ -114,18 +116,63 @@ wrapDisposeException fn = (fn `catchAll` \ex -> throwM (DisposeException ex))
 type DisposeFnIO = IO ()
 
 
-type STMDisposerState = TOnce (STMc Retry '[] ()) (Future ())
+class Disposable a => TDisposable canRetry a | a -> canRetry where
+  getTDisposer :: a -> TDisposer canRetry
 
-data TDisposerElement = TDisposerElement Unique STMDisposerState
+toTDisposer :: IsTDisposerElement canRetry a => [a] -> TDisposer canRetry
+toTDisposer x = TDisposer (TDisposerElement <$> x)
 
-instance ToFuture () TDisposerElement where
-  toFuture (TDisposerElement _ state) = join (toFuture state)
+newtype TDisposer canRetry = TDisposer [TDisposerElement canRetry]
+  deriving newtype (Semigroup, Monoid)
 
-instance IsDisposerElement TDisposerElement where
-  disposerElementKey (TDisposerElement key _) = key
-  disposeEventually# (TDisposerElement _ state) =
+instance Disposable (TDisposer canRetry) where
+  getDisposer (TDisposer tds) = toDisposer tds
+
+class IsDisposerElement a => IsTDisposerElement canRetry a | a -> canRetry where
+  disposeTDisposerElement :: a -> STMc canRetry '[] ()
+
+data TDisposerElement canRetry =
+  forall a. IsTDisposerElement canRetry a => TDisposerElement a
+
+instance IsTDisposerElement canRetry (TDisposerElement canRetry) where
+  disposeTDisposerElement (TDisposerElement x) = disposeTDisposerElement x
+
+instance IsDisposerElement (TDisposerElement canRetry) where
+  disposerElementKey (TDisposerElement x) = disposerElementKey x
+  disposeEventually# (TDisposerElement x) = disposeEventually# x
+  beginDispose# (TDisposerElement x) = beginDispose# x
+
+instance ToFuture () (TDisposerElement canRetry) where
+  toFuture (TDisposerElement x) = toFuture x
+
+disposeSTM :: forall canRetry a m. (TDisposable canRetry a, MonadSTMc canRetry '[] m) => a -> m ()
+disposeSTM x =
+  let TDisposer elements = getTDisposer x
+  in liftSTMc (mapM_ disposeTDisposerElement elements)
+
+data RetryTDisposerElement canRetry
+  = canRetry ~ Retry => RetryTDisposerElement Unique (TOnce (STMc Retry '[] ()) (Future ()))
+
+instance ToFuture () (RetryTDisposerElement canRetry) where
+  toFuture (RetryTDisposerElement _ state) = join (toFuture state)
+
+instance IsDisposerElement (RetryTDisposerElement canRetry) where
+  disposerElementKey (RetryTDisposerElement key _) = key
+  disposeEventually# (RetryTDisposerElement _ state) =
     mapFinalizeTOnce state \fn ->
       void . toFuture <$> forkSTMcOnRetry fn
+
+instance IsTDisposerElement canRetry (RetryTDisposerElement canRetry) where
+  disposeTDisposerElement (RetryTDisposerElement _ state) = do
+    future <- mapFinalizeTOnce state startDisposeFn
+    -- Elements can also be disposed by a resource manager (on a dedicated thread).
+    -- In that case that thread has to be awaited (otherwise this is a no-op).
+    readFuture future
+    where
+      startDisposeFn :: STMc Retry '[] () -> STMc Retry '[] (Future ())
+      startDisposeFn disposeFn = do
+        disposeFn
+        pure (pure ())
 
 wrapSTM :: ExceptionSink -> STM () -> STMc Retry '[] ()
 wrapSTM sink fn =
@@ -133,32 +180,24 @@ wrapSTM sink fn =
     (liftSTM fn)
     \ex -> throwToExceptionSink sink (DisposeException ex)
 
-
-newUnmanagedSTMDisposer :: MonadSTMc NoRetry '[] m => STM () -> ExceptionSink -> m TDisposer
+newUnmanagedSTMDisposer :: MonadSTMc NoRetry '[] m => STM () -> ExceptionSink -> m (TDisposer Retry)
 newUnmanagedSTMDisposer fn sink = do
   key <- newUniqueSTM
-  element <-  TDisposerElement key <$> newTOnce (wrapSTM sink fn)
+  element <-  TDisposerElement . RetryTDisposerElement key <$> newTOnce (wrapSTM sink fn)
   pure $ TDisposer [element]
 
-newUnmanagedTDisposer :: MonadSTMc NoRetry '[] m => STMc Retry '[] () -> m TDisposer
-newUnmanagedTDisposer fn = do
+newUnmanagedNoRetryTDisposer :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m (TDisposer NoRetry)
+newUnmanagedNoRetryTDisposer fn = do
+  TSimpleDisposer elements <- newUnmanagedTSimpleDisposer fn
+  pure (toTDisposer elements)
+
+
+newUnmanagedRetryTDisposer :: MonadSTMc NoRetry '[] m => STMc Retry '[] () -> m (TDisposer Retry)
+newUnmanagedRetryTDisposer fn = do
   key <- newUniqueSTM
-  element <-  TDisposerElement key <$> newTOnce fn
+  element <-  TDisposerElement . RetryTDisposerElement key <$> newTOnce fn
   pure $ TDisposer [element]
 
-disposeTDisposer :: MonadSTM m => TDisposer -> m ()
-disposeTDisposer (TDisposer elements) = liftSTMc $ mapM_ go elements
-  where
-    go (TDisposerElement _ state) = do
-      future <- mapFinalizeTOnce state startDisposeFn
-      -- Elements can also be disposed by a resource manager (on a dedicated thread).
-      -- In that case that thread has to be awaited (otherwise this is a no-op).
-      readFuture future
-      where
-        startDisposeFn :: STMc Retry '[] () -> STMc Retry '[] (Future ())
-        startDisposeFn disposeFn = do
-          disposeFn
-          pure (pure ())
 
 -- NOTE TSimpleDisposer is moved to it's own module due to module dependencies
 
@@ -170,6 +209,9 @@ instance IsDisposerElement TSimpleDisposerElement where
   disposeEventually# disposer =
     pure () <$ disposeTSimpleDisposerElement disposer
 
+instance IsTDisposerElement NoRetry TSimpleDisposerElement where
+  disposeTDisposerElement = disposeTSimpleDisposerElement
+
 
 -- | A trivial disposer that does not perform any action when disposed.
 trivialDisposer :: Disposer
@@ -180,6 +222,12 @@ trivialDisposer = mempty
 isTrivialDisposer :: Disposer -> Bool
 isTrivialDisposer (Disposer []) = True
 isTrivialDisposer _ = False
+
+-- | Check if a disposer is a trivial disposer, i.e. a disposer that does not
+-- perform any action when disposed.
+isTrivialTDisposer :: TDisposer canRetry -> Bool
+isTrivialTDisposer (TDisposer []) = True
+isTrivialTDisposer _ = False
 
 newUnmanagedIODisposer :: MonadSTMc NoRetry '[] m => IO () -> ExceptionSink -> m Disposer
 newUnmanagedIODisposer fn exChan = do

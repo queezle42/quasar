@@ -120,12 +120,12 @@ disposeTSimpleDisposer (TSimpleDisposer elements) = liftSTMc do
 
 -- | In case of reentry this will return without calling the dispose hander again.
 disposeTSimpleDisposerElement :: TSimpleDisposerElement -> STMc NoRetry '[] ()
-disposeTSimpleDisposerElement (TSimpleDisposerElement _ state) =
-  readTVar state >>= \case
+disposeTSimpleDisposerElement (TSimpleDisposerElement _ var) =
+  readTVar var >>= \case
     TSimpleDisposerNormal fn isDisposedRegistry -> do
-      writeTVar state (TSimpleDisposerDisposing isDisposedRegistry)
+      writeTVar var (TSimpleDisposerDisposing isDisposedRegistry)
       fn
-      writeTVar state TSimpleDisposerDisposed
+      writeTVar var TSimpleDisposerDisposed
       callCallbacks isDisposedRegistry ()
     TSimpleDisposerDisposing _ ->
       -- Doing nothing results in the documented behavior.

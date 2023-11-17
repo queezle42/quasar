@@ -6,7 +6,7 @@ module Quasar.Resources.DisposableVar (
 
 import Quasar.Future (ToFuture(..), IsFuture(..))
 import Quasar.Prelude
-import Quasar.Resources (IsDisposerElement(..), Disposable (getDisposer), toDisposer)
+import Quasar.Resources.Disposer
 import Quasar.Utils.CallbackRegistry
 
 
@@ -19,18 +19,23 @@ data DisposableVar a = DisposableVar Unique (TVar (DisposableVarState a))
 
 instance IsDisposerElement (DisposableVar a) where
   disposerElementKey (DisposableVar key _) = key
-  disposeEventually# (DisposableVar _ var) = do
+  disposeEventually# dvar = pure () <$ disposeTDisposerElement dvar
+
+instance IsTDisposerElement NoRetry (DisposableVar a) where
+  disposeTDisposerElement (DisposableVar _ var) = do
     readTVar var >>= \case
-      DisposableVarDisposed -> pure (pure ())
-      DisposableVarDisposing _ -> pure (pure ())
+      DisposableVarDisposed -> pure ()
+      DisposableVarDisposing _ -> pure ()
       DisposableVarAlive content disposeFn callbackRegistry -> do
         writeTVar var (DisposableVarDisposing callbackRegistry)
         disposeFn content
         writeTVar var DisposableVarDisposed
-        pure (pure ())
 
 instance Disposable (DisposableVar a) where
   getDisposer x = toDisposer [x]
+
+instance TDisposable NoRetry (DisposableVar a) where
+  getTDisposer x = toTDisposer [x]
 
 
 instance ToFuture () (DisposableVar a) where
