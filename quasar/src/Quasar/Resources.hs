@@ -37,15 +37,23 @@ module Quasar.Resources (
   -- * Types to implement resources
   -- ** Disposer
   Disposer,
-  TDisposer,
-  TSimpleDisposer,
-  disposeSTM,
   disposeTSimpleDisposer,
   newUnmanagedIODisposer,
-  newUnmanagedSTMDisposer,
-  newUnmanagedTSimpleDisposer,
   trivialDisposer,
   isTrivialDisposer,
+
+  -- *** STM variants
+  TDisposable(..),
+  TDisposer,
+  disposeSTM,
+  newUnmanagedSTMDisposer,
+  newUnmanagedNoRetryTDisposer,
+  newUnmanagedRetryTDisposer,
+  isTrivialTDisposer,
+
+  -- *** Legacy NoRetry disposer
+  TSimpleDisposer,
+  newUnmanagedTSimpleDisposer,
   isTrivialTSimpleDisposer,
 
   -- ** Resource manager
@@ -57,6 +65,8 @@ module Quasar.Resources (
   -- * Implementing disposers
   IsDisposerElement(..),
   toDisposer,
+  IsTDisposerElement(..),
+  toTDisposer,
 ) where
 
 

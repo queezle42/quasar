@@ -22,7 +22,7 @@ module Quasar.Resources.Disposer (
   newUnmanagedRetryTDisposer,
   isTrivialTDisposer,
 
-  -- ** Legacy/internal STM variants
+  -- ** Legacy NoRetry disposer
   TSimpleDisposer,
   newUnmanagedTSimpleDisposer,
   disposeTSimpleDisposer,
