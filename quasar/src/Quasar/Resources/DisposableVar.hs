@@ -1,6 +1,7 @@
 module Quasar.Resources.DisposableVar (
   DisposableVar,
   newDisposableVar,
+  newDisposableVarIO,
   tryReadDisposableVar,
 ) where
 
@@ -56,6 +57,13 @@ newDisposableVar content disposeFn = liftSTMc do
   key <- newUniqueSTM
   callbackRegistry <- newCallbackRegistry
   var <- newTVar (DisposableVarAlive content disposeFn callbackRegistry)
+  pure $ DisposableVar key var
+
+newDisposableVarIO :: MonadIO m => a -> (a -> STMc NoRetry '[] ()) -> m (DisposableVar a)
+newDisposableVarIO content disposeFn = liftIO do
+  key <- newUnique
+  callbackRegistry <- newCallbackRegistryIO
+  var <- newTVarIO (DisposableVarAlive content disposeFn callbackRegistry)
   pure $ DisposableVar key var
 
 tryReadDisposableVar :: MonadSTMc NoRetry '[] m => DisposableVar a -> m (Maybe a)
