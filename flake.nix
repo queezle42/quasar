@@ -57,6 +57,8 @@
       quasar-web-client = final.callPackage ./quasar-web-client {};
     };
 
+    checks = mapAttrs (_k: filterAttrs (k: _v: k != "default")) self.packages;
+
     devShells = forAllSystems (system:
       let
         pkgs = import nixpkgs { inherit system; overlays = [
