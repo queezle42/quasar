@@ -114,3 +114,53 @@ type PlainUpdate = ObservableData Change NotPending NoContext NoLoad
 type ValidatedUpdate = ObservableData Change NotPending Validated NoLoad
 type ObservableState = ObservableData NoChange NotPending NoContext
 type ObserverState = ObservableData NoChange Pending NoContext
+
+
+testPlainChangeCtors :: PlainChange Load Identity v -> ()
+testPlainChangeCtors ObservableCleared = ()
+testPlainChangeCtors (ObservableUnchanged Loading NoContextInfo) = ()
+testPlainChangeCtors (ObservableUnchanged Live NoContextInfo) = ()
+testPlainChangeCtors (ObservableReplace LiveP _new) = ()
+testPlainChangeCtors (ObservableDelta LiveP _delta) = ()
+
+testValidatedChangeCtors :: ValidatedChange Load Identity v -> ()
+testValidatedChangeCtors ObservableCleared = ()
+testValidatedChangeCtors (ObservableUnchanged Loading (ValidatedInfo _)) = ()
+testValidatedChangeCtors (ObservableUnchanged Live (ValidatedInfo _)) = ()
+testValidatedChangeCtors (ObservableReplace LiveP _new) = ()
+testValidatedChangeCtors (ObservableDelta LiveP _delta) = ()
+
+testPendingChangeCtors :: PendingChange Load Identity v -> ()
+testPendingChangeCtors ObservableCleared = ()
+testPendingChangeCtors (ObservableUnchanged Loading (ValidatedInfo _)) = ()
+testPendingChangeCtors (ObservableUnchanged Live (ValidatedInfo _)) = ()
+testPendingChangeCtors (ObservableReplace LoadingP _new) = ()
+testPendingChangeCtors (ObservableDelta LoadingP _delta) = ()
+testPendingChangeCtors (ObservableReplace LiveP _new) = ()
+testPendingChangeCtors (ObservableDelta LiveP _delta) = ()
+
+testEvaluatedPendingChangeCtors :: EvaluatedPendingChange Load Identity v -> ()
+testEvaluatedPendingChangeCtors ObservableCleared = ()
+testEvaluatedPendingChangeCtors (ObservableUnchanged Loading (EvaluatedInfo _)) = ()
+testEvaluatedPendingChangeCtors (ObservableUnchanged Live (EvaluatedInfo _)) = ()
+testEvaluatedPendingChangeCtors (ObservableReplace LoadingP _new) = ()
+testEvaluatedPendingChangeCtors (ObservableDelta LoadingP _delta) = ()
+testEvaluatedPendingChangeCtors (ObservableReplace LiveP _new) = ()
+testEvaluatedPendingChangeCtors (ObservableDelta LiveP _delta) = ()
+
+testValidatedUpdate :: ValidatedUpdate Identity v -> ()
+testValidatedUpdate (ObservableDelta LiveP _delta) = ()
+testValidatedUpdate (ObservableReplace LiveP _new) = ()
+
+testPlainUpdateCtors :: PlainUpdate Identity v -> ()
+testPlainUpdateCtors (ObservableReplace LiveP _new) = ()
+testPlainUpdateCtors (ObservableDelta LiveP _delta) = ()
+
+testObserverStateCtors :: ObserverState Load Identity v -> ()
+testObserverStateCtors ObservableCleared = ()
+testObserverStateCtors (ObservableReplace LoadingP _new) = ()
+testObserverStateCtors (ObservableReplace LiveP _new) = ()
+
+testObservableStateCtors :: ObservableState Load Identity v -> ()
+testObservableStateCtors ObservableCleared = ()
+testObservableStateCtors (ObservableReplace LiveP _new) = ()
