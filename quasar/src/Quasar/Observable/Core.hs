@@ -57,6 +57,7 @@ module Quasar.Observable.Core (
   ValidatedUpdate(..),
   mergeValidatedUpdate,
   validatedUpdateToContext,
+  unvalidatedUpdate,
   EvaluatedUpdate(.., EvaluatedUpdateOk, EvaluatedUpdateThrow),
 
   MappedObservable(..),
@@ -418,57 +419,69 @@ type ValidatedUpdate :: (Type -> Type) -> Type -> Type
 data ValidatedUpdate c v where
   ValidatedUpdateReplace :: c v -> ValidatedUpdate c v
   ValidatedUpdateDelta :: ValidatedDelta c v -> ValidatedUpdate c v
-  ValidatedUpdateUnchanged :: DeltaContext c -> ValidatedUpdate c v
 
 deriving instance (Show (c v), Show (ValidatedDelta c v), Show (DeltaContext c)) => Show (ValidatedUpdate c v)
 deriving instance (Eq (c v), Eq (ValidatedDelta c v), Eq (DeltaContext c)) => Eq (ValidatedUpdate c v)
 
-instance ObservableContainer c v => HasField "unvalidated" (ValidatedUpdate c v) (Maybe (ObservableUpdate c v)) where
-  getField (ValidatedUpdateReplace new) = Just (ObservableUpdateReplace new)
-  getField (ValidatedUpdateDelta delta) = Just (ObservableUpdateDelta (validatedDeltaToDelta @c delta))
-  getField (ValidatedUpdateUnchanged ctx) = Nothing
+
+unvalidatedUpdate :: ObservableContainer c v => Either (DeltaContext c) (ValidatedUpdate c v) -> Maybe (ObservableUpdate c v)
+unvalidatedUpdate (Right update) = Just update.unvalidated
+unvalidatedUpdate (Left _) = Nothing
+
+instance ObservableContainer c v => HasField "unvalidated" (ValidatedUpdate c v) (ObservableUpdate c v) where
+  getField (ValidatedUpdateReplace new) = ObservableUpdateReplace new
+  getField (ValidatedUpdateDelta delta) = ObservableUpdateDelta (validatedDeltaToDelta @c delta)
 
 instance (Functor c, Functor (ValidatedDelta c)) => Functor (ValidatedUpdate c) where
   fmap fn (ValidatedUpdateReplace new) = ValidatedUpdateReplace (fn <$> new)
   fmap fn (ValidatedUpdateDelta delta) = ValidatedUpdateDelta (fn <$> delta)
-  fmap fn (ValidatedUpdateUnchanged ctx) = ValidatedUpdateUnchanged ctx
 
 instance (Foldable c, Traversable (ValidatedDelta c)) => Foldable (ValidatedUpdate c) where
   foldMap f (ValidatedUpdateReplace x) = foldMap f x
   foldMap f (ValidatedUpdateDelta delta) = foldMap f delta
-  foldMap _f (ValidatedUpdateUnchanged _ctx) = mempty
 
 instance (Traversable c, Traversable (ValidatedDelta c)) => Traversable (ValidatedUpdate c) where
   traverse f (ValidatedUpdateReplace x) = ValidatedUpdateReplace <$> traverse f x
   traverse f (ValidatedUpdateDelta delta) = ValidatedUpdateDelta <$> traverse f delta
-  traverse _f (ValidatedUpdateUnchanged ctx) = pure (ValidatedUpdateUnchanged ctx)
+
+-- | Validate an update, based on a previous container state context.
+validateUpdate ::
+  forall c v. ObservableContainer c v =>
+  Maybe (ObservableUpdate c v) -> DeltaContext c -> Either (DeltaContext c) (ValidatedUpdate c v)
+validateUpdate Nothing oldCtx = Left oldCtx
+validateUpdate (Just (ObservableUpdateReplace new)) _oldCtx =
+  Right (ValidatedUpdateReplace new)
+validateUpdate (Just (ObservableUpdateDelta delta)) oldCtx =
+  case validateDelta @c oldCtx delta of
+    Nothing -> Left oldCtx
+    Just validated -> Right (ValidatedUpdateDelta validated)
 
 validatedUpdateToContext ::
   forall c v.
   ObservableContainer c v =>
-  ValidatedUpdate c v -> DeltaContext c
-validatedUpdateToContext (ValidatedUpdateReplace content) = toDeltaContext @c content
-validatedUpdateToContext (ValidatedUpdateDelta delta) = validatedDeltaToContext @c delta
-validatedUpdateToContext (ValidatedUpdateUnchanged ctx) = ctx
+  Either (DeltaContext c) (ValidatedUpdate c v) -> DeltaContext c
+validatedUpdateToContext (Right (ValidatedUpdateReplace content)) = toDeltaContext @c content
+validatedUpdateToContext (Right (ValidatedUpdateDelta delta)) = validatedDeltaToContext @c delta
+validatedUpdateToContext (Left ctx) = ctx
 
 mergeValidatedUpdate ::
   forall c v.
   ObservableContainer c v =>
-  ValidatedUpdate c v ->
+  Either (DeltaContext c) (ValidatedUpdate c v) ->
   Maybe (ObservableUpdate c v) ->
-  ValidatedUpdate c v
-mergeValidatedUpdate _ (Just (ObservableUpdateReplace new)) = ValidatedUpdateReplace new
+  Either (DeltaContext c) (ValidatedUpdate c v)
+mergeValidatedUpdate _ (Just (ObservableUpdateReplace new)) = Right (ValidatedUpdateReplace new)
 mergeValidatedUpdate old Nothing = old
-mergeValidatedUpdate (ValidatedUpdateUnchanged ctx) (Just (ObservableUpdateDelta delta)) =
+mergeValidatedUpdate (Left ctx) (Just (ObservableUpdateDelta delta)) =
   case validateDelta @c ctx delta of
-    Nothing -> ValidatedUpdateUnchanged ctx
-    Just validated -> ValidatedUpdateDelta validated
-mergeValidatedUpdate oldUpdate@(ValidatedUpdateReplace old) (Just (ObservableUpdateDelta delta)) = do
+    Nothing -> Left ctx
+    Just validated -> Right (ValidatedUpdateDelta validated)
+mergeValidatedUpdate (Right oldUpdate@(ValidatedUpdateReplace old)) (Just (ObservableUpdateDelta delta)) = do
   case applyDelta @c delta old of
-    Nothing -> oldUpdate
-    Just new -> ValidatedUpdateReplace new
-mergeValidatedUpdate (ValidatedUpdateDelta oldDelta) (Just (ObservableUpdateDelta delta)) =
-  ValidatedUpdateDelta (mergeDelta @c oldDelta delta)
+    Nothing -> Right oldUpdate
+    Just new -> Right (ValidatedUpdateReplace new)
+mergeValidatedUpdate (Right (ValidatedUpdateDelta oldDelta)) (Just (ObservableUpdateDelta delta)) =
+  Right (ValidatedUpdateDelta (mergeDelta @c oldDelta delta))
 
 
 
@@ -897,7 +910,7 @@ fromMaybeL _ (JustL x) = x
 type PendingChange :: LoadKind -> (Type -> Type) -> Type -> Type
 data PendingChange canLoad c v where
   PendingChangeLoadingClear :: PendingChange Load c v
-  PendingChangeAlter :: Loading canLoad -> ValidatedUpdate c v -> PendingChange canLoad c v
+  PendingChangeAlter :: Loading canLoad -> Either (DeltaContext c) (ValidatedUpdate c v) -> PendingChange canLoad c v
 
 type LastChange :: LoadKind -> Type
 data LastChange canLoad where
@@ -917,25 +930,28 @@ updatePendingChange ObservableChangeLiveUnchanged PendingChangeLoadingClear = Pe
 updatePendingChange ObservableChangeLoadingUnchanged (PendingChangeAlter _loading delta) = PendingChangeAlter Loading delta
 updatePendingChange ObservableChangeLiveUnchanged (PendingChangeAlter _loading delta) = PendingChangeAlter Live delta
 updatePendingChange (ObservableChangeLiveReplace content) _ =
-  PendingChangeAlter Live (ValidatedUpdateReplace content)
+  PendingChangeAlter Live (Right (ValidatedUpdateReplace content))
 updatePendingChange (ObservableChangeLiveDelta _delta) PendingChangeLoadingClear =
   PendingChangeLoadingClear
-updatePendingChange (ObservableChangeLiveDelta delta) (PendingChangeAlter _loading (ValidatedUpdateReplace prevReplace)) =
+updatePendingChange (ObservableChangeLiveDelta delta) (PendingChangeAlter _loading (Right (ValidatedUpdateReplace prevReplace))) =
   case applyDelta @c delta prevReplace of
-    Nothing -> PendingChangeAlter Live (ValidatedUpdateReplace prevReplace)
-    Just new -> PendingChangeAlter Live (ValidatedUpdateReplace new)
-updatePendingChange (ObservableChangeLiveDelta delta) (PendingChangeAlter _loading (ValidatedUpdateDelta prevDelta)) =
-  PendingChangeAlter Live (ValidatedUpdateDelta (mergeDelta @c prevDelta delta))
-updatePendingChange (ObservableChangeLiveDelta delta) (PendingChangeAlter _loading (ValidatedUpdateUnchanged ctx)) =
+    Nothing -> PendingChangeAlter Live (Right (ValidatedUpdateReplace prevReplace))
+    Just new -> PendingChangeAlter Live (Right (ValidatedUpdateReplace new))
+updatePendingChange (ObservableChangeLiveDelta delta) (PendingChangeAlter _loading (Right (ValidatedUpdateDelta prevDelta))) =
+  PendingChangeAlter Live (Right (ValidatedUpdateDelta (mergeDelta @c prevDelta delta)))
+updatePendingChange (ObservableChangeLiveDelta delta) (PendingChangeAlter _loading (Left ctx)) =
   case validateDelta @c ctx delta of
     Nothing ->
       -- Invalid delta, cannot apply but change from loading to live
-      PendingChangeAlter Live (ValidatedUpdateUnchanged ctx)
-    Just validatedDelta -> PendingChangeAlter Live (ValidatedUpdateDelta validatedDelta)
+      PendingChangeAlter Live (Left ctx)
+    Just validatedDelta -> PendingChangeAlter Live (Right (ValidatedUpdateDelta validatedDelta))
 
 initialPendingChange :: ObservableContainer c v => ObservableState canLoad c v -> PendingChange canLoad c v
 initialPendingChange ObservableStateLoading = PendingChangeLoadingClear
-initialPendingChange (ObservableStateLive initial) = PendingChangeAlter Live (ValidatedUpdateUnchanged (toDeltaContext initial))
+initialPendingChange (ObservableStateLive initial) = PendingChangeAlter Live (Left (toDeltaContext initial))
+
+unchangedPendingChange :: ObservableContainer c v => c v -> PendingChange canLoad c v
+unchangedPendingChange initial = PendingChangeAlter Live (Left (toDeltaContext initial))
 
 initialLastChange :: ObservableState canLoad c v -> LastChange canLoad
 initialLastChange ObservableStateLoading = LastChangeLoadingCleared
@@ -943,14 +959,14 @@ initialLastChange (ObservableStateLive _) = LastChangeLive
 
 replacingPendingChange :: ObservableState canLoad c v -> PendingChange canLoad c v
 replacingPendingChange ObservableStateLoading = PendingChangeLoadingClear
-replacingPendingChange (ObservableStateLive initial) = PendingChangeAlter Live (ValidatedUpdateReplace initial)
+replacingPendingChange (ObservableStateLive initial) = PendingChangeAlter Live (Right (ValidatedUpdateReplace initial))
 
 initialPendingAndLastChange :: ObservableContainer c v => ObservableState canLoad c v -> (PendingChange canLoad c v, LastChange canLoad)
 initialPendingAndLastChange ObservableStateLoading =
   (PendingChangeLoadingClear, LastChangeLoadingCleared)
 initialPendingAndLastChange (ObservableStateLive initial) =
   let ctx = toDeltaContext initial
-  in (PendingChangeAlter Live (ValidatedUpdateUnchanged ctx), LastChangeLive)
+  in (PendingChangeAlter Live (Left ctx), LastChangeLive)
 
 
 changeFromPending ::
@@ -972,18 +988,18 @@ changeFromPending loading pendingChange lastChange = do
     changeFromPending' _ x@(PendingChangeAlter Loading _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, x)
     changeFromPending' _ (PendingChangeAlter Loading _) LastChangeLoadingCleared = Nothing
     changeFromPending' _ (PendingChangeAlter Loading _) LastChangeLoading = Nothing
-    changeFromPending' _ (PendingChangeAlter Live (ValidatedUpdateUnchanged _)) LastChangeLoadingCleared = Nothing
+    changeFromPending' _ (PendingChangeAlter Live (Left _)) LastChangeLoadingCleared = Nothing
     changeFromPending' Loading (PendingChangeAlter Live _) LastChangeLoadingCleared = Nothing
     changeFromPending' Loading (PendingChangeAlter Live _) LastChangeLoading = Nothing
     changeFromPending' Loading x@(PendingChangeAlter Live _) LastChangeLive = Just (ObservableChangeLoadingUnchanged, x)
     -- Category: Changing to live or already live
-    changeFromPending' Live (PendingChangeAlter Live (ValidatedUpdateDelta _delta)) LastChangeLoadingCleared = Nothing
-    changeFromPending' Live x@(PendingChangeAlter Live (ValidatedUpdateUnchanged _)) LastChangeLoading = Just (ObservableChangeLiveUnchanged, x)
-    changeFromPending' Live (PendingChangeAlter Live (ValidatedUpdateUnchanged _)) LastChangeLive = Nothing
-    changeFromPending' Live x@(PendingChangeAlter Live (ValidatedUpdateReplace new)) _lc =
-      Just (ObservableChangeLiveReplace new, PendingChangeAlter Live (ValidatedUpdateUnchanged (toDeltaContext new)))
-    changeFromPending' Live x@(PendingChangeAlter Live (ValidatedUpdateDelta delta)) _lc =
-      Just (ObservableChangeLiveDelta (validatedDeltaToDelta @c delta), PendingChangeAlter Live (ValidatedUpdateUnchanged (validatedDeltaToContext @c delta)))
+    changeFromPending' Live (PendingChangeAlter Live (Right (ValidatedUpdateDelta _delta))) LastChangeLoadingCleared = Nothing
+    changeFromPending' Live x@(PendingChangeAlter Live (Left _)) LastChangeLoading = Just (ObservableChangeLiveUnchanged, x)
+    changeFromPending' Live (PendingChangeAlter Live (Left _)) LastChangeLive = Nothing
+    changeFromPending' Live x@(PendingChangeAlter Live (Right (ValidatedUpdateReplace new))) _lc =
+      Just (ObservableChangeLiveReplace new, PendingChangeAlter Live (Left (toDeltaContext new)))
+    changeFromPending' Live x@(PendingChangeAlter Live (Right (ValidatedUpdateDelta delta))) _lc =
+      Just (ObservableChangeLiveDelta (validatedDeltaToDelta @c delta), PendingChangeAlter Live (Left (validatedDeltaToContext @c delta)))
 
     updateLastChange :: ObservableChange canLoad c v -> LastChange canLoad -> LastChange canLoad
     updateLastChange ObservableChangeLoadingClear _ = LastChangeLoadingCleared
@@ -1275,7 +1291,7 @@ attachContextMergeObserver ::
   -- Function to merge the container during (re)initialisation.
   (ca va -> cb vb -> c v) ->
   -- Function to merge updates. Provides a validated update and the previous context for each side.
-  ((ValidatedUpdate ca va, DeltaContext ca) -> (ValidatedUpdate cb vb, DeltaContext cb ) -> Maybe (MergeChange canLoad c v)) ->
+  ((Maybe (ValidatedUpdate ca va), DeltaContext ca) -> (Maybe (ValidatedUpdate cb vb), DeltaContext cb ) -> Maybe (ObservableUpdate c v)) ->
   -- LHS observable input.
   a ->
   -- RHS observable input.

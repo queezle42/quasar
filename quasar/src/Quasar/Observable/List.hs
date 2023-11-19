@@ -419,32 +419,32 @@ operationsToUpdate :: Length -> [ListOperation v] -> Maybe (ObservableUpdate Seq
 operationsToUpdate _initialLength [] = Nothing
 operationsToUpdate initialLength (op:ops) =
   let initial = operationToValidatedUpdate initialLength op
-  in (foldl applyListOperationToUpdate initial ops).unvalidated
+  in unvalidatedUpdate (foldl applyListOperationToUpdate initial ops)
 
 
 applyListOperationToUpdate ::
-  ValidatedUpdate Seq v ->
+  Either Length (ValidatedUpdate Seq v) ->
   ListOperation v ->
-  ValidatedUpdate Seq v
+  Either Length (ValidatedUpdate Seq v)
 applyListOperationToUpdate oldUpdate op =
   let newUpdate = operationToValidatedUpdate (validatedUpdateToContext oldUpdate) op
-  in mergeValidatedUpdate oldUpdate newUpdate.unvalidated
+  in mergeValidatedUpdate oldUpdate (unvalidatedUpdate newUpdate)
 
-operationToValidatedUpdate :: Length -> ListOperation v -> ValidatedUpdate Seq v
+operationToValidatedUpdate :: Length -> ListOperation v -> Either Length (ValidatedUpdate Seq v)
 operationToValidatedUpdate len (ListInsert pos value) =
-  if len > 0
+  Right if len > 0
     then ValidatedUpdateDelta $ ValidatedListDelta $ FT.fromList
       if pos < len
         then [ListKeep pos, ListSplice [value], ListKeep (len - pos)]
         else [ListKeep len, ListSplice [value]]
     else ValidatedUpdateReplace [value]
 operationToValidatedUpdate len (ListAppend value) =
-  if len > 0
+  Right if len > 0
     then ValidatedUpdateDelta $ ValidatedListDelta $ FT.fromList [ListKeep len, ListSplice [value]]
     else ValidatedUpdateReplace [value]
 operationToValidatedUpdate len (ListDelete pos) =
   if pos < len
-    then if len == 1
+    then Right if len == 1
       then ValidatedUpdateReplace []
       else ValidatedUpdateDelta $ ValidatedListDelta
         if pos == 0
@@ -452,9 +452,9 @@ operationToValidatedUpdate len (ListDelete pos) =
           else if pos == (len - 1)
             then FT.singleton (ListKeep pos)
             else FT.fromList [ListKeep pos, ListDrop 1, ListKeep (len - pos - 1)]
-    else ValidatedUpdateUnchanged len
-operationToValidatedUpdate 0 (ListReplaceAll []) = ValidatedUpdateUnchanged 0
-operationToValidatedUpdate _len (ListReplaceAll new) = ValidatedUpdateReplace new
+    else Left len
+operationToValidatedUpdate 0 (ListReplaceAll []) = Left 0
+operationToValidatedUpdate _len (ListReplaceAll new) = Right (ValidatedUpdateReplace new)
 
 
 data ConcatList canLoad exceptions v = Concat (ObservableList canLoad exceptions v) (ObservableList canLoad exceptions v)
@@ -469,17 +469,17 @@ instance IsObservableCore canLoad exceptions Seq v (ConcatList canLoad exception
     attachContextMergeObserver (<>) merge fx fy callback
     where
       merge ::
-        (ValidatedUpdate Seq v, Length) ->
-        (ValidatedUpdate Seq v, Length) ->
-        Maybe (MergeChange canLoad Seq v)
+        (Maybe (ValidatedUpdate Seq v), Length) ->
+        (Maybe (ValidatedUpdate Seq v), Length) ->
+        Maybe (ObservableUpdate Seq v)
       merge lhs rhs =
         let delta = validatedDeltaToDelta @Seq (ValidatedListDelta (joinOps (toFt lhs) (toFt rhs)))
-        in Just (MergeChangeUpdate (ObservableUpdateDelta delta))
+        in Just (ObservableUpdateDelta delta)
 
-      toFt :: (ValidatedUpdate Seq v, Length) -> FingerTree Length (ListDeltaOperation v)
-      toFt (ValidatedUpdateUnchanged ctx, _) = FT.singleton (ListKeep ctx)
-      toFt (ValidatedUpdateReplace new, prevLength) = prependDrop prevLength (insertFt new)
-      toFt (ValidatedUpdateDelta (ValidatedListDelta ft), _) = ft
+      toFt :: (Maybe (ValidatedUpdate Seq v), Length) -> FingerTree Length (ListDeltaOperation v)
+      toFt (Nothing, ctx) = FT.singleton (ListKeep ctx)
+      toFt (Just (ValidatedUpdateReplace new), prevLength) = prependDrop prevLength (insertFt new)
+      toFt (Just (ValidatedUpdateDelta (ValidatedListDelta ft)), _) = ft
 
 instance IsObservableList canLoad exceptions v (ConcatList canLoad exceptions v) where
 
