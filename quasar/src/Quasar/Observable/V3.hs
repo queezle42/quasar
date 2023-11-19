@@ -73,10 +73,14 @@ type NoChange = 'NoChange
 
 #endif
 
-type LoadingAndPending :: LoadKind -> PendingKind -> Type
-data LoadingAndPending canLoad pending where
-  LiveP :: LoadingAndPending canLoad pending
-  LoadingPending :: LoadingAndPending Load Pending
+type LoadingP :: PendingKind -> LoadKind -> Type
+data LoadingP pending canLoad where
+  LiveP :: LoadingP pending canLoad
+  LoadingP :: LoadingP Pending Load
+
+instance HasField "loading" (LoadingP pending canLoad) (Loading canLoad) where
+  getField LiveP = Live
+  getField LoadingP = Loading
 
 
 type ObservableDelta :: ContextKind -> (Type -> Type) -> Type -> Type
@@ -95,14 +99,9 @@ type ObservableData :: ChangeKind -> PendingKind -> ContextKind -> LoadKind -> (
 data ObservableData change pending ctx canLoad c v where
   ObservableCleared :: ObservableData change pending ctx Load c v
   ObservableUnchanged :: Loading canLoad -> ObservableInfo ctx c v -> ObservableData Change pending ctx Load c v
-  ObservablePendingReplace :: c v -> ObservableData change Pending ctx Load c v
-  ObservablePendingDelta :: ObservableDelta ctx c v -> ObservableData Change Pending ctx Load c v
-  ObservableLiveReplace :: c v -> ObservableData change pending ctx canLoad c v
-  ObservableLiveDelta :: ObservableDelta ctx c v -> ObservableData Change pending ctx canLoad c v
-
-  --ObservableReplace :: Loading (canLoad && pending) -> c v -> ObservableData change ctx Pending Load c v
-  --ObservableEx :: Loading (canLoad && pending) -> Ex exceptions -> ObservableData change ctx Pending Load c v
-  --ObservableDelta :: Loading (canLoad && pending) -> ObservableDelta ctx c v -> ObservableData Change ctx pending canLoad c v
+  ObservableReplace :: LoadingP pending canLoad -> c v -> ObservableData change pending ctx canLoad c v
+  --ObservableEx :: LoadingP pending canLoad -> Ex exceptions -> ObservableData change pending ctx canLoad c v
+  ObservableDelta :: LoadingP pending canLoad -> ObservableDelta ctx c v -> ObservableData Change pending ctx canLoad c v
 
 
 -- | A "normal" change that can be applied to an observer.
@@ -110,6 +109,7 @@ type PlainChange = ObservableData Change NotPending NoContext
 type ValidatedChange = ObservableData Change NotPending Validated
 type EvaluatedChange = ObservableData Change NotPending Evaluated
 type PendingChange = ObservableData Change Pending Validated
+type EvaluatedPendingChange = ObservableData Change Pending Evaluated
 type PlainUpdate = ObservableData Change NotPending NoContext NoLoad
 type ValidatedUpdate = ObservableData Change NotPending Validated NoLoad
 type ObservableState = ObservableData NoChange NotPending NoContext
