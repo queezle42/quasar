@@ -236,7 +236,13 @@ instance (Monad (t m), MonadTrans t, MonadSTMcBase m) => MonadSTMcBase (t m) whe
 
 
 type MonadSTMc :: RetryKind -> [Type] -> (Type -> Type) -> Constraint
-type MonadSTMc canRetry exceptions m = (If (canRetry == Retry) (MonadRetry m) (() :: Constraint), MonadSTMcBase m, ThrowForAll exceptions m, ThrowForAll exceptions (STMc canRetry exceptions))
+type MonadSTMc canRetry exceptions m =
+  (
+    If (canRetry == Retry) (MonadRetry m) (() :: Constraint),
+    MonadSTMcBase m,
+    ThrowForAll exceptions m,
+    ThrowForAll exceptions (STMc canRetry exceptions)
+  )
 
 
 liftSTMc ::
@@ -348,7 +354,10 @@ orElseNothing fx = unsafeLiftSTM (STM.orElse (Just <$> runSTMc fx) (pure Nothing
 {-# INLINABLE orElseNothing #-}
 
 
-atomicallyC :: MonadIO m => STMc canRetry exceptions a -> m a
+atomicallyC ::
+  forall canRetry exceptions m a.
+  MonadIO m =>
+  STMc canRetry exceptions a -> m a
 atomicallyC = liftIO . STM.atomically . runSTMc
 {-# INLINABLE atomicallyC #-}
 
