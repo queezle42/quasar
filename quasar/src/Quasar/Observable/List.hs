@@ -31,14 +31,16 @@ module Quasar.Observable.List (
 
   -- * ObservableListVar (mutable observable var)
   ObservableListVar,
-  newObservableListVar,
-  newObservableListVarIO,
-  insert,
-  append,
-  delete,
-  lookupDelete,
-  replace,
-  clear,
+  newVar,
+  newVarIO,
+  insertVar,
+  appendVar,
+  deleteVar,
+  lookupDeleteVar,
+  replaceVar,
+  clearVar,
+  applyOperationsVar,
+  applyDeltaVar,
 ) where
 
 import Data.Binary (Binary)
@@ -494,36 +496,40 @@ deriving newtype instance ToObservableT NoLoad '[] Seq v (ObservableListVar v)
 instance IsObservableList l e v (Subject l e Seq v)
   -- TODO
 
-newObservableListVar :: MonadSTMc NoRetry '[] m => Seq v -> m (ObservableListVar v)
-newObservableListVar x = liftSTMc @NoRetry @'[] $ ObservableListVar <$> newSubject x
+newVar :: MonadSTMc NoRetry '[] m => Seq v -> m (ObservableListVar v)
+newVar x = liftSTMc @NoRetry @'[] $ ObservableListVar <$> newSubject x
 
-newObservableListVarIO :: MonadIO m => Seq v -> m (ObservableListVar v)
-newObservableListVarIO x = liftIO $ ObservableListVar <$> newSubjectIO x
+newVarIO :: MonadIO m => Seq v -> m (ObservableListVar v)
+newVarIO x = liftIO $ ObservableListVar <$> newSubjectIO x
 
 -- | Apply a list of `AbsoluteListDeltaOperation`s as a single change.
-applyListOperations :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> [ListOperation v] -> m ()
-applyListOperations (ObservableListVar var) ops =
+applyOperationsVar :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> [ListOperation v] -> m ()
+applyOperationsVar (ObservableListVar var) ops =
   updateSimpleSubject var \list ->
     operationsToUpdate (fromIntegral (Seq.length list)) ops
 
-insert :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Length -> v -> m ()
-insert var pos value = applyListOperations var [ListInsert pos value]
+applyDeltaVar :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> ListDelta v -> m ()
+applyDeltaVar (ObservableListVar subject) delta =
+  changeSubject subject (ObservableChangeLiveDelta delta)
 
-append :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> v -> m ()
-append var value = applyListOperations var [ListAppend value]
+insertVar :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Length -> v -> m ()
+insertVar var pos value = applyOperationsVar var [ListInsert pos value]
 
-delete :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Length -> m ()
-delete var pos = applyListOperations var [ListDelete pos]
+appendVar :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> v -> m ()
+appendVar var value = applyOperationsVar var [ListAppend value]
 
-lookupDelete :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Length -> m (Maybe v)
-lookupDelete var@(ObservableListVar subject) pos = do
+deleteVar :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Length -> m ()
+deleteVar var pos = applyOperationsVar var [ListDelete pos]
+
+lookupDeleteVar :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Length -> m (Maybe v)
+lookupDeleteVar var@(ObservableListVar subject) pos = do
   state <- readSubject subject
   let r = Seq.lookup (fromIntegral pos) state
-  when (isJust r) $ delete var pos
+  when (isJust r) $ deleteVar var pos
   pure r
 
-replace :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Seq v -> m ()
-replace var new = applyListOperations var [ListReplaceAll new]
+replaceVar :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Seq v -> m ()
+replaceVar var new = applyOperationsVar var [ListReplaceAll new]
 
-clear :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> m ()
-clear var = replace var mempty
+clearVar :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> m ()
+clearVar var = replaceVar var mempty
