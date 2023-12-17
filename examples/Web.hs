@@ -35,15 +35,15 @@ main = runQuasarAndExit do
           then "🐿"
           else fromString (show x)
 
-  mapVar <- newObservableMapVarIO mempty
+  mapVar <- ObservableMap.newVarIO mempty
   async_ $ forever do
     x <- randomRIO @Int (1, 100)
     atomically do
-      ObservableMap.insert mapVar x (squirrelFn x)
+      ObservableMap.insertVar mapVar x (squirrelFn x)
     liftIO $ threadDelay 1_000_000
     y <- randomRIO @Int (1, 100)
     atomically do
-      ObservableMap.delete mapVar y
+      ObservableMap.deleteVar mapVar y
     liftIO $ threadDelay 700_000
 
   let rootDiv = domElement "div" mempty (ObservableList.fromList [
