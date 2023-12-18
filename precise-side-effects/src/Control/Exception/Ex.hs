@@ -69,6 +69,8 @@ instance (n :< as, ns :<< as) => (n ': ns) :<< as
 -- The rhs may also be of type `Ex`, in which case all possible exceptions are
 -- removed from the lhs.
 --
+-- When the rhs is `SomeException`, the resulting type list is empty.
+--
 -- The lhs must not contain `Ex`.
 type (:-) :: [Type] -> Type -> [Type]
 type family a :- b where
@@ -79,10 +81,12 @@ type family a :- b where
   (r ': xs) :- r = xs :- r
   (x ': xs) :- r = x ': (xs :- r)
 
--- | Remove an exception from a type-level list.
+-- | Remove a list of exceptions from a type-level list.
 --
 -- The rhs may also contain type `Ex`, in which case all possible exceptions are
 -- removed from the lhs.
+--
+-- When the rhs contains `SomeException`, the resulting type list is empty.
 --
 -- The lhs must not contain `Ex`.
 type (:--) :: [Type] -> [Type] -> [Type]
