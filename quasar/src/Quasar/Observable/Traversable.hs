@@ -37,15 +37,6 @@ instance TraversableObservableContainer c => TraversableObservableContainer (Obs
   selectRemoved delta (ObservableResultOk x) = selectRemoved delta x
   selectRemoved _ (ObservableResultEx _ex) = []
 
-traverseDelta ::
-  forall c v m a.
-  (ObservableFunctor c, Traversable (ValidatedDelta c), Applicative m) =>
-  (v -> m a) -> Delta c v -> DeltaContext c -> m (Maybe (Delta c a))
-traverseDelta fn delta ctx =
-  case validateDelta @c ctx delta of
-    Nothing -> pure Nothing
-    Just validated -> Just . validatedDeltaToDelta @c <$> traverse fn validated
-
 selectRemovedByChange :: TraversableObservableContainer c => ObservableChange l c v -> ObserverState l c a -> [a]
 selectRemovedByChange ObservableChangeLoadingClear state = foldr (:) [] state
 selectRemovedByChange ObservableChangeLoadingUnchanged _ = []
@@ -55,14 +46,6 @@ selectRemovedByChange (ObservableChangeLiveDelta _delta) ObserverStateLoadingCle
 selectRemovedByChange (ObservableChangeLiveDelta delta) (ObserverStateLoadingCached state) = selectRemoved delta state
 selectRemovedByChange (ObservableChangeLiveDelta delta) (ObserverStateLive state) = selectRemoved delta state
 
-
-traverseUpdate :: forall c v a m. (Applicative m, TraversableObservableContainer c) => (v -> m a) -> ObservableUpdate c v -> Maybe (DeltaContext c) -> m (Maybe (ObservableUpdate c a))
-traverseUpdate fn (ObservableUpdateReplace content) _context = do
-  newContent <- traverse fn content
-  pure (Just (ObservableUpdateReplace newContent))
-traverseUpdate fn (ObservableUpdateDelta delta) (Just context) = do
-  ObservableUpdateDelta <<$>> traverseDelta @c fn delta context
-traverseUpdate _fn (ObservableUpdateDelta _delta) Nothing = pure Nothing
 
 traverseChange :: forall canLoad c v a m b. (Applicative m, TraversableObservableContainer c) => (v -> m a) -> ObservableChange canLoad c v -> ObserverState canLoad c b -> m (Maybe (ObservableChange canLoad c a))
 traverseChange fn change state = traverseChangeWithContext fn change state.context
