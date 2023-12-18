@@ -505,7 +505,7 @@ newVarIO x = liftIO $ ObservableListVar <$> newSubjectIO x
 -- | Apply a list of `AbsoluteListDeltaOperation`s as a single change.
 applyOperationsVar :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> [ListOperation v] -> m ()
 applyOperationsVar (ObservableListVar var) ops =
-  updateSimpleSubject var \list ->
+  modifySubject var \list ->
     operationsToUpdate (fromIntegral (Seq.length list)) ops
 
 applyDeltaVar :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> ListDelta v -> m ()
