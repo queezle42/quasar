@@ -73,8 +73,8 @@ instance (n :< as, ns :<< as) => (n ': ns) :<< as
 type (:-) :: [Type] -> Type -> [Type]
 type family a :- b where
   '[] :- _ = '[]
-  (Ex _ ': _) :- _ = TypeError ('Text "Invalid usage of ‘Ex’ in lhs of type family ‘:-’")
   _ :- SomeException = '[]
+  (Ex _ ': _) :- _ = TypeError ('Text "Invalid usage of ‘Ex’ in lhs of type family ‘:-’")
   xs :- (Ex exceptions) = xs :-- exceptions
   (r ': xs) :- r = xs :- r
   (x ': xs) :- r = x ': (xs :- r)
