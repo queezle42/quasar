@@ -201,7 +201,7 @@ class QuasarWebClient {
 
     if (websocketAddress == null) {
       const protocol = window.location.protocol == "https:" ? "wss" : "ws";
-      this.websocketAddress = `${protocol}://${window.location.host}:${window.location.port}/ws`;
+      this.websocketAddress = `${protocol}://${window.location.host}/ws`;
     }
     else {
       this.websocketAddress = websocketAddress;
