@@ -1,16 +1,23 @@
 {-# OPTIONS_HADDOCK not-home #-}
+{-# LANGUAGE CPP #-}
 
 module Quasar.Prelude
   ( module Prelude,
     module Quasar.PreludeExtras,
     module Control.Concurrent.STM.Class,
+#if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
+    -- Workaround for https://github.com/haskell/haddock/issues/1601
+    Control.Concurrent.STM.Class.RetryKind(..),
+#endif
     module Control.Exception.Ex,
     (>=>),
     (<=<),
     (<|>),
     (&),
     (<&>),
+#if ! MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
     Control.Applicative.liftA2,
+#endif
     Control.Applicative.Alternative,
     Data.Foldable.fold,
     Data.Foldable.sequenceA_,
@@ -87,7 +94,13 @@ import Prelude qualified as P
 import Control.Applicative ((<|>))
 import Control.Applicative qualified
 import Control.Concurrent.MVar
+#if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
+-- Workaround for https://github.com/haskell/haddock/issues/1601
+import Control.Concurrent.STM.Class hiding (RetryKind(..), registerDelay)
+import Control.Concurrent.STM.Class qualified
+#else
 import Control.Concurrent.STM.Class hiding (registerDelay)
+#endif
 import Control.Exception qualified
 import Control.Exception.Ex
 import Control.Monad ((>=>), (<=<))
