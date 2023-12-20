@@ -154,15 +154,15 @@ newtype QuasarSTMc canRetry exceptions a = QuasarSTMc (QuasarT (STMc canRetry ex
     Applicative,
     Functor,
     Monad,
-    MonadCatch,
-    MonadFail,
     MonadFix,
     MonadSTMcBase,
-    MonadThrow,
-    Throw e,
     MonadThrowEx
   )
 
+deriving newtype instance (Exception e, e :< exceptions) => Throw e (QuasarSTMc canRetry exceptions)
+deriving newtype instance SomeException :< exceptions => MonadThrow (QuasarSTMc canRetry exceptions)
+deriving newtype instance SomeException :< exceptions => MonadCatch (QuasarSTMc canRetry exceptions)
+deriving newtype instance IOException :< exceptions => MonadFail (QuasarSTMc canRetry exceptions)
 deriving newtype instance MonadRetry (QuasarSTMc Retry exceptions)
 deriving newtype instance Alternative (QuasarSTMc Retry exceptions)
 deriving newtype instance MonadPlus (QuasarSTMc Retry exceptions)

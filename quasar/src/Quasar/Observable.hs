@@ -40,8 +40,8 @@ module Quasar.Observable (
 ) where
 
 import Control.Applicative
+import Control.Monad (MonadPlus)
 import Control.Monad.Catch
-import Control.Monad.Except
 import Data.Coerce (coerce)
 import Data.String (IsString(..))
 import Quasar.Async
