@@ -40,9 +40,9 @@ module Quasar.Resources.Disposer (
 
   -- * Implementing disposers
   IsDisposerElement(..),
-  toDisposer,
+  mkDisposer,
   IsTDisposerElement(..),
-  toTDisposer,
+  mkTDisposer,
 ) where
 
 import Control.Monad (foldM)
@@ -73,8 +73,8 @@ class ToFuture () a => IsDisposerElement a where
   beginDispose# :: a -> STMc NoRetry '[] DisposeResult
   beginDispose# disposer = DisposeResultAwait <$> disposeEventually# disposer
 
-toDisposer :: IsDisposerElement a => [a] -> Disposer
-toDisposer x = Disposer (DisposerElement <$> x)
+mkDisposer :: IsDisposerElement a => [a] -> Disposer
+mkDisposer x = Disposer (DisposerElement <$> x)
 
 
 newtype Disposer = Disposer [DisposerElement]
@@ -111,7 +111,7 @@ instance IsDisposerElement IODisposerElement where
       void . toFuture <$> forkFutureSTM (wrapDisposeException fn) sink
 
 wrapDisposeException :: MonadCatch m => m a -> m a
-wrapDisposeException fn = (fn `catchAll` \ex -> throwM (DisposeException ex))
+wrapDisposeException fn = fn `catchAll` \ex -> throwM (DisposeException ex)
 
 type DisposeFnIO = IO ()
 
@@ -119,14 +119,14 @@ type DisposeFnIO = IO ()
 class Disposable a => TDisposable canRetry a | a -> canRetry where
   getTDisposer :: a -> TDisposer
 
-toTDisposer :: IsTDisposerElement a => [a] -> TDisposer
-toTDisposer x = TDisposer (TDisposerElement <$> x)
+mkTDisposer :: IsTDisposerElement a => [a] -> TDisposer
+mkTDisposer x = TDisposer (TDisposerElement <$> x)
 
 newtype TDisposer = TDisposer [TDisposerElement]
   deriving newtype (Semigroup, Monoid)
 
 instance Disposable TDisposer where
-  getDisposer (TDisposer tds) = toDisposer tds
+  getDisposer (TDisposer tds) = mkDisposer tds
 
 class IsDisposerElement a => IsTDisposerElement a where
   disposeTDisposerElement :: a -> STMc NoRetry '[] ()
@@ -177,7 +177,7 @@ newUnmanagedSTMDisposer fn sink = do
 newUnmanagedNoRetryTDisposer :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TDisposer
 newUnmanagedNoRetryTDisposer fn = do
   TSimpleDisposer elements <- newUnmanagedTSimpleDisposer fn
-  pure (toTDisposer elements)
+  pure (mkTDisposer elements)
 
 
 newUnmanagedRetryTDisposer :: MonadSTMc NoRetry '[] m => STMc Retry '[] () -> m Disposer
@@ -190,7 +190,7 @@ newUnmanagedRetryTDisposer fn = do
 -- NOTE TSimpleDisposer is moved to it's own module due to module dependencies
 
 instance Disposable TSimpleDisposer where
-  getDisposer (TSimpleDisposer tds) = toDisposer tds
+  getDisposer (TSimpleDisposer tds) = mkDisposer tds
 
 instance IsDisposerElement TSimpleDisposerElement where
   disposerElementKey (TSimpleDisposerElement key _) = key
@@ -260,7 +260,7 @@ data ResourceManagerState
   | ResourceManagerDisposed
 
 instance Disposable ResourceManager where
-  getDisposer rm = toDisposer [rm]
+  getDisposer rm = mkDisposer [rm]
 
 instance ToFuture () ResourceManager where
   toFuture rm = toFuture (resourceManagerIsDisposed rm)

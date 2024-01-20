@@ -33,10 +33,10 @@ instance IsTDisposerElement (DisposableVar a) where
         writeTVar var DisposableVarDisposed
 
 instance Disposable (DisposableVar a) where
-  getDisposer x = toDisposer [x]
+  getDisposer x = mkDisposer [x]
 
 instance TDisposable NoRetry (DisposableVar a) where
-  getTDisposer x = toTDisposer [x]
+  getTDisposer x = mkTDisposer [x]
 
 
 instance ToFuture () (DisposableVar a) where

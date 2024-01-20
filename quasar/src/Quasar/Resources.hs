@@ -64,9 +64,9 @@ module Quasar.Resources (
 
   -- * Implementing disposers
   IsDisposerElement(..),
-  toDisposer,
+  mkDisposer,
   IsTDisposerElement(..),
-  toTDisposer,
+  mkTDisposer,
 ) where
 
 
