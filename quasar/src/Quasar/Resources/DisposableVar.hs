@@ -22,7 +22,7 @@ instance IsDisposerElement (DisposableVar a) where
   disposerElementKey (DisposableVar key _) = key
   disposeEventually# dvar = pure () <$ disposeTDisposerElement dvar
 
-instance IsTDisposerElement NoRetry (DisposableVar a) where
+instance IsTDisposerElement (DisposableVar a) where
   disposeTDisposerElement (DisposableVar _ var) = do
     readTVar var >>= \case
       DisposableVarDisposed -> pure ()

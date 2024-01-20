@@ -97,7 +97,7 @@ registerDisposeActionIO fn = quasarAtomically $ registerDisposeAction fn
 registerDisposeActionIO_ :: HasCallStack => (MonadQuasar m, MonadIO m) => IO () -> m ()
 registerDisposeActionIO_ fn = quasarAtomically $ void $ registerDisposeAction fn
 
-registerDisposeTransaction :: HasCallStack => (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m) => STM () -> m (TDisposer Retry)
+registerDisposeTransaction :: HasCallStack => (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m) => STM () -> m Disposer
 registerDisposeTransaction fn = do
   exChan <- askExceptionSink
   rm <- askResourceManager
@@ -105,12 +105,12 @@ registerDisposeTransaction fn = do
     disposer <- newUnmanagedSTMDisposer fn exChan
     attachResource rm disposer
     pure disposer
-{-# SPECIALIZE registerDisposeTransaction :: STM () -> QuasarSTM (TDisposer Retry) #-}
+{-# SPECIALIZE registerDisposeTransaction :: STM () -> QuasarSTM Disposer #-}
 
 registerDisposeTransaction_ :: HasCallStack => (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m) => STM () -> m ()
 registerDisposeTransaction_ fn = void $ registerDisposeTransaction fn
 
-registerDisposeTransactionIO :: HasCallStack => (MonadQuasar m, MonadIO m) => STM () -> m (TDisposer Retry)
+registerDisposeTransactionIO :: HasCallStack => (MonadQuasar m, MonadIO m) => STM () -> m Disposer
 registerDisposeTransactionIO fn = quasarAtomically $ registerDisposeTransaction fn
 
 registerDisposeTransactionIO_ :: HasCallStack => (MonadQuasar m, MonadIO m) => STM () -> m ()
