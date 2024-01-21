@@ -116,7 +116,7 @@ wrapDisposeException fn = fn `catchAll` \ex -> throwM (DisposeException ex)
 type DisposeFnIO = IO ()
 
 
-class Disposable a => TDisposable canRetry a | a -> canRetry where
+class Disposable a => TDisposable a where
   getTDisposer :: a -> TDisposer
 
 mkTDisposer :: IsTDisposerElement a => [a] -> TDisposer
@@ -145,7 +145,7 @@ instance IsDisposerElement TDisposerElement where
 instance ToFuture () TDisposerElement where
   toFuture (TDisposerElement x) = toFuture x
 
-disposeSTM :: forall canRetry a m. (TDisposable canRetry a, MonadSTMc canRetry '[] m) => a -> m ()
+disposeSTM :: (TDisposable a, MonadSTMc NoRetry '[] m) => a -> m ()
 disposeSTM x =
   let TDisposer elements = getTDisposer x
   in liftSTMc (mapM_ disposeTDisposerElement elements)
