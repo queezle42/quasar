@@ -37,7 +37,6 @@ module Quasar.Resources (
   -- * Types to implement resources
   -- ** Disposer
   Disposer,
-  disposeTSimpleDisposer,
   newUnmanagedIODisposer,
   trivialDisposer,
   isTrivialDisposer,
@@ -45,16 +44,12 @@ module Quasar.Resources (
   -- *** STM variants
   TDisposable(..),
   TDisposer,
+  disposeTDisposer,
   disposeSTM,
+  newUnmanagedTDisposer,
   newUnmanagedSTMDisposer,
-  newUnmanagedNoRetryTDisposer,
   newUnmanagedRetryTDisposer,
   isTrivialTDisposer,
-
-  -- *** Legacy NoRetry disposer
-  TSimpleDisposer,
-  newUnmanagedTSimpleDisposer,
-  isTrivialTSimpleDisposer,
 
   -- ** Resource manager
   ResourceManager,
@@ -116,19 +111,19 @@ registerDisposeTransactionIO fn = quasarAtomically $ registerDisposeTransaction 
 registerDisposeTransactionIO_ :: HasCallStack => (MonadQuasar m, MonadIO m) => STM () -> m ()
 registerDisposeTransactionIO_ fn = quasarAtomically $ void $ registerDisposeTransaction fn
 
-registerSimpleDisposeTransaction :: HasCallStack => (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m) => STMc NoRetry '[] () -> m TSimpleDisposer
+registerSimpleDisposeTransaction :: HasCallStack => (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m) => STMc NoRetry '[] () -> m TDisposer
 registerSimpleDisposeTransaction fn = do
   rm <- askResourceManager
   liftSTMc @NoRetry @'[FailedToAttachResource] do
-    disposer <- newUnmanagedTSimpleDisposer fn
+    disposer <- newUnmanagedTDisposer fn
     attachResource rm disposer
     pure disposer
-{-# SPECIALIZE registerSimpleDisposeTransaction :: STMc NoRetry '[] () -> QuasarSTM TSimpleDisposer #-}
+{-# SPECIALIZE registerSimpleDisposeTransaction :: STMc NoRetry '[] () -> QuasarSTM TDisposer #-}
 
 registerSimpleDisposeTransaction_ :: HasCallStack => (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m) => STMc NoRetry '[] () -> m ()
 registerSimpleDisposeTransaction_ fn = void $ registerSimpleDisposeTransaction fn
 
-registerSimpleDisposeTransactionIO :: HasCallStack => (MonadQuasar m, MonadIO m) => STMc NoRetry '[] () -> m TSimpleDisposer
+registerSimpleDisposeTransactionIO :: HasCallStack => (MonadQuasar m, MonadIO m) => STMc NoRetry '[] () -> m TDisposer
 registerSimpleDisposeTransactionIO fn = quasarAtomically $ registerSimpleDisposeTransaction fn
 
 registerSimpleDisposeTransactionIO_ :: HasCallStack => (MonadQuasar m, MonadIO m) => STMc NoRetry '[] () -> m ()

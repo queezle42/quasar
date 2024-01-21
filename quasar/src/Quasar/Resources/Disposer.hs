@@ -16,17 +16,12 @@ module Quasar.Resources.Disposer (
   -- ** STM variants
   TDisposable(..),
   TDisposer,
+  disposeTDisposer,
   disposeSTM,
+  newUnmanagedTDisposer,
   newUnmanagedSTMDisposer,
-  newUnmanagedNoRetryTDisposer,
   newUnmanagedRetryTDisposer,
   isTrivialTDisposer,
-
-  -- ** Legacy NoRetry disposer
-  TSimpleDisposer,
-  newUnmanagedTSimpleDisposer,
-  disposeTSimpleDisposer,
-  isTrivialTSimpleDisposer,
 
   -- * Resource manager
   ResourceManager,
@@ -56,7 +51,7 @@ import Quasar.Async.Fork
 import Quasar.Exceptions
 import Quasar.Future
 import Quasar.Prelude
-import Quasar.Resources.Core
+import Quasar.Utils.CallbackRegistry
 import Quasar.Utils.TOnce
 
 class Disposable a where
@@ -150,6 +145,81 @@ disposeSTM x =
   let TDisposer elements = getTDisposer x
   in liftSTMc (mapM_ disposeTDisposerElement elements)
 
+
+data TSimpleDisposerState
+  = TSimpleDisposerNormal (STMc NoRetry '[] ()) (CallbackRegistry ())
+  | TSimpleDisposerDisposing (CallbackRegistry ())
+  | TSimpleDisposerDisposed
+
+data TSimpleDisposerElement = TSimpleDisposerElement Unique (TVar TSimpleDisposerState)
+
+newtype TSimpleDisposer = TSimpleDisposer [TSimpleDisposerElement]
+  deriving newtype (Semigroup, Monoid)
+
+newUnmanagedTSimpleDisposer :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TSimpleDisposer
+newUnmanagedTSimpleDisposer fn = liftSTMc do
+  key <- newUniqueSTM
+  isDisposedRegistry <- newCallbackRegistry
+  stateVar <- newTVar (TSimpleDisposerNormal fn isDisposedRegistry)
+  let element = TSimpleDisposerElement key stateVar
+  pure $ TSimpleDisposer [element]
+
+-- | In case of reentry this will return without calling the dispose hander again.
+disposeTSimpleDisposer :: MonadSTMc NoRetry '[] m => TSimpleDisposer -> m ()
+disposeTSimpleDisposer (TSimpleDisposer elements) = liftSTMc do
+  mapM_ disposeTSimpleDisposerElement elements
+
+-- | In case of reentry this will return without calling the dispose hander again.
+disposeTSimpleDisposerElement :: TSimpleDisposerElement -> STMc NoRetry '[] ()
+disposeTSimpleDisposerElement (TSimpleDisposerElement _ var) =
+  readTVar var >>= \case
+    TSimpleDisposerNormal fn isDisposedRegistry -> do
+      writeTVar var (TSimpleDisposerDisposing isDisposedRegistry)
+      fn
+      writeTVar var TSimpleDisposerDisposed
+      callCallbacks isDisposedRegistry ()
+    TSimpleDisposerDisposing _ ->
+      -- Doing nothing results in the documented behavior.
+      pure ()
+    TSimpleDisposerDisposed -> pure ()
+
+-- | Check if a disposer is a trivial disposer, i.e. a disposer that does not
+-- perform any action when disposed.
+isTrivialTSimpleDisposer :: TSimpleDisposer -> Bool
+isTrivialTSimpleDisposer (TSimpleDisposer []) = True
+isTrivialTSimpleDisposer _ = False
+
+instance ToFuture () TSimpleDisposerElement
+
+instance IsFuture () TSimpleDisposerElement where
+  readFuture# (TSimpleDisposerElement _ stateVar) = do
+    readTVar stateVar >>= \case
+      TSimpleDisposerDisposed -> pure ()
+      _ -> retry
+
+  readOrAttachToFuture# (TSimpleDisposerElement _ stateVar) callback = do
+    readTVar stateVar >>= \case
+      TSimpleDisposerDisposed -> pure (Right ())
+      TSimpleDisposerDisposing registry -> Left <$> registerDisposedCallback registry
+      TSimpleDisposerNormal _ registry -> Left <$> registerDisposedCallback registry
+    where
+      registerDisposedCallback registry = do
+        -- NOTE Using mfix to get the disposer is a safe because the registered
+        -- method won't be called immediately.
+        -- Modifying the callback to deregister itself is an inefficient hack
+        -- that could be improved by writing a custom registry.
+        mfix \disposer -> do
+          registerCallback registry \value -> do
+            callback value
+            disposeTDisposer disposer
+
+instance ToFuture () TSimpleDisposer where
+  toFuture (TSimpleDisposer elements) = mconcat $ toFuture <$> elements
+
+instance ToFuture () TDisposer where
+  toFuture (TDisposer elements) = mconcat $ toFuture <$> elements
+
+
 data RetryDisposerElement canRetry
   = canRetry ~ Retry => RetryTDisposerElement Unique (TOnce (STMc Retry '[] ()) (Future ()))
 
@@ -174,10 +244,13 @@ newUnmanagedSTMDisposer fn sink = do
   element <- DisposerElement . RetryTDisposerElement key <$> newTOnce (wrapSTM sink fn)
   pure $ Disposer [element]
 
-newUnmanagedNoRetryTDisposer :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TDisposer
-newUnmanagedNoRetryTDisposer fn = do
+newUnmanagedTDisposer :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TDisposer
+newUnmanagedTDisposer fn = do
   TSimpleDisposer elements <- newUnmanagedTSimpleDisposer fn
   pure (mkTDisposer elements)
+
+disposeTDisposer :: TDisposer -> STMc NoRetry '[] ()
+disposeTDisposer (TDisposer elements) = mapM_ disposeTDisposerElement elements
 
 
 newUnmanagedRetryTDisposer :: MonadSTMc NoRetry '[] m => STMc Retry '[] () -> m Disposer

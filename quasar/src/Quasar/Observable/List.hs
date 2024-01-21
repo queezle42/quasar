@@ -52,7 +52,7 @@ import Quasar.Observable.Core
 import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
 import Quasar.Prelude
-import Quasar.Resources (TSimpleDisposer)
+import Quasar.Resources (TDisposer)
 
 
 newtype ListDelta v
@@ -365,7 +365,7 @@ instance IsObservableList canLoad exceptions v (ObservableState canLoad (Observa
 attachSimpleListObserver ::
   ObservableList NoLoad '[] v ->
   (ObservableUpdate Seq v -> STMc NoRetry '[] ()) ->
-  STMc NoRetry '[] (TSimpleDisposer, Seq v)
+  STMc NoRetry '[] (TDisposer, Seq v)
 attachSimpleListObserver observable callback = do
   (disposer, initial) <- attachObserver# observable \case
     ObservableChangeLiveReplace (ObservableResultTrivial new) -> callback (ObservableUpdateReplace new)

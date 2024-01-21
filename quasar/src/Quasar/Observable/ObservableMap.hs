@@ -71,7 +71,7 @@ class ToObservableMap k v a => IsObservableMap k v a where
   -- | Register a listener to observe changes to the whole map. The callback
   -- will be invoked with the current state of the map immediately after
   -- registering and after that will be invoked for every change to the map.
-  attachMapDeltaObserver# :: a -> (ObservableMapDelta k v -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Map k v)
+  attachMapDeltaObserver# :: a -> (ObservableMapDelta k v -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TDisposer, Map k v)
 
 isEmpty :: ToObservableMap k v a => a -> Observable Bool
 isEmpty x = observeIsEmpty# (toObservableMap x)
@@ -82,7 +82,7 @@ length x = observeLength# (toObservableMap x)
 lookup :: (ToObservableMap k v a, Ord k) => k -> a -> Observable (Maybe v)
 lookup key x = observeKey# key (toObservableMap x)
 
-attachMapDeltaObserver :: (ToObservableMap k v a, MonadSTMc NoRetry '[] m) => a -> (ObservableMapDelta k v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Map k v)
+attachMapDeltaObserver :: (ToObservableMap k v a, MonadSTMc NoRetry '[] m) => a -> (ObservableMapDelta k v -> STMc NoRetry '[] ()) -> m (TDisposer, Map k v)
 attachMapDeltaObserver x callback = liftSTMc $ attachMapDeltaObserver# (toObservableMap x) callback
 
 data ObservableMap k v = forall a. IsObservableMap k v a => ObservableMap a

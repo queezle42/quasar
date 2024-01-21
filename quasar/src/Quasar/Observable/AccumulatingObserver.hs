@@ -12,7 +12,7 @@ import Quasar.Utils.Fix (mfixTVar)
 
 data AccumulatingObserver canLoad exceptions c v =
   AccumulatingObserver
-    TSimpleDisposer
+    TDisposer
     (TVar (Maybe (PendingChange canLoad (ObservableResult exceptions c) v)))
     (TVar (LastChange canLoad))
 
@@ -35,10 +35,10 @@ attachAccumulatingObserver observable = do
 
       let (pending, last) = initialPendingAndLastChange initial
 
-      if isTrivialTSimpleDisposer obsDisposer
+      if isTrivialTDisposer obsDisposer
         then pure (((Nothing, initial), Just pending), last)
         else do
-          accumDisposer <- newUnmanagedTSimpleDisposer do
+          accumDisposer <- newUnmanagedTDisposer do
             writeTVar pendingVar Nothing
 
           let disposer = accumDisposer <> obsDisposer
@@ -66,4 +66,4 @@ disposeAccumulatingObserver ::
   AccumulatingObserver canLoad exceptions c v ->
   STMc NoRetry '[] ()
 disposeAccumulatingObserver (AccumulatingObserver disposer _ _) =
-  disposeTSimpleDisposer disposer
+  disposeTDisposer disposer

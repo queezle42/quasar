@@ -60,14 +60,14 @@ traverseChangeWithContext fn change ctx = do
 
 data TraversingObservable l e c v =
   forall va. TraversingObservable
-    (va -> STMc NoRetry '[] (TSimpleDisposer, v))
+    (va -> STMc NoRetry '[] (TDisposer, v))
     (ObservableT l e c va)
 
 instance TraversableObservableContainer c => IsObservableCore l e c v (TraversingObservable l e c v) where
   readObservable# (TraversingObservable fn fx) = do
     x <- readObservable# fx
     mapped <- liftSTMc @NoRetry @'[] $ traverse fn x
-    mapM_ (disposeTSimpleDisposer . fst) mapped
+    mapM_ (disposeTDisposer . fst) mapped
     pure (snd <$> mapped)
 
   attachObserver# (TraversingObservable fn fx) callback = do
@@ -77,7 +77,7 @@ instance TraversableObservableContainer c => IsObservableCore l e c v (Traversin
         -- Var is only set to Nothing when the observer is destructed
         readTVar var >>= mapM_ \old -> do
           traverseChange fn change old >>= mapM_ \traversedChange -> do
-            mapM_ disposeTSimpleDisposer (selectRemovedByChange change old)
+            mapM_ disposeTDisposer (selectRemovedByChange change old)
             let
               disposerChange = fst <$> traversedChange
               downstreamChange = snd <$> traversedChange
@@ -88,15 +88,15 @@ instance TraversableObservableContainer c => IsObservableCore l e c v (Traversin
       let iVar = createObserverState (fst <$> bar)
       let iState = snd <$> bar
 
-      finalDisposer <- newUnmanagedTSimpleDisposer do
-        mapM_ (mapM_ disposeTSimpleDisposer) =<< swapTVar var Nothing
+      finalDisposer <- newUnmanagedTDisposer do
+        mapM_ (mapM_ disposeTDisposer) =<< swapTVar var Nothing
 
       pure ((fxDisposer <> finalDisposer, iState), Just iVar)
 
 
 observableTMapSTM ::
   (TraversableObservableContainer c, ContainerConstraint l e c v (TraversingObservable l e c v)) =>
-  (va -> STMc NoRetry '[] (TSimpleDisposer, v)) ->
+  (va -> STMc NoRetry '[] (TDisposer, v)) ->
   ObservableT l e c va ->
   ObservableT l e c v
 observableTMapSTM fn fx = ObservableT (TraversingObservable fn fx)
@@ -104,9 +104,9 @@ observableTMapSTM fn fx = ObservableT (TraversingObservable fn fx)
 observableTAttachForEach ::
   forall l e c va.
   (TraversableObservableContainer c, ContainerConstraint l e c () (TraversingObservable l e c ())) =>
-  (va -> STMc NoRetry '[] TSimpleDisposer) ->
+  (va -> STMc NoRetry '[] TDisposer) ->
   ObservableT l e c va ->
-  STMc NoRetry '[] TSimpleDisposer
+  STMc NoRetry '[] TDisposer
 observableTAttachForEach fn fx = do
   (disposer, _) <- attachObserver# (observableTMapSTM ((,()) <<$>> fn) fx) \_ -> pure ()
   pure disposer

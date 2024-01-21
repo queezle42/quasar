@@ -23,7 +23,7 @@ data CacheState canLoad exceptions c v
   | forall a. IsObservableCore canLoad exceptions c v a
     => CacheAttached
       a
-      TSimpleDisposer
+      TDisposer
       (CallbackRegistry (EvaluatedObservableChange canLoad (ObservableResult exceptions c) v))
       (ObserverState canLoad (ObservableResult exceptions c) v)
 
@@ -62,7 +62,7 @@ instance ObservableContainer c v => IsObservableCore canLoad exceptions c v (Cac
           CacheIdle _ -> unreachableCodePath
           CacheAttached upstream upstreamDisposer _ _ -> do
             writeTVar var (CacheIdle upstream)
-            disposeTSimpleDisposer upstreamDisposer
+            disposeTDisposer upstreamDisposer
       updateCache :: EvaluatedObservableChange canLoad (ObservableResult exceptions c) v -> STMc NoRetry '[] ()
       updateCache change = do
         readTVar var >>= \case

@@ -228,10 +228,10 @@ newChannel parent@RawChannel{multiplexer, quasar=parentQuasar} channelId = do
   -- Attach to parent
   modifyTVar parent.children $ HM.insert channelId channel
 
-  disposer <- newUnmanagedTSimpleDisposer (sendChannelCloseMessage channel)
+  disposer <- newUnmanagedTDisposer (sendChannelCloseMessage channel)
   tryAttachResource quasar.resourceManager disposer >>= \case
     Right () -> pure ()
-    Left FailedToAttachResource -> disposeTSimpleDisposer disposer
+    Left FailedToAttachResource -> disposeTDisposer disposer
 
   modifyTVar multiplexer.channelsVar $ HM.insert channelId channel
 

@@ -509,14 +509,14 @@ instance Ord k => IsObservableMap l e k v (TraversingObservable l e (Map k) v)
 
 mapSTM ::
   Ord k =>
-  (va -> STMc NoRetry '[] (TSimpleDisposer, v)) ->
+  (va -> STMc NoRetry '[] (TDisposer, v)) ->
   ObservableMap l e k va ->
   ObservableMap l e k v
 mapSTM fn (ObservableMap fx) = ObservableMap (observableTMapSTM fn fx)
 
 attachForEach ::
   Ord k =>
-  (va -> STMc NoRetry '[] TSimpleDisposer) ->
+  (va -> STMc NoRetry '[] TDisposer) ->
   ObservableMap l e k va ->
-  STMc NoRetry '[] TSimpleDisposer
+  STMc NoRetry '[] TDisposer
 attachForEach fn (ObservableMap fx) = observableTAttachForEach fn fx

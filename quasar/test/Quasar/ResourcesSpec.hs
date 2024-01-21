@@ -6,7 +6,6 @@ import Control.Monad.Catch
 import Quasar.Exceptions
 import Quasar.Exceptions.ExceptionSink
 import Quasar.Future
-import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Resources
 import Quasar.Utils.Exceptions
@@ -70,10 +69,10 @@ spec = parallel $ do
           dispose disposable
           readTVarIO markVar `shouldReturn` True
 
-    describe "TSimpleDisposer" $ do
+    describe "TDisposer" $ do
       it "can be disposed" $ io do
         markVar <- newTVarIO False
-        disposable <- atomically $ newUnmanagedTSimpleDisposer (writeTVar markVar True)
+        disposable <- atomically $ newUnmanagedTDisposer (writeTVar markVar True)
         dispose disposable
         readTVarIO markVar `shouldReturn` True
 

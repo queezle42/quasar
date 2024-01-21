@@ -37,7 +37,7 @@ import Quasar.Observable.List qualified as ObservableList
 import Quasar.Observable.Map
 import Quasar.Observable.Traversable
 import Quasar.Prelude
-import Quasar.Resources (TSimpleDisposer, isTrivialTSimpleDisposer, disposeTSimpleDisposer)
+import Quasar.Resources (TDisposer, isTrivialTDisposer, disposeTDisposer)
 
 type ComponentRef = Word64
 
@@ -137,10 +137,10 @@ textNode text = CreateNodeComponent (Component "text" initializeTextComponent)
       (disposer, initial) <- attachSimpleObserver text (writeTVar updateVar . Just)
       let initData = Aeson.toJSON initial
 
-      if isTrivialTSimpleDisposer disposer
+      if isTrivialTDisposer disposer
         then pure (Left (initData, []))
         else pure (Right ComponentInit {
-          free = [] <$ disposeTSimpleDisposer disposer,
+          free = [] <$ disposeTDisposer disposer,
           initData,
           commandSource = commandSource updateVar,
           eventHandler = const (pure ())

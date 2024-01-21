@@ -114,7 +114,7 @@ instance (Binary (c ()), Binary (Delta c ())) => Binary (PackedChange c)
 type ObservableReference :: (Type -> Type) -> Type -> Type
 data ObservableReference c v = ObservableReference {
   isAttached :: TVar Bool,
-  observableDisposer :: TVar TSimpleDisposer,
+  observableDisposer :: TVar TDisposer,
   pendingChange :: TVar (PendingChange Load (ObservableResult '[SomeException] c) v),
   lastChange :: TVar (LastChange Load),
   activeObjects :: TVar (ObserverState Load (ObservableResult '[SomeException] c) Disposer),
@@ -158,7 +158,7 @@ sendObservableReference observable channel = do
           upstreamObservableChanged ref (toReplacingChange initial)
           writeTVar ref.isAttached True
     requestCallback ref _context Stop = atomicallyC do
-      disposeTSimpleDisposer =<< swapTVar ref.observableDisposer mempty
+      disposeTDisposer =<< swapTVar ref.observableDisposer mempty
       upstreamObservableChanged ref ObservableChangeLoadingClear
       writeTVar ref.isAttached False
 

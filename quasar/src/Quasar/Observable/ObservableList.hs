@@ -47,9 +47,9 @@ class ToObservableList v a => IsObservableList v a | a -> v where
   -- | Register a listener to observe changes to the whole map. The callback
   -- will be invoked with the current state of the map immediately after
   -- registering and after that will be invoked for every change to the map.
-  attachListDeltaObserver# :: a -> (ObservableListDelta v -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TSimpleDisposer, Seq v)
+  attachListDeltaObserver# :: a -> (ObservableListDelta v -> STMc NoRetry '[] ()) -> STMc NoRetry '[] (TDisposer, Seq v)
 
-attachListDeltaObserver :: (ToObservableList v a, MonadSTMc NoRetry '[] m) => a -> (ObservableListDelta v -> STMc NoRetry '[] ()) -> m (TSimpleDisposer, Seq v)
+attachListDeltaObserver :: (ToObservableList v a, MonadSTMc NoRetry '[] m) => a -> (ObservableListDelta v -> STMc NoRetry '[] ()) -> m (TDisposer, Seq v)
 attachListDeltaObserver x callback = liftSTMc $ attachListDeltaObserver# (toObservableList x) callback
 
 length :: ToObservableList v a => a -> Observable Int

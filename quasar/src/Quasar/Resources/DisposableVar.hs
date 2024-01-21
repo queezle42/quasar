@@ -35,7 +35,7 @@ instance IsTDisposerElement (DisposableVar a) where
 instance Disposable (DisposableVar a) where
   getDisposer x = mkDisposer [x]
 
-instance TDisposable NoRetry (DisposableVar a) where
+instance TDisposable (DisposableVar a) where
   getTDisposer x = mkTDisposer [x]
 
 

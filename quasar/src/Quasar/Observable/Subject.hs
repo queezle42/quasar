@@ -19,10 +19,9 @@ module Quasar.Observable.Subject (
 ) where
 
 import Control.Applicative
-import Control.Monad.Except
 import Quasar.Observable.Core
 import Quasar.Prelude
-import Quasar.Resources.Core
+import Quasar.Utils.CallbackRegistry
 
 
 data Subject canLoad exceptions c v = Subject (TVar (ObserverState canLoad (ObservableResult exceptions c) v)) (CallbackRegistry (EvaluatedObservableChange canLoad (ObservableResult exceptions c) v))

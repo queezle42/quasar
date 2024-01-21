@@ -99,9 +99,7 @@ library
     Quasar.Utils.ReaderLock
     Quasar.Utils.TOnce
   other-modules:
-    Quasar.Resources.Core
     Quasar.Resources.Disposer
-    Quasar.Resources.TSimpleDisposer
   hs-source-dirs:
     src
 

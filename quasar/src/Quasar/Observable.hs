@@ -75,7 +75,7 @@ class ToObservable r a => IsObservable r a | a -> r where
   -- The implementation of `attachObserver#` MUST NOT directly or indirectly
   -- update an observable during the current STM transaction. Only working with
   -- `TVar`s and calling `registerCallback` is guaranteed to be safe.
-  attachObserver# :: a -> ObserverCallback r -> STMc NoRetry '[] (TSimpleDisposer, r)
+  attachObserver# :: a -> ObserverCallback r -> STMc NoRetry '[] (TDisposer, r)
 
   mapObservable# :: (r -> r2) -> a -> Observable r2
   mapObservable# f o = Observable (MappedObservable f (toObservable o))
@@ -86,7 +86,7 @@ class ToObservable r a => IsObservable r a | a -> r where
 readObservable :: (ToObservable r a, MonadSTMc NoRetry '[] m) => a -> m r
 readObservable o = liftSTMc $ readObservable# (toObservable o)
 
-attachObserver :: (ToObservable r a, MonadSTMc NoRetry '[] m) => a -> ObserverCallback r -> m (TSimpleDisposer, r)
+attachObserver :: (ToObservable r a, MonadSTMc NoRetry '[] m) => a -> ObserverCallback r -> m (TDisposer, r)
 attachObserver o callback = liftSTMc $ attachObserver# (toObservable o) callback
 
 mapObservable :: ToObservable r a => (r -> r2) -> a -> Observable r2
@@ -97,7 +97,7 @@ cacheObservable o = liftSTMc $ cacheObservable# (toObservable o)
 
 -- | The implementation of `observeSTM` will call the callback during
 -- registration.
-observeSTM :: (ToObservable r a, MonadSTMc NoRetry '[] m) => a -> ObserverCallback r -> m TSimpleDisposer
+observeSTM :: (ToObservable r a, MonadSTMc NoRetry '[] m) => a -> ObserverCallback r -> m TDisposer
 observeSTM observable callback = liftSTMc do
   (disposer, initial) <- attachObserver# (toObservable observable) callback
   callback initial
@@ -129,13 +129,13 @@ observeQ
   :: (MonadQuasar m, MonadSTMc NoRetry '[SomeException] m)
   => Observable a
   -> (a -> STMc NoRetry '[SomeException] ()) -- ^ callback
-  -> m TSimpleDisposer
+  -> m TDisposer
 observeQ observable callbackFn = do
   sink <- askExceptionSink
   mfix \disposerFixed -> do
     let
       wrappedCallback state = callbackFn state `catchAllSTMc` \e -> do
-        disposeTSimpleDisposer disposerFixed
+        disposeTDisposer disposerFixed
         throwToExceptionSink sink e
     disposer <- observeSTM observable wrappedCallback
     collectResource disposer
@@ -286,13 +286,13 @@ instance IsObservable a (BindObservable a) where
       (leftDisposer, ix) <- attachObserver# fx (leftCallback rightDisposerVar)
       (rightDisposer, iy) <- attachObserver# (fn ix) callback
 
-      varDisposer <- newUnmanagedTSimpleDisposer do
-        disposeTSimpleDisposer =<< swapTVar rightDisposerVar mempty
+      varDisposer <- newUnmanagedTDisposer do
+        disposeTDisposer =<< swapTVar rightDisposerVar mempty
       pure ((leftDisposer <> varDisposer, iy), rightDisposer)
 
     where
       leftCallback rightDisposerVar lmsg = do
-        disposeTSimpleDisposer =<< readTVar rightDisposerVar
+        disposeTDisposer =<< readTVar rightDisposerVar
         rightDisposer <- observeSTM (fn lmsg) callback
         writeTVar rightDisposerVar rightDisposer
 
@@ -307,7 +307,7 @@ data CachedObservable a = CachedObservable (TVar (CacheState a))
 
 data CacheState a
   = CacheIdle (Observable a)
-  | CacheAttached (Observable a) TSimpleDisposer (CallbackRegistry a) a
+  | CacheAttached (Observable a) TDisposer (CallbackRegistry a) a
 
 instance ToObservable a (CachedObservable a)
 
@@ -335,7 +335,7 @@ instance IsObservable a (CachedObservable a) where
           CacheIdle _ -> unreachableCodePath
           CacheAttached upstream upstreamDisposer _ _ -> do
             writeTVar var (CacheIdle upstream)
-            disposeTSimpleDisposer upstreamDisposer
+            disposeTDisposer upstreamDisposer
       updateCache :: a -> STMc NoRetry '[] ()
       updateCache value = do
         readTVar var >>= \case
