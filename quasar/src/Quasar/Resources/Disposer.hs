@@ -153,21 +153,12 @@ data TSimpleDisposerState
 
 data TSimpleDisposerElement = TSimpleDisposerElement Unique (TVar TSimpleDisposerState)
 
-newtype TSimpleDisposer = TSimpleDisposer [TSimpleDisposerElement]
-  deriving newtype (Semigroup, Monoid)
-
-newUnmanagedTSimpleDisposer :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TSimpleDisposer
-newUnmanagedTSimpleDisposer fn = liftSTMc do
+newUnmanagedTSimpleDisposerElement :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TSimpleDisposerElement
+newUnmanagedTSimpleDisposerElement fn = liftSTMc do
   key <- newUniqueSTM
   isDisposedRegistry <- newCallbackRegistry
   stateVar <- newTVar (TSimpleDisposerNormal fn isDisposedRegistry)
-  let element = TSimpleDisposerElement key stateVar
-  pure $ TSimpleDisposer [element]
-
--- | In case of reentry this will return without calling the dispose hander again.
-disposeTSimpleDisposer :: MonadSTMc NoRetry '[] m => TSimpleDisposer -> m ()
-disposeTSimpleDisposer (TSimpleDisposer elements) = liftSTMc do
-  mapM_ disposeTSimpleDisposerElement elements
+  pure (TSimpleDisposerElement key stateVar)
 
 -- | In case of reentry this will return without calling the dispose hander again.
 disposeTSimpleDisposerElement :: TSimpleDisposerElement -> STMc NoRetry '[] ()
@@ -182,12 +173,6 @@ disposeTSimpleDisposerElement (TSimpleDisposerElement _ var) =
       -- Doing nothing results in the documented behavior.
       pure ()
     TSimpleDisposerDisposed -> pure ()
-
--- | Check if a disposer is a trivial disposer, i.e. a disposer that does not
--- perform any action when disposed.
-isTrivialTSimpleDisposer :: TSimpleDisposer -> Bool
-isTrivialTSimpleDisposer (TSimpleDisposer []) = True
-isTrivialTSimpleDisposer _ = False
 
 instance ToFuture () TSimpleDisposerElement
 
@@ -212,9 +197,6 @@ instance IsFuture () TSimpleDisposerElement where
           registerCallback registry \value -> do
             callback value
             disposeTDisposer disposer
-
-instance ToFuture () TSimpleDisposer where
-  toFuture (TSimpleDisposer elements) = mconcat $ toFuture <$> elements
 
 instance ToFuture () TDisposer where
   toFuture (TDisposer elements) = mconcat $ toFuture <$> elements
@@ -246,8 +228,8 @@ newUnmanagedSTMDisposer fn sink = do
 
 newUnmanagedTDisposer :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TDisposer
 newUnmanagedTDisposer fn = do
-  TSimpleDisposer elements <- newUnmanagedTSimpleDisposer fn
-  pure (mkTDisposer elements)
+  element <- newUnmanagedTSimpleDisposerElement fn
+  pure (TDisposer [TDisposerElement element])
 
 disposeTDisposer :: TDisposer -> STMc NoRetry '[] ()
 disposeTDisposer (TDisposer elements) = mapM_ disposeTDisposerElement elements
@@ -259,11 +241,6 @@ newUnmanagedRetryTDisposer fn = do
   element <- DisposerElement . RetryTDisposerElement key <$> newTOnce fn
   pure $ Disposer [element]
 
-
--- NOTE TSimpleDisposer is moved to it's own module due to module dependencies
-
-instance Disposable TSimpleDisposer where
-  getDisposer (TSimpleDisposer tds) = mkDisposer tds
 
 instance IsDisposerElement TSimpleDisposerElement where
   disposerElementKey (TSimpleDisposerElement key _) = key
