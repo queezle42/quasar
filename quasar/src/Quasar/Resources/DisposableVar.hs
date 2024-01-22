@@ -82,6 +82,7 @@ instance IsTDisposerElement (TDisposableVar a) where
         writeTVar var (TDisposableVarDisposing callbackRegistry)
         disposeFn content
         writeTVar var TDisposableVarDisposed
+        callCallbacks callbackRegistry ()
 
 instance Disposable (TDisposableVar a) where
   getDisposer x = mkDisposer [x]
