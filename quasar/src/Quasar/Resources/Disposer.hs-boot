@@ -13,4 +13,4 @@ instance Semigroup TDisposer
 instance ToFuture () TDisposer
 
 newUnmanagedTDisposer :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TDisposer
-disposeTDisposer :: TDisposer -> STMc NoRetry '[] ()
+disposeTDisposer :: MonadSTMc NoRetry '[] m => TDisposer -> m ()

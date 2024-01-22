@@ -234,8 +234,8 @@ newUnmanagedTDisposer fn = do
   pure (TDisposer [TDisposerElement element])
 
 -- | In case of reentry this might return before disposing is completed.
-disposeTDisposer :: TDisposer -> STMc NoRetry '[] ()
-disposeTDisposer (TDisposer elements) = mapM_ disposeTDisposerElement elements
+disposeTDisposer :: MonadSTMc NoRetry '[] m => TDisposer -> m ()
+disposeTDisposer (TDisposer elements) = liftSTMc $ mapM_ disposeTDisposerElement elements
 
 
 newUnmanagedRetryTDisposer :: MonadSTMc NoRetry '[] m => STMc Retry '[] () -> m Disposer
