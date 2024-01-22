@@ -3,72 +3,123 @@ module Quasar.Resources.DisposableVar (
   newDisposableVar,
   newDisposableVarIO,
   tryReadDisposableVar,
+
+  -- * `TDisposable` variant
+  TDisposableVar,
+  newTDisposableVar,
+  newTDisposableVarIO,
+  tryReadTDisposableVar,
 ) where
 
-import Quasar.Future (ToFuture(..), IsFuture(..))
+import Control.Monad.Catch
+import Quasar.Future (Future, ToFuture(..), IsFuture(..))
 import Quasar.Prelude
 import Quasar.Resources.Disposer
 import Quasar.Utils.CallbackRegistry
+import Quasar.Utils.TOnce
+import Quasar.Exceptions (ExceptionSink, DisposeException (..))
+import Quasar.Async.Fork (forkFutureSTM)
 
 
-data DisposableVarState a
-  = DisposableVarAlive a (a -> STMc NoRetry '[] ()) (CallbackRegistry ())
-  | DisposableVarDisposing (CallbackRegistry ())
-  | DisposableVarDisposed
 
-data DisposableVar a = DisposableVar Unique (TVar (DisposableVarState a))
+type DisposableVarState a = TOnce (ExceptionSink, a -> IO (), a) (Future ())
+
+data DisposableVar a = DisposableVar Unique (DisposableVarState a)
+
+instance ToFuture () (DisposableVar a) where
+  toFuture (DisposableVar _ state) = join (toFuture state)
 
 instance IsDisposerElement (DisposableVar a) where
   disposerElementKey (DisposableVar key _) = key
-  disposeEventually# dvar = pure () <$ disposeTDisposerElement dvar
-
-instance IsTDisposerElement (DisposableVar a) where
-  disposeTDisposerElement (DisposableVar _ var) = do
-    readTVar var >>= \case
-      DisposableVarDisposed -> pure ()
-      DisposableVarDisposing _ -> pure ()
-      DisposableVarAlive content disposeFn callbackRegistry -> do
-        writeTVar var (DisposableVarDisposing callbackRegistry)
-        disposeFn content
-        writeTVar var DisposableVarDisposed
+  disposeEventually# (DisposableVar _ disposeState) = do
+    mapFinalizeTOnce disposeState \(sink, fn, value) ->
+      void . toFuture <$> forkFutureSTM (wrapDisposeException (fn value)) sink
 
 instance Disposable (DisposableVar a) where
   getDisposer x = mkDisposer [x]
 
-instance TDisposable (DisposableVar a) where
+wrapDisposeException :: MonadCatch m => m a -> m a
+wrapDisposeException fn = fn `catchAll` \ex -> throwM (DisposeException ex)
+
+tryReadDisposableVar :: MonadSTMc NoRetry '[] m => DisposableVar a -> m (Maybe a)
+tryReadDisposableVar (DisposableVar _ stateTOnce) = liftSTMc @NoRetry @'[] do
+  readTOnce stateTOnce <&> \case
+    Left (_, _, value) -> Just value
+    _ -> Nothing
+
+newDisposableVar :: MonadSTMc NoRetry '[] m => ExceptionSink -> (a -> IO ()) -> a -> m (DisposableVar a)
+newDisposableVar sink fn value = do
+  key <- newUniqueSTM
+  DisposableVar key <$> newTOnce (sink, fn, value)
+
+newDisposableVarIO :: MonadIO m => ExceptionSink -> (a -> IO ()) -> a -> m (DisposableVar a)
+newDisposableVarIO sink fn value = do
+  key <- newUnique
+  DisposableVar key <$> newTOnceIO (sink, fn, value)
+
+
+
+data TDisposableVarState a
+  = TDisposableVarAlive a (a -> STMc NoRetry '[] ()) (CallbackRegistry ())
+  | TDisposableVarDisposing (CallbackRegistry ())
+  | TDisposableVarDisposed
+
+data TDisposableVar a = TDisposableVar Unique (TVar (TDisposableVarState a))
+
+instance IsDisposerElement (TDisposableVar a) where
+  disposerElementKey (TDisposableVar key _) = key
+  disposeEventually# dvar =
+    -- NOTE On reentrant call the future does not reflect not-yet disposed
+    -- state.
+    pure () <$ disposeTDisposerElement dvar
+
+instance IsTDisposerElement (TDisposableVar a) where
+  disposeTDisposerElement (TDisposableVar _ var) = do
+    readTVar var >>= \case
+      TDisposableVarDisposed -> pure ()
+      TDisposableVarDisposing _ -> pure ()
+      TDisposableVarAlive content disposeFn callbackRegistry -> do
+        writeTVar var (TDisposableVarDisposing callbackRegistry)
+        disposeFn content
+        writeTVar var TDisposableVarDisposed
+
+instance Disposable (TDisposableVar a) where
+  getDisposer x = mkDisposer [x]
+
+instance TDisposable (TDisposableVar a) where
   getTDisposer x = mkTDisposer [x]
 
 
-instance ToFuture () (DisposableVar a) where
+instance ToFuture () (TDisposableVar a) where
 
-instance IsFuture () (DisposableVar a) where
-  readFuture# (DisposableVar _ var) = do
+instance IsFuture () (TDisposableVar a) where
+  readFuture# (TDisposableVar _ var) = do
     readTVar var >>= \case
-      DisposableVarDisposed -> pure ()
+      TDisposableVarDisposed -> pure ()
       _ -> retry
-  readOrAttachToFuture# (DisposableVar _ var) callback = do
+  readOrAttachToFuture# (TDisposableVar _ var) callback = do
     readTVar var >>= \case
-      DisposableVarDisposed -> pure (Right ())
-      DisposableVarDisposing callbackRegistry -> Left <$> registerCallback callbackRegistry callback
-      DisposableVarAlive _ _ callbackRegistry -> Left <$> registerCallback callbackRegistry callback
+      TDisposableVarDisposed -> pure (Right ())
+      TDisposableVarDisposing callbackRegistry -> Left <$> registerCallback callbackRegistry callback
+      TDisposableVarAlive _ _ callbackRegistry -> Left <$> registerCallback callbackRegistry callback
 
-newDisposableVar :: MonadSTMc NoRetry '[] m => a -> (a -> STMc NoRetry '[] ()) -> m (DisposableVar a)
-newDisposableVar content disposeFn = liftSTMc do
+newTDisposableVar :: MonadSTMc NoRetry '[] m => a -> (a -> STMc NoRetry '[] ()) -> m (TDisposableVar a)
+newTDisposableVar content disposeFn = liftSTMc do
   key <- newUniqueSTM
   callbackRegistry <- newCallbackRegistry
-  var <- newTVar (DisposableVarAlive content disposeFn callbackRegistry)
-  pure $ DisposableVar key var
+  var <- newTVar (TDisposableVarAlive content disposeFn callbackRegistry)
+  pure $ TDisposableVar key var
 
-newDisposableVarIO :: MonadIO m => a -> (a -> STMc NoRetry '[] ()) -> m (DisposableVar a)
-newDisposableVarIO content disposeFn = liftIO do
+newTDisposableVarIO :: MonadIO m => a -> (a -> STMc NoRetry '[] ()) -> m (TDisposableVar a)
+newTDisposableVarIO content disposeFn = liftIO do
   key <- newUnique
   callbackRegistry <- newCallbackRegistryIO
-  var <- newTVarIO (DisposableVarAlive content disposeFn callbackRegistry)
-  pure $ DisposableVar key var
+  var <- newTVarIO (TDisposableVarAlive content disposeFn callbackRegistry)
+  pure $ TDisposableVar key var
 
-tryReadDisposableVar :: MonadSTMc NoRetry '[] m => DisposableVar a -> m (Maybe a)
-tryReadDisposableVar (DisposableVar _ var) = do
+tryReadTDisposableVar :: MonadSTMc NoRetry '[] m => TDisposableVar a -> m (Maybe a)
+tryReadTDisposableVar (TDisposableVar _ var) = do
   readTVar var >>= \case
-    DisposableVarDisposed -> pure Nothing
-    DisposableVarDisposing _ -> pure Nothing
-    DisposableVarAlive content _ _ -> pure (Just content)
+    TDisposableVarDisposed -> pure Nothing
+    TDisposableVarDisposing _ -> pure Nothing
+    TDisposableVarAlive content _ _ -> pure (Just content)

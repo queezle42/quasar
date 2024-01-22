@@ -124,6 +124,7 @@ instance Disposable TDisposer where
   getDisposer (TDisposer tds) = mkDisposer tds
 
 class IsDisposerElement a => IsTDisposerElement a where
+  -- | In case of reentry this might return before disposing is completed.
   disposeTDisposerElement :: a -> STMc NoRetry '[] ()
 
 data TDisposerElement =
@@ -140,6 +141,7 @@ instance IsDisposerElement TDisposerElement where
 instance ToFuture () TDisposerElement where
   toFuture (TDisposerElement x) = toFuture x
 
+-- | In case of reentry this might return before disposing is completed.
 disposeSTM :: (TDisposable a, MonadSTMc NoRetry '[] m) => a -> m ()
 disposeSTM x =
   let TDisposer elements = getTDisposer x
@@ -231,6 +233,7 @@ newUnmanagedTDisposer fn = do
   element <- newUnmanagedTSimpleDisposerElement fn
   pure (TDisposer [TDisposerElement element])
 
+-- | In case of reentry this might return before disposing is completed.
 disposeTDisposer :: TDisposer -> STMc NoRetry '[] ()
 disposeTDisposer (TDisposer elements) = mapM_ disposeTDisposerElement elements
 
@@ -245,6 +248,8 @@ newUnmanagedRetryTDisposer fn = do
 instance IsDisposerElement TSimpleDisposerElement where
   disposerElementKey (TSimpleDisposerElement key _) = key
   disposeEventually# disposer =
+    -- NOTE On reentrant call the future does not reflect not-yet disposed
+    -- state.
     pure () <$ disposeTSimpleDisposerElement disposer
 
 instance IsTDisposerElement TSimpleDisposerElement where

@@ -20,7 +20,7 @@ data TOnceAlreadyFinalized = TOnceAlreadyFinalized
 
 instance Exception TOnceAlreadyFinalized
 
-newtype TOnce a b = TOnce (TVar (Either (a, (CallbackRegistry b)) b))
+newtype TOnce a b = TOnce (TVar (Either (a, CallbackRegistry b) b))
 
 instance ToFuture b (TOnce a b)
 
@@ -61,7 +61,7 @@ mapFinalizeTOnce (TOnce var) fn = do
   readTVar var >>= \case
     Left (initial, registry) -> do
       promise <- newPromise
-      let future = (join (toFuture promise))
+      let future = join (toFuture promise)
       writeTVar var (Right future)
       liftSTMc $ callCallbacks registry future
       final <- fn initial
