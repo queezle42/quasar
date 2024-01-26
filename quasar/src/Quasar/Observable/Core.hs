@@ -115,7 +115,7 @@ module Quasar.Observable.Core (
 ) where
 
 import Control.Applicative
-import Control.Monad.Catch (MonadThrow(..), MonadCatch(..), bracket, fromException)
+import Control.Monad.Catch (MonadThrow(..), MonadCatch(..), bracket, fromException, MonadMask)
 import Control.Monad.Except
 import Data.Bifunctor (first)
 import Data.Binary (Binary)
@@ -1693,6 +1693,50 @@ attachSimpleObserver observable callback = do
     ObservableChangeLiveDelta delta -> absurd1 delta
   case initial of
     ObservableStateLive (ObservableResultTrivial (Identity x)) -> pure (disposer, x)
+
+
+observeWith ::
+  forall l e a m b.
+  (MonadIO m, MonadMask m) =>
+  Observable l e a ->
+  (STMc Retry '[] (Either (Ex e) a) -> m b) ->
+  m b
+observeWith obs code = bracket (liftIO aquire) (liftIO . release) (code . snd)
+  where
+    aquire :: IO (TDisposer, STMc Retry '[] (Either (Ex e) a))
+    aquire = atomicallyC do
+      seenVar <- newTVar False
+      mfixTVar \var -> do
+        (disposer, initial) <- attachObserver# obs \change -> do
+          state <- readTVar var
+          forM_ (applyObservableChange change state) \(_, newState) -> do
+            writeTVar var newState
+            case change of
+              ObservableChangeLiveReplace _ -> writeTVar seenVar False
+              _ -> pure ()
+        pure ((disposer, get seenVar var), createObserverState initial)
+
+    release :: (TDisposer, STMc Retry '[] (Either (Ex e) a)) -> IO ()
+    release (disposer, _) = atomically $ disposeTDisposer disposer
+
+    get :: TVar Bool -> TVar (ObserverState l (ObservableResult e Identity) a) -> STMc Retry '[] (Either (Ex e) a)
+    get seenVar var = do
+      whenM (readTVar seenVar) retry
+      result <- readTVar var >>= \case
+        ObserverStateLive (ObservableResultOk (Identity x)) -> pure (Right x)
+        ObserverStateLive (ObservableResultEx ex) -> pure (Left ex)
+        _ -> retry -- Loading
+      writeTVar seenVar True
+      pure result
+
+observeBlocking ::
+  forall l e a m b.
+  (MonadIO m, MonadMask m) =>
+  Observable l e a ->
+  (Either (Ex e) a -> m ()) ->
+  m b
+observeBlocking obs code =
+  observeWith obs \get -> forever (atomicallyC get >>= code)
 
 
 -- ** Exception wrapper
