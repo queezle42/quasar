@@ -1,3 +1,4 @@
+{-# LANGUAGE RoleAnnotations #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Quasar.Future (
@@ -5,7 +6,6 @@ module Quasar.Future (
   MonadAwait(..),
   peekFuture,
   peekFutureIO,
-  awaitSTM,
 
   -- * Future
   ToFuture(..),
@@ -45,11 +45,7 @@ module Quasar.Future (
   tryFulfillPromiseIO_,
 
   -- * Exception variants
-  awaitEx,
   FutureEx,
-  ToFutureEx,
-  toFutureEx,
-  limitFutureEx,
   PromiseEx,
   execToPromiseEx,
 ) where
@@ -58,7 +54,6 @@ import Control.Exception (BlockedIndefinitelyOnSTM(..))
 import Control.Exception.Ex
 import Control.Monad.Catch
 import Control.Monad.Trans (MonadTrans, lift)
-import Data.Coerce (coerce)
 import Quasar.Exceptions
 import Quasar.Prelude
 import Quasar.Utils.CallbackRegistry
@@ -68,10 +63,9 @@ import {-# SOURCE #-} Quasar.Resources.Disposer
 
 class Monad m => MonadAwait m where
   -- | Wait until a future is completed and then return it's value.
-  await :: ToFuture r a => a -> m r
-
-awaitEx :: (MonadAwait m, ThrowEx exceptions m, ToFutureEx exceptions r a) => a -> m r
-awaitEx = await >=> either throwEx pure
+  --
+  -- Throws an exception if the future fails with an exception.
+  await :: ToFuture e r a => a -> m r
 
 data BlockedIndefinitelyOnAwait = BlockedIndefinitelyOnAwait
   deriving stock Show
@@ -81,27 +75,26 @@ instance Exception BlockedIndefinitelyOnAwait where
 
 
 instance MonadAwait IO where
-  await x =
-    catch
-      (atomically (readFuture x))
+  await f = do
+    x <- atomically (readFuture f) `catch`
       \BlockedIndefinitelyOnSTM -> throwM BlockedIndefinitelyOnAwait
+    either (throwIO . exToException) pure x
 
-awaitSTM :: MonadSTMc Retry '[] m => ToFuture r a => a -> m r
-awaitSTM x = readFuture x
-{-# DEPRECATED awaitSTM "Use readFuture instead" #-}
 
 instance {-# OVERLAPPABLE #-} (MonadTrans t, MonadAwait m, Monad (t m)) => MonadAwait (t m) where
   await = lift . await
 
 
-type FutureCallback a = a -> STMc NoRetry '[] ()
+type FutureCallback e a = Either (Ex e) a -> STMc NoRetry '[] ()
+type SafeFutureCallback a = a -> STMc NoRetry '[] ()
 
-class ToFuture r a | a -> r where
-  toFuture :: a -> Future r
-  default toFuture :: IsFuture r a => a -> Future r
+type ToFuture :: [Type] -> Type -> Type -> Constraint
+class ToFuture e r a | a -> e, a -> r where
+  toFuture :: a -> Future e r
+  default toFuture :: IsFuture e r a => a -> Future e r
   toFuture = Future
 
-class ToFuture r a => IsFuture r a | a -> r where
+class ToFuture e r a => IsFuture e r a | a -> e, a -> r where
   {-# MINIMAL readFuture#, readOrAttachToFuture# #-}
 
   -- | Read the value from a future or block until it is available.
@@ -110,7 +103,7 @@ class ToFuture r a => IsFuture r a | a -> r where
   --
   -- The implementation of `readFuture#` MUST NOT directly or indirectly
   -- complete a future. Only working with `TVar`s is guaranteed to be safe.
-  readFuture# :: a -> STMc Retry '[] r
+  readFuture# :: a -> STMc Retry '[] (Either (Ex e) r)
 
   -- | If the future is already completed, the value is returned in a `Right`.
   -- Otherwise the callback is attached to the future and will be called once
@@ -128,196 +121,308 @@ class ToFuture r a => IsFuture r a | a -> r where
   -- indirectly complete a future during the current STM transaction. Only
   -- working with `TVar`s and calling `registerCallback` are guaranteed to be
   -- safe.
-  readOrAttachToFuture# :: a -> FutureCallback r -> STMc NoRetry '[] (Either TDisposer r)
+  readOrAttachToFuture# :: a -> FutureCallback e r -> STMc NoRetry '[] (Either TDisposer (Either (Ex e) r))
 
-  mapFuture# :: (r -> r2) -> a -> Future r2
+  mapFuture# :: (r -> r2) -> a -> Future e r2
   mapFuture# f = Future . MappedFuture f . toFuture
 
-  cacheFuture# :: a -> STMc NoRetry '[] (Future r)
+  cacheFuture# :: a -> STMc NoRetry '[] (Future e r)
   cacheFuture# f = Future <$> newCachedFuture (toFuture f)
 
 
-readFuture :: (ToFuture r a, MonadSTMc Retry '[] m) => a -> m r
+readFuture :: (ToFuture e r a, MonadSTMc Retry '[] m) => a -> m (Either (Ex e) r)
 readFuture x = liftSTMc $ readFuture# (toFuture x)
 
-readOrAttachToFuture :: (ToFuture r a, MonadSTMc NoRetry '[] m) => a -> FutureCallback r -> m (Either TDisposer r)
+readSafeFuture :: (ToFuture '[] r a, MonadSTMc Retry '[] m) => a -> m r
+readSafeFuture f = liftSTMc do
+  readFuture# (toFuture f) <&> \case
+    Left ex -> absurdEx ex
+    Right x -> x
+
+readOrAttachToFuture :: (ToFuture e r a, MonadSTMc NoRetry '[] m) => a -> FutureCallback e r -> m (Either TDisposer (Either (Ex e) r))
 readOrAttachToFuture x callback = liftSTMc $ readOrAttachToFuture# (toFuture x) callback
+
+readOrAttachToSafeFuture :: (ToFuture '[] r a, MonadSTMc NoRetry '[] m) => a -> SafeFutureCallback r -> m (Either TDisposer r)
+readOrAttachToSafeFuture fx callback = do
+  r <- liftSTMc $ readOrAttachToFuture# (toFuture fx) \case
+    Left ex -> absurdEx ex
+    Right x -> callback x
+  pure (either absurdEx id <$> r)
 
 -- | Variant of `readOrAttachToFuture` that does not allow to detach the
 -- callback.
-readOrAttachToFuture_ :: (ToFuture r a, MonadSTMc NoRetry '[] m) => a -> FutureCallback r -> m (Maybe r)
+readOrAttachToFuture_ :: (ToFuture e r a, MonadSTMc NoRetry '[] m) => a -> FutureCallback e r -> m (Maybe (Either (Ex e) r))
 -- TODO disposer is dropped, revisit later
 readOrAttachToFuture_ x callback = either (const Nothing) Just <$> readOrAttachToFuture x callback
 
 -- | Will call the callback immediately if the future is already completed.
-callOnceCompleted :: (ToFuture r a, MonadSTMc NoRetry '[] m) => a -> FutureCallback r -> m TDisposer
+callOnceCompleted :: (ToFuture e r a, MonadSTMc NoRetry '[] m) => a -> FutureCallback e r -> m TDisposer
 callOnceCompleted future callback = liftSTMc do
   readOrAttachToFuture future callback >>= \case
     Left disposer -> pure disposer
     Right value -> mempty <$ callback value
 
+-- | Will call the callback immediately if the future is already completed.
+callOnceCompletedSafe :: (ToFuture '[] r a, MonadSTMc NoRetry '[] m) => a -> SafeFutureCallback r -> m TDisposer
+callOnceCompletedSafe future callback = liftSTMc do
+  readOrAttachToSafeFuture future callback >>= \case
+    Left disposer -> pure disposer
+    Right value -> mempty <$ callback value
+
 -- | Variant of `callOnceCompleted` that does not allow to detach the callback.
-callOnceCompleted_ :: (ToFuture r a, MonadSTMc NoRetry '[] m) => a -> FutureCallback r -> m ()
+callOnceCompleted_ :: (ToFuture e r a, MonadSTMc NoRetry '[] m) => a -> FutureCallback e r -> m ()
 -- TODO disposer is dropped, revisit later
 callOnceCompleted_ future callback = void $ callOnceCompleted future callback
 
-mapFuture :: ToFuture r a => (r -> r2) -> a -> Future r2
+-- | Variant of `callOnceCompletedSafe` that does not allow to detach the callback.
+callOnceCompletedSafe_ :: (ToFuture '[] r a, MonadSTMc NoRetry '[] m) => a -> SafeFutureCallback r -> m ()
+-- TODO disposer is dropped, revisit later
+callOnceCompletedSafe_ future callback = void $ callOnceCompletedSafe future callback
+
+mapFuture :: ToFuture e r a => (r -> r2) -> a -> Future e r2
 mapFuture f future = mapFuture# f (toFuture future)
 
-cacheFuture :: (ToFuture r a, MonadSTMc NoRetry '[] m) => a -> m (Future r)
+cacheFuture :: (ToFuture e r a, MonadSTMc NoRetry '[] m) => a -> m (Future e r)
 cacheFuture f = liftSTMc $ cacheFuture# (toFuture f)
-
-type ToFutureEx exceptions r = ToFuture (Either (Ex exceptions) r)
 
 
 -- | Returns the result (in a `Just`) when the future is completed and returns
 -- `Nothing` otherwise.
-peekFuture :: (ToFuture r a, MonadSTMc NoRetry '[] m) => a -> m (Maybe r)
+peekFuture :: (ToFuture e r a, MonadSTMc NoRetry '[] m) => a -> m (Maybe (Either (Ex e) r))
 peekFuture future = orElseNothing (readFuture# (toFuture future))
 
 -- | Returns the result (in a `Just`) when the future is completed and returns
 -- `Nothing` otherwise.
-peekFutureIO :: (ToFuture r a, MonadIO m) => a -> m (Maybe r)
+peekFutureIO :: (ToFuture e r a, MonadIO m) => a -> m (Maybe (Either (Ex e) r))
 peekFutureIO future = atomically $ peekFuture future
 
 
-data Future r = forall a. IsFuture r a => Future a
+type Future :: [Type] -> Type -> Type
+data Future e r = forall a. IsFuture e r a => Future a
 
 
-instance Functor Future where
+instance Functor (Future e) where
   fmap f x = toFuture (MappedFuture f x)
 
-instance Applicative Future where
-  pure x = toFuture (ConstFuture x)
+instance Applicative (Future e) where
+  pure x = constFuture (Right x)
   liftA2 f x y = toFuture (LiftA2Future f x y)
 
-instance Monad Future where
+instance Monad (Future e) where
   fx >>= fn = toFuture (BindFuture fx fn)
 
 
-instance ToFuture a (Future a) where
+instance ToFuture e a (Future e a) where
   toFuture = id
 
-instance IsFuture a (Future a) where
+instance IsFuture e a (Future e a) where
   readFuture# (Future x) = readFuture# x
   readOrAttachToFuture# (Future x) = readOrAttachToFuture# x
   mapFuture# f (Future x) = mapFuture# f x
   cacheFuture# (Future x) = cacheFuture# x
 
-instance MonadAwait Future where
-  await = toFuture
+-- TODO
+--instance MonadAwait (Future e) where
+--  await = toFuture
 
-instance Semigroup a => Semigroup (Future a) where
+instance Semigroup a => Semigroup (Future e a) where
   x <> y = liftA2 (<>) x y
 
-instance Monoid a => Monoid (Future a) where
+instance Monoid a => Monoid (Future e a) where
   mempty = pure mempty
 
+instance (Exception e, e :< exceptions) => Throw e (Future exceptions) where
+  throwC ex = constFuture (Left (toEx ex))
 
-data ConstFuture a = ConstFuture a
+instance MonadThrowEx (Future exceptions) where
+  unsafeThrowEx = constFuture . Left . unsafeToEx @exceptions
 
-instance ToFuture a (ConstFuture a)
+instance SomeException :< exceptions => MonadThrow (Future exceptions) where
+  throwM = throwC . toException
 
-instance IsFuture a (ConstFuture a) where
+instance (SomeException :< exceptions, Exception (Ex exceptions)) => MonadCatch (Future exceptions) where
+  catch x f = toFuture $ CatchFuture x \ex ->
+    case fromException (toException ex) of
+      Just matched -> toFuture (f matched)
+      Nothing -> throwFuture ex
+
+instance SomeException :< exceptions => MonadFail (Future exceptions) where
+  fail = throwM . userError
+
+relaxFuture :: sub :<< super => Future sub a -> Future super a
+relaxFuture f = toFuture $ CatchFuture f (\ex -> constFuture (Left (relaxEx ex)))
+
+throwFuture :: Ex e -> Future e a
+throwFuture = constFuture . Left
+
+
+newtype ConstFuture e a = ConstFuture (Either (Ex e) a)
+
+instance ToFuture e a (ConstFuture e a)
+
+instance IsFuture e a (ConstFuture e a) where
   readFuture# (ConstFuture x) = pure x
   readOrAttachToFuture# (ConstFuture x) _ = pure (Right x)
-  mapFuture# f (ConstFuture x) = pure (f x)
+  mapFuture# f (ConstFuture x) = toFuture (ConstFuture (f <$> x))
   cacheFuture# f = pure (toFuture f)
 
-data MappedFuture a = forall b. MappedFuture (b -> a) (Future b)
+constFuture :: Either (Ex e) a -> Future e a
+constFuture = toFuture . ConstFuture
 
-instance ToFuture a (MappedFuture a)
+data MappedFuture e a = forall b. MappedFuture (b -> a) (Future e b)
 
-instance IsFuture a (MappedFuture a) where
-  readFuture# (MappedFuture f future) = f <$> readFuture# future
+instance ToFuture e a (MappedFuture e a)
+
+instance IsFuture e a (MappedFuture e a) where
+  readFuture# (MappedFuture f future) = f <<$>> readFuture# future
   readOrAttachToFuture# (MappedFuture f future) callback =
-    f <<$>> readOrAttachToFuture# future (callback . f)
+    fmap f <<$>> readOrAttachToFuture# future (callback . fmap f)
   mapFuture# f1 (MappedFuture f2 future) =
     toFuture (MappedFuture (f1 . f2) future)
 
 
-data LiftA2Future a =
-  forall b c. LiftA2Future (b -> c -> a) (Future b) (Future c)
+data LiftA2Future e a =
+  forall b c. LiftA2Future (b -> c -> a) (Future e b) (Future e c)
 
-data LiftA2State a b = LiftA2Initial | LiftA2Left a | LiftA2Right b | LiftA2Done
+data LiftA2State e a b = LiftA2Initial | LiftA2Left a | LiftA2Right (Either (Ex e) b) | LiftA2Done
 
-instance ToFuture a (LiftA2Future a)
+instance ToFuture e a (LiftA2Future e a)
 
-instance IsFuture a (LiftA2Future a) where
-  readFuture# (LiftA2Future fn fx fy) = liftA2 fn (readFuture# fx) (readFuture# fy)
+instance IsFuture e a (LiftA2Future e a) where
+  readFuture# (LiftA2Future fn fx fy) = do
+    readFuture# fx >>= \case
+      Left ex -> pure (Left ex)
+      Right x -> fn x <<$>> readFuture# fy
 
   readOrAttachToFuture# (LiftA2Future fn fx fy) callback =
     mfixExtra \s -> do
       var <- newTVar s
-      r1 <- readOrAttachToFuture# fx \x -> do
-        readTVar var >>= \case
+      r1 <- readOrAttachToFuture# fx \case
+        Left ex -> dispatchEx var ex
+        Right x -> readTVar var >>= \case
           LiftA2Initial -> writeTVar var (LiftA2Left x)
           LiftA2Right y -> dispatch var x y
           _ -> unreachableCodePath
-      r2 <- readOrAttachToFuture# fy \y -> do
-        readTVar var >>= \case
-          LiftA2Initial -> writeTVar var (LiftA2Right y)
-          LiftA2Left x -> dispatch var x y
-          _ -> unreachableCodePath
-      pure case (r1, r2) of
-        (Right v1, Right v2) -> (Right (fn v1 v2), LiftA2Done)
-        (Right v1, Left d2) -> (Left d2, LiftA2Left v1)
-        (Left d1, Right v2) -> (Left d1, LiftA2Right v2)
-        (Left d1, Left d2) -> (Left (d1 <> d2), LiftA2Initial)
+
+      case r1 of
+        Left d1 -> do
+          r2 <- readOrAttachToFuture# fy \y -> do
+            readTVar var >>= \case
+              LiftA2Initial -> writeTVar var (LiftA2Right y)
+              LiftA2Left x -> dispatch var x y
+              _ -> unreachableCodePath
+          pure case r2 of
+            Right v2 -> (Left d1, LiftA2Right v2)
+            Left d2 -> (Left (d1 <> d2), LiftA2Initial)
+        Right (Left ex) -> pure (Right (Left ex), LiftA2Done)
+        Right (Right x) -> do
+          r2 <- readOrAttachToFuture# fy \y -> dispatch var x y
+          pure case r2 of
+            Right (Left ex) -> (Right (Left ex), LiftA2Done)
+            Right (Right v2) -> (Right (Right (fn x v2)), LiftA2Done)
+            Left d2 -> (Left d2, LiftA2Left x)
     where
-      dispatch var x y = do
+      dispatch var x ry = do
         writeTVar var LiftA2Done
-        callback (fn x y)
+        case ry of
+          Left ex -> callback (Left ex)
+          Right y -> callback (Right (fn x y))
+      dispatchEx var ex = do
+        writeTVar var LiftA2Done
+        callback (Left ex)
 
   mapFuture# f (LiftA2Future fn fx fy) =
     toFuture (LiftA2Future (\x y -> f (fn x y)) fx fy)
 
 
-data BindFuture a = forall b. BindFuture (Future b) (b -> Future a)
+data BindFuture e a = forall b. BindFuture (Future e b) (b -> Future e a)
 
-instance ToFuture a (BindFuture a)
+instance ToFuture e a (BindFuture e a)
 
-instance IsFuture a (BindFuture a) where
-  readFuture# (BindFuture fx fn) = readFuture# . fn =<< readFuture# fx
+instance IsFuture e a (BindFuture e a) where
+  readFuture# (BindFuture fx fn) =
+    readFuture# fx >>= \case
+      Left ex -> pure (Left ex)
+      Right x -> readFuture# (fn x)
 
   readOrAttachToFuture# (BindFuture fx fn) callback = do
     disposerVar <- newTVar Nothing
     dyWrapper <- newUnmanagedTDisposer do
       mapM_ disposeTDisposer =<< swapTVar disposerVar Nothing
-    rx <- readOrAttachToFuture# fx \x -> do
-      ry <- readOrAttachToFuture# (fn x) \y -> do
-        callback y
-        disposeTDisposer dyWrapper
-      case ry of
-        Left dy -> do
-          writeTVar disposerVar (Just dy)
-          callOnceCompleted_ dy \() ->
-            -- This is not a loop since disposing a TDisposer is reentrant-safe
-            disposeTDisposer dyWrapper
-        Right y -> do
+    rx <- readOrAttachToFuture# fx \case
+      Left ex -> callback (Left ex)
+      Right x -> do
+        ry <- readOrAttachToFuture# (fn x) \y -> do
           callback y
           disposeTDisposer dyWrapper
+        case ry of
+          Left dy -> do
+            writeTVar disposerVar (Just dy)
+            callOnceCompletedSafe_ dy \() ->
+              -- This is not a loop since disposing a TDisposer is reentrant-safe
+              disposeTDisposer dyWrapper
+          Right y -> do
+            callback y
+            disposeTDisposer dyWrapper
     case rx of
       Left dx -> pure (Left (dx <> dyWrapper))
       -- LHS already completed, so trivially defer to RHS
-      Right x -> readOrAttachToFuture# (fn x) callback
+      Right (Left ex) -> pure (Right (Left ex))
+      Right (Right x) -> readOrAttachToFuture# (fn x) callback
 
 
   mapFuture# f (BindFuture fx fn) = toFuture (BindFuture fx (fmap f . fn))
 
 
-newtype CachedFuture a = CachedFuture (TVar (CacheState a))
-data CacheState a
-  = CacheIdle (Future a)
-  | CacheAttached (Future a) TDisposer (CallbackRegistry a)
-  | Cached a
+data CatchFuture e a = forall e2. CatchFuture (Future e2 a) (Ex e2 -> Future e a)
 
-newCachedFuture :: Future a -> STMc NoRetry '[] (CachedFuture a)
+instance ToFuture e a (CatchFuture e a)
+
+instance IsFuture e a (CatchFuture e a) where
+  readFuture# (CatchFuture fx fn) =
+    readFuture# fx >>= \case
+      Left ex -> readFuture# (fn ex)
+      Right x -> pure (Right x)
+
+  readOrAttachToFuture# (CatchFuture fx fn) callback = do
+    disposerVar <- newTVar Nothing
+    dyWrapper <- newUnmanagedTDisposer do
+      mapM_ disposeTDisposer =<< swapTVar disposerVar Nothing
+    rx <- readOrAttachToFuture# fx \case
+      Left ex -> do
+        ry <- readOrAttachToFuture# (fn ex) \y -> do
+          callback y
+          disposeTDisposer dyWrapper
+        case ry of
+          Left dy -> do
+            writeTVar disposerVar (Just dy)
+            callOnceCompletedSafe_ dy \() ->
+              -- This is not a loop since disposing a TDisposer is reentrant-safe
+              disposeTDisposer dyWrapper
+          Right y -> do
+            callback y
+            disposeTDisposer dyWrapper
+      Right x -> callback (Right x)
+    case rx of
+      Left dx -> pure (Left (dx <> dyWrapper))
+      Right (Left ex) -> readOrAttachToFuture# (fn ex) callback
+      -- LHS already completed, so trivially defer to RHS
+      Right (Right x) -> pure (Right (Right x))
+
+
+
+newtype CachedFuture e a = CachedFuture (TVar (CacheState e a))
+data CacheState e a
+  = CacheIdle (Future e a)
+  | CacheAttached (Future e a) TDisposer (CallbackRegistry (Either (Ex e) a))
+  | Cached (Either (Ex e) a)
+
+newCachedFuture :: Future e a -> STMc NoRetry '[] (CachedFuture e a)
 newCachedFuture f = CachedFuture <$> newTVar (CacheIdle f)
 
-instance ToFuture a (CachedFuture a)
+instance ToFuture e a (CachedFuture e a)
 
-instance IsFuture a (CachedFuture a) where
+instance IsFuture e a (CachedFuture e a) where
   readFuture# x@(CachedFuture var) = do
     readTVar var >>= \case
       CacheIdle future -> readCacheUpstreamFuture x future
@@ -342,7 +447,7 @@ instance IsFuture a (CachedFuture a) where
 
   cacheFuture# = pure . toFuture
 
-removeCacheListener :: CachedFuture a -> STMc NoRetry '[] ()
+removeCacheListener :: CachedFuture e a -> STMc NoRetry '[] ()
 removeCacheListener (CachedFuture var) = do
   readTVar var >>= \case
     CacheIdle _ -> unreachableCodePath
@@ -351,7 +456,7 @@ removeCacheListener (CachedFuture var) = do
       disposeTDisposer disposer
     Cached _ -> pure ()
 
-fulfillCacheValue :: CachedFuture a -> a -> STMc NoRetry '[] ()
+fulfillCacheValue :: CachedFuture e a -> Either (Ex e) a -> STMc NoRetry '[] ()
 fulfillCacheValue (CachedFuture var) value =
   swapTVar var (Cached value) >>= \case
     CacheIdle _ -> pure ()
@@ -360,7 +465,7 @@ fulfillCacheValue (CachedFuture var) value =
       callCallbacks registry value
     Cached _ -> pure ()
 
-readCacheUpstreamFuture :: CachedFuture a -> Future a -> STMc Retry '[] a
+readCacheUpstreamFuture :: CachedFuture e a -> Future e a -> STMc Retry '[] (Either (Ex e) a)
 readCacheUpstreamFuture cache future = do
   value <- readFuture# future
   liftSTMc $ fulfillCacheValue cache value
@@ -368,53 +473,7 @@ readCacheUpstreamFuture cache future = do
 
 
 type FutureEx :: [Type] -> Type -> Type
-newtype FutureEx exceptions a = FutureEx (Future (Either (Ex exceptions) a))
-
-instance Functor (FutureEx exceptions) where
-  fmap f (FutureEx x) = FutureEx (mapFuture# (fmap f) x)
-
-instance Applicative (FutureEx exceptions) where
-  pure x = FutureEx (pure (Right x))
-  liftA2 f (FutureEx x) (FutureEx y) = FutureEx (liftA2 (liftA2 f) x y)
-
-instance Monad (FutureEx exceptions) where
-  (FutureEx x) >>= f = FutureEx $ x >>= \case
-    (Left ex) -> pure (Left ex)
-    Right y -> toFuture (f y)
-
-instance ToFuture (Either (Ex exceptions) a) (FutureEx exceptions a) where
-  toFuture (FutureEx f) = f
-
-instance MonadAwait (FutureEx exceptions) where
-  await f = FutureEx (Right <$> toFuture f)
-
-instance (Exception e, e :< exceptions) => Throw e (FutureEx exceptions) where
-  throwC ex = FutureEx $ pure (Left (toEx ex))
-
-instance MonadThrowEx (FutureEx exceptions) where
-  unsafeThrowEx = FutureEx . pure . Left . unsafeToEx @exceptions
-
-instance SomeException :< exceptions => MonadThrow (FutureEx exceptions) where
-  throwM = throwC . toException
-
-instance (SomeException :< exceptions, Exception (Ex exceptions)) => MonadCatch (FutureEx exceptions) where
-  catch (FutureEx x) f = FutureEx $ x >>= \case
-    left@(Left ex) -> case fromException (toException ex) of
-      Just matched -> toFuture (f matched)
-      Nothing -> pure left
-    Right y -> pure (Right y)
-
-instance SomeException :< exceptions => MonadFail (FutureEx exceptions) where
-  fail = throwM . userError
-
-limitFutureEx :: sub :<< super => FutureEx sub a -> FutureEx super a
-limitFutureEx (FutureEx f) = FutureEx $ coerce <$> f
-
-toFutureEx ::
-  forall exceptions r a.
-  ToFuture (Either (Ex exceptions) r) a =>
-  a -> FutureEx exceptions r
-toFutureEx x = FutureEx (toFuture x)
+type FutureEx exceptions a = Future exceptions a
 
 
 -- ** Promise
@@ -424,17 +483,17 @@ newtype Promise a = Promise (TVar (Either (CallbackRegistry a) a))
 
 type PromiseEx exceptions a = Promise (Either (Ex exceptions) a)
 
-instance ToFuture a (Promise a)
+instance ToFuture '[] a (Promise a)
 
-instance IsFuture a (Promise a) where
+instance IsFuture '[] a (Promise a) where
   readFuture# (Promise var) =
     readTVar var >>= \case
       Left _ -> retry
-      Right value -> pure value
+      Right value -> pure (Right value)
 
   readOrAttachToFuture# (Promise var) callback =
     readTVar var >>= \case
-      Right value -> pure (Right value)
+      Right value -> pure (Right (Right value))
       Left registry ->
         -- NOTE Using mfix to get the disposer is a safe because the registered
         -- method won't be called immediately.
@@ -442,7 +501,7 @@ instance IsFuture a (Promise a) where
         -- that could be improved by writing a custom registry.
         Left <$> mfix \disposer -> do
           registerCallback registry \value -> do
-            callback value
+            callback (Right value)
             disposeTDisposer disposer
 
 newPromise :: MonadSTMc NoRetry '[] m => m (Promise a)
@@ -482,6 +541,9 @@ tryFulfillPromiseIO_ var result = void $ tryFulfillPromiseIO var result
 execToPromiseEx :: PromiseEx exceptions a -> STMc NoRetry exceptions a -> STMc NoRetry '[] ()
 execToPromiseEx promise fn = tryFulfillPromise_ promise =<< tryExSTMc fn
 
+toFutureEx :: ToFuture '[] (Either (Ex e) a) b => b -> Future e a
+toFutureEx f = relaxFuture (toFuture f) >>= constFuture
+
 
 -- * Utility functions
 
@@ -504,18 +566,18 @@ afixExtra action = do
       throwM ex
 
 
--- ** Awaiting multiple awaitables
+-- ** Awaiting multiple futures
 
-data AnyFuture a = AnyFuture [Future a] (TVar (Maybe a))
+data AnyFuture e a = AnyFuture [Future e a] (TVar (Maybe (Either (Ex e) a)))
 
-instance ToFuture a (AnyFuture a)
+instance ToFuture e a (AnyFuture e a)
 
-instance IsFuture a (AnyFuture a) where
+instance IsFuture e a (AnyFuture e a) where
   readFuture# (AnyFuture fs var) = do
     readTVar var >>= \case
       Just value -> pure value
       Nothing -> do
-        value <- foldr orElseC retry (readFuture# <$> fs)
+        value <- foldr (orElseC . readFuture#) retry fs
         writeTVar var (Just value)
         pure value
 
@@ -524,7 +586,7 @@ instance IsFuture a (AnyFuture a) where
       Just value -> pure (Right value)
       Nothing -> go futures []
     where
-      go :: [Future a] -> [TDisposer] -> STMc NoRetry '[] (Either TDisposer a)
+      go :: [Future e a] -> [TDisposer] -> STMc NoRetry '[] (Either TDisposer (Either (Ex e) a))
       go [] acc = pure (Left (mconcat acc))
       go (f : fs) acc = do
         readOrAttachToFuture# f internalCallback >>= \case
@@ -544,13 +606,13 @@ instance IsFuture a (AnyFuture a) where
 
 -- Completes as soon as any future in the list is completed and then returns the
 -- left-most completed result.
-anyFuture :: MonadSTMc NoRetry '[] m => [Future r] -> m (Future r)
+anyFuture :: MonadSTMc NoRetry '[] m => [Future e r] -> m (Future e r)
 anyFuture fs = toFuture <$> (AnyFuture fs <$> newTVar Nothing)
 
 -- | Like `awaitAny` with two futures.
-any2Future :: MonadSTMc NoRetry '[] m => Future r -> Future r -> m (Future r)
+any2Future :: MonadSTMc NoRetry '[] m => Future e r -> Future e r -> m (Future e r)
 any2Future x y = anyFuture [toFuture x, toFuture y]
 
 -- | Completes as soon as either future completes.
-eitherFuture :: MonadSTMc NoRetry '[] m => Future a -> Future b -> m (Future (Either a b))
+eitherFuture :: MonadSTMc NoRetry '[] m => Future e a -> Future e b -> m (Future e (Either a b))
 eitherFuture x y = any2Future (Left <$> x) (Right <$> y)
