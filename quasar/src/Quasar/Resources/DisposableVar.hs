@@ -12,6 +12,7 @@ module Quasar.Resources.DisposableVar (
 ) where
 
 import Control.Monad.Catch
+import Data.Hashable (Hashable(..))
 import Quasar.Future (Future, ToFuture(..), IsFuture(..))
 import Quasar.Prelude
 import Quasar.Resources.Disposer
@@ -37,6 +38,13 @@ instance IsDisposerElement (DisposableVar a) where
 
 instance Disposable (DisposableVar a) where
   getDisposer x = mkDisposer [x]
+
+instance Eq (DisposableVar a) where
+  (DisposableVar x _) == (DisposableVar y _) = x == y
+
+instance Hashable (DisposableVar a) where
+  hash (DisposableVar key _) = hash key
+  hashWithSalt salt (DisposableVar key _) = hashWithSalt salt key
 
 wrapDisposeException :: MonadCatch m => m a -> m a
 wrapDisposeException fn = fn `catchAll` \ex -> throwM (DisposeException ex)
@@ -103,6 +111,14 @@ instance IsFuture () (TDisposableVar a) where
       TDisposableVarDisposed -> pure (Right ())
       TDisposableVarDisposing callbackRegistry -> Left <$> registerCallback callbackRegistry callback
       TDisposableVarAlive _ _ callbackRegistry -> Left <$> registerCallback callbackRegistry callback
+
+
+instance Eq (TDisposableVar a) where
+  (TDisposableVar x _) == (TDisposableVar y _) = x == y
+
+instance Hashable (TDisposableVar a) where
+  hash (TDisposableVar key _) = hash key
+  hashWithSalt salt (TDisposableVar key _) = hashWithSalt salt key
 
 newTDisposableVar :: MonadSTMc NoRetry '[] m => a -> (a -> STMc NoRetry '[] ()) -> m (TDisposableVar a)
 newTDisposableVar content disposeFn = liftSTMc do
