@@ -1,21 +1,21 @@
-module Quasar.Resources.Lock (
-  Lock,
-  newLock,
-  newLockIO,
-  tryReadLock,
-  tryDuplicateLock,
+module Quasar.Resources.TRcVar (
+  TRcVar,
+  newTRcVar,
+  newTRcVarIO,
+  tryReadTRcVar,
+  tryDuplicateTRcVar,
 ) where
 
 import Quasar.Prelude
 import Quasar.Resources
 import Quasar.Resources.DisposableVar
 
--- | A Lock is a disposable storage (like a `TDisposableVar`) that can be
+-- | A TRcVar is a disposable storage (like a `TDisposableVar`) that can be
 -- cloned. Every copy has an independent lifetime.
-newtype Lock a = Lock (TDisposableVar (LockRc a))
+newtype TRcVar a = TRcVar (TDisposableVar (TRcVarRc a))
   deriving (Disposable, TDisposable)
 
-data LockRc a = LockRc {
+data TRcVarRc a = TRcVarRc {
   -- Refcount that tracks how many locks exists in this group of locks.
   lockCount :: TVar Word64,
   -- A release function. Called when the last lock of the group is disposed.
@@ -23,45 +23,45 @@ data LockRc a = LockRc {
   content :: a
 }
 
-decrementLock :: LockRc a -> STMc NoRetry '[] ()
-decrementLock rc = do
+decrementTRcVar :: TRcVarRc a -> STMc NoRetry '[] ()
+decrementTRcVar rc = do
   let lockCount = rc.lockCount
   c <- readTVar lockCount
   writeTVar rc.lockCount (pred c)
   when (c == 0) (rc.cleanup rc.content)
 
-newLock :: MonadSTMc NoRetry '[] m => (a -> STMc NoRetry '[] ()) -> a -> m (Lock a)
-newLock cleanup content = do
+newTRcVar :: MonadSTMc NoRetry '[] m => (a -> STMc NoRetry '[] ()) -> a -> m (TRcVar a)
+newTRcVar cleanup content = do
   lockCount <- newTVar 1
-  let rc = LockRc {
+  let rc = TRcVarRc {
     lockCount,
     cleanup,
     content
   }
-  Lock <$> newTDisposableVar rc decrementLock
+  TRcVar <$> newTDisposableVar rc decrementTRcVar
 
-newLockIO :: MonadIO m => (a -> STMc NoRetry '[] ()) -> a -> m (Lock a)
-newLockIO cleanup content = do
+newTRcVarIO :: MonadIO m => (a -> STMc NoRetry '[] ()) -> a -> m (TRcVar a)
+newTRcVarIO cleanup content = do
   lockCount <- newTVarIO 1
-  let rc = LockRc {
+  let rc = TRcVarRc {
     lockCount,
     cleanup,
     content
   }
-  Lock <$> newTDisposableVarIO rc decrementLock
+  TRcVar <$> newTDisposableVarIO rc decrementTRcVar
 
 -- | Read the content of the lock, if the lock has not been disposed.
-tryReadLock :: MonadSTMc NoRetry '[] m => Lock a -> m (Maybe a)
-tryReadLock (Lock var) = liftSTMc @NoRetry @'[] do
+tryReadTRcVar :: MonadSTMc NoRetry '[] m => TRcVar a -> m (Maybe a)
+tryReadTRcVar (TRcVar var) = liftSTMc @NoRetry @'[] do
   (.content) <<$>> tryReadTDisposableVar var
 
 -- | Produces a _new_ lock that points to the same content, but has an
 -- independent lifetime. The caller has to ensure the new lock is disposed.
 --
 -- Usually this would be used to pass a copy of the lock to another component.
-tryDuplicateLock :: MonadSTMc NoRetry '[] m => Lock a -> m (Maybe (Lock a))
-tryDuplicateLock (Lock var) = liftSTMc @NoRetry @'[] do
+tryDuplicateTRcVar :: MonadSTMc NoRetry '[] m => TRcVar a -> m (Maybe (TRcVar a))
+tryDuplicateTRcVar (TRcVar var) = liftSTMc @NoRetry @'[] do
   tryReadTDisposableVar var >>= mapM \rc -> do
     modifyTVar rc.lockCount succ
-    Lock <$> newTDisposableVar rc decrementLock
+    TRcVar <$> newTDisposableVar rc decrementTRcVar
 
