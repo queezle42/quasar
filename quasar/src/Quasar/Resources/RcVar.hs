@@ -1,4 +1,4 @@
-module Quasar.Resources.TRcVar (
+module Quasar.Resources.RcVar (
   RcVar,
   newRcVar,
   newRcVarIO,
