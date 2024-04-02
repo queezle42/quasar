@@ -38,6 +38,10 @@ module Quasar.Resources.Disposer (
   mkDisposer,
   IsTDisposerElement(..),
   mkTDisposer,
+  DisposeResult(..),
+  DisposeDependencies(..),
+  flattenDisposeDependencies,
+  beginDisposeDisposer,
 ) where
 
 import Control.Monad (foldM)
@@ -296,6 +300,25 @@ data DisposeResult
 
 data DisposeDependencies = DisposeDependencies Unique (Future [DisposeDependencies])
 
+-- Combine the futures of all DisposeDependencies. The resulting future might be
+-- expensive.
+flattenDisposeDependencies :: DisposeDependencies -> Future ()
+flattenDisposeDependencies = void . go mempty
+  where
+    go :: HashSet Unique -> DisposeDependencies -> Future (HashSet Unique)
+    go keys (DisposeDependencies key deps)
+      | HashSet.member key keys = pure keys -- loop detection: dependencies were already handled
+      | otherwise = do
+          dependencies <- await deps
+          foldM go (HashSet.insert key keys) dependencies
+
+beginDisposeDisposer :: Disposer -> STMc NoRetry '[] (Future [DisposeDependencies])
+beginDisposeDisposer (Disposer elements) = do
+  mapM beginDispose# elements <&> \results -> do
+    catMaybes <$> forM results \case
+      DisposeResultAwait future -> Nothing <$ future
+      DisposeResultDependencies deps -> pure (Just deps)
+
 
 -- * Resource manager
 
@@ -425,7 +448,6 @@ beginDisposeResourceManagerInternal rm = do
           | otherwise = do
               dependencies <- await deps
               foldM go (HashSet.insert key keys) dependencies
-
 
 -- * ResourceCollector
 

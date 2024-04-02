@@ -2,6 +2,8 @@ module Quasar.Resources.DisposableVar (
   DisposableVar,
   newDisposableVar,
   newDisposableVarIO,
+  newFnDisposableVar,
+  newFnDisposableVarIO,
   tryReadDisposableVar,
 
   -- * `TDisposable` variant
@@ -11,30 +13,35 @@ module Quasar.Resources.DisposableVar (
   tryReadTDisposableVar,
 ) where
 
-import Control.Monad.Catch
 import Data.Hashable (Hashable(..))
+import Quasar.Exceptions (ExceptionSink, DisposeException (..))
 import Quasar.Future (Future, ToFuture(..), IsFuture(..))
 import Quasar.Prelude
 import Quasar.Resources.Disposer
 import Quasar.Utils.CallbackRegistry
 import Quasar.Utils.TOnce
-import Quasar.Exceptions (ExceptionSink, DisposeException (..))
-import Quasar.Async.Fork (forkFutureSTM)
 
 
-
-type DisposableVarState a = TOnce (ExceptionSink, a -> IO (), a) (Future ())
+type DisposableVarState a = TOnce (a -> STMc NoRetry '[] Disposer, a) (Future [DisposeDependencies])
 
 data DisposableVar a = DisposableVar Unique (DisposableVarState a)
 
 instance ToFuture () (DisposableVar a) where
-  toFuture (DisposableVar _ state) = join (toFuture state)
+  toFuture (DisposableVar _ state) = do
+    mdeps <- join (toFuture state)
+    mapM_ flattenDisposeDependencies mdeps
 
 instance IsDisposerElement (DisposableVar a) where
   disposerElementKey (DisposableVar key _) = key
-  disposeEventually# (DisposableVar _ disposeState) = do
-    mapFinalizeTOnce disposeState \(sink, fn, value) ->
-      void . toFuture <$> forkFutureSTM (wrapDisposeException (fn value)) sink
+  beginDispose# (DisposableVar key disposeState) = do
+    deps <- mapFinalizeTOnce disposeState \(fn, value) ->
+      beginDisposeDisposer =<< fn value
+    pure (DisposeResultDependencies (DisposeDependencies key deps))
+
+  disposeEventually# self = do
+    beginDispose# self <&> \case
+      DisposeResultAwait future -> future
+      DisposeResultDependencies deps -> flattenDisposeDependencies deps
 
 instance Disposable (DisposableVar a) where
   getDisposer x = mkDisposer [x]
@@ -46,24 +53,49 @@ instance Hashable (DisposableVar a) where
   hash (DisposableVar key _) = hash key
   hashWithSalt salt (DisposableVar key _) = hashWithSalt salt key
 
-wrapDisposeException :: MonadCatch m => m a -> m a
-wrapDisposeException fn = fn `catchAll` \ex -> throwM (DisposeException ex)
-
 tryReadDisposableVar :: MonadSTMc NoRetry '[] m => DisposableVar a -> m (Maybe a)
 tryReadDisposableVar (DisposableVar _ stateTOnce) = liftSTMc @NoRetry @'[] do
   readTOnce stateTOnce <&> \case
-    Left (_, _, value) -> Just value
+    Left (_, value) -> Just value
     _ -> Nothing
 
-newDisposableVar :: MonadSTMc NoRetry '[] m => ExceptionSink -> (a -> IO ()) -> a -> m (DisposableVar a)
-newDisposableVar sink fn value = do
-  key <- newUniqueSTM
-  DisposableVar key <$> newTOnce (sink, fn, value)
+newFnDisposableVar ::
+  MonadSTMc NoRetry '[] m =>
+  ExceptionSink ->
+  (a -> IO ()) ->
+  a ->
+  m (DisposableVar a)
+newFnDisposableVar sink fn = liftSTMc @NoRetry @'[] .
+  newDisposableVar \value -> do
+    newUnmanagedIODisposer (fn value) sink
 
-newDisposableVarIO :: MonadIO m => ExceptionSink -> (a -> IO ()) -> a -> m (DisposableVar a)
-newDisposableVarIO sink fn value = do
+newDisposableVar ::
+  MonadSTMc NoRetry '[] m =>
+  (a -> STMc NoRetry '[] Disposer) ->
+  a ->
+  m (DisposableVar a)
+newDisposableVar fn value = do
+  key <- newUniqueSTM
+  DisposableVar key <$> newTOnce (fn, value)
+
+newFnDisposableVarIO ::
+  MonadIO m =>
+  ExceptionSink ->
+  (a -> IO ()) ->
+  a ->
+  m (DisposableVar a)
+newFnDisposableVarIO sink fn = liftIO .
+  newDisposableVarIO \value -> do
+    newUnmanagedIODisposer (fn value) sink
+
+newDisposableVarIO ::
+  MonadIO m =>
+  (a -> STMc NoRetry '[] Disposer) ->
+  a ->
+  m (DisposableVar a)
+newDisposableVarIO fn value = do
   key <- newUnique
-  DisposableVar key <$> newTOnceIO (sink, fn, value)
+  DisposableVar key <$> newTOnceIO (fn, value)
 
 
 
@@ -140,3 +172,16 @@ tryReadTDisposableVar (TDisposableVar _ var) = do
     TDisposableVarDisposed -> pure Nothing
     TDisposableVarDisposing _ -> pure Nothing
     TDisposableVarAlive content _ _ -> pure (Just content)
+
+-- | Try to write a `TDisposableVar`. On success the previous content is
+-- returned.
+--
+-- If the var is already disposed or currently disposing, `Nothing` is returned.
+tryWriteTDisposableVar :: MonadSTMc NoRetry '[] m => TDisposableVar a -> a -> m (Maybe a)
+tryWriteTDisposableVar (TDisposableVar _ var) newContent = do
+  readTVar var >>= \case
+    TDisposableVarDisposed -> pure Nothing
+    TDisposableVarDisposing _ -> pure Nothing
+    TDisposableVarAlive oldContent disposeFn callbackRegistry -> do
+      writeTVar var (TDisposableVarAlive newContent disposeFn callbackRegistry)
+      pure (Just oldContent)
