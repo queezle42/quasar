@@ -45,6 +45,7 @@ newTOnceIO initial = liftIO do
   registry <- newCallbackRegistryIO
   TOnce <$> newTVarIO (Left (initial, registry))
 
+-- | Finalizes the `TOnce` by replacing the content, if not already finalized.
 finalizeTOnce :: MonadSTMc NoRetry '[TOnceAlreadyFinalized] m => TOnce a b -> b -> m ()
 finalizeTOnce (TOnce var) value = liftSTMc @NoRetry @'[TOnceAlreadyFinalized] do
   readTVar var >>= \case
@@ -56,6 +57,9 @@ finalizeTOnce (TOnce var) value = liftSTMc @NoRetry @'[TOnceAlreadyFinalized] do
 readTOnce :: MonadSTMc NoRetry '[] m => TOnce a b -> m (Either a b)
 readTOnce (TOnce var) = Bifunctor.first fst <$> readTVar var
 
+-- | Finalizes the `TOnce` by running an STM action.
+--
+-- Reentrant-safe.
 mapFinalizeTOnce :: MonadSTMc NoRetry '[] m => TOnce a (Future b) -> (a -> m (Future b)) -> m (Future b)
 mapFinalizeTOnce (TOnce var) fn = do
   readTVar var >>= \case
