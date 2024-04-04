@@ -57,6 +57,9 @@ module Quasar.Resources (
   attachResource,
   tryAttachResource,
 
+  -- * Utils
+  futureDisposer,
+
   -- * Implementing disposers
   IsDisposerElement(..),
   mkDisposer,
@@ -71,6 +74,7 @@ import Quasar.Exceptions
 import Quasar.MonadQuasar
 import Quasar.Prelude
 import Quasar.Resources.Disposer
+import Quasar.Resources.FutureDisposer
 
 
 registerDisposeAction :: HasCallStack => (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m) => IO () -> m Disposer

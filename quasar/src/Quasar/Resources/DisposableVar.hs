@@ -14,7 +14,7 @@ module Quasar.Resources.DisposableVar (
 ) where
 
 import Data.Hashable (Hashable(..))
-import Quasar.Exceptions (ExceptionSink, DisposeException (..))
+import Quasar.Exceptions (ExceptionSink)
 import Quasar.Future (Future, ToFuture(..), IsFuture(..))
 import Quasar.Prelude
 import Quasar.Resources.Disposer
