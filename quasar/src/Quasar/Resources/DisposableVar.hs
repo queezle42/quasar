@@ -28,15 +28,16 @@ data DisposableVar a = DisposableVar Unique (DisposableVarState a)
 
 instance ToFuture () (DisposableVar a) where
   toFuture (DisposableVar _ state) = do
-    mdeps <- join (toFuture state)
-    mapM_ flattenDisposeDependencies mdeps
+    deps <- join (toFuture state)
+    mapM_ flattenDisposeDependencies deps
 
 instance IsDisposerElement (DisposableVar a) where
   disposerElementKey (DisposableVar key _) = key
+
   beginDispose# (DisposableVar key disposeState) = do
-    deps <- mapFinalizeTOnce disposeState \(fn, value) ->
+    fdeps <- mapFinalizeTOnce disposeState \(fn, value) ->
       beginDisposeDisposer =<< fn value
-    pure (DisposeResultDependencies (DisposeDependencies key deps))
+    pure (DisposeResultDependencies (DisposeDependencies key fdeps))
 
   disposeEventually# self = do
     beginDispose# self <&> \case
