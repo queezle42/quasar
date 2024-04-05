@@ -90,7 +90,7 @@ library
     Quasar.PreludeExtras
     Quasar.Resources
     Quasar.Resources.DisposableVar
-    Quasar.Resources.RcVar
+    Quasar.Resources.Rc
     Quasar.Utils.CallbackRegistry
     Quasar.Utils.Exceptions
     Quasar.Utils.ExtraT
