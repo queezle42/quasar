@@ -17,15 +17,14 @@ import Quasar.Resources.DisposableVar
 newtype Rc a = Rc (DisposableVar (RcHandle a))
   deriving (Eq, Hashable, Disposable)
 
-data RcHandle a = RcHandle {
+data RcHandle a = Disposable a => RcHandle {
   -- Refcount that tracks how many locks exists in this group of locks.
   lockCount :: TVar Word64,
-  disposer :: Disposer,
   content :: a
 }
 
 decrementRc :: RcHandle a -> STMc NoRetry '[] Disposer
-decrementRc rc = do
+decrementRc rc@RcHandle{} = do
   let lockCount = rc.lockCount
   c <- readTVar lockCount
   case c of
@@ -36,7 +35,7 @@ decrementRc rc = do
     -- Last owner disposed, run cleanup
     1 -> do
       writeTVar rc.lockCount 0
-      pure rc.disposer
+      pure (getDisposer rc.content)
 
     -- Decrement rc count
     _ -> mempty <$ writeTVar rc.lockCount (pred c)
@@ -64,7 +63,6 @@ newRc content = liftSTMc @NoRetry @'[] do
   lockCount <- newTVar 1
   let rc = RcHandle {
     lockCount,
-    disposer = getDisposer content,
     content
   }
   Rc <$> newSpecialDisposableVar decrementRc rc
@@ -74,7 +72,6 @@ newRcIO content = liftIO do
   lockCount <- newTVarIO 1
   let rc = RcHandle {
     lockCount,
-    disposer = getDisposer content,
     content
   }
   Rc <$> newSpecialDisposableVarIO decrementRc rc
