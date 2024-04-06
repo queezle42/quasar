@@ -57,6 +57,7 @@ import Quasar.Future
 import Quasar.Prelude
 import Quasar.Utils.CallbackRegistry
 import Quasar.Utils.TOnce
+import Quasar.Exceptions.ExceptionSink (loggingExceptionSink)
 
 class Disposable a where
   getDisposer :: a -> Disposer
@@ -331,7 +332,7 @@ isDisposing :: ResourceManager -> Future ()
 isDisposing rm = toFuture (resourceManagerIsDisposing rm)
 
 data ResourceManagerState
-  = ResourceManagerNormal (TVar (HashMap Unique DisposerElement)) ExceptionSink
+  = ResourceManagerNormal (TVar (HashMap Unique DisposerElement))
   | ResourceManagerDisposing (Future [DisposeDependencies])
   | ResourceManagerDisposed
 
@@ -350,11 +351,11 @@ instance IsDisposerElement ResourceManager where
     DisposeResultDependencies <$> beginDisposeResourceManagerInternal resourceManager
 
 
-newUnmanagedResourceManagerSTM :: MonadSTMc NoRetry '[] m => ExceptionSink -> m ResourceManager
-newUnmanagedResourceManagerSTM exChan = do
+newUnmanagedResourceManagerSTM :: MonadSTMc NoRetry '[] m => m ResourceManager
+newUnmanagedResourceManagerSTM = do
   resourceManagerKey <- newUniqueSTM
   attachedResources <- newTVar mempty
-  resourceManagerState <- newTVar (ResourceManagerNormal attachedResources exChan)
+  resourceManagerState <- newTVar (ResourceManagerNormal attachedResources)
   resourceManagerIsDisposing <- newPromise
   resourceManagerIsDisposed <- newPromise
   pure ResourceManager {
@@ -376,7 +377,7 @@ tryAttachResource resourceManager (getDisposer -> Disposer ds) = liftSTMc do
 tryAttachDisposer :: HasCallStack => ResourceManager -> DisposerElement -> STMc NoRetry '[] (Either FailedToAttachResource ())
 tryAttachDisposer resourceManager disposer = do
   readTVar (resourceManagerState resourceManager) >>= \case
-    ResourceManagerNormal attachedResources _ -> do
+    ResourceManagerNormal attachedResources -> do
       alreadyAttached <- isJust . HM.lookup key <$> readTVar attachedResources
       unless alreadyAttached do
         attachedResult <- readOrAttachToFuture_ disposer \() -> finalizerCallback
@@ -390,7 +391,7 @@ tryAttachDisposer resourceManager disposer = do
     key = disposerElementKey disposer
     finalizerCallback :: STMc NoRetry '[] ()
     finalizerCallback = readTVar (resourceManagerState resourceManager) >>= \case
-      ResourceManagerNormal attachedResources _ -> modifyTVar attachedResources (HM.delete key)
+      ResourceManagerNormal attachedResources -> modifyTVar attachedResources (HM.delete key)
       -- No resource detach is required in other states, since all resources are disposed soon
       -- (awaiting each resource should be cheaper than modifying the HashMap until it is empty).
       _ -> pure ()
@@ -399,7 +400,7 @@ tryAttachDisposer resourceManager disposer = do
 beginDisposeResourceManagerInternal :: ResourceManager -> STMc NoRetry '[] DisposeDependencies
 beginDisposeResourceManagerInternal rm = do
   readTVar (resourceManagerState rm) >>= \case
-    ResourceManagerNormal attachedResources exChan -> do
+    ResourceManagerNormal attachedResources -> do
       dependenciesVar <- newPromise
 
       -- write before fulfilling the promise since the promise has callbacks
@@ -407,11 +408,14 @@ beginDisposeResourceManagerInternal rm = do
       tryFulfillPromise_ (resourceManagerIsDisposing rm) ()
 
       attachedDisposers <- HM.elems <$> readTVar attachedResources
-      forkSTM_ (disposeThread dependenciesVar attachedDisposers) exChan
+      forkSTM_ (disposeThread dependenciesVar attachedDisposers) brokenDisposerExceptionSink
       pure $ DisposeDependencies rmKey (toFuture dependenciesVar)
     ResourceManagerDisposing deps -> pure $ DisposeDependencies rmKey deps
     ResourceManagerDisposed -> pure $ DisposeDependencies rmKey mempty
   where
+    -- TODO prefix with message
+    brokenDisposerExceptionSink = loggingExceptionSink
+
     disposeThread :: Promise [DisposeDependencies] -> [DisposerElement] -> IO ()
     disposeThread dependenciesVar attachedDisposers = do
       -- Begin to dispose all attached resources

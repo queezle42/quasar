@@ -54,7 +54,7 @@ import Quasar.Prelude
 import Quasar.Resources.Disposer
 
 
--- Invariant: the resource manager is disposed as soon as an exception is thrown to the channel
+-- Invariant: the resource manager is disposed as soon as an exception is thrown to the sink
 data Quasar = Quasar ExceptionSink ResourceManager
 
 instance Disposable Quasar where
@@ -67,14 +67,14 @@ instance HasField "resourceManager" Quasar ResourceManager where
   getField = quasarResourceManager
 
 quasarExceptionSink :: Quasar -> ExceptionSink
-quasarExceptionSink (Quasar exChan _) = exChan
+quasarExceptionSink (Quasar sink _) = sink
 
 quasarResourceManager :: Quasar -> ResourceManager
 quasarResourceManager (Quasar _ rm) = rm
 
 newResourceScopeSTM :: (MonadSTMc NoRetry '[FailedToAttachResource] m, HasCallStack) => Quasar -> m Quasar
 newResourceScopeSTM parent = do
-  rm <- newUnmanagedResourceManagerSTM parentExceptionSink
+  rm <- newUnmanagedResourceManagerSTM
   attachResource (quasarResourceManager parent) rm
   pure $ newQuasar parentExceptionSink rm
   where
@@ -262,15 +262,15 @@ quasarAtomicallyC (QuasarSTMc fn) = do
 
 redirectExceptionToSink :: (MonadCatch m, MonadQuasar m, MonadSTM m) => m a -> m (Maybe a)
 redirectExceptionToSink fn = do
-  exChan <- askExceptionSink
+  sink <- askExceptionSink
   (Just <$> fn) `catchAll`
-    \ex -> liftSTM (Nothing <$ throwToExceptionSink exChan ex)
+    \ex -> liftSTM (Nothing <$ throwToExceptionSink sink ex)
 
 redirectExceptionToSinkIO :: (MonadCatch m, MonadQuasar m, MonadIO m) => m a -> m (Maybe a)
 redirectExceptionToSinkIO fn = do
-  exChan <- askExceptionSink
+  sink <- askExceptionSink
   (Just <$> fn) `catchAll`
-    \ex -> atomically (Nothing <$ throwToExceptionSink exChan ex)
+    \ex -> atomically (Nothing <$ throwToExceptionSink sink ex)
 {-# SPECIALIZE redirectExceptionToSinkIO :: QuasarIO a -> QuasarIO (Maybe a) #-}
 
 redirectExceptionToSink_ :: (MonadCatch m, MonadQuasar m, MonadSTM m) => m a -> m ()
@@ -286,19 +286,19 @@ redirectExceptionToSinkIO_ fn = void $ redirectExceptionToSinkIO fn
 -- Current behavior: exceptions on the current thread are not handled.
 catchQuasar :: forall e m a. (MonadQuasar m, Exception e) => (e -> STMc NoRetry '[SomeException] ()) -> m a -> m a
 catchQuasar handler fn = do
-  exSink <- catchSink handler <$> askExceptionSink
-  replaceExceptionSink exSink fn
+  sink <- catchSink handler <$> askExceptionSink
+  replaceExceptionSink sink fn
 
 replaceExceptionSink :: MonadQuasar m => ExceptionSink -> m a -> m a
-replaceExceptionSink exSink fn = do
+replaceExceptionSink sink fn = do
   quasar <- askQuasar
-  let q = newQuasar exSink (quasarResourceManager quasar)
+  let q = newQuasar sink (quasarResourceManager quasar)
   localQuasar q fn
 
 -- * Quasar initialization
 
 withQuasar :: ExceptionSink -> QuasarIO a -> IO a
-withQuasar exChan fn = mask \unmask -> do
-  rm <- atomically $ newUnmanagedResourceManagerSTM exChan
-  let quasar = newQuasar exChan rm
+withQuasar sink fn = mask \unmask -> do
+  rm <- atomically $ newUnmanagedResourceManagerSTM
+  let quasar = newQuasar sink rm
   unmask (runQuasarIO quasar fn) `finally` dispose rm
