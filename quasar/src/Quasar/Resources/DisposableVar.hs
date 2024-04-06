@@ -113,6 +113,8 @@ newDisposableVar value = do
 
 -- | Create a new `DisposableVar` that calls a function when it is disposed.
 -- The function selects a disposer, which is then disposed.
+--
+-- The function will only be called once.
 newSpecialDisposableVar ::
   MonadSTMc NoRetry '[] m =>
   (a -> STMc NoRetry '[] Disposer) ->
