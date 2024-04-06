@@ -14,17 +14,17 @@ import Quasar.Resources.DisposableVar
 -- | A Rc is a disposable readonly data structure that can be cloned. Every copy
 -- has an independent lifetime. The content is disposed when all copies of the
 -- Rc are disposed.
-newtype Rc a = Rc (DisposableVar (RcRc a))
+newtype Rc a = Rc (DisposableVar (RcHandle a))
   deriving (Eq, Hashable, Disposable)
 
-data RcRc a = RcRc {
+data RcHandle a = RcHandle {
   -- Refcount that tracks how many locks exists in this group of locks.
   lockCount :: TVar Word64,
   disposer :: Disposer,
   content :: a
 }
 
-decrementRc :: RcRc a -> STMc NoRetry '[] Disposer
+decrementRc :: RcHandle a -> STMc NoRetry '[] Disposer
 decrementRc rc = do
   let lockCount = rc.lockCount
   c <- readTVar lockCount
@@ -62,7 +62,7 @@ tryExtractRc (Rc var) = do
 newRc :: (Disposable a, MonadSTMc NoRetry '[] m) => a -> m (Rc a)
 newRc content = liftSTMc @NoRetry @'[] do
   lockCount <- newTVar 1
-  let rc = RcRc {
+  let rc = RcHandle {
     lockCount,
     disposer = getDisposer content,
     content
@@ -72,7 +72,7 @@ newRc content = liftSTMc @NoRetry @'[] do
 newRcIO :: (Disposable a, MonadIO m) => a -> m (Rc a)
 newRcIO content = liftIO do
   lockCount <- newTVarIO 1
-  let rc = RcRc {
+  let rc = RcHandle {
     lockCount,
     disposer = getDisposer content,
     content
