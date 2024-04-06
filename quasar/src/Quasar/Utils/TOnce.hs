@@ -4,6 +4,7 @@ module Quasar.Utils.TOnce (
   newTOnceIO,
   finalizeTOnce,
   readTOnce,
+  readTOnceIO,
   mapFinalizeTOnce,
 
   -- * Exceptions
@@ -56,6 +57,9 @@ finalizeTOnce (TOnce var) value = liftSTMc @NoRetry @'[TOnceAlreadyFinalized] do
 
 readTOnce :: MonadSTMc NoRetry '[] m => TOnce a b -> m (Either a b)
 readTOnce (TOnce var) = Bifunctor.first fst <$> readTVar var
+
+readTOnceIO :: MonadIO m => TOnce a b -> m (Either a b)
+readTOnceIO (TOnce var) = Bifunctor.first fst <$> readTVarIO var
 
 -- | Finalizes the `TOnce` by running an STM action.
 --

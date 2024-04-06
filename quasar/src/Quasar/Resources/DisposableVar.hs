@@ -5,6 +5,7 @@ module Quasar.Resources.DisposableVar (
   newFnDisposableVar,
   newFnDisposableVarIO,
   tryReadDisposableVar,
+  tryReadDisposableVarIO,
 
   -- * `TDisposable` variant
   TDisposableVar,
@@ -57,6 +58,12 @@ instance Hashable (DisposableVar a) where
 tryReadDisposableVar :: MonadSTMc NoRetry '[] m => DisposableVar a -> m (Maybe a)
 tryReadDisposableVar (DisposableVar _ stateTOnce) = liftSTMc @NoRetry @'[] do
   readTOnce stateTOnce <&> \case
+    Left (_, value) -> Just value
+    _ -> Nothing
+
+tryReadDisposableVarIO :: MonadIO m => DisposableVar a -> m (Maybe a)
+tryReadDisposableVarIO (DisposableVar _ stateTOnce) = liftIO do
+  readTOnceIO stateTOnce <&> \case
     Left (_, value) -> Just value
     _ -> Nothing
 
