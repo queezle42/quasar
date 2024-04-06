@@ -6,14 +6,19 @@ module Quasar.Resources.DisposableVar (
   newFnDisposableVarIO,
   tryReadDisposableVar,
   tryReadDisposableVarIO,
+  tryWriteDisposableVar,
+  tryModifyDisposableVar,
 
   -- * `TDisposable` variant
   TDisposableVar,
   newTDisposableVar,
   newTDisposableVarIO,
   tryReadTDisposableVar,
+  tryWriteTDisposableVar,
+  tryModifyTDisposableVar,
 ) where
 
+import Data.Bifunctor qualified as Bifunctor
 import Data.Hashable (Hashable(..))
 import Quasar.Exceptions (ExceptionSink)
 import Quasar.Future (Future, ToFuture(..), IsFuture(..))
@@ -23,9 +28,7 @@ import Quasar.Utils.CallbackRegistry
 import Quasar.Utils.TOnce
 
 
-type DisposableVarState a = TOnce (a -> STMc NoRetry '[] Disposer, a) (Future [DisposeDependencies])
-
-data DisposableVar a = DisposableVar Unique (DisposableVarState a)
+data DisposableVar a = DisposableVar Unique (TOnce (a -> STMc NoRetry '[] Disposer, a) (Future [DisposeDependencies]))
 
 instance ToFuture () (DisposableVar a) where
   toFuture (DisposableVar _ state) = do
@@ -66,6 +69,23 @@ tryReadDisposableVarIO (DisposableVar _ stateTOnce) = liftIO do
   readTOnceIO stateTOnce <&> \case
     Left (_, value) -> Just value
     _ -> Nothing
+
+-- | Try to write a `DisposableVar`. On success the previous content is
+-- returned.
+--
+-- If the var is already disposed or currently disposing, `Nothing` is returned.
+tryWriteDisposableVar :: MonadSTMc NoRetry '[] m => DisposableVar a -> a -> m (Maybe a)
+tryWriteDisposableVar (DisposableVar _ var) newContent =
+  snd <<$>> tryModifyTOnce var (Bifunctor.second \_ -> newContent)
+
+-- | Try to modify a `DisposableVar`. On success the previous content is
+-- returned.
+--
+-- If the var is already disposed or currently disposing, `Nothing` is returned.
+tryModifyDisposableVar :: MonadSTMc NoRetry '[] m => DisposableVar a -> (a -> a) -> m (Maybe a)
+tryModifyDisposableVar (DisposableVar _ var) fn =
+  snd <<$>> tryModifyTOnce var (Bifunctor.second fn)
+
 
 newFnDisposableVar ::
   MonadSTMc NoRetry '[] m =>
@@ -192,4 +212,17 @@ tryWriteTDisposableVar (TDisposableVar _ var) newContent = do
     TDisposableVarDisposing _ -> pure Nothing
     TDisposableVarAlive oldContent disposeFn callbackRegistry -> do
       writeTVar var (TDisposableVarAlive newContent disposeFn callbackRegistry)
+      pure (Just oldContent)
+
+-- | Try to modify a `TDisposableVar`. On success the previous content is
+-- returned.
+--
+-- If the var is already disposed or currently disposing, `Nothing` is returned.
+tryModifyTDisposableVar :: MonadSTMc NoRetry '[] m => TDisposableVar a -> (a -> a) -> m (Maybe a)
+tryModifyTDisposableVar (TDisposableVar _ var) fn = do
+  readTVar var >>= \case
+    TDisposableVarDisposed -> pure Nothing
+    TDisposableVarDisposing _ -> pure Nothing
+    TDisposableVarAlive oldContent disposeFn callbackRegistry -> do
+      writeTVar var (TDisposableVarAlive (fn oldContent) disposeFn callbackRegistry)
       pure (Just oldContent)
