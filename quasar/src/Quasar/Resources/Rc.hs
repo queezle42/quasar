@@ -10,13 +10,12 @@ module Quasar.Resources.Rc (
 import Quasar.Prelude
 import Quasar.Resources
 import Quasar.Resources.DisposableVar
-import Quasar.Exceptions (ExceptionSink)
 
 -- | A Rc is a disposable readonly data structure that can be cloned. Every copy
 -- has an independent lifetime. The content is disposed when all copies of the
 -- Rc are disposed.
 newtype Rc a = Rc (DisposableVar (RcRc a))
-  deriving Disposable
+  deriving (Eq, Hashable, Disposable)
 
 data RcRc a = RcRc {
   -- Refcount that tracks how many locks exists in this group of locks.
