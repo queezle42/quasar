@@ -86,8 +86,6 @@ instance ToFuture () Disposer where
   toFuture (Disposer ds) = foldMap toFuture ds
 
 
-type DisposerState = TOnce DisposeFnIO (Future ())
-
 data DisposerElement = forall a. IsDisposerElement a => DisposerElement a
 
 instance ToFuture () DisposerElement where
@@ -98,7 +96,7 @@ instance IsDisposerElement DisposerElement where
   disposeEventually# (DisposerElement x) = disposeEventually# x
   beginDispose# (DisposerElement x) = beginDispose# x
 
-data IODisposerElement = IODisposerElement Unique ExceptionSink DisposerState
+data IODisposerElement = IODisposerElement Unique ExceptionSink (TOnce DisposeFnIO (Future ()))
 
 instance ToFuture () IODisposerElement where
   toFuture (IODisposerElement _ _ state) = join (toFuture state)
