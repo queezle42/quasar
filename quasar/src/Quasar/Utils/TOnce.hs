@@ -5,6 +5,7 @@ module Quasar.Utils.TOnce (
   finalizeTOnce,
   readTOnce,
   readTOnceIO,
+  tryWriteTOnce,
   mapFinalizeTOnce,
 
   -- * Exceptions
@@ -60,6 +61,17 @@ readTOnce (TOnce var) = Bifunctor.first fst <$> readTVar var
 
 readTOnceIO :: MonadIO m => TOnce a b -> m (Either a b)
 readTOnceIO (TOnce var) = Bifunctor.first fst <$> readTVarIO var
+
+-- | Writes a TOnce if it has not been finalized before.
+--
+-- If a value was replaced, the old value is returned.
+tryWriteTOnce :: MonadSTMc NoRetry '[] m => TOnce a b -> a -> m (Maybe a)
+tryWriteTOnce (TOnce var) newValue = do
+  readTVar var >>= \case
+    Left (oldValue, callbackRegistry) -> do
+      writeTVar var (Left (newValue, callbackRegistry))
+      pure (Just oldValue)
+    Right _ -> pure Nothing
 
 -- | Finalizes the `TOnce` by running an STM action.
 --
