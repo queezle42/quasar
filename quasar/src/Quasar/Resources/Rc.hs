@@ -68,7 +68,7 @@ newRc content = liftSTMc @NoRetry @'[] do
     disposer = getDisposer content,
     content
   }
-  Rc <$> newDisposableVar decrementRc rc
+  Rc <$> newSpecialDisposableVar decrementRc rc
 
 newRcIO :: (Disposable a, MonadIO m) => a -> m (Rc a)
 newRcIO content = liftIO do
@@ -78,7 +78,7 @@ newRcIO content = liftIO do
     disposer = getDisposer content,
     content
   }
-  Rc <$> newDisposableVarIO decrementRc rc
+  Rc <$> newSpecialDisposableVarIO decrementRc rc
 
 -- | Read the content of the lock, if the lock has not been disposed.
 tryReadRc :: MonadSTMc NoRetry '[] m => Rc a -> m (Maybe a)
@@ -93,5 +93,5 @@ tryDuplicateRc :: MonadSTMc NoRetry '[] m => Rc a -> m (Maybe (Rc a))
 tryDuplicateRc (Rc var) = liftSTMc @NoRetry @'[] do
   tryReadDisposableVar var >>= mapM \rc -> do
     modifyTVar rc.lockCount succ
-    Rc <$> newDisposableVar decrementRc rc
+    Rc <$> newSpecialDisposableVar decrementRc rc
 

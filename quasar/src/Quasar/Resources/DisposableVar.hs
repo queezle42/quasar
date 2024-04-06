@@ -4,6 +4,8 @@ module Quasar.Resources.DisposableVar (
   newDisposableVarIO,
   newFnDisposableVar,
   newFnDisposableVarIO,
+  newSpecialDisposableVar,
+  newSpecialDisposableVarIO,
   tryReadDisposableVar,
   tryReadDisposableVarIO,
   tryWriteDisposableVar,
@@ -87,6 +89,8 @@ tryModifyDisposableVar (DisposableVar _ var) fn =
   snd <<$>> tryModifyTOnce var (Bifunctor.second fn)
 
 
+-- | Create a new `DisposableVar` that runs an `IO` function when it is
+-- disposed.
 newFnDisposableVar ::
   MonadSTMc NoRetry '[] m =>
   ExceptionSink ->
@@ -94,15 +98,27 @@ newFnDisposableVar ::
   a ->
   m (DisposableVar a)
 newFnDisposableVar sink fn = liftSTMc @NoRetry @'[] .
-  newDisposableVar \value -> do
+  newSpecialDisposableVar \value -> do
     newUnmanagedIODisposer (fn value) sink
 
+-- | Create a new `DisposableVar` that disposes the current content using the
+-- `Disposable` instance when the var is disposed.
 newDisposableVar ::
+  (Disposable a, MonadSTMc NoRetry '[] m) =>
+  a ->
+  m (DisposableVar a)
+newDisposableVar value = do
+  key <- newUniqueSTM
+  DisposableVar key <$> newTOnce (pure . getDisposer, value)
+
+-- | Create a new `DisposableVar` that calls a function when it is disposed.
+-- The function selects a disposer, which is then disposed.
+newSpecialDisposableVar ::
   MonadSTMc NoRetry '[] m =>
   (a -> STMc NoRetry '[] Disposer) ->
   a ->
   m (DisposableVar a)
-newDisposableVar fn value = do
+newSpecialDisposableVar fn value = do
   key <- newUniqueSTM
   DisposableVar key <$> newTOnce (fn, value)
 
@@ -113,15 +129,23 @@ newFnDisposableVarIO ::
   a ->
   m (DisposableVar a)
 newFnDisposableVarIO sink fn = liftIO .
-  newDisposableVarIO \value -> do
+  newSpecialDisposableVarIO \value -> do
     newUnmanagedIODisposer (fn value) sink
 
 newDisposableVarIO ::
+  (Disposable a, MonadIO m) =>
+  a ->
+  m (DisposableVar a)
+newDisposableVarIO value = liftIO do
+  key <- newUnique
+  DisposableVar key <$> newTOnceIO (pure . getDisposer, value)
+
+newSpecialDisposableVarIO ::
   MonadIO m =>
   (a -> STMc NoRetry '[] Disposer) ->
   a ->
   m (DisposableVar a)
-newDisposableVarIO fn value = do
+newSpecialDisposableVarIO fn value = liftIO do
   key <- newUnique
   DisposableVar key <$> newTOnceIO (fn, value)
 
