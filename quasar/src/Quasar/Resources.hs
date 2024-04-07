@@ -59,6 +59,7 @@ module Quasar.Resources (
 
   -- * Utils
   futureDisposer,
+  futureDisposerGeneric,
 
   -- * Implementing disposers
   IsDisposerElement(..),

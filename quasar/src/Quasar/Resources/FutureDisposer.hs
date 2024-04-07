@@ -1,5 +1,6 @@
 module Quasar.Resources.FutureDisposer (
   futureDisposer,
+  futureDisposerGeneric,
 ) where
 
 import Quasar.Prelude
@@ -42,3 +43,6 @@ futureDisposer future = do
   key <- newUniqueSTM
   var <- newTOnce future
   pure (getDisposer (FutureDisposer key var))
+
+futureDisposerGeneric :: (Disposable a, MonadSTMc NoRetry '[] m) => Future a -> m Disposer
+futureDisposerGeneric x = liftSTMc (futureDisposer (getDisposer <$> x))
