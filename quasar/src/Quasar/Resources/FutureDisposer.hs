@@ -40,9 +40,15 @@ instance Disposable FutureDisposer where
 
 futureDisposer :: Future Disposer -> STMc NoRetry '[] Disposer
 futureDisposer future = do
-  key <- newUniqueSTM
-  var <- newTOnce future
-  pure (getDisposer (FutureDisposer key var))
+  peekFuture future >>= \case
+    Just disposer ->
+      -- Simply pass through the disposer if the future is already completed or
+      -- trivial.
+      pure disposer
+    Nothing -> do
+      key <- newUniqueSTM
+      var <- newTOnce future
+      pure (getDisposer (FutureDisposer key var))
 
 futureDisposerGeneric :: (Disposable a, MonadSTMc NoRetry '[] m) => Future a -> m Disposer
 futureDisposerGeneric x = liftSTMc (futureDisposer (getDisposer <$> x))
