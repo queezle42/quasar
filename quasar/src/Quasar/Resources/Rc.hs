@@ -3,6 +3,7 @@ module Quasar.Resources.Rc (
   newRc,
   newRcIO,
   tryReadRc,
+  tryReadRcIO,
   tryDuplicateRc,
   tryExtractRc,
 ) where
@@ -80,6 +81,11 @@ newRcIO content = liftIO do
 tryReadRc :: MonadSTMc NoRetry '[] m => Rc a -> m (Maybe a)
 tryReadRc (Rc var) = liftSTMc @NoRetry @'[] do
   (.content) <<$>> tryReadDisposableVar var
+
+-- | Read the content of the lock, if the lock has not been disposed.
+tryReadRcIO :: MonadIO m => Rc a -> m (Maybe a)
+tryReadRcIO (Rc var) = liftIO do
+  (.content) <<$>> tryReadDisposableVarIO var
 
 -- | Produces a _new_ lock that points to the same content, but has an
 -- independent lifetime. The caller has to ensure the new lock is disposed.
