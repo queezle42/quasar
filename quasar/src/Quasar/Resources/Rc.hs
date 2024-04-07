@@ -6,11 +6,14 @@ module Quasar.Resources.Rc (
   tryReadRcIO,
   tryDuplicateRc,
   tryExtractRc,
+  consumeRc,
 ) where
 
 import Quasar.Prelude
 import Quasar.Resources
 import Quasar.Resources.DisposableVar
+import Quasar.Exceptions (mkDisposedException)
+import Control.Exception (finally)
 
 -- | A Rc is a disposable readonly data structure that can be cloned. Every copy
 -- has an independent lifetime. The content is disposed when all copies of the
@@ -97,3 +100,9 @@ tryDuplicateRc (Rc var) = liftSTMc @NoRetry @'[] do
     modifyTVar rc.lockCount succ
     Rc <$> newSpecialDisposableVar decrementRc rc
 
+consumeRc :: Rc a -> (a -> IO b) -> IO b
+consumeRc rc fn = do
+  flip finally (dispose rc) do
+    tryReadRcIO rc >>= \case
+      Nothing -> liftIO $ throwC mkDisposedException
+      Just content -> fn content
