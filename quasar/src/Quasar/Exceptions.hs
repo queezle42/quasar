@@ -13,6 +13,11 @@ module Quasar.Exceptions (
   AsyncException(..),
   isCancelAsync,
   isAsyncDisposed,
+
+  DisposedException(..),
+  mkDisposedException,
+  isDisposedException,
+
   DisposeException(..),
   isDisposeException,
   FailedToAttachResource(..),
@@ -24,7 +29,7 @@ module Quasar.Exceptions (
 
 import Control.Monad.Catch
 import Quasar.Prelude
-import GHC.Stack (CallStack, callStack)
+import GHC.Stack (CallStack, callStack, popCallStack)
 import GHC.Exception (prettyCallStack)
 
 
@@ -93,6 +98,23 @@ isCancelAsync _ = False
 isAsyncDisposed :: SomeException -> Bool
 isAsyncDisposed (fromException @AsyncDisposed -> Just _) = True
 isAsyncDisposed _ = False
+
+
+
+
+newtype DisposedException = DisposedException CallStack
+instance Show DisposedException where
+  showsPrec d (DisposedException cs) = showParen (d > 10) $ showString "DisposedException " . showsPrec 11 cs
+instance Exception DisposedException where
+  displayException (DisposedException cs) =
+    "DisposedException: Trying to use a disposed resource:\n" <> prettyCallStack cs
+
+mkDisposedException :: HasCallStack => DisposedException
+mkDisposedException = DisposedException (popCallStack callStack)
+
+isDisposedException :: SomeException -> Bool
+isDisposedException (fromException @DisposedException -> Just _) = True
+isDisposedException _ = False
 
 
 
