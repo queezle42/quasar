@@ -63,13 +63,13 @@ class Disposable a where
   getDisposer :: a -> Disposer
 
 
-isDisposed :: Disposable a => a -> Future ()
+isDisposed :: Disposable a => a -> Future '[] ()
 isDisposed r = toFuture (getDisposer r)
 
 
-class ToFuture () a => IsDisposerElement a where
+class ToFuture '[] () a => IsDisposerElement a where
   disposerElementKey :: a -> Unique
-  disposeEventually# :: a -> STMc NoRetry '[] (Future ())
+  disposeEventually# :: a -> STMc NoRetry '[] (Future '[] ())
   beginDispose# :: a -> STMc NoRetry '[] DisposeResult
   beginDispose# disposer = DisposeResultAwait <$> disposeEventually# disposer
 
@@ -83,13 +83,13 @@ newtype Disposer = Disposer [DisposerElement]
 instance Disposable Disposer where
   getDisposer = id
 
-instance ToFuture () Disposer where
+instance ToFuture '[] () Disposer where
   toFuture (Disposer ds) = foldMap toFuture ds
 
 
 data DisposerElement = forall a. IsDisposerElement a => DisposerElement a
 
-instance ToFuture () DisposerElement where
+instance ToFuture '[] () DisposerElement where
   toFuture (DisposerElement x) = toFuture x
 
 instance IsDisposerElement DisposerElement where
@@ -97,16 +97,16 @@ instance IsDisposerElement DisposerElement where
   disposeEventually# (DisposerElement x) = disposeEventually# x
   beginDispose# (DisposerElement x) = beginDispose# x
 
-data IODisposerElement = IODisposerElement Unique ExceptionSink (TOnce DisposeFnIO (Future ()))
+data IODisposerElement = IODisposerElement Unique ExceptionSink (TOnce DisposeFnIO (Future '[] ()))
 
-instance ToFuture () IODisposerElement where
+instance ToFuture '[] () IODisposerElement where
   toFuture (IODisposerElement _ _ state) = join (toFuture state)
 
 instance IsDisposerElement IODisposerElement where
   disposerElementKey (IODisposerElement key _ _) = key
   disposeEventually# (IODisposerElement _ sink disposeState) = do
     mapFinalizeTOnce disposeState \fn ->
-      void . toFuture <$> forkFutureSTM (wrapDisposeException fn) sink
+      void . tryAllC <$> forkFutureSTM (wrapDisposeException fn) sink
 
 wrapDisposeException :: MonadCatch m => m a -> m a
 wrapDisposeException fn = fn `catchAll` \ex -> throwM (DisposeException ex)
@@ -141,7 +141,7 @@ instance IsDisposerElement TDisposerElement where
   disposeEventually# (TDisposerElement x) = disposeEventually# x
   beginDispose# (TDisposerElement x) = beginDispose# x
 
-instance ToFuture () TDisposerElement where
+instance ToFuture '[] () TDisposerElement where
   toFuture (TDisposerElement x) = toFuture x
 
 -- | In case of reentry this might return before disposing is completed.
@@ -152,8 +152,8 @@ disposeSTM x =
 
 
 data TSimpleDisposerState
-  = TSimpleDisposerNormal (STMc NoRetry '[] ()) (CallbackRegistry ())
-  | TSimpleDisposerDisposing (CallbackRegistry ())
+  = TSimpleDisposerNormal (STMc NoRetry '[] ()) (CallbackRegistry (Either (Ex '[]) ()))
+  | TSimpleDisposerDisposing (CallbackRegistry (Either (Ex '[]) ()))
   | TSimpleDisposerDisposed
 
 data TSimpleDisposerElement = TSimpleDisposerElement Unique (TVar TSimpleDisposerState)
@@ -173,23 +173,23 @@ disposeTSimpleDisposerElement (TSimpleDisposerElement _ var) =
       writeTVar var (TSimpleDisposerDisposing isDisposedRegistry)
       fn
       writeTVar var TSimpleDisposerDisposed
-      callCallbacks isDisposedRegistry ()
+      callCallbacks isDisposedRegistry (Right ())
     TSimpleDisposerDisposing _ ->
       -- Doing nothing results in the documented behavior.
       pure ()
     TSimpleDisposerDisposed -> pure ()
 
-instance ToFuture () TSimpleDisposerElement
+instance ToFuture '[] () TSimpleDisposerElement
 
-instance IsFuture () TSimpleDisposerElement where
+instance IsFuture '[] () TSimpleDisposerElement where
   readFuture# (TSimpleDisposerElement _ stateVar) = do
     readTVar stateVar >>= \case
-      TSimpleDisposerDisposed -> pure ()
+      TSimpleDisposerDisposed -> pure (Right ())
       _ -> retry
 
   readOrAttachToFuture# (TSimpleDisposerElement _ stateVar) callback = do
     readTVar stateVar >>= \case
-      TSimpleDisposerDisposed -> pure (Right ())
+      TSimpleDisposerDisposed -> pure (Right (Right ()))
       TSimpleDisposerDisposing registry -> Left <$> registerDisposedCallback registry
       TSimpleDisposerNormal _ registry -> Left <$> registerDisposedCallback registry
     where
@@ -203,14 +203,14 @@ instance IsFuture () TSimpleDisposerElement where
             callback value
             disposeTDisposer disposer
 
-instance ToFuture () TDisposer where
+instance ToFuture '[] () TDisposer where
   toFuture (TDisposer elements) = mconcat $ toFuture <$> elements
 
 
 data RetryDisposerElement canRetry
-  = canRetry ~ Retry => RetryTDisposerElement Unique (TOnce (STMc Retry '[] ()) (Future ()))
+  = canRetry ~ Retry => RetryTDisposerElement Unique (TOnce (STMc Retry '[] ()) (Future '[] ()))
 
-instance ToFuture () (RetryDisposerElement canRetry) where
+instance ToFuture '[] () (RetryDisposerElement canRetry) where
   toFuture (RetryTDisposerElement _ state) = join (toFuture state)
 
 instance IsDisposerElement (RetryDisposerElement canRetry) where
@@ -223,7 +223,7 @@ wrapSTM :: ExceptionSink -> STM () -> STMc Retry '[] ()
 wrapSTM sink fn =
   catchAllSTMc @Retry @'[SomeException]
     (liftSTM fn)
-    \ex -> throwToExceptionSink sink (DisposeException ex)
+    \ex -> throwToExceptionSink sink (DisposeException (toException ex))
 
 newUnmanagedSTMDisposer :: MonadSTMc NoRetry '[] m => STM () -> ExceptionSink -> m Disposer
 newUnmanagedSTMDisposer fn sink = do
@@ -285,7 +285,7 @@ newUnmanagedIODisposer fn exChan = do
 dispose :: (MonadIO m, Disposable r) => r -> m ()
 dispose resource = liftIO $ await =<< atomically (disposeEventually resource)
 
-disposeEventually :: (Disposable a, MonadSTMc NoRetry '[] m) => a -> m (Future ())
+disposeEventually :: (Disposable a, MonadSTMc NoRetry '[] m) => a -> m (Future '[] ())
 disposeEventually (getDisposer -> Disposer ds) = liftSTMc do
   mconcat <$> mapM disposeEventually# ds
 
@@ -294,24 +294,24 @@ disposeEventually_ resource = void $ disposeEventually resource
 
 
 data DisposeResult
-  = DisposeResultAwait (Future ())
+  = DisposeResultAwait (Future '[] ())
   | DisposeResultDependencies DisposeDependencies
 
-data DisposeDependencies = DisposeDependencies Unique (Future [DisposeDependencies])
+data DisposeDependencies = DisposeDependencies Unique (Future '[] [DisposeDependencies])
 
 -- Combine the futures of all DisposeDependencies. The resulting future might be
 -- expensive.
-flattenDisposeDependencies :: DisposeDependencies -> Future ()
+flattenDisposeDependencies :: DisposeDependencies -> Future '[] ()
 flattenDisposeDependencies = void . go mempty
   where
-    go :: HashSet Unique -> DisposeDependencies -> Future (HashSet Unique)
+    go :: HashSet Unique -> DisposeDependencies -> Future '[] (HashSet Unique)
     go keys (DisposeDependencies key deps)
       | HashSet.member key keys = pure keys -- loop detection: dependencies were already handled
       | otherwise = do
-          dependencies <- await deps
+          dependencies <- deps
           foldM go (HashSet.insert key keys) dependencies
 
-beginDisposeDisposer :: Disposer -> STMc NoRetry '[] (Future [DisposeDependencies])
+beginDisposeDisposer :: Disposer -> STMc NoRetry '[] (Future '[] [DisposeDependencies])
 beginDisposeDisposer (Disposer elements) = do
   mapM beginDispose# elements <&> \results -> do
     catMaybes <$> forM results \case
@@ -328,18 +328,18 @@ data ResourceManager = ResourceManager {
   resourceManagerIsDisposed :: Promise ()
 }
 
-isDisposing :: ResourceManager -> Future ()
+isDisposing :: ResourceManager -> Future '[] ()
 isDisposing rm = toFuture (resourceManagerIsDisposing rm)
 
 data ResourceManagerState
   = ResourceManagerNormal (TVar (HashMap Unique DisposerElement))
-  | ResourceManagerDisposing (Future [DisposeDependencies])
+  | ResourceManagerDisposing (Future '[] [DisposeDependencies])
   | ResourceManagerDisposed
 
 instance Disposable ResourceManager where
   getDisposer rm = mkDisposer [rm]
 
-instance ToFuture () ResourceManager where
+instance ToFuture '[] () ResourceManager where
   toFuture rm = toFuture (resourceManagerIsDisposed rm)
 
 instance IsDisposerElement ResourceManager where
@@ -380,9 +380,9 @@ tryAttachDisposer resourceManager disposer = do
     ResourceManagerNormal attachedResources -> do
       alreadyAttached <- isJust . HM.lookup key <$> readTVar attachedResources
       unless alreadyAttached do
-        attachedResult <- readOrAttachToFuture_ disposer \() -> finalizerCallback
+        attachedResult <- readOrAttachToFuture_ disposer \_ -> finalizerCallback
         case attachedResult of
-          Just () -> pure () -- Already disposed
+          Just _ -> pure () -- Already disposed
           Nothing -> modifyTVar attachedResources (HM.insert key disposer)
       pure $ Right ()
     _ -> pure $ Left FailedToAttachResource
@@ -436,7 +436,7 @@ beginDisposeResourceManagerInternal rm = do
     rmKey :: Unique
     rmKey = resourceManagerKey rm
 
-    collectDependencies :: [DisposeResult] -> Future [DisposeDependencies]
+    collectDependencies :: [DisposeResult] -> Future '[] [DisposeDependencies]
     collectDependencies (DisposeResultAwait future : xs) = future >> collectDependencies xs
     collectDependencies (DisposeResultDependencies deps : xs) = (deps : ) <$> collectDependencies xs
     collectDependencies [] = pure []

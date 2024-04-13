@@ -156,7 +156,7 @@ registerNewResource_ :: forall a m. (Disposable a, MonadQuasar m, MonadIO m, Mon
 registerNewResource_ = void . registerNewResource
 
 
-disposeEventuallyIO :: (Disposable r, MonadIO m) => r -> m (Future ())
+disposeEventuallyIO :: (Disposable r, MonadIO m) => r -> m (Future '[] ())
 disposeEventuallyIO res = atomically $ disposeEventually res
 
 disposeEventuallyIO_ :: (Disposable r, MonadIO m) => r -> m ()

@@ -47,7 +47,7 @@ data Async a = Async (FutureEx '[AsyncException, AsyncDisposed] a) Disposer
 instance Disposable (Async a) where
   getDisposer (Async _ disposer) = disposer
 
-instance ToFuture (Either (Ex '[AsyncException, AsyncDisposed]) a) (Async a) where
+instance ToFuture '[AsyncException, AsyncDisposed] a (Async a) where
   toFuture (Async future _) = toFuture future
 
 
@@ -107,7 +107,7 @@ spawnAsync registerDisposerFn exSink fn = withFrozenCallStack $ mask_ do
 
   pure (Async (toFutureEx resultVar) disposer)
   where
-    disposeFn :: Unique -> PromiseEx '[AsyncException, AsyncDisposed] a -> Future (Maybe ThreadId) -> IO ()
+    disposeFn :: Unique -> PromiseEx '[AsyncException, AsyncDisposed] a -> Future '[] (Maybe ThreadId) -> IO ()
     disposeFn key resultVar threadIdFuture = do
       -- ThreadId future will be filled after the thread is forked
       await threadIdFuture >>= mapM_ \threadId -> do
@@ -182,7 +182,7 @@ unmanagedAsyncWithUnmaskSTM exSink fn = liftSTMc @NoRetry @'[] do
 
       pure (Async (toFutureEx resultVar) disposer, threadId)
   where
-    disposeFn :: Unique -> PromiseEx '[AsyncException, AsyncDisposed] a -> Future ThreadId -> IO ()
+    disposeFn :: Unique -> PromiseEx '[AsyncException, AsyncDisposed] a -> Future '[] ThreadId -> IO ()
     disposeFn key resultVar threadIdFuture = do
       -- ThreadId future will be filled after the thread is forked
       threadId <- await threadIdFuture

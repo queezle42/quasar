@@ -8,7 +8,7 @@ import Quasar.Future
 import Quasar.Resources.Disposer
 import Quasar.Utils.TOnce
 
-data FutureDisposer = FutureDisposer Unique (TOnce (Future Disposer) (Future [DisposeDependencies]))
+data FutureDisposer = FutureDisposer Unique (TOnce (Future '[] Disposer) (Future '[] [DisposeDependencies]))
 
 instance IsDisposerElement FutureDisposer where
   disposerElementKey (FutureDisposer key _) = key
@@ -22,7 +22,7 @@ instance IsDisposerElement FutureDisposer where
     fdeps <- mapFinalizeTOnce var \future -> do
 
       promise <- newPromise
-      callOnceCompleted_ future \disposer -> do
+      callOnceCompleted_ future \(RightAbsurdEx disposer) -> do
         fdeps <- beginDisposeDisposer disposer
         tryFulfillPromise_ promise fdeps
 
@@ -30,7 +30,7 @@ instance IsDisposerElement FutureDisposer where
 
     pure (DisposeResultDependencies (DisposeDependencies key fdeps))
 
-instance ToFuture () FutureDisposer where
+instance ToFuture '[] () FutureDisposer where
   toFuture (FutureDisposer _ var) = do
     deps <- join (toFuture var)
     mapM_ flattenDisposeDependencies deps
@@ -38,10 +38,10 @@ instance ToFuture () FutureDisposer where
 instance Disposable FutureDisposer where
   getDisposer x = mkDisposer [x]
 
-futureDisposer :: Future Disposer -> STMc NoRetry '[] Disposer
+futureDisposer :: Future '[] Disposer -> STMc NoRetry '[] Disposer
 futureDisposer future = do
   peekFuture future >>= \case
-    Just disposer ->
+    Just (RightAbsurdEx disposer) ->
       -- Simply pass through the disposer if the future is already completed or
       -- trivial.
       pure disposer
@@ -50,5 +50,5 @@ futureDisposer future = do
       var <- newTOnce future
       pure (getDisposer (FutureDisposer key var))
 
-futureDisposerGeneric :: (Disposable a, MonadSTMc NoRetry '[] m) => Future a -> m Disposer
+futureDisposerGeneric :: (Disposable a, MonadSTMc NoRetry '[] m) => Future '[] a -> m Disposer
 futureDisposerGeneric x = liftSTMc (futureDisposer (getDisposer <$> x))

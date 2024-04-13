@@ -23,20 +23,20 @@ data TOnceAlreadyFinalized = TOnceAlreadyFinalized
 
 instance Exception TOnceAlreadyFinalized
 
-newtype TOnce a b = TOnce (TVar (Either (a, CallbackRegistry b) b))
+newtype TOnce a b = TOnce (TVar (Either (a, CallbackRegistry (Either (Ex '[]) b)) b))
 
-instance ToFuture b (TOnce a b)
+instance ToFuture '[] b (TOnce a b)
 
-instance IsFuture b (TOnce a b) where
+instance IsFuture '[] b (TOnce a b) where
   readFuture# (TOnce var) =
     readTVar var >>= \case
       Left _ -> retry
-      Right value -> pure value
+      Right value -> pure (Right value)
 
   readOrAttachToFuture# (TOnce var) callback = do
     readTVar var >>= \case
       Left (_, registry) -> Left <$> registerCallback registry callback
-      Right value -> pure (Right value)
+      Right value -> pure (Right (Right value))
 
 newTOnce :: MonadSTMc NoRetry '[] m => a -> m (TOnce a b)
 newTOnce initial = liftSTMc do
@@ -54,7 +54,7 @@ finalizeTOnce (TOnce var) value = liftSTMc @NoRetry @'[TOnceAlreadyFinalized] do
   readTVar var >>= \case
     Left (_, registry) -> do
       writeTVar var (Right value)
-      liftSTMc $ callCallbacks registry value
+      liftSTMc $ callCallbacks registry (Right value)
     Right _ -> throwC TOnceAlreadyFinalized
 
 readTOnce :: MonadSTMc NoRetry '[] m => TOnce a b -> m (Either a b)
@@ -88,14 +88,14 @@ tryModifyTOnce (TOnce var) fn = do
 -- | Finalizes the `TOnce` by running an STM action.
 --
 -- Reentrant-safe.
-mapFinalizeTOnce :: MonadSTMc NoRetry '[] m => TOnce a (Future b) -> (a -> m (Future b)) -> m (Future b)
+mapFinalizeTOnce :: MonadSTMc NoRetry '[] m => TOnce a (Future '[] b) -> (a -> m (Future '[] b)) -> m (Future '[] b)
 mapFinalizeTOnce (TOnce var) fn = do
   readTVar var >>= \case
     Left (initial, registry) -> do
       promise <- newPromise
       let future = join (toFuture promise)
       writeTVar var (Right future)
-      liftSTMc $ callCallbacks registry future
+      liftSTMc $ callCallbacks registry (Right future)
       final <- fn initial
       tryFulfillPromise_ promise final
       pure final

@@ -9,12 +9,14 @@ module Quasar.Future (
 
   -- * Future
   ToFuture(..),
+  toFutureEx,
   readFuture,
   readOrAttachToFuture,
   readOrAttachToFuture_,
   callOnceCompleted,
   callOnceCompleted_,
   mapFuture,
+  relaxFuture,
   cacheFuture,
   IsFuture(..),
   Future,

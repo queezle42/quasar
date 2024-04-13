@@ -1431,22 +1431,6 @@ bindObservableT fx fn = ObservableT (BindObservable @canLoad @exceptions fx rhsH
       rhsHandler (ObservableResultEx ex) = ObservableT (ObservableStateLiveEx ex)
 
 
-instance IsObservableCore Load '[] Identity v (Future v) where
-  readObservable# future = do
-    peekFuture future <&> \case
-      Nothing -> ObservableStateLoading
-      Just value -> ObservableStateLive (ObservableResultOk (Identity value))
-
-  attachObserver# future callback = do
-    initial <- readOrAttachToFuture# future \value ->
-      callback (ObservableChangeLiveReplace (ObservableResultOk (Identity value)))
-    pure case initial of
-      Left disposer -> (disposer, ObservableStateLoading)
-      Right value -> (mempty, ObservableStateLive (ObservableResultOk (Identity value)))
-
-instance ToObservableT Load '[] Identity v (Future v) where
-  toObservableT = ObservableT
-
 
 instance IsObservableCore Load exceptions Identity v (FutureEx exceptions v) where
   readObservable# future = do

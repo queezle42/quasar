@@ -104,15 +104,15 @@ observeSTM observable callback = liftSTMc do
   pure disposer
 
 
-instance ToObservable (Maybe r) (Future r)
+instance ToObservable (Maybe r) (Future '[] r)
 
-instance IsObservable (Maybe r) (Future r) where
-  readObservable# future = orElseNothing @'[] (readFuture future)
+instance IsObservable (Maybe r) (Future '[] r) where
+  readObservable# future = orElseNothing @'[] (fromEitherEx <$> readFuture future)
 
   attachObserver# future callback = do
-    readOrAttachToFuture future (callback . Just) >>= \case
+    readOrAttachToFuture future (callback . Just . fromEitherEx) >>= \case
       Left disposer -> pure (disposer, Nothing)
-      Right value -> pure (mempty, Just value)
+      Right (RightAbsurdEx value) -> pure (mempty, Just value)
 
   cacheObservable# future = toObservable <$> cacheFuture# future
 

@@ -101,7 +101,7 @@ data Multiplexer = Multiplexer {
   disposer :: Disposer,
   multiplexerException :: Promise MultiplexerException,
   multiplexerResult :: Promise (Maybe MultiplexerException),
-  receiveThreadCompleted :: Future (),
+  receiveThreadCompleted :: Future '[] (),
   -- Set to true after magic bytes have been received
   receivedHeader :: TVar Bool,
   outbox :: TVar [OutboxMessage],
@@ -368,7 +368,7 @@ newMultiplexer side connection = liftQuasarIO $ mask_ do
     mapM_ (atomically . throwToExceptionSink exceptionSink) mException
   pure rootChannel
 
-newMultiplexerInternal :: MultiplexerSide -> Connection -> QuasarIO (RawChannel, Future (Maybe MultiplexerException))
+newMultiplexerInternal :: MultiplexerSide -> Connection -> QuasarIO (RawChannel, Future '[] (Maybe MultiplexerException))
 newMultiplexerInternal side connection = disposeOnError do
   -- The multiplexer returned by `askResourceManager` is created by
   -- `disposeOnError`, so it can be used as a disposable without accidentally
@@ -396,8 +396,8 @@ newMultiplexerInternal side connection = disposeOnError do
         sendThread multiplexer connection.send
 
       let
-        sendThreadCompleted = void $ toFuture sendTask
-        receiveThreadCompleted = void $ toFuture receiveTask
+        sendThreadCompleted = void $ tryAllC (toFuture sendTask)
+        receiveThreadCompleted = void $ tryAllC (toFuture receiveTask)
 
       registerDisposeActionIO_ do
         -- NOTE The network connection should be closed automatically when the root channel is closed.
@@ -420,7 +420,7 @@ newMultiplexerInternal side connection = disposeOnError do
 
         connection.close
 
-        fulfillPromiseIO multiplexerResult =<< peekFutureIO (toFuture multiplexerException)
+        fulfillPromiseIO multiplexerResult . fmap fromEitherEx =<< peekFutureIO (toFuture multiplexerException)
 
       pure Multiplexer {
         side,
@@ -475,7 +475,7 @@ sendThread multiplexer sendFn = do
       join $ atomically do
         peekFuture (toFuture multiplexer.multiplexerException) >>= \case
           -- Send exception (if required for that exception type) and then terminate send loop
-          Just fatalException -> pure $ sendException fatalException
+          Just (RightAbsurdEx fatalException) -> pure $ sendException fatalException
           Nothing -> do
             messages <- swapTVar multiplexer.outbox []
             case messages of
@@ -705,7 +705,7 @@ sendRawChannelMessageDeferred channel msgHook = liftIO do
           Right (msg, result) -> do
             tryFulfillPromise_ promise (Right result)
             pure (Just msg)
-  awaitEx promise
+  await (toFutureEx promise)
 
 sendRawChannelMessageDeferred_ :: MonadIO m => RawChannel -> (SendMessageContext -> STMc NoRetry '[AbortSend] BSL.ByteString) -> m ()
 sendRawChannelMessageDeferred_ channel fn =  sendRawChannelMessageDeferred channel ((,()) <<$>> fn)
@@ -726,7 +726,7 @@ sendRawChannelMessageInternal queueBehavior channel@RawChannel{multiplexer} msgH
   -- NOTE At most one message can be queued per STM transaction, so `sendChannelMessage` cannot be changed to STM
 
   -- Abort if the multiplexer is finished or currently cleaning up
-  mapM_ throwC =<< peekFuture (toFuture multiplexer.multiplexerException)
+  mapM_ throwC . fmap fromEitherEx =<< peekFuture (toFuture multiplexer.multiplexerException)
 
   -- Abort if the channel is closed
   liftSTMc $ verifyChannelIsConnected channel

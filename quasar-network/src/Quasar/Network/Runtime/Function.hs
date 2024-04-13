@@ -43,7 +43,7 @@ instance NetworkObject a => NetworkFunction (IO (FutureEx '[SomeException] a)) w
   handleNetworkFunctionCall fn callChannel _callContext = pure do
     future <- liftIO fn
     async_ do
-      result <- await future
+      result <- await (tryAllC future)
       case result of
         Left ex -> do
           -- TODO send exception before closing channel
@@ -58,7 +58,7 @@ instance NetworkObject a => NetworkFunction (IO (FutureEx '[SomeException] a)) w
     promise <- newPromiseIO
     sendChannelMessageDeferred_ functionChannel \context -> do
       addChannelMessagePart context \callChannel callContext -> do
-        callOnceCompleted_ (isDisposed callChannel) (\() -> tryFulfillPromise_ promise (Left (toEx NetworkFunctionException)))
+        callOnceCompleted_ (isDisposed callChannel) (\_ -> tryFulfillPromise_ promise (Left (toEx NetworkFunctionException)))
         forM_ args \(NetworkArgument arg) -> provideObjectAsMessagePart callContext arg
         pure ((), callResponseHandler promise callChannel)
       pure NetworkCallRequest

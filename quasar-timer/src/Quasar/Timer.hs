@@ -52,8 +52,8 @@ instance Ord Timer where
 instance Disposable Timer where
   getDisposer Timer{disposer} = disposer
 
-instance ToFuture (Either (Ex '[TimerCancelled]) ()) Timer where
-  toFuture Timer{completed} = toFuture completed
+instance ToFuture '[TimerCancelled] () Timer where
+  toFuture Timer{completed} = toFutureEx completed
 
 
 data TimerScheduler = TimerScheduler {
@@ -118,7 +118,7 @@ startSchedulerThread scheduler = async (schedulerThread `finally` liftIO cancelA
     wait :: Timer -> Int -> QuasarIO ()
     wait nextTimer microseconds = do
       delay <- newDelay microseconds
-      atomically $ (void $ readFuture delay) `orElse` nextTimerChanged
+      atomically $ void (readFuture delay) `orElse` nextTimerChanged
       dispose delay
       where
         nextTimerChanged :: STM ()
@@ -194,8 +194,7 @@ newUnmanagedTimer scheduler time = liftIO do
 
 sleepUntil :: MonadIO m => TimerScheduler -> UTCTime -> m ()
 sleepUntil scheduler time = liftIO do
-  result <- bracketOnError (newUnmanagedTimer scheduler time) dispose await
-  either throwM pure result
+  bracketOnError (newUnmanagedTimer scheduler time) dispose await
 
 
 -- | Provides an `IsFuture` instance that can be awaited successfully after a given number of microseconds.
@@ -204,8 +203,9 @@ sleepUntil scheduler time = liftIO do
 newtype Delay = Delay (Async ())
   deriving newtype Disposable
 
-instance ToFuture (Either (Ex '[TimerCancelled]) ()) Delay where
-  toFuture (Delay task) = Bifunctor.first (const (toEx @'[TimerCancelled] TimerCancelled)) <$> toFuture task
+instance ToFuture '[TimerCancelled] () Delay where
+  --toFuture (Delay task) = Bifunctor.first (const (toEx @'[TimerCancelled] TimerCancelled)) <$> toFuture task
+  toFuture (Delay task) = relaxFuture (tryAllC (toFuture task)) >>= either (\_ -> throwC TimerCancelled) pure
 
 newDelay :: (MonadQuasar m, MonadIO m) => Int -> m Delay
 newDelay microseconds = Delay <$> async (liftIO (threadDelay microseconds))

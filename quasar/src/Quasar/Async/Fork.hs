@@ -46,7 +46,7 @@ forkJobQueue = unsafePerformIO do
   pure queue
 {-# NOINLINE forkJobQueue #-}
 
-queueForkIOWithUnmaskSTM :: MonadSTMc NoRetry '[] m => ((forall a. IO a -> IO a) -> IO ()) -> m (Future ThreadId)
+queueForkIOWithUnmaskSTM :: MonadSTMc NoRetry '[] m => ((forall a. IO a -> IO a) -> IO ()) -> m (Future '[] ThreadId)
 queueForkIOWithUnmaskSTM job = do
   promise <- newPromise
   writeTQueue forkJobQueue $ Job job (Just promise)
@@ -61,7 +61,7 @@ queueForkIOWithUnmaskSTM_ job = do
 
 forkSTM ::
   MonadSTMc NoRetry '[] m =>
-  IO () -> ExceptionSink -> m (Future ThreadId)
+  IO () -> ExceptionSink -> m (Future '[] ThreadId)
 forkSTM fn = forkWithUnmaskSTM (\unmask -> unmask fn)
 
 forkSTM_ :: MonadSTMc NoRetry '[] m => IO () -> ExceptionSink -> m ()
@@ -69,7 +69,7 @@ forkSTM_ fn = forkWithUnmaskSTM_ (\unmask -> unmask fn)
 
 forkSTMcSTM ::
   MonadSTMc NoRetry '[] m =>
-  STMc Retry '[] () -> m (Future ThreadId)
+  STMc Retry '[] () -> m (Future '[] ThreadId)
 forkSTMcSTM fn = queueForkIOWithUnmaskSTM (\unmask -> unmask (atomicallyC fn))
 
 forkSTMcSTM_ ::
@@ -80,7 +80,7 @@ forkSTMcSTM_ fn = queueForkIOWithUnmaskSTM_ (\unmask -> unmask (atomicallyC fn))
 
 forkWithUnmaskSTM ::
   MonadSTMc NoRetry '[] m =>
-  ((forall a. IO a -> IO a) -> IO ()) -> ExceptionSink -> m (Future ThreadId)
+  ((forall a. IO a -> IO a) -> IO ()) -> ExceptionSink -> m (Future '[] ThreadId)
 forkWithUnmaskSTM fn sink = queueForkIOWithUnmaskSTM (wrapWithExceptionSink fn sink)
 
 forkWithUnmaskSTM_ ::
@@ -122,7 +122,7 @@ forkOnRetry f sink = liftSTMc $ fx `orElseC` fy
         (pure <$> liftSTM f)
         \ex -> do
           throwToExceptionSink sink ex
-          pure (throwC (AsyncException ex))
+          pure (throwC (AsyncException (toException ex)))
     fy :: STMc NoRetry '[] (FutureEx '[AsyncException] a)
     fy = forkFutureSTM (atomically f) sink
 

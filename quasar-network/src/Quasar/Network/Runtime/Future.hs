@@ -28,7 +28,7 @@ instance NetworkObject a => NetworkRootReference (FutureEx '[SomeException] a) w
   provideRootReference future channel = do
     execForeignQuasarSTMc @NoRetry channel.quasar do
       asyncSTM_ do
-        result <- await future
+        result <- await (tryAllC future)
         case result of
           Left _ex -> do
             -- TODO send exception before closing channel
@@ -41,7 +41,7 @@ instance NetworkObject a => NetworkRootReference (FutureEx '[SomeException] a) w
     pure (\_ -> absurd)
   receiveRootReference channel = do
     promise <- newPromise
-    callOnceCompleted_ (isDisposed channel) (\() -> tryFulfillPromise_ promise (Left (toEx NetworkFutureException)))
+    callOnceCompleted_ (isDisposed channel) (\_ -> tryFulfillPromise_ promise (Left (toEx NetworkFutureException)))
     pure (futureHandler promise, toFutureEx promise)
     where
       futureHandler :: PromiseEx '[SomeException] a -> ChannelHandler FutureMessage

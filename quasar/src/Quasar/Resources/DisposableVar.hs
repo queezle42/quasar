@@ -30,9 +30,9 @@ import Quasar.Utils.CallbackRegistry
 import Quasar.Utils.TOnce
 
 
-data DisposableVar a = DisposableVar Unique (TOnce (a -> STMc NoRetry '[] Disposer, a) (Future [DisposeDependencies]))
+data DisposableVar a = DisposableVar Unique (TOnce (a -> STMc NoRetry '[] Disposer, a) (Future '[] [DisposeDependencies]))
 
-instance ToFuture () (DisposableVar a) where
+instance ToFuture '[] () (DisposableVar a) where
   toFuture (DisposableVar _ state) = do
     deps <- join (toFuture state)
     mapM_ flattenDisposeDependencies deps
@@ -154,8 +154,8 @@ newSpecialDisposableVarIO fn value = liftIO do
 
 
 data TDisposableVarState a
-  = TDisposableVarAlive a (a -> STMc NoRetry '[] ()) (CallbackRegistry ())
-  | TDisposableVarDisposing (CallbackRegistry ())
+  = TDisposableVarAlive a (a -> STMc NoRetry '[] ()) (CallbackRegistry (Either (Ex '[]) ()))
+  | TDisposableVarDisposing (CallbackRegistry (Either (Ex '[]) ()))
   | TDisposableVarDisposed
 
 data TDisposableVar a = TDisposableVar Unique (TVar (TDisposableVarState a))
@@ -176,7 +176,7 @@ instance IsTDisposerElement (TDisposableVar a) where
         writeTVar var (TDisposableVarDisposing callbackRegistry)
         disposeFn content
         writeTVar var TDisposableVarDisposed
-        callCallbacks callbackRegistry ()
+        callCallbacks callbackRegistry (Right ())
 
 instance Disposable (TDisposableVar a) where
   getDisposer x = mkDisposer [x]
@@ -185,16 +185,16 @@ instance TDisposable (TDisposableVar a) where
   getTDisposer x = mkTDisposer [x]
 
 
-instance ToFuture () (TDisposableVar a) where
+instance ToFuture '[] () (TDisposableVar a) where
 
-instance IsFuture () (TDisposableVar a) where
+instance IsFuture '[] () (TDisposableVar a) where
   readFuture# (TDisposableVar _ var) = do
     readTVar var >>= \case
-      TDisposableVarDisposed -> pure ()
+      TDisposableVarDisposed -> pure (Right ())
       _ -> retry
   readOrAttachToFuture# (TDisposableVar _ var) callback = do
     readTVar var >>= \case
-      TDisposableVarDisposed -> pure (Right ())
+      TDisposableVarDisposed -> pure (Right (Right ()))
       TDisposableVarDisposing callbackRegistry -> Left <$> registerCallback callbackRegistry callback
       TDisposableVarAlive _ _ callbackRegistry -> Left <$> registerCallback callbackRegistry callback
 

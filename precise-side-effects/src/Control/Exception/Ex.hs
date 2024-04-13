@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
@@ -21,6 +22,10 @@ module Control.Exception.Ex (
   (:<<),
   (:-),
   (:--),
+
+  -- ** Either
+  fromEitherEx,
+  Either(RightAbsurdEx),
 
   -- * Implementation helper
   unsafeToEx,
@@ -204,3 +209,13 @@ instance MonadThrowEx STM where
 
 instance {-# OVERLAPPABLE #-} (MonadThrowEx m, Monad (t m), MonadTrans t) => MonadThrowEx (t m) where
   unsafeThrowEx = lift . unsafeThrowEx
+
+fromEitherEx :: Either (Ex '[]) a -> a
+fromEitherEx (Left ex) = absurdEx ex
+fromEitherEx (Right value) = value
+
+pattern RightAbsurdEx :: a -> Either (Ex '[]) a
+pattern RightAbsurdEx value <- (fromEitherEx -> value) where
+  RightAbsurdEx value = Right value
+
+{-# COMPLETE RightAbsurdEx #-}

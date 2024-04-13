@@ -10,7 +10,7 @@ import {-# SOURCE #-} Quasar.Future
 data TDisposer
 instance Monoid TDisposer
 instance Semigroup TDisposer
-instance ToFuture () TDisposer
+instance ToFuture '[] () TDisposer
 
 newUnmanagedTDisposer :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TDisposer
 disposeTDisposer :: MonadSTMc NoRetry '[] m => TDisposer -> m ()

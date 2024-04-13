@@ -46,7 +46,7 @@ spec = describe "runMultiplexer" $ do
           runQuasarIO channel.quasar $ registerDisposeTransactionIO_ (fulfillPromise var ())
           dispose channel
       do x
-    peekFutureIO (toFuture var) `shouldReturn` Just ()
+    peekFutureIO (toFuture var) `shouldReturn` Just (Right ())
 
   it "can send and receive simple messages" $ do
     recvMVar <- newEmptyMVar
