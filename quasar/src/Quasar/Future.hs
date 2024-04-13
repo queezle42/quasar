@@ -539,7 +539,7 @@ tryFulfillPromiseIO_ :: MonadIO m => Promise a -> a -> m ()
 tryFulfillPromiseIO_ var result = void $ tryFulfillPromiseIO var result
 
 execToPromiseEx :: PromiseEx exceptions a -> STMc NoRetry exceptions a -> STMc NoRetry '[] ()
-execToPromiseEx promise fn = tryFulfillPromise_ promise =<< tryExSTMc fn
+execToPromiseEx promise fn = tryFulfillPromise_ promise =<< tryAllSTMc fn
 
 toFutureEx :: ToFuture '[] (Either (Ex e) a) b => b -> Future e a
 toFutureEx f = relaxFuture (toFuture f) >>= constFuture

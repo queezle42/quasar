@@ -53,7 +53,6 @@ module Control.Concurrent.STM.Class (
   handleAllSTMc,
   trySTMc,
   tryAllSTMc,
-  tryExSTMc,
 
   -- * Unique
   Unique,
@@ -146,6 +145,7 @@ import Control.Exception (IOException)
 import Control.Exception.Ex
 import Control.Monad (MonadPlus)
 import Control.Monad.Catch
+import Control.Monad.CatchC
 import Control.Monad.Fix (MonadFix)
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Class (lift, MonadTrans)
@@ -220,6 +220,10 @@ instance (Exception e, e :< exceptions) => Throw e (STMc canRetry exceptions) wh
 instance MonadThrowEx (STMc canRetry exceptions) where
   unsafeThrowEx = STMc . throwM
 
+instance MonadCatchC (STMc canRetry) where
+  catchC ft fc = unsafeLiftSTM (catch (runSTMc ft) (runSTMc . fc))
+  tryC f = unsafeLiftSTM (try (runSTMc f))
+
 
 type MonadSTMcBase :: (Type -> Type) -> Constraint
 class MonadThrowEx m => MonadSTMcBase m where
@@ -287,7 +291,7 @@ catchAllSTMc ::
   forall canRetry exceptions m a. (
     MonadSTMc canRetry '[] m
   ) =>
-  STMc canRetry exceptions a -> (SomeException -> m a) -> m a
+  STMc canRetry exceptions a -> (Ex exceptions -> m a) -> m a
 
 catchAllSTMc ft fc = tryAllSTMc ft >>= either fc pure
 {-# INLINABLE catchAllSTMc #-}
@@ -307,7 +311,7 @@ handleAllSTMc ::
   forall canRetry exceptions m a. (
     MonadSTMc canRetry '[] m
   ) =>
-  (SomeException -> m a) -> STMc canRetry exceptions a -> m a
+  (Ex exceptions -> m a) -> STMc canRetry exceptions a -> m a
 
 handleAllSTMc = flip catchAllSTMc
 {-# INLINABLE handleAllSTMc #-}
@@ -319,24 +323,16 @@ trySTMc ::
     MonadSTMc canRetry (exceptions :- e) m
   ) =>
   STMc canRetry exceptions a -> m (Either e a)
-trySTMc f = unsafeLiftSTM (try (runSTMc f))
+trySTMc f = liftSTMc (tryC f)
 {-# INLINABLE trySTMc #-}
 
 tryAllSTMc ::
   forall canRetry exceptions m a. (
     MonadSTMc canRetry '[] m
   ) =>
-  STMc canRetry exceptions a -> m (Either SomeException a)
-tryAllSTMc f = unsafeLiftSTM (try (runSTMc f))
-{-# INLINABLE tryAllSTMc #-}
-
-tryExSTMc ::
-  forall canRetry exceptions m a. (
-    MonadSTMc canRetry '[] m
-  ) =>
   STMc canRetry exceptions a -> m (Either (Ex exceptions) a)
-tryExSTMc f = unsafeLiftSTM (Bifunctor.first unsafeToEx <$> try (runSTMc f))
-{-# INLINABLE tryExSTMc #-}
+tryAllSTMc f = liftSTMc (tryAllC f)
+{-# INLINABLE tryAllSTMc #-}
 
 orElseC ::
   forall exceptions m a. (MonadSTMc NoRetry exceptions m) =>
