@@ -68,6 +68,7 @@ library
   exposed-modules:
     Control.Concurrent.STM.Class
     Control.Exception.Ex
+    Control.Monad.CatchC
   other-modules:
     Control.Concurrent.STM.Class.TH
   hs-source-dirs:
