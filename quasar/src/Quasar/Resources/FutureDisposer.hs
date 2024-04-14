@@ -8,7 +8,7 @@ import Quasar.Future
 import Quasar.Resources.Disposer
 import Quasar.Utils.TOnce
 
-data FutureDisposer = FutureDisposer Unique (TOnce (Future '[] Disposer) (Future '[] [DisposeDependencies]))
+data FutureDisposer = FutureDisposer Unique (TOnce (Future '[] (Maybe Disposer)) (Future '[] [DisposeDependencies]))
 
 instance IsDisposerElement FutureDisposer where
   disposerElementKey (FutureDisposer key _) = key
@@ -22,9 +22,12 @@ instance IsDisposerElement FutureDisposer where
     fdeps <- mapFinalizeTOnce var \future -> do
 
       promise <- newPromise
-      callOnceCompleted_ future \(RightAbsurdEx disposer) -> do
-        fdeps <- beginDisposeDisposer disposer
-        tryFulfillPromise_ promise fdeps
+      callOnceCompleted_ future \case
+        (RightAbsurdEx Nothing) -> do
+          tryFulfillPromise_ promise (pure [])
+        (RightAbsurdEx (Just disposer)) -> do
+          fdeps <- beginDisposeDisposer disposer
+          tryFulfillPromise_ promise fdeps
 
       pure (join (toFuture promise))
 
@@ -38,17 +41,19 @@ instance ToFuture '[] () FutureDisposer where
 instance Disposable FutureDisposer where
   getDisposer x = mkDisposer [x]
 
-futureDisposer :: Future '[] Disposer -> STMc NoRetry '[] Disposer
+futureDisposer :: Future e Disposer -> STMc NoRetry '[] Disposer
 futureDisposer future = do
   peekFuture future >>= \case
-    Just (RightAbsurdEx disposer) ->
-      -- Simply pass through the disposer if the future is already completed or
-      -- trivial.
+    Just (Left _) ->
+      -- Return an empty disposer if the future has already failed
+      pure mempty
+    Just (Right disposer) ->
+      -- Simply pass through the disposer if the future is already completed.
       pure disposer
     Nothing -> do
       key <- newUniqueSTM
-      var <- newTOnce future
+      var <- newTOnce (rightToMaybe <$> tryAllC future)
       pure (getDisposer (FutureDisposer key var))
 
-futureDisposerGeneric :: (Disposable a, MonadSTMc NoRetry '[] m) => Future '[] a -> m Disposer
+futureDisposerGeneric :: (Disposable a, MonadSTMc NoRetry '[] m) => Future e a -> m Disposer
 futureDisposerGeneric x = liftSTMc (futureDisposer (getDisposer <$> x))
