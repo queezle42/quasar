@@ -10,6 +10,7 @@ module Quasar.Prelude
     Control.Concurrent.STM.Class.RetryKind(..),
 #endif
     module Control.Exception.Ex,
+    module Control.Monad.CatchC,
     (>=>),
     (<=<),
     (<|>),
@@ -105,6 +106,7 @@ import Control.Exception qualified
 import Control.Exception.Ex
 import Control.Monad ((>=>), (<=<))
 import Control.Monad qualified
+import Control.Monad.CatchC
 import Control.Monad.Fix qualified
 import Control.Monad.IO.Class qualified
 import Data.Foldable qualified
