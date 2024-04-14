@@ -53,6 +53,7 @@ module Quasar.Future (
 import Control.Exception (BlockedIndefinitelyOnSTM(..))
 import Control.Exception.Ex
 import Control.Monad.Catch
+import Control.Monad.CatchC
 import Control.Monad.Trans (MonadTrans, lift)
 import Quasar.Exceptions
 import Quasar.Prelude
@@ -245,6 +246,14 @@ instance (SomeException :< exceptions, Exception (Ex exceptions)) => MonadCatch 
     case fromException (toException ex) of
       Just matched -> toFuture (f matched)
       Nothing -> throwFuture ex
+
+instance MonadCatchC Future where
+  catchC ft fc = toFuture $ CatchFuture ft \ex ->
+    case matchEx ex of
+      Right matched -> toFuture (fc matched)
+      Left unmatched -> throwFuture unmatched
+
+  -- TODO implement tryC with TryFuture operation
 
 instance SomeException :< exceptions => MonadFail (Future exceptions) where
   fail = throwM . userError
