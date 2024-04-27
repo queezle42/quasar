@@ -42,6 +42,12 @@
     - traceShowIO
     - traceShowIdIO
 
+- functions:
+  - message: "undefined is not allowed in production code"
+    within: []
+    name:
+    - undefined
+
 # Add custom hints for this project
 #
 # Will suggest replacing "wibbleMany [myvar]" with "wibbleOne myvar"

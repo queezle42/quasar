@@ -63,8 +63,6 @@ module Quasar.Prelude
     Data.Word.Word32,
     Data.Word.Word64,
     GHC.Stack.HasCallStack,
-    error,
-    errorWithoutStackTrace,
     Debug.Trace.trace,
     Debug.Trace.traceId,
     Debug.Trace.traceShow,
@@ -74,21 +72,17 @@ module Quasar.Prelude
     traceIO,
     traceShowIO,
     traceShowIdIO,
-    undefined,
   )
 where
 
 import Prelude hiding
-  ( error,
-    errorWithoutStackTrace,
-    head,
+  ( head,
     last,
     read,
     -- Due to the accepted "monad of no return" proposal, return becomes an
     -- alias for pure. Return can be a pitfall for newcomers, so we decided to
     -- use pure instead.
     return,
-    undefined,
   )
 import Prelude qualified as P
 
@@ -125,18 +119,6 @@ import GHC.Generics qualified
 import GHC.Stack qualified
 import GHC.Types qualified
 import Quasar.PreludeExtras
-
-{-# WARNING error "Undefined." #-}
-error :: forall (r :: GHC.Types.RuntimeRep). forall (a :: GHC.Types.TYPE r). GHC.Stack.HasCallStack => String -> a
-error = P.error
-
-{-# WARNING errorWithoutStackTrace "Undefined." #-}
-errorWithoutStackTrace :: String -> a
-errorWithoutStackTrace = P.errorWithoutStackTrace
-
-{-# WARNING undefined "Undefined." #-}
-undefined :: forall (r :: GHC.Types.RuntimeRep). forall (a :: GHC.Types.TYPE r). GHC.Stack.HasCallStack => a
-undefined = P.undefined
 
 traceIO :: Control.Monad.IO.Class.MonadIO m => String -> m ()
 traceIO = Control.Monad.IO.Class.liftIO . Debug.Trace.traceIO
