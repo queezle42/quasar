@@ -4,7 +4,10 @@ module Quasar.Resources.Rc (
   newRcIO,
   tryReadRc,
   tryReadRcIO,
+  readRc,
+  readRcIO,
   tryDuplicateRc,
+  duplicateRc,
   tryExtractRc,
   consumeRc,
 ) where
@@ -12,7 +15,7 @@ module Quasar.Resources.Rc (
 import Quasar.Prelude
 import Quasar.Resources
 import Quasar.Resources.DisposableVar
-import Quasar.Exceptions (mkDisposedException)
+import Quasar.Exceptions (mkDisposedException, DisposedException(..))
 import Control.Exception (finally)
 
 -- | A Rc is a disposable readonly data structure that can be cloned. Every copy
@@ -90,6 +93,14 @@ tryReadRcIO :: MonadIO m => Rc a -> m (Maybe a)
 tryReadRcIO (Rc var) = liftIO do
   (.content) <<$>> tryReadDisposableVarIO var
 
+readRc :: MonadSTMc NoRetry '[DisposedException] m => Rc a -> m a
+readRc rc = liftSTMc @NoRetry @'[DisposedException] do
+  maybe (throwC mkDisposedException) pure =<< tryReadRc rc
+
+readRcIO :: MonadIO m => Rc a -> m a
+readRcIO rc = liftIO do
+  maybe (throwIO mkDisposedException) pure =<< tryReadRcIO rc
+
 -- | Produces a _new_ lock that points to the same content, but has an
 -- independent lifetime. The caller has to ensure the new lock is disposed.
 --
@@ -99,6 +110,12 @@ tryDuplicateRc (Rc var) = liftSTMc @NoRetry @'[] do
   tryReadDisposableVar var >>= mapM \rc -> do
     modifyTVar rc.lockCount succ
     Rc <$> newSpecialDisposableVar decrementRc rc
+
+duplicateRc ::
+  (HasCallStack, MonadSTMc NoRetry '[DisposedException] m) =>
+  Rc a -> m (Rc a)
+duplicateRc rc = liftSTMc @NoRetry @'[DisposedException] do
+  maybe (throwC mkDisposedException) pure =<< tryDuplicateRc rc
 
 consumeRc :: Rc a -> (a -> IO b) -> IO b
 consumeRc rc fn = do
