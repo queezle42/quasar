@@ -8,6 +8,8 @@ module Quasar.Resources.DisposableVar (
   newSpecialDisposableVarIO,
   tryReadDisposableVar,
   tryReadDisposableVarIO,
+  readDisposableVar,
+  readDisposableVarIO,
   tryWriteDisposableVar,
   tryModifyDisposableVar,
 
@@ -22,7 +24,7 @@ module Quasar.Resources.DisposableVar (
 
 import Data.Bifunctor qualified as Bifunctor
 import Data.Hashable (Hashable(..))
-import Quasar.Exceptions (ExceptionSink)
+import Quasar.Exceptions (ExceptionSink, DisposedException, mkDisposedException)
 import Quasar.Future (Future, ToFuture(..), IsFuture(..))
 import Quasar.Prelude
 import Quasar.Resources.Disposer
@@ -66,11 +68,25 @@ tryReadDisposableVar (DisposableVar _ stateTOnce) = liftSTMc @NoRetry @'[] do
     Left (_, value) -> Just value
     _ -> Nothing
 
+-- | Throwing varinat of `tryReadDisposableVar`.
+--
+-- Throws a `DisposedException` if the var has already been disposed.
+readDisposableVar :: MonadSTMc NoRetry '[DisposedException] m => DisposableVar a -> m a
+readDisposableVar var = liftSTMc @NoRetry @'[DisposedException] do
+  maybe (throwC mkDisposedException) pure =<< tryReadDisposableVar var
+
 tryReadDisposableVarIO :: MonadIO m => DisposableVar a -> m (Maybe a)
 tryReadDisposableVarIO (DisposableVar _ stateTOnce) = liftIO do
   readTOnceIO stateTOnce <&> \case
     Left (_, value) -> Just value
     _ -> Nothing
+
+-- | Throwing varinat of `tryReadDisposableVarIO`.
+--
+-- Throws a `DisposedException` if the var has already been disposed.
+readDisposableVarIO :: MonadIO m => DisposableVar a -> m a
+readDisposableVarIO rc = liftIO do
+  maybe (throwIO mkDisposedException) pure =<< tryReadDisposableVarIO rc
 
 -- | Try to write a `DisposableVar`. On success the previous content is
 -- returned.
