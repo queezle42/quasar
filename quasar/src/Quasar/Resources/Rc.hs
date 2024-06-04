@@ -93,11 +93,13 @@ tryReadRcIO :: MonadIO m => Rc a -> m (Maybe a)
 tryReadRcIO (Rc var) = liftIO do
   (.content) <<$>> tryReadDisposableVarIO var
 
-readRc :: MonadSTMc NoRetry '[DisposedException] m => Rc a -> m a
+readRc ::
+  (MonadSTMc NoRetry '[DisposedException] m, HasCallStack) =>
+  Rc a -> m a
 readRc rc = liftSTMc @NoRetry @'[DisposedException] do
   maybe (throwC mkDisposedException) pure =<< tryReadRc rc
 
-readRcIO :: MonadIO m => Rc a -> m a
+readRcIO :: (MonadIO m, HasCallStack) => Rc a -> m a
 readRcIO rc = liftIO do
   maybe (throwIO mkDisposedException) pure =<< tryReadRcIO rc
 
@@ -112,12 +114,12 @@ tryDuplicateRc (Rc var) = liftSTMc @NoRetry @'[] do
     Rc <$> newSpecialDisposableVar decrementRc rc
 
 duplicateRc ::
-  (HasCallStack, MonadSTMc NoRetry '[DisposedException] m) =>
+  (MonadSTMc NoRetry '[DisposedException] m, HasCallStack) =>
   Rc a -> m (Rc a)
 duplicateRc rc = liftSTMc @NoRetry @'[DisposedException] do
   maybe (throwC mkDisposedException) pure =<< tryDuplicateRc rc
 
-consumeRc :: Rc a -> (a -> IO b) -> IO b
+consumeRc :: HasCallStack => Rc a -> (a -> IO b) -> IO b
 consumeRc rc fn = do
   flip finally (dispose rc) do
     tryReadRcIO rc >>= \case
