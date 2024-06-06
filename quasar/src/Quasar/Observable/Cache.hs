@@ -2,8 +2,14 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Quasar.Observable.Cache (
+  -- TODO move to Observable module
   cacheObservable,
   observeCachedObservable,
+
+  cacheObservableT,
+
+  -- ** Observable operation type
+  CachedObservable,
 ) where
 
 import Control.Applicative
@@ -93,11 +99,22 @@ fixInvalidCacheState _cached EvaluatedObservableChangeLoadingUnchanged =
   -- Filtered by `applyEvaluatedObservableChange` in `updateCache`
   impossibleCodePath
 
-cacheObservable :: (ToObservable canLoad exceptions v a, MonadSTMc NoRetry '[] m) => a -> m (Observable canLoad exceptions v)
-cacheObservable (toObservable -> f) =
+cacheObservable ::
+  MonadSTMc NoRetry '[] m =>
+  Observable canLoad exceptions v -> m (Observable canLoad exceptions v)
+cacheObservable (Observable f) = Observable <$> cacheObservableT f
+
+cacheObservableT ::
+  (
+    ObservableContainer c v,
+    ContainerConstraint canLoad exceptions c v (CachedObservable canLoad exceptions c v),
+    MonadSTMc NoRetry '[] m
+  ) =>
+  ObservableT canLoad exceptions c v -> m (ObservableT canLoad exceptions c v)
+cacheObservableT f =
   if isCachedObservable# f
     then pure f
-    else toObservable . CachedObservable <$> newTVar (CacheIdle f)
+    else ObservableT . CachedObservable <$> newTVar (CacheIdle f)
 
 
 -- ** Embedded cache in the Observable monad
@@ -116,7 +133,7 @@ instance IsObservableCore canLoad exceptions Identity (Observable l e v) (CacheO
     pure (mempty, ObservableStateLive (pure cache))
 
 -- | Cache an observable in the `Observable` monad. Use with care! A new cache
--- is created for every outer observable valuation.
+-- is created for every outer observable evaluation.
 observeCachedObservable :: forall canLoad exceptions e l v a. ToObservable l e v a => a -> Observable canLoad exceptions (Observable l e v)
 observeCachedObservable x =
   toObservable (CacheObservableOperation @canLoad @exceptions (toObservable x))

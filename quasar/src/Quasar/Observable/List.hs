@@ -12,6 +12,7 @@ module Quasar.Observable.List (
   validatedListDeltaLength,
   ListDeltaOperation(..),
   Length(..),
+  cache,
 
   -- * Reexports
   FingerTree,
@@ -48,6 +49,7 @@ import Data.FingerTree (FingerTree, Measured(measure), (<|), ViewL(EmptyL, (:<))
 import Data.FingerTree qualified as FT
 import Data.Sequence (Seq(Empty))
 import Data.Sequence qualified as Seq
+import Quasar.Observable.Cache
 import Quasar.Observable.Core
 import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
@@ -372,6 +374,16 @@ attachSimpleListObserver observable callback = do
     ObservableChangeLiveDelta delta -> callback (ObservableUpdateDelta delta)
   case initial of
     ObservableStateLive (ObservableResultTrivial x) -> pure (disposer, x)
+
+
+instance IsObservableList canLoad exceptions v (CachedObservable canLoad exceptions Seq v) where
+
+cache ::
+  MonadSTMc NoRetry '[] m =>
+  ObservableList canLoad exceptions v ->
+  m (ObservableList canLoad exceptions v)
+cache (ObservableList f) = ObservableList <$> cacheObservableT f
+
 
 constObservableList :: ObservableState canLoad (ObservableResult exceptions Seq) v -> ObservableList canLoad exceptions v
 constObservableList = ObservableList . ObservableT

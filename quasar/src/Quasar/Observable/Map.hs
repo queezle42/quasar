@@ -11,6 +11,7 @@ module Quasar.Observable.Map (
   liftObservableMap,
   IsObservableMap(..),
   query,
+  cache,
 
   -- ** Delta types
   MapDelta(..),
@@ -69,6 +70,7 @@ module Quasar.Observable.Map (
 import Control.Applicative hiding (empty)
 import Control.Monad.Except
 import Data.Binary (Binary)
+import Data.Foldable (foldl')
 import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -76,6 +78,7 @@ import Data.Maybe (mapMaybe)
 import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
 import GHC.Records (HasField (..))
+import Quasar.Observable.Cache
 import Quasar.Observable.Core
 import Quasar.Observable.Lift
 import Quasar.Observable.List (ObservableList(..), IsObservableList, ListDelta, ListOperation(..))
@@ -85,7 +88,6 @@ import Quasar.Observable.Traversable
 import Quasar.Prelude hiding (filter, lookup)
 import Quasar.Resources.Disposer
 import Quasar.Utils.Map qualified as MapUtils
-import Data.Foldable (foldl')
 
 
 newtype MapDelta k v
@@ -223,6 +225,16 @@ query
   -> ObservableList canLoad exceptions (Bounds k)
   -> ObservableMap canLoad exceptions k v
 query x = query# (toObservableMap x)
+
+
+
+instance Ord k => IsObservableMap canLoad exceptions k v (CachedObservable canLoad exceptions (Map k) v) where
+
+cache ::
+  (Ord k, MonadSTMc NoRetry '[] m) =>
+  ObservableMap canLoad exceptions k v ->
+  m (ObservableMap canLoad exceptions k v)
+cache (ObservableMap f) = ObservableMap <$> cacheObservableT f
 
 
 
