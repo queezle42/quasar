@@ -1645,7 +1645,7 @@ throwExObservable = unsafeThrowEx . exToException
 
 catchObservable ::
   forall canLoad exceptions e v.
-  (Exception e, ExceptionList exceptions) =>
+  Exception e =>
   Observable canLoad exceptions v ->
   (e -> Observable canLoad (exceptions :- e) v) ->
   Observable canLoad (exceptions :- e) v
