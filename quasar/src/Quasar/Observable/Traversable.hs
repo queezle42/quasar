@@ -17,7 +17,6 @@ module Quasar.Observable.Traversable (
 ) where
 
 import Control.Applicative hiding (empty)
-import Control.Monad.Except
 import Quasar.Observable.Core
 import Quasar.Prelude hiding (filter, lookup)
 import Quasar.Resources.Disposer
