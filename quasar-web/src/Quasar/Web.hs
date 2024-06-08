@@ -34,7 +34,8 @@ import Quasar.Observable.AccumulatingObserver
 import Quasar.Observable.Core
 import Quasar.Observable.List (ListOperation(..), ObservableList, updateToOperations)
 import Quasar.Observable.List qualified as ObservableList
-import Quasar.Observable.Map
+import Quasar.Observable.Map (ObservableMap)
+import Quasar.Observable.Map qualified as ObservableMap
 import Quasar.Observable.Traversable
 import Quasar.Prelude
 import Quasar.Resources (TDisposer, isTrivialTDisposer, disposeTDisposer)

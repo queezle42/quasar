@@ -38,7 +38,8 @@ module Quasar.Observable.Map (
 
   -- ** Traversal
   mapWithKey,
-  mapSTM,
+  traverse,
+  traverseWithKey,
   attachForEach,
 
   -- ** Conversions
@@ -77,6 +78,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
 import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
+import Data.Traversable qualified as Traversable
 import GHC.Records (HasField (..))
 import Quasar.Observable.Cache
 import Quasar.Observable.Core
@@ -85,7 +87,7 @@ import Quasar.Observable.List (ObservableList(..), IsObservableList, ListDelta, 
 import Quasar.Observable.List qualified as ObservableList
 import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
-import Quasar.Prelude hiding (filter, lookup)
+import Quasar.Prelude hiding (filter, lookup, traverse)
 import Quasar.Resources.Disposer
 import Quasar.Utils.Map qualified as MapUtils
 
@@ -103,7 +105,7 @@ instance Foldable (MapDelta k) where
   foldMap f (MapDelta x) = foldMap (foldMap f) x
 
 instance Traversable (MapDelta k) where
-  traverse f (MapDelta ops) = MapDelta <$> traverse (traverse f) ops
+  traverse f (MapDelta ops) = MapDelta <$> Traversable.traverse (Traversable.traverse f) ops
 
 data MapOperation v = Insert v | Delete
   deriving (Generic, Show, Eq, Ord)
@@ -519,16 +521,29 @@ clearVar var = replaceVar var mempty
 
 instance Ord k => IsObservableMap l e k v (TraversingObservable l e (Map k) v)
 
-mapSTM ::
+traverse ::
   Ord k =>
-  (va -> STMc NoRetry '[] (TDisposer, v)) ->
+  (va -> STMc NoRetry '[] v) ->
+  (v -> STMc NoRetry '[] ()) ->
   ObservableMap l e k va ->
   ObservableMap l e k v
-mapSTM fn (ObservableMap fx) = ObservableMap (observableTMapSTM fn fx)
+traverse addFn removeFn (ObservableMap fx) =
+  ObservableMap (traverseObservableT addFn removeFn fx)
+
+traverseWithKey ::
+  Ord k =>
+  (k -> va -> STMc NoRetry '[] v) ->
+  (k -> v -> STMc NoRetry '[] ()) ->
+  ObservableMap l e k va ->
+  ObservableMap l e k v
+traverseWithKey addFn removeFn fx =
+  snd <$> traverse (\(k, v) -> (k,) <$> addFn k v) (uncurry removeFn) (mapWithKey (,) fx)
 
 attachForEach ::
   Ord k =>
-  (va -> STMc NoRetry '[] TDisposer) ->
+  (va -> STMc NoRetry '[] v) ->
+  (v -> STMc NoRetry '[] ()) ->
   ObservableMap l e k va ->
   STMc NoRetry '[] TDisposer
-attachForEach fn (ObservableMap fx) = observableTAttachForEach fn fx
+attachForEach addFn removeFn (ObservableMap fx) =
+  attachForEachObservableT addFn removeFn fx

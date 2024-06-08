@@ -25,6 +25,10 @@ module Quasar.Observable.List (
   fromSeq,
   constObservableList,
 
+  -- * Traversal
+  traverse,
+  attachForEach,
+
   -- * List operations with absolute addressing
   ListOperation(..),
   updateToOperations,
@@ -49,11 +53,12 @@ import Data.FingerTree (FingerTree, Measured(measure), (<|), ViewL(EmptyL, (:<))
 import Data.FingerTree qualified as FT
 import Data.Sequence (Seq(Empty))
 import Data.Sequence qualified as Seq
+import Data.Traversable qualified as Traversable
 import Quasar.Observable.Cache
 import Quasar.Observable.Core
 import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
-import Quasar.Prelude
+import Quasar.Prelude hiding (traverse)
 import Quasar.Resources (TDisposer)
 
 
@@ -81,7 +86,7 @@ instance Traversable ValidatedListDelta where
   traverse fn (ValidatedListDelta ft) =
     -- unsafeTraverse is safe here because we don't change the length/structure
     -- of the operations.
-    ValidatedListDelta <$> FT.unsafeTraverse (traverse fn) ft
+    ValidatedListDelta <$> FT.unsafeTraverse (Traversable.traverse fn) ft
 
 validatedListDeltaLength :: ValidatedListDelta v -> Length
 validatedListDeltaLength (ValidatedListDelta ft) = measure ft
@@ -127,7 +132,7 @@ instance Foldable ListDeltaOperation where
   foldr _fn initial (ListKeep _) = initial
 
 instance Traversable ListDeltaOperation where
-  traverse fn (ListSplice xs) = ListSplice <$> traverse fn xs
+  traverse fn (ListSplice xs) = ListSplice <$> Traversable.traverse fn xs
   traverse _fn (ListDrop l) = pure (ListDrop l)
   traverse _fn (ListKeep l) = pure (ListKeep l)
 
@@ -400,6 +405,31 @@ singleton = ObservableList . ObservableT . fromSeq . Seq.singleton
 empty :: ObservableList canLoad exceptions v
 empty = mempty
 
+
+
+-- * Traversal
+
+instance IsObservableList l e v (TraversingObservable l e Seq v)
+
+traverse ::
+  (va -> STMc NoRetry '[] v) ->
+  (v -> STMc NoRetry '[] ()) ->
+  ObservableList l e va ->
+  ObservableList l e v
+traverse addFn removeFn (ObservableList fx) =
+  ObservableList (traverseObservableT addFn removeFn fx)
+
+attachForEach ::
+  (va -> STMc NoRetry '[] v) ->
+  (v -> STMc NoRetry '[] ()) ->
+  ObservableList l e va ->
+  STMc NoRetry '[] TDisposer
+attachForEach addFn removeFn (ObservableList fx) =
+  attachForEachObservableT addFn removeFn fx
+
+
+
+-- * List operations with absolute addressing
 
 data ListOperation v
   = ListInsert Length v -- ^ Insert before element n.
