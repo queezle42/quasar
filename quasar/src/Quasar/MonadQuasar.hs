@@ -74,7 +74,7 @@ quasarResourceManager (Quasar _ rm) = rm
 
 newResourceScopeSTM :: (MonadSTMc NoRetry '[FailedToAttachResource] m, HasCallStack) => Quasar -> m Quasar
 newResourceScopeSTM parent = do
-  rm <- newUnmanagedResourceManagerSTM
+  rm <- newResourceManager
   attachResource (quasarResourceManager parent) rm
   pure $ newQuasar parentExceptionSink rm
   where
@@ -299,6 +299,6 @@ replaceExceptionSink sink fn = do
 
 withQuasar :: ExceptionSink -> QuasarIO a -> IO a
 withQuasar sink fn = mask \unmask -> do
-  rm <- atomically $ newUnmanagedResourceManagerSTM
+  rm <- atomically newResourceManager
   let quasar = newQuasar sink rm
   unmask (runQuasarIO quasar fn) `finally` dispose rm

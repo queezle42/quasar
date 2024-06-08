@@ -358,7 +358,7 @@ instance IsFuture e a (BindFuture e a) where
 
   readOrAttachToFuture# (BindFuture fx fn) callback = do
     disposerVar <- newTVar Nothing
-    dyWrapper <- newUnmanagedTDisposer do
+    dyWrapper <- newTDisposer do
       mapM_ disposeTDisposer =<< swapTVar disposerVar Nothing
     rx <- readOrAttachToFuture# fx \case
       Left ex -> callback (Left ex)
@@ -397,7 +397,7 @@ instance IsFuture e a (CatchFuture e a) where
 
   readOrAttachToFuture# (CatchFuture fx fn) callback = do
     disposerVar <- newTVar Nothing
-    dyWrapper <- newUnmanagedTDisposer do
+    dyWrapper <- newTDisposer do
       mapM_ disposeTDisposer =<< swapTVar disposerVar Nothing
     rx <- readOrAttachToFuture# fx \case
       Left ex -> do

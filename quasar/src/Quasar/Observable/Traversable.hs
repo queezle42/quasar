@@ -85,7 +85,7 @@ instance TraversableObservableContainer c => IsObservableCore l e c v (Traversin
       let iVar = createObserverState bar
       let iState = bar
 
-      finalDisposer <- newUnmanagedTDisposer do
+      finalDisposer <- newTDisposer do
         mapM_ (mapM_ removeFn) =<< swapTVar var Nothing
 
       pure ((fxDisposer <> finalDisposer, iState), Just iVar)

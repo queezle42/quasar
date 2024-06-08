@@ -1,6 +1,6 @@
 module Quasar.Resources.Disposer (
   TDisposer,
-  newUnmanagedTDisposer,
+  newTDisposer,
   disposeTDisposer,
 ) where
 
@@ -12,5 +12,5 @@ instance Monoid TDisposer
 instance Semigroup TDisposer
 instance ToFuture '[] () TDisposer
 
-newUnmanagedTDisposer :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TDisposer
+newTDisposer :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TDisposer
 disposeTDisposer :: MonadSTMc NoRetry '[] m => TDisposer -> m ()

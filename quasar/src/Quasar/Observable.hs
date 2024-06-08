@@ -286,7 +286,7 @@ instance IsObservable a (BindObservable a) where
       (leftDisposer, ix) <- attachObserver# fx (leftCallback rightDisposerVar)
       (rightDisposer, iy) <- attachObserver# (fn ix) callback
 
-      varDisposer <- newUnmanagedTDisposer do
+      varDisposer <- newTDisposer do
         disposeTDisposer =<< swapTVar rightDisposerVar mempty
       pure ((leftDisposer <> varDisposer, iy), rightDisposer)
 

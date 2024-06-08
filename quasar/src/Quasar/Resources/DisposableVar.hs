@@ -115,7 +115,7 @@ newFnDisposableVar ::
   m (DisposableVar a)
 newFnDisposableVar sink fn = liftSTMc @NoRetry @'[] .
   newSpecialDisposableVar \value -> do
-    newUnmanagedIODisposer (fn value) sink
+    newDisposer (fn value) sink
 
 -- | Create a new `DisposableVar` that disposes the current content using the
 -- `Disposable` instance when the var is disposed.
@@ -148,7 +148,7 @@ newFnDisposableVarIO ::
   m (DisposableVar a)
 newFnDisposableVarIO sink fn = liftIO .
   newSpecialDisposableVarIO \value -> do
-    newUnmanagedIODisposer (fn value) sink
+    newDisposer (fn value) sink
 
 newDisposableVarIO ::
   (Disposable a, MonadIO m) =>

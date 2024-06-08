@@ -37,7 +37,7 @@ registerCallback :: CallbackRegistry a -> (a -> STMc NoRetry '[] ()) -> STMc NoR
 registerCallback (CallbackRegistry var emptyCallback) callback = do
   key <- newUniqueSTM
   modifyTVar var (HM.insert key callback)
-  newUnmanagedTDisposer do
+  newTDisposer do
     isEmpty <- HM.null <$> stateTVar var (dup . HM.delete key)
     when isEmpty emptyCallback
 
@@ -52,7 +52,7 @@ registerCallbackChangeAfterFirstCall ::
 registerCallbackChangeAfterFirstCall (CallbackRegistry var emptyCallback) firstCallback otherCallback = do
   key <- newUniqueSTM
   modifyTVar var (HM.insert key (wrappedCallback key))
-  newUnmanagedTDisposer do
+  newTDisposer do
     isEmpty <- HM.null <$> stateTVar var (dup . HM.delete key)
     when isEmpty emptyCallback
   where

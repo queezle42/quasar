@@ -3,7 +3,6 @@
 module Quasar.Timer (
   Timer,
   newTimer,
-  newUnmanagedTimer,
   sleepUntil,
 
   TimerScheduler,
@@ -17,8 +16,6 @@ module Quasar.Timer (
 
 import Control.Concurrent
 import Control.Monad.Catch
-import Data.Bifunctor qualified as Bifunctor
-import Data.Foldable (toList)
 import Data.Heap
 import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
 import Quasar.Async
@@ -167,16 +164,12 @@ startSchedulerThread scheduler = async (schedulerThread `finally` liftIO cancelA
       mapM_ dispose timers
 
 
-newTimer :: (MonadQuasar m, MonadIO m, MonadMask m) => TimerScheduler -> UTCTime -> m Timer
-newTimer scheduler time = registerNewResource $ newUnmanagedTimer scheduler time
-
-
-newUnmanagedTimer :: MonadIO m => TimerScheduler -> UTCTime -> m Timer
-newUnmanagedTimer scheduler time = liftIO do
+newTimer :: MonadIO m => TimerScheduler -> UTCTime -> m Timer
+newTimer scheduler time = liftIO do
   key <- newUnique
   completed <- newPromiseIO
   atomically do
-    disposer <- newUnmanagedSTMDisposer (disposeFn completed) (exceptionSink scheduler)
+    disposer <- newSTMDisposer (disposeFn completed) (exceptionSink scheduler)
     let timer = Timer { key, time, completed, disposer, scheduler }
     tryTakeTMVar (heap scheduler) >>= \case
       Just timers -> putTMVar (heap scheduler) (insert timer timers)
@@ -194,7 +187,7 @@ newUnmanagedTimer scheduler time = liftIO do
 
 sleepUntil :: MonadIO m => TimerScheduler -> UTCTime -> m ()
 sleepUntil scheduler time = liftIO do
-  bracketOnError (newUnmanagedTimer scheduler time) dispose await
+  bracketOnError (newTimer scheduler time) dispose await
 
 
 -- | Provides an `IsFuture` instance that can be awaited successfully after a given number of microseconds.

@@ -1341,7 +1341,7 @@ instance (IsObservableCore canLoad exceptions c v b, ObservableContainer c v) =>
           (disposerY, initialY) <- attachObserver# (fn x) (rhsCallback var)
           pure (initialY, BindStateAttached Live disposerY (initialPendingAndLastChange initialY))
 
-      rhsDisposer <- newUnmanagedTDisposer do
+      rhsDisposer <- newTDisposer do
         readTVar var >>= \case
           (BindStateAttached _ disposer _) -> disposeTDisposer disposer
           _ -> pure ()

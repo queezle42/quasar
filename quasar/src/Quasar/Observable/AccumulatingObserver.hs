@@ -38,7 +38,7 @@ attachAccumulatingObserver observable = do
       if isTrivialTDisposer obsDisposer
         then pure (((Nothing, initial), Just pending), last)
         else do
-          accumDisposer <- newUnmanagedTDisposer do
+          accumDisposer <- newTDisposer do
             writeTVar pendingVar Nothing
 
           let disposer = accumDisposer <> obsDisposer

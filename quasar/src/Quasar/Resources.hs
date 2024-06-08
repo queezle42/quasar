@@ -37,7 +37,8 @@ module Quasar.Resources (
   -- * Types to implement resources
   -- ** Disposer
   Disposer,
-  newUnmanagedIODisposer,
+  newDisposer,
+  newDisposerIO,
   trivialDisposer,
   isTrivialDisposer,
 
@@ -46,14 +47,14 @@ module Quasar.Resources (
   TDisposer,
   disposeTDisposer,
   disposeSTM,
-  newUnmanagedTDisposer,
-  newUnmanagedSTMDisposer,
-  newUnmanagedRetryTDisposer,
+  newTDisposer,
+  newSTMDisposer,
+  newRetryTDisposer,
   isTrivialTDisposer,
 
   -- ** Resource manager
   ResourceManager,
-  newUnmanagedResourceManagerSTM,
+  newResourceManager,
   attachResource,
   tryAttachResource,
 
@@ -83,7 +84,7 @@ registerDisposeAction fn = do
   exChan <- askExceptionSink
   rm <- askResourceManager
   liftSTMc @NoRetry @'[FailedToAttachResource] do
-    disposer <- newUnmanagedIODisposer fn exChan
+    disposer <- newDisposer fn exChan
     attachResource rm disposer
     pure disposer
 {-# SPECIALIZE registerDisposeAction :: IO () -> QuasarSTM Disposer #-}
@@ -102,7 +103,7 @@ registerDisposeTransaction fn = do
   exChan <- askExceptionSink
   rm <- askResourceManager
   liftSTMc @NoRetry @'[FailedToAttachResource] do
-    disposer <- newUnmanagedSTMDisposer fn exChan
+    disposer <- newSTMDisposer fn exChan
     attachResource rm disposer
     pure disposer
 {-# SPECIALIZE registerDisposeTransaction :: STM () -> QuasarSTM Disposer #-}
@@ -120,7 +121,7 @@ registerSimpleDisposeTransaction :: HasCallStack => (MonadQuasar m, MonadSTMc No
 registerSimpleDisposeTransaction fn = do
   rm <- askResourceManager
   liftSTMc @NoRetry @'[FailedToAttachResource] do
-    disposer <- newUnmanagedTDisposer fn
+    disposer <- newTDisposer fn
     attachResource rm disposer
     pure disposer
 {-# SPECIALIZE registerSimpleDisposeTransaction :: STMc NoRetry '[] () -> QuasarSTM TDisposer #-}

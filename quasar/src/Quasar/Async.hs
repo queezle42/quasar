@@ -98,7 +98,7 @@ spawnAsync registerDisposerFn exSink fn = withFrozenCallStack $ mask_ do
   let threadIdFuture = toFuture threadIdPromise
 
   -- Disposer is created first to ensure the resource can be safely attached
-  disposer <- atomically $ newUnmanagedIODisposer (disposeFn key resultVar threadIdFuture) exSink
+  disposer <- atomically $ newDisposer (disposeFn key resultVar threadIdFuture) exSink
 
   registerDisposerFn disposer `onException` tryFulfillPromiseIO_ threadIdPromise Nothing
 
@@ -176,7 +176,7 @@ unmanagedAsyncWithUnmaskSTM exSink fn = liftSTMc @NoRetry @'[] do
     resultVar <- newPromise
 
     mfixExtra \threadIdFixed -> do
-      disposer <- newUnmanagedIODisposer (disposeFn key resultVar threadIdFixed) exSink
+      disposer <- newDisposer (disposeFn key resultVar threadIdFixed) exSink
 
       threadId <- forkWithUnmaskSTM (runAndPut exSink key resultVar disposer fn) exSink
 

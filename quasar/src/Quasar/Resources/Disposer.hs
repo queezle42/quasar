@@ -8,7 +8,8 @@ module Quasar.Resources.Disposer (
   dispose,
   disposeEventually,
   disposeEventually_,
-  newUnmanagedIODisposer,
+  newDisposer,
+  newDisposerIO,
   isDisposed,
   trivialDisposer,
   isTrivialDisposer,
@@ -18,14 +19,14 @@ module Quasar.Resources.Disposer (
   TDisposer,
   disposeTDisposer,
   disposeSTM,
-  newUnmanagedTDisposer,
-  newUnmanagedSTMDisposer,
-  newUnmanagedRetryTDisposer,
+  newTDisposer,
+  newSTMDisposer,
+  newRetryTDisposer,
   isTrivialTDisposer,
 
   -- * Resource manager
   ResourceManager,
-  newUnmanagedResourceManagerSTM,
+  newResourceManager,
   attachResource,
   tryAttachResource,
   isDisposing,
@@ -158,8 +159,8 @@ data TSimpleDisposerState
 
 data TSimpleDisposerElement = TSimpleDisposerElement Unique (TVar TSimpleDisposerState)
 
-newUnmanagedTSimpleDisposerElement :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TSimpleDisposerElement
-newUnmanagedTSimpleDisposerElement fn = liftSTMc do
+newTSimpleDisposerElement :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TSimpleDisposerElement
+newTSimpleDisposerElement fn = liftSTMc do
   key <- newUniqueSTM
   isDisposedRegistry <- newCallbackRegistry
   stateVar <- newTVar (TSimpleDisposerNormal fn isDisposedRegistry)
@@ -225,15 +226,15 @@ wrapSTM sink fn =
     (liftSTM fn)
     \ex -> throwToExceptionSink sink (DisposeException (toException ex))
 
-newUnmanagedSTMDisposer :: MonadSTMc NoRetry '[] m => STM () -> ExceptionSink -> m Disposer
-newUnmanagedSTMDisposer fn sink = do
+newSTMDisposer :: MonadSTMc NoRetry '[] m => STM () -> ExceptionSink -> m Disposer
+newSTMDisposer fn sink = do
   key <- newUniqueSTM
   element <- DisposerElement . RetryTDisposerElement key <$> newTOnce (wrapSTM sink fn)
   pure $ Disposer [element]
 
-newUnmanagedTDisposer :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TDisposer
-newUnmanagedTDisposer fn = do
-  element <- newUnmanagedTSimpleDisposerElement fn
+newTDisposer :: MonadSTMc NoRetry '[] m => STMc NoRetry '[] () -> m TDisposer
+newTDisposer fn = do
+  element <- newTSimpleDisposerElement fn
   pure (TDisposer [TDisposerElement element])
 
 -- | In case of reentry this might return before disposing is completed.
@@ -241,8 +242,8 @@ disposeTDisposer :: MonadSTMc NoRetry '[] m => TDisposer -> m ()
 disposeTDisposer (TDisposer elements) = liftSTMc $ mapM_ disposeTDisposerElement elements
 
 
-newUnmanagedRetryTDisposer :: MonadSTMc NoRetry '[] m => STMc Retry '[] () -> m Disposer
-newUnmanagedRetryTDisposer fn = do
+newRetryTDisposer :: MonadSTMc NoRetry '[] m => STMc Retry '[] () -> m Disposer
+newRetryTDisposer fn = do
   key <- newUniqueSTM
   element <- DisposerElement . RetryTDisposerElement key <$> newTOnce fn
   pure $ Disposer [element]
@@ -275,10 +276,16 @@ isTrivialTDisposer :: TDisposer -> Bool
 isTrivialTDisposer (TDisposer []) = True
 isTrivialTDisposer _ = False
 
-newUnmanagedIODisposer :: MonadSTMc NoRetry '[] m => IO () -> ExceptionSink -> m Disposer
-newUnmanagedIODisposer fn exChan = do
+newDisposer :: MonadSTMc NoRetry '[] m => IO () -> ExceptionSink -> m Disposer
+newDisposer fn exChan = do
   key <- newUniqueSTM
   state <- newTOnce fn
+  pure $ Disposer [DisposerElement (IODisposerElement key exChan state)]
+
+newDisposerIO :: MonadIO m => IO () -> ExceptionSink -> m Disposer
+newDisposerIO fn exChan = do
+  key <- newUnique
+  state <- newTOnceIO fn
   pure $ Disposer [DisposerElement (IODisposerElement key exChan state)]
 
 
@@ -351,8 +358,8 @@ instance IsDisposerElement ResourceManager where
     DisposeResultDependencies <$> beginDisposeResourceManagerInternal resourceManager
 
 
-newUnmanagedResourceManagerSTM :: MonadSTMc NoRetry '[] m => m ResourceManager
-newUnmanagedResourceManagerSTM = do
+newResourceManager :: MonadSTMc NoRetry '[] m => m ResourceManager
+newResourceManager = do
   resourceManagerKey <- newUniqueSTM
   attachedResources <- newTVar mempty
   resourceManagerState <- newTVar (ResourceManagerNormal attachedResources)

@@ -37,26 +37,26 @@ spec = parallel $ do
       it "can be disposed" $ io do
         withTestExceptionSink \sink -> do
           markVar <- newTVarIO False
-          disposable <- atomically $ newUnmanagedIODisposer (atomically (writeTVar markVar True)) sink
+          disposable <- atomically $ newDisposer (atomically (writeTVar markVar True)) sink
           dispose disposable
           readTVarIO markVar `shouldReturn` True
 
       it "signals it's disposed state" $ io do
         withTestExceptionSink \sink -> do
-          disposable <- atomically $ newUnmanagedIODisposer (pure ()) sink
+          disposable <- atomically $ newDisposer (pure ()) sink
           void $ forkIO $ threadDelay 100000 >> dispose disposable
           await (isDisposed disposable)
 
       it "can be disposed multiple times" $ io do
         withTestExceptionSink \sink -> do
-          disposable <- atomically $ newUnmanagedIODisposer (pure ()) sink
+          disposable <- atomically $ newDisposer (pure ()) sink
           dispose disposable
           dispose disposable
           await (isDisposed disposable)
 
       it "can be disposed in parallel" $ do
         withTestExceptionSink \sink -> do
-          disposable <- atomically $ newUnmanagedIODisposer (threadDelay 100000) sink
+          disposable <- atomically $ newDisposer (threadDelay 100000) sink
           void $ forkIO $ dispose disposable
           dispose disposable
           await (isDisposed disposable)
@@ -65,14 +65,14 @@ spec = parallel $ do
       it "can be disposed" $ io do
         withTestExceptionSink \sink -> do
           markVar <- newTVarIO False
-          disposable <- atomically $ newUnmanagedSTMDisposer (writeTVar markVar True) sink
+          disposable <- atomically $ newSTMDisposer (writeTVar markVar True) sink
           dispose disposable
           readTVarIO markVar `shouldReturn` True
 
     describe "TDisposer" $ do
       it "can be disposed" $ io do
         markVar <- newTVarIO False
-        disposable <- atomically $ newUnmanagedTDisposer (writeTVar markVar True)
+        disposable <- atomically $ newTDisposer (writeTVar markVar True)
         dispose disposable
         readTVarIO markVar `shouldReturn` True
 
