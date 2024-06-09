@@ -86,6 +86,7 @@ library
     Quasar.Observable.Set
     Quasar.Observable.Subject
     Quasar.Observable.Traversable
+    Quasar.Pool
     Quasar.Prelude
     Quasar.PreludeExtras
     Quasar.Resources
