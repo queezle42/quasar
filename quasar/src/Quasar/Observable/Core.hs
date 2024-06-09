@@ -112,6 +112,10 @@ module Quasar.Observable.Core (
   skipRedundantUpdates,
   Void1,
   absurd1,
+
+  -- ** High-level observe wrapper
+  observeWith,
+  observeBlocking,
 ) where
 
 import Control.Applicative
