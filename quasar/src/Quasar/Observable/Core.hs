@@ -1576,7 +1576,7 @@ type Observable :: LoadKind -> [Type] -> Type -> Type
 newtype Observable canLoad exceptions v = Observable (ObservableT canLoad exceptions Identity v)
 
 instance ToObservableT canLoad exceptions Identity v (Observable canLoad exceptions v) where
-  toObservableT (Observable x) = ObservableT x
+  toObservableT (Observable x) = x
 
 instance Functor (Observable canLoad exceptions) where
   fmap fn (Observable fx) = Observable (ObservableT (mapObservable# fn fx))
