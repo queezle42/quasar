@@ -61,7 +61,7 @@ import Quasar.Exceptions
 import Quasar.Prelude
 import Quasar.Utils.CallbackRegistry
 import Quasar.Utils.Fix
-import {-# SOURCE #-} Quasar.Resources.Disposer
+import {-# SOURCE #-} Quasar.Disposer.Core
 
 
 class Monad m => MonadAwait m where

@@ -14,7 +14,7 @@ import Control.Applicative
 import Data.HashMap.Strict qualified as HM
 import Data.Unique
 import Quasar.Prelude
-import {-# SOURCE #-} Quasar.Resources.Disposer
+import {-# SOURCE #-} Quasar.Disposer.Core
 
 data CallbackRegistry a = CallbackRegistry (TVar (HM.HashMap Unique (a -> STMc NoRetry '[] ()))) (STMc NoRetry '[] ())
 

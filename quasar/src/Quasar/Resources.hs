@@ -71,11 +71,11 @@ module Quasar.Resources (
 
 
 import Control.Monad.Catch
-import Quasar.Future
+import Quasar.Disposer.Core
 import Quasar.Exceptions
+import Quasar.Future
 import Quasar.MonadQuasar
 import Quasar.Prelude
-import Quasar.Resources.Disposer
 import Quasar.Resources.FutureDisposer
 
 

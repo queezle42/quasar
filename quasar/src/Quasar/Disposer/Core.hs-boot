@@ -1,4 +1,4 @@
-module Quasar.Resources.Disposer (
+module Quasar.Disposer.Core (
   TDisposer,
   newTDisposer,
   disposeTDisposer,

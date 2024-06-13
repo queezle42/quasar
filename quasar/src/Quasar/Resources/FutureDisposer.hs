@@ -3,9 +3,9 @@ module Quasar.Resources.FutureDisposer (
   futureDisposerGeneric,
 ) where
 
-import Quasar.Prelude
+import Quasar.Disposer.Core
 import Quasar.Future
-import Quasar.Resources.Disposer
+import Quasar.Prelude
 import Quasar.Utils.TOnce
 
 data FutureDisposer = FutureDisposer Unique (TOnce (Future '[] (Maybe Disposer)) (Future '[] [DisposeDependencies]))

@@ -48,10 +48,10 @@ import Control.Monad.Catch (MonadThrow, MonadCatch, MonadMask, bracket, catchAll
 import Control.Monad.Reader (ReaderT, runReaderT, ask, local)
 import Control.Monad.Trans (lift)
 import GHC.Records (HasField(..))
+import Quasar.Disposer.Core
 import Quasar.Exceptions
 import Quasar.Future
 import Quasar.Prelude
-import Quasar.Resources.Disposer
 
 
 -- Invariant: the resource manager is disposed as soon as an exception is thrown to the sink

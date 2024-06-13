@@ -1,7 +1,7 @@
 {-# OPTIONS_HADDOCK not-home #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Quasar.Resources.Disposer (
+module Quasar.Disposer.Core (
   -- * Disposer api
   Disposable(..),
   Disposer,

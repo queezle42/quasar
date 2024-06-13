@@ -24,10 +24,10 @@ module Quasar.Resources.DisposableVar (
 
 import Data.Bifunctor qualified as Bifunctor
 import Data.Hashable (Hashable(..))
+import Quasar.Disposer.Core
 import Quasar.Exceptions (ExceptionSink, DisposedException, mkDisposedException)
 import Quasar.Future (Future, ToFuture(..), IsFuture(..))
 import Quasar.Prelude
-import Quasar.Resources.Disposer
 import Quasar.Utils.CallbackRegistry
 import Quasar.Utils.TOnce
 
