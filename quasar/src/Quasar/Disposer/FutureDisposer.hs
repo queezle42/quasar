@@ -1,4 +1,4 @@
-module Quasar.Resources.FutureDisposer (
+module Quasar.Disposer.FutureDisposer (
   futureDisposer,
   futureDisposerGeneric,
 ) where

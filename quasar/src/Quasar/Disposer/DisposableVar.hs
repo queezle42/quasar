@@ -1,4 +1,4 @@
-module Quasar.Resources.DisposableVar (
+module Quasar.Disposer.DisposableVar (
   DisposableVar,
   newDisposableVar,
   newDisposableVarIO,

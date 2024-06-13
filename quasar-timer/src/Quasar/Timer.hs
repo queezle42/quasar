@@ -19,11 +19,11 @@ import Control.Monad.Catch
 import Data.Heap
 import Data.Time.Clock (UTCTime, diffUTCTime, getCurrentTime)
 import Quasar.Async
+import Quasar.Disposer
 import Quasar.Exceptions
 import Quasar.Future
 import Quasar.MonadQuasar
 import Quasar.Prelude
-import Quasar.Resources
 
 
 data TimerCancelled = TimerCancelled

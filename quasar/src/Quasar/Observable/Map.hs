@@ -84,6 +84,7 @@ import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
 import Data.Traversable qualified as Traversable
 import GHC.Records (HasField (..))
+import Quasar.Disposer
 import Quasar.Observable.Cache
 import Quasar.Observable.Core
 import Quasar.Observable.Lift
@@ -92,7 +93,6 @@ import Quasar.Observable.List qualified as ObservableList
 import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
 import Quasar.Prelude hiding (filter, lookup, traverse)
-import Quasar.Resources
 import Quasar.Utils.Map qualified as MapUtils
 
 

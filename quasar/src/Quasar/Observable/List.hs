@@ -58,12 +58,12 @@ import Data.FingerTree qualified as FT
 import Data.Sequence (Seq(Empty))
 import Data.Sequence qualified as Seq
 import Data.Traversable qualified as Traversable
+import Quasar.Disposer (TDisposer)
 import Quasar.Observable.Cache
 import Quasar.Observable.Core
 import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
 import Quasar.Prelude hiding (traverse)
-import Quasar.Resources (TDisposer)
 
 
 newtype ListDelta v

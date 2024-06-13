@@ -64,6 +64,9 @@ library
     Quasar
     Quasar.Async
     Quasar.Async.Fork
+    Quasar.Disposer
+    Quasar.Disposer.DisposableVar
+    Quasar.Disposer.Rc
     Quasar.Exceptions
     Quasar.Exceptions.ExceptionSink
     Quasar.Future
@@ -85,9 +88,6 @@ library
     Quasar.Pool
     Quasar.Prelude
     Quasar.PreludeExtras
-    Quasar.Resources
-    Quasar.Resources.DisposableVar
-    Quasar.Resources.Rc
     Quasar.Utils.CallbackRegistry
     Quasar.Utils.Exceptions
     Quasar.Utils.ExtraT
@@ -98,7 +98,7 @@ library
     Quasar.Utils.TOnce
   other-modules:
     Quasar.Disposer.Core
-    Quasar.Resources.FutureDisposer
+    Quasar.Disposer.FutureDisposer
   hs-source-dirs:
     src
 
@@ -120,13 +120,13 @@ test-suite quasar-test
   main-is: Spec.hs
   other-modules:
     Quasar.AsyncSpec
+    Quasar.DisposerSpec
     Quasar.FutureSpec
     Quasar.Observable.BindSpec
     Quasar.Observable.LiftSpec
     Quasar.Observable.ListSpec
     Quasar.Observable.ObservableVarSpec
     Quasar.ObservableSpec
-    Quasar.ResourcesSpec
     Quasar.Utils.ReaderLockSpec
   hs-source-dirs:
     test

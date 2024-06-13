@@ -1,4 +1,4 @@
-module Quasar.Resources.Rc (
+module Quasar.Disposer.Rc (
   Rc,
   newRc,
   newRcIO,
@@ -13,8 +13,8 @@ module Quasar.Resources.Rc (
 ) where
 
 import Quasar.Prelude
-import Quasar.Resources
-import Quasar.Resources.DisposableVar
+import Quasar.Disposer
+import Quasar.Disposer.DisposableVar
 import Quasar.Exceptions (mkDisposedException, DisposedException(..))
 import Control.Exception (finally)
 

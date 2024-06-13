@@ -16,9 +16,9 @@ module Quasar.Timer.PosixTimer (
 import Control.Concurrent
 import Foreign
 import Foreign.C
-import Quasar.Prelude
+import Quasar.Disposer
 import Quasar.MonadQuasar
-import Quasar.Resources
+import Quasar.Prelude
 import System.Posix.Types
 
 #include <signal.h>

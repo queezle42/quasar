@@ -124,9 +124,9 @@ import Data.Binary (Binary)
 import Data.String (IsString(..))
 import Data.Type.Equality ((:~:)(Refl))
 import GHC.Records (HasField(..))
+import Quasar.Disposer
 import Quasar.Future
 import Quasar.Prelude
-import Quasar.Resources
 import Quasar.Utils.Fix
 
 -- * Generalized observables

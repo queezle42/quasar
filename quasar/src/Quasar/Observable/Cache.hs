@@ -14,9 +14,9 @@ module Quasar.Observable.Cache (
 
 import Control.Applicative
 import Data.Functor.Identity
+import Quasar.Disposer
 import Quasar.Observable.Core
 import Quasar.Prelude
-import Quasar.Resources
 import Quasar.Utils.CallbackRegistry
 
 -- * Cache

@@ -12,11 +12,11 @@ import Control.Concurrent
 import Control.Monad.Catch
 import Foreign
 import Foreign.C
-import Quasar.Future
 import Quasar.Async
+import Quasar.Disposer
+import Quasar.Future
 import Quasar.MonadQuasar
 import Quasar.Prelude
-import Quasar.Resources
 import Quasar.Timer.PosixTimer
 import System.Posix.Types
 

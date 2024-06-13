@@ -30,6 +30,7 @@ import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
 import Data.String (IsString(..))
 import Data.Text (Text)
+import Quasar.Disposer (TDisposer, isTrivialTDisposer, disposeTDisposer)
 import Quasar.Observable.AccumulatingObserver
 import Quasar.Observable.Core
 import Quasar.Observable.List (ListOperation(..), ObservableList, updateToOperations)
@@ -38,7 +39,6 @@ import Quasar.Observable.Map (ObservableMap)
 import Quasar.Observable.Map qualified as ObservableMap
 import Quasar.Observable.Traversable
 import Quasar.Prelude
-import Quasar.Resources (TDisposer, isTrivialTDisposer, disposeTDisposer)
 
 type ComponentRef = Word64
 

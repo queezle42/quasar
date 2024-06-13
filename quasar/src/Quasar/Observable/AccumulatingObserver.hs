@@ -5,9 +5,9 @@ module Quasar.Observable.AccumulatingObserver (
   disposeAccumulatingObserver,
 ) where
 
+import Quasar.Disposer
 import Quasar.Observable.Core
 import Quasar.Prelude
-import Quasar.Resources
 import Quasar.Utils.Fix (mfixTVar)
 
 data AccumulatingObserver canLoad exceptions c v =

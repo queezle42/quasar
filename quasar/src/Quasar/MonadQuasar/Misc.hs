@@ -16,13 +16,13 @@ module Quasar.MonadQuasar.Misc (
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Data.List.NonEmpty
-import Quasar.Future
 import Quasar.Async
+import Quasar.Disposer
 import Quasar.Exceptions
 import Quasar.Exceptions.ExceptionSink
+import Quasar.Future
 import Quasar.MonadQuasar
 import Quasar.Prelude
-import Quasar.Resources
 import Quasar.Utils.Exceptions
 import System.Exit
 

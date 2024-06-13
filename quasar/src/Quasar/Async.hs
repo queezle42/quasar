@@ -34,11 +34,11 @@ import Control.Exception (throwTo)
 import Control.Monad.Catch
 import GHC.Stack (withFrozenCallStack)
 import Quasar.Async.Fork
+import Quasar.Disposer
 import Quasar.Exceptions
 import Quasar.Future
 import Quasar.MonadQuasar
 import Quasar.Prelude
-import Quasar.Resources
 import Quasar.Utils.Fix
 
 

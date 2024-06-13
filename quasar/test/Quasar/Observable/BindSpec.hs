@@ -1,9 +1,9 @@
 module Quasar.Observable.BindSpec (spec) where
 
+import Quasar.Disposer (dispose)
 import Quasar.Observable.Core
 import Quasar.Observable.ObservableVar
 import Quasar.Prelude
-import Quasar.Resources (dispose)
 import Test.Hspec
 
 spec :: Spec

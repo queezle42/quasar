@@ -9,6 +9,7 @@ import Control.Monad.Catch
 import Data.Binary (Binary)
 import Data.Map.Strict (Map)
 import Quasar.Async
+import Quasar.Disposer
 import Quasar.Exceptions
 import Quasar.MonadQuasar
 import Quasar.MonadQuasar.Misc
@@ -22,7 +23,6 @@ import Quasar.Observable.Map
 import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
 import Quasar.Prelude
-import Quasar.Resources
 
 
 -- * ObservableT instance

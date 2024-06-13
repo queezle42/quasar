@@ -1,13 +1,13 @@
-module Quasar.ResourcesSpec (spec) where
+module Quasar.DisposerSpec (spec) where
 
 import Control.Concurrent
 import Control.Exception
 import Control.Monad.Catch
+import Quasar.Disposer
 import Quasar.Exceptions
 import Quasar.Exceptions.ExceptionSink
 import Quasar.Future
 import Quasar.Prelude
-import Quasar.Resources
 import Quasar.Utils.Exceptions
 import Test.Hspec
 

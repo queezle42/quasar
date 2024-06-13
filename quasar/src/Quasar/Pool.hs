@@ -8,13 +8,13 @@ module Quasar.Pool (
 
 import Control.Monad.Catch (handleAll, mask_)
 import Quasar.Async (unmanagedAsync)
+import Quasar.Disposer
 import Quasar.Exceptions (ExceptionSink, throwToExceptionSinkIO)
 import Quasar.Observable.Core
 import Quasar.Observable.List (ObservableList)
 import Quasar.Observable.Map (ObservableMapVar, toObservableMap)
 import Quasar.Observable.Map qualified as ObservableMap
 import Quasar.Prelude
-import Quasar.Resources
 
 
 -- TODO rename

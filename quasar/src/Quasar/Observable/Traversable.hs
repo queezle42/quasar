@@ -17,11 +17,11 @@ module Quasar.Observable.Traversable (
 ) where
 
 import Control.Applicative hiding (empty)
+import Data.Traversable (for)
+import Quasar.Disposer
 import Quasar.Observable.Core
 import Quasar.Prelude hiding (filter, lookup)
-import Quasar.Resources
 import Quasar.Utils.Fix
-import Data.Traversable (for)
 
 
 -- * Selecting removals from a delta
