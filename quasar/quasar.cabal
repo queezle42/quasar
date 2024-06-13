@@ -99,11 +99,6 @@ library
   other-modules:
     Quasar.Resources.Disposer
     Quasar.Resources.FutureDisposer
-    -- Legacy observable v1
-    Quasar.Observable
-    Quasar.Observable.ObservableList
-    Quasar.Observable.ObservableMap
-    Quasar.Observable.ObservablePriority
   hs-source-dirs:
     src
 
