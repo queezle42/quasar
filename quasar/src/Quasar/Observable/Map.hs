@@ -28,6 +28,8 @@ module Quasar.Observable.Map (
 
   -- ** Query
   lookup,
+  lookupMin,
+  lookupMax,
   count,
   isEmpty,
 
@@ -279,6 +281,12 @@ singleton key value = constObservableMap (ObservableStateLiveOk (Map.singleton k
 
 lookup :: Ord k => k -> ObservableMap l e k v -> Observable l e (Maybe v)
 lookup key x = lookupValue# (toObservableMap x) (Key key)
+
+lookupMin :: Ord k => ObservableMap l e k v -> Observable l e (Maybe v)
+lookupMin x = lookupValue# (toObservableMap x) Min
+
+lookupMax :: Ord k => ObservableMap l e k v -> Observable l e (Maybe v)
+lookupMax x = lookupValue# (toObservableMap x) Max
 
 count :: Ord k => ObservableMap l e k v -> Observable l e Int64
 count = count#
