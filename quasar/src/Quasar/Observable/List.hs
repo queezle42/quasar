@@ -25,6 +25,10 @@ module Quasar.Observable.List (
   fromSeq,
   constObservableList,
 
+  -- ** Query
+  count,
+  isEmpty,
+
   -- * Traversal
   traverse,
   attachForEach,
@@ -379,6 +383,13 @@ attachSimpleListObserver observable callback = do
     ObservableChangeLiveDelta delta -> callback (ObservableUpdateDelta delta)
   case initial of
     ObservableStateLive (ObservableResultTrivial x) -> pure (disposer, x)
+
+
+count :: ObservableList l e v -> Observable l e Int64
+count fx = count# fx
+
+isEmpty :: ObservableList l e v -> Observable l e Bool
+isEmpty fx = isEmpty# fx
 
 
 instance IsObservableList canLoad exceptions v (CachedObservable canLoad exceptions Seq v) where
