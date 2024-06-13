@@ -124,8 +124,6 @@ test-suite quasar-test
     Quasar.Observable.BindSpec
     Quasar.Observable.LiftSpec
     Quasar.Observable.ListSpec
-    Quasar.Observable.ObservableHashMapSpec
-    Quasar.Observable.ObservablePrioritySpec
     Quasar.Observable.ObservableVarSpec
     Quasar.ObservableSpec
     Quasar.ResourcesSpec
