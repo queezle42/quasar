@@ -6,7 +6,6 @@ import Control.Concurrent (forkIO, threadDelay)
 import Data.String (fromString)
 import Data.Text (Text)
 import Data.Text qualified as T
-import Data.Text.Lazy qualified as TL
 import Network.Wai.Handler.Warp
 import Quasar
 import Quasar.Observable.Core
@@ -30,7 +29,7 @@ main = runQuasarAndExit do
   let
     squirrelFn :: Int -> Observable NoLoad '[] Text
     squirrelFn x = do
-        isSquirrel <- skipRedundantUpdates ((== x) <$> toObservable var)
+        isSquirrel <- skipUpdateIfEqual ((== x) <$> toObservable var)
         if isSquirrel
           then "🐿"
           else fromString (show x)

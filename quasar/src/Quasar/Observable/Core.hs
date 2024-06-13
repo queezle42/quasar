@@ -109,7 +109,7 @@ module Quasar.Observable.Core (
   catchObservable,
   catchAllObservable,
   attachSimpleObserver,
-  skipRedundantUpdates,
+  skipUpdateIfEqual,
   Void1,
   absurd1,
 
@@ -1508,12 +1508,12 @@ attachDeltaRemappingObserver x resetFn deltaFn callback =
 
 
 
-newtype SkipRedundantUpdates canLoad exceptions c v = SkipRedundantUpdates (ObservableT canLoad exceptions c v)
+newtype SkipUpdateIfEqual canLoad exceptions c v = SkipUpdateIfEqual (ObservableT canLoad exceptions c v)
 
-instance Eq (c v) => IsObservableCore canLoad exceptions c v (SkipRedundantUpdates canLoad exceptions c v) where
-  readObservable# (SkipRedundantUpdates fx) = readObservable# fx
+instance Eq (c v) => IsObservableCore canLoad exceptions c v (SkipUpdateIfEqual canLoad exceptions c v) where
+  readObservable# (SkipUpdateIfEqual fx) = readObservable# fx
 
-  attachEvaluatedObserver# (SkipRedundantUpdates fx) callback = do
+  attachEvaluatedObserver# (SkipUpdateIfEqual fx) callback = do
     mfixTVar \var -> do
       (disposer, initial) <- attachEvaluatedObserver# fx \change -> do
         oldState <- readTVar var
@@ -1543,11 +1543,11 @@ instance Eq (c v) => IsObservableCore canLoad exceptions c v (SkipRedundantUpdat
 
 
 -- TODO move to Observable module
-skipRedundantUpdates ::
+skipUpdateIfEqual ::
   Eq v =>
   Observable canLoad exceptions v ->
   Observable canLoad exceptions v
-skipRedundantUpdates (Observable fx) = Observable (ObservableT (SkipRedundantUpdates fx))
+skipUpdateIfEqual (Observable fx) = Observable (ObservableT (SkipUpdateIfEqual fx))
 
 
 
