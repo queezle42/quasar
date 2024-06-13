@@ -51,6 +51,8 @@ module Quasar.Observable.Map (
   filter,
   filterKey,
   filterWithKey,
+  mapMaybe,
+  mapMaybeWithKey,
 
   -- * ObservableMapVar (mutable observable var)
   ObservableMapVar(..),
@@ -76,7 +78,7 @@ import Data.Foldable (foldl')
 import Data.Map.Merge.Strict qualified as Map
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (mapMaybe)
+import Data.Maybe qualified as Maybe
 import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
 import Data.Traversable qualified as Traversable
@@ -155,7 +157,7 @@ instance ContainerCount (Map k) where
   containerIsEmpty# x = Map.null x
 
 instance Ord k => TraversableObservableContainer (Map k) where
-  selectRemoved (MapDelta ops) old = mapMaybe (\key -> Map.lookup key old) (Map.keys ops)
+  selectRemoved (MapDelta ops) old = Maybe.mapMaybe (\key -> Map.lookup key old) (Map.keys ops)
 
 
 
@@ -429,6 +431,45 @@ filterWithKey fn fx = ObservableMap (ObservableT (FilteredObservableMap fn fx))
 -- | Note: Implemented using `filterWithKey`.
 filterKey :: (k -> Bool) -> ObservableMap l e k v -> ObservableMap l e k v
 filterKey fn fx = filterWithKey (\key _ -> fn key) fx
+
+
+data MapMaybeObservableMap l e k va v = MapMaybeObservableMap (k -> va -> Maybe v) (ObservableMap l e k va)
+
+instance Ord k => IsObservableCore l e (Map k) v (MapMaybeObservableMap l e k va v) where
+  readObservable# (MapMaybeObservableMap fn fx) =
+    mapObservableStateResult (Map.mapMaybeWithKey fn) <$> readObservable# fx
+
+  attachObserver# (MapMaybeObservableMap fn fx) callback = do
+    (disposer, initial) <- attachObserver# fx \change -> callback case change of
+      ObservableChangeLiveReplace (ObservableResultOk new) ->
+        ObservableChangeLiveReplace (ObservableResultOk (Map.mapMaybeWithKey fn new))
+      ObservableChangeLiveDelta delta ->
+        ObservableChangeLiveDelta (filterDelta delta)
+      -- Exception, loading, cleared or unchanged
+      -- Values are passed through unchanged but are reconstructed because the type changes.
+      ObservableChangeLiveReplace (ObservableResultEx ex) ->
+        ObservableChangeLiveReplace (ObservableResultEx ex)
+      ObservableChangeLoadingClear -> ObservableChangeLoadingClear
+      ObservableChangeLiveUnchanged -> ObservableChangeLiveUnchanged
+      ObservableChangeLoadingUnchanged -> ObservableChangeLoadingUnchanged
+
+    pure (disposer, mapObservableStateResult (Map.mapMaybeWithKey fn) initial)
+    where
+      filterDelta :: MapDelta k va -> MapDelta k v
+      filterDelta (MapDelta ops) = MapDelta (Map.mapWithKey filterOperation ops)
+      filterOperation :: k -> MapOperation va -> MapOperation v
+      filterOperation key (Insert value) = maybe Delete Insert (fn key value)
+      filterOperation _key Delete = Delete
+
+instance Ord k => IsObservableMap l e k v (MapMaybeObservableMap l e k va v) where
+
+mapMaybe :: Ord k => (va -> Maybe v) -> ObservableMap l e k va -> ObservableMap l e k v
+mapMaybe fn = mapMaybeWithKey (const fn)
+
+mapMaybeWithKey ::
+  Ord k =>
+  (k -> va -> Maybe v) -> ObservableMap l e k va -> ObservableMap l e k v
+mapMaybeWithKey fn fx = ObservableMap (ObservableT (MapMaybeObservableMap fn fx))
 
 
 -- * Convert to list of values/items
