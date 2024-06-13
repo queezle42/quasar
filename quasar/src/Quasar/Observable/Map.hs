@@ -18,7 +18,7 @@ module Quasar.Observable.Map (
   MapOperation(..),
 
   -- * Observable interaction
-  bind,
+  bindObservable,
 
   -- ** Const construction
   empty,
@@ -245,12 +245,12 @@ instance (Ord k, IsObservableCore l e (Map k) v b) => IsObservableMap l e k v (B
   -- TODO
 
 
-bind ::
+bindObservable ::
   forall canLoad exceptions k v va. Ord k =>
   Observable canLoad exceptions va ->
   (va -> ObservableMap canLoad exceptions k v) ->
   ObservableMap canLoad exceptions k v
-bind fx fn = ObservableMap (bindObservableT fx ((\(ObservableMap x) -> x) . fn))
+bindObservable fx fn = ObservableMap (bindObservableT fx ((\(ObservableMap x) -> x) . fn))
 
 
 constObservableMap :: ObservableState canLoad (ObservableResult exceptions (Map k)) v -> ObservableMap canLoad exceptions k v
