@@ -49,6 +49,7 @@ module Quasar.Observable.Map (
 
   -- ** Filter
   filter,
+  filterKey,
   filterWithKey,
 
   -- * ObservableMapVar (mutable observable var)
@@ -424,6 +425,10 @@ filter fn = filterWithKey (const fn)
 
 filterWithKey :: (k -> v -> Bool) -> ObservableMap l e k v -> ObservableMap l e k v
 filterWithKey fn fx = ObservableMap (ObservableT (FilteredObservableMap fn fx))
+
+-- | Note: Implemented using `filterWithKey`.
+filterKey :: (k -> Bool) -> ObservableMap l e k v -> ObservableMap l e k v
+filterKey fn fx = filterWithKey (\key _ -> fn key) fx
 
 
 -- * Convert to list of values/items
