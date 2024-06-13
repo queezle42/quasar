@@ -70,7 +70,6 @@ library
     Quasar.Logger
     Quasar.MonadQuasar
     Quasar.MonadQuasar.Misc
-    Quasar.Observable
     Quasar.Observable.AccumulatingObserver
     Quasar.Observable.Async
     Quasar.Observable.Cache
@@ -79,9 +78,6 @@ library
     Quasar.Observable.List
     Quasar.Observable.Loading
     Quasar.Observable.Map
-    Quasar.Observable.ObservableList
-    Quasar.Observable.ObservableMap
-    Quasar.Observable.ObservablePriority
     Quasar.Observable.ObservableVar
     Quasar.Observable.Set
     Quasar.Observable.Subject
@@ -103,6 +99,11 @@ library
   other-modules:
     Quasar.Resources.Disposer
     Quasar.Resources.FutureDisposer
+    -- Legacy observable v1
+    Quasar.Observable
+    Quasar.Observable.ObservableList
+    Quasar.Observable.ObservableMap
+    Quasar.Observable.ObservablePriority
   hs-source-dirs:
     src
 
