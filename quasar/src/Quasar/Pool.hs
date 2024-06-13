@@ -17,6 +17,7 @@ import Quasar.Prelude
 import Quasar.Resources
 
 
+-- TODO rename
 data Pool a = forall b. IsPool a b => Pool b
 
 instance IsPool a (Pool a) where
