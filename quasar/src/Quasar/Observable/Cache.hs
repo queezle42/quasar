@@ -16,7 +16,7 @@ import Control.Applicative
 import Data.Functor.Identity
 import Quasar.Observable.Core
 import Quasar.Prelude
-import Quasar.Resources.Disposer
+import Quasar.Resources
 import Quasar.Utils.CallbackRegistry
 
 -- * Cache

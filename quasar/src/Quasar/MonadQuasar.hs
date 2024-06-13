@@ -44,9 +44,9 @@ module Quasar.MonadQuasar (
 ) where
 
 import Control.Monad (MonadPlus)
-import Control.Monad.Trans (lift)
 import Control.Monad.Catch (MonadThrow, MonadCatch, MonadMask, bracket, catchAll, mask, finally)
 import Control.Monad.Reader (ReaderT, runReaderT, ask, local)
+import Control.Monad.Trans (lift)
 import GHC.Records (HasField(..))
 import Quasar.Exceptions
 import Quasar.Future

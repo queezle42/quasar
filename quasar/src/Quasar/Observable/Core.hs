@@ -126,7 +126,7 @@ import Data.Type.Equality ((:~:)(Refl))
 import GHC.Records (HasField(..))
 import Quasar.Future
 import Quasar.Prelude
-import Quasar.Resources.Disposer
+import Quasar.Resources
 import Quasar.Utils.Fix
 
 -- * Generalized observables

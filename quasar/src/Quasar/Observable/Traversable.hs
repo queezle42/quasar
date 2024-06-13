@@ -19,7 +19,7 @@ module Quasar.Observable.Traversable (
 import Control.Applicative hiding (empty)
 import Quasar.Observable.Core
 import Quasar.Prelude hiding (filter, lookup)
-import Quasar.Resources.Disposer
+import Quasar.Resources
 import Quasar.Utils.Fix
 import Data.Traversable (for)
 

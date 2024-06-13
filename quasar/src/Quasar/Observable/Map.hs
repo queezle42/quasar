@@ -92,7 +92,7 @@ import Quasar.Observable.List qualified as ObservableList
 import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
 import Quasar.Prelude hiding (filter, lookup, traverse)
-import Quasar.Resources.Disposer
+import Quasar.Resources
 import Quasar.Utils.Map qualified as MapUtils
 
 
