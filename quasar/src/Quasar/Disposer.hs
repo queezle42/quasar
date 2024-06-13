@@ -1,8 +1,29 @@
 module Quasar.Disposer (
-  -- * Resources
+  -- * Disposer api
   Disposable(..),
   dispose,
+  disposeEventually,
+  disposeEventually_,
+  disposeEventuallyIO,
+  disposeEventuallyIO_,
+
+  -- ** Disposer
+  Disposer,
+  newDisposer,
+  newDisposerIO,
   isDisposed,
+  trivialDisposer,
+  isTrivialDisposer,
+
+  -- ** STM variants
+  TDisposable(..),
+  TDisposer,
+  disposeTDisposer,
+  disposeSTM,
+  newTDisposer,
+  newSTMDisposer,
+  newRetryTDisposer,
+  isTrivialTDisposer,
 
   -- * ResourceCollector
   ResourceCollector(..),
@@ -20,10 +41,6 @@ module Quasar.Disposer (
   registerSimpleDisposeTransaction_,
   registerSimpleDisposeTransactionIO,
   registerSimpleDisposeTransactionIO_,
-  disposeEventually,
-  disposeEventually_,
-  disposeEventuallyIO,
-  disposeEventuallyIO_,
   captureResources,
   captureResources_,
   captureResourcesIO,
@@ -33,24 +50,6 @@ module Quasar.Disposer (
   registerNewResource,
   registerNewResource_,
   disposeOnError,
-
-  -- * Types to implement resources
-  -- ** Disposer
-  Disposer,
-  newDisposer,
-  newDisposerIO,
-  trivialDisposer,
-  isTrivialDisposer,
-
-  -- *** STM variants
-  TDisposable(..),
-  TDisposer,
-  disposeTDisposer,
-  disposeSTM,
-  newTDisposer,
-  newSTMDisposer,
-  newRetryTDisposer,
-  isTrivialTDisposer,
 
   -- ** Resource manager
   ResourceManager,
