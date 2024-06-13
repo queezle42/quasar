@@ -13,7 +13,6 @@ module Quasar.Observable.Cache (
 ) where
 
 import Control.Applicative
-import Control.Monad.Except
 import Data.Functor.Identity
 import Quasar.Observable.Core
 import Quasar.Prelude

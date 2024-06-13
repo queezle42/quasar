@@ -8,7 +8,6 @@ module Quasar.Network.Runtime.Observable () where
 import Control.Monad.Catch
 import Data.Binary (Binary)
 import Data.Map.Strict (Map)
-import Data.Map.Strict qualified as Map
 import Quasar.Async
 import Quasar.Exceptions
 import Quasar.MonadQuasar

@@ -120,8 +120,6 @@ module Quasar.Observable.Core (
 
 import Control.Applicative
 import Control.Monad.Catch (MonadThrow(..), MonadCatch(..), bracket, fromException, MonadMask)
-import Control.Monad.Except
-import Data.Bifunctor (first)
 import Data.Binary (Binary)
 import Data.String (IsString(..))
 import Data.Type.Equality ((:~:)(Refl))

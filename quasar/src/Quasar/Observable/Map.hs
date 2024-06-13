@@ -74,7 +74,6 @@ module Quasar.Observable.Map (
 ) where
 
 import Control.Applicative hiding (empty)
-import Control.Monad.Except
 import Data.Binary (Binary)
 import Data.Foldable (foldl')
 import Data.Map.Merge.Strict qualified as Map
@@ -88,7 +87,7 @@ import GHC.Records (HasField (..))
 import Quasar.Observable.Cache
 import Quasar.Observable.Core
 import Quasar.Observable.Lift
-import Quasar.Observable.List (ObservableList(..), IsObservableList, ListDelta, ListOperation(..))
+import Quasar.Observable.List (ObservableList(..), IsObservableList, ListOperation(..))
 import Quasar.Observable.List qualified as ObservableList
 import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
