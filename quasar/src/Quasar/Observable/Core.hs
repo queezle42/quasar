@@ -167,8 +167,8 @@ class IsObservableCore canLoad exceptions c v a | a -> canLoad, a -> exceptions,
 
       pure ((disposer, initial), createObserverState initial)
 
-  isCachedObservable# :: a -> Bool
-  isCachedObservable# _ = False
+  isSharedObservable# :: a -> Bool
+  isSharedObservable# _ = False
 
   mapObservable# :: ObservableFunctor c => (v -> vb) -> a -> MappedObservable canLoad exceptions c vb
   mapObservable# f x = MappedObservable f x
@@ -220,7 +220,7 @@ instance IsObservableCore canLoad exceptions c v (ObservableT canLoad exceptions
   readObservable# (ObservableT x) = readObservable# x
   attachObserver# (ObservableT x) = attachObserver# x
   attachEvaluatedObserver# (ObservableT x) = attachEvaluatedObserver# x
-  isCachedObservable# (ObservableT x) = isCachedObservable# x
+  isSharedObservable# (ObservableT x) = isSharedObservable# x
   mapObservable# f (ObservableT x) = mapObservable# f x
   count# (ObservableT x) = count# x
   isEmpty# (ObservableT x) = isEmpty# x
@@ -686,7 +686,7 @@ instance Semigroup (c v) => Semigroup (ObservableState canLoad c v) where
 instance IsObservableCore canLoad exceptions c v (ObservableState canLoad (ObservableResult exceptions c) v) where
   readObservable# = pure
   attachObserver# x _callback = pure (mempty, x)
-  isCachedObservable# _ = True
+  isSharedObservable# _ = True
   count# x = constObservable (mapObservableStateResult (Identity . containerCount#) x)
   isEmpty# x = constObservable (mapObservableStateResult (Identity . containerIsEmpty#) x)
 
@@ -1632,7 +1632,7 @@ instance IsObservableCore canLoad exceptions Identity v (Observable canLoad exce
   readObservable# (Observable x) = readObservable# x
   attachObserver# (Observable x) = attachObserver# x
   attachEvaluatedObserver# (Observable x) = attachEvaluatedObserver# x
-  isCachedObservable# (Observable x) = isCachedObservable# x
+  isSharedObservable# (Observable x) = isSharedObservable# x
   mapObservable# f (Observable x) = mapObservable# f x
   count# (Observable x) = count# x
   isEmpty# (Observable x) = isEmpty# x

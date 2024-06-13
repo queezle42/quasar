@@ -75,7 +75,6 @@ library
     Quasar.MonadQuasar.Misc
     Quasar.Observable.AccumulatingObserver
     Quasar.Observable.Async
-    Quasar.Observable.Cache
     Quasar.Observable.Core
     Quasar.Observable.Lift
     Quasar.Observable.List
@@ -83,6 +82,7 @@ library
     Quasar.Observable.Map
     Quasar.Observable.ObservableVar
     Quasar.Observable.Set
+    Quasar.Observable.Share
     Quasar.Observable.Subject
     Quasar.Observable.Traversable
     Quasar.Pool

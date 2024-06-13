@@ -11,7 +11,7 @@ module Quasar.Observable.Map (
   liftObservableMap,
   IsObservableMap(..),
   query,
-  cache,
+  share,
 
   -- ** Delta types
   MapDelta(..),
@@ -85,11 +85,11 @@ import Data.Sequence qualified as Seq
 import Data.Traversable qualified as Traversable
 import GHC.Records (HasField (..))
 import Quasar.Disposer
-import Quasar.Observable.Cache
 import Quasar.Observable.Core
 import Quasar.Observable.Lift
 import Quasar.Observable.List (ObservableList(..), IsObservableList, ListOperation(..))
 import Quasar.Observable.List qualified as ObservableList
+import Quasar.Observable.Share
 import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
 import Quasar.Prelude hiding (filter, lookup, traverse)
@@ -206,7 +206,7 @@ instance IsObservableCore canLoad exceptions (Map k) v (ObservableMap canLoad ex
   readObservable# (ObservableMap (ObservableT x)) = readObservable# x
   attachObserver# (ObservableMap x) = attachObserver# x
   attachEvaluatedObserver# (ObservableMap x) = attachEvaluatedObserver# x
-  isCachedObservable# (ObservableMap (ObservableT x)) = isCachedObservable# x
+  isSharedObservable# (ObservableMap (ObservableT x)) = isSharedObservable# x
 
 instance IsObservableMap canLoad exceptions k v (ObservableMap canLoad exceptions k v) where
   lookupKey# (ObservableMap x) = lookupKey# x
@@ -234,14 +234,14 @@ query x = query# (toObservableMap x)
 
 
 
-instance Ord k => IsObservableMap canLoad exceptions k v (CachedObservable canLoad exceptions (Map k) v) where
+instance Ord k => IsObservableMap canLoad exceptions k v (SharedObservable canLoad exceptions (Map k) v) where
   -- TODO
 
-cache ::
+share ::
   (Ord k, MonadSTMc NoRetry '[] m) =>
   ObservableMap canLoad exceptions k v ->
   m (ObservableMap canLoad exceptions k v)
-cache (ObservableMap f) = ObservableMap <$> cacheObservableT f
+share (ObservableMap f) = ObservableMap <$> shareObservableT f
 
 
 

@@ -53,7 +53,7 @@ instance Ord v => IsObservableCore canLoad exceptions Set v (ObservableSet canLo
   readObservable# (ObservableSet x) = readObservable# x
   attachObserver# (ObservableSet x) = attachObserver# x
   attachEvaluatedObserver# (ObservableSet x) = attachEvaluatedObserver# x
-  isCachedObservable# (ObservableSet x) = isCachedObservable# x
+  isSharedObservable# (ObservableSet x) = isSharedObservable# x
 
 instance Ord v => IsObservableSet canLoad exceptions v (ObservableSet canLoad exceptions v) where
   --member# (ObservableSet x) = member# x

@@ -12,7 +12,7 @@ module Quasar.Observable.List (
   validatedListDeltaLength,
   ListDeltaOperation(..),
   Length(..),
-  cache,
+  share,
 
   -- * Reexports
   FingerTree,
@@ -59,8 +59,8 @@ import Data.Sequence (Seq(Empty))
 import Data.Sequence qualified as Seq
 import Data.Traversable qualified as Traversable
 import Quasar.Disposer (TDisposer)
-import Quasar.Observable.Cache
 import Quasar.Observable.Core
+import Quasar.Observable.Share
 import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
 import Quasar.Prelude hiding (traverse)
@@ -342,7 +342,7 @@ instance IsObservableCore canLoad exceptions Seq v (ObservableList canLoad excep
   readObservable# (ObservableList x) = readObservable# x
   attachObserver# (ObservableList x) = attachObserver# x
   attachEvaluatedObserver# (ObservableList x) = attachEvaluatedObserver# x
-  isCachedObservable# (ObservableList x) = isCachedObservable# x
+  isSharedObservable# (ObservableList x) = isSharedObservable# x
 
 instance IsObservableList canLoad exceptions v (ObservableList canLoad exceptions v) where
   --member# (ObservableList (ObservableT x)) = member# x
@@ -392,13 +392,13 @@ isEmpty :: ObservableList l e v -> Observable l e Bool
 isEmpty fx = isEmpty# fx
 
 
-instance IsObservableList canLoad exceptions v (CachedObservable canLoad exceptions Seq v) where
+instance IsObservableList canLoad exceptions v (SharedObservable canLoad exceptions Seq v) where
 
-cache ::
+share ::
   MonadSTMc NoRetry '[] m =>
   ObservableList canLoad exceptions v ->
   m (ObservableList canLoad exceptions v)
-cache (ObservableList f) = ObservableList <$> cacheObservableT f
+share (ObservableList f) = ObservableList <$> shareObservableT f
 
 
 constObservableList :: ObservableState canLoad (ObservableResult exceptions Seq) v -> ObservableList canLoad exceptions v
