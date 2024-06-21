@@ -1,38 +1,92 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
+{-# LANGUAGE ImpredicativeTypes #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Quasar.Observable.Set (
   ObservableSet,
   ToObservableSet,
   toObservableSet,
-  ObservableSetDelta(..),
-  ObservableSetOperation(..),
+  SetDelta(..),
+  SetOperation(..),
+  share,
+
+  -- * Observable interaction
+  bindObservable,
+
+  -- ** Const construction
+  empty,
+  singleton,
+  fromSet,
+  fromList,
+  constObservableSet,
+
+  -- ** Query
+  count,
+  isEmpty,
+
+  -- ** Combine
+  union,
+
+  -- ** Conversions
+  asList,
+
+  -- * Traversal
+  attachForEach,
+
+  -- * ObservableSetVar (mutable observable var)
+  ObservableSetVar(..),
+  newVar,
+  newVarIO,
+  readVar,
+  readVarIO,
+  insertVar,
+  deleteVar,
+  replaceVar,
+  clearVar,
 ) where
 
+import Data.Foldable (foldl')
+import Data.Map (Map)
+import Data.Map qualified as Map
+import Data.Sequence (Seq)
+import Data.Sequence qualified as Seq
 import Data.Set (Set)
 import Data.Set qualified as Set
+import Quasar.Disposer (TDisposer)
 import Quasar.Observable.Core
-import Quasar.Observable.List
+import Quasar.Observable.List (ObservableList, ListOperation, IsObservableList(..))
+import Quasar.Observable.List qualified as List
+import Quasar.Observable.Share
+import Quasar.Observable.Subject
 import Quasar.Prelude
 
 
-newtype ObservableSetDelta v
-  = ObservableSetDelta (Set (ObservableSetOperation v))
+newtype SetDelta v
+  = SetDelta (Map v SetOperation)
 
-data ObservableSetOperation v = ObservableSetInsert v | ObservableSetDelete v
+data SetOperation = Insert | Delete
   deriving (Eq, Ord)
 
-applyObservableSetOperation :: Ord v => ObservableSetOperation v -> Set v -> Set v
-applyObservableSetOperation (ObservableSetInsert x) = Set.insert x
-applyObservableSetOperation (ObservableSetDelete x) = Set.delete x
 
-applyObservableSetOperations :: Ord v => Set (ObservableSetOperation v) -> Set v -> Set v
-applyObservableSetOperations ops old = Set.foldr applyObservableSetOperation old ops
+insertDelta :: v -> SetDelta v
+insertDelta value = SetDelta (Map.singleton value Insert)
+
+deleteDelta :: v -> SetDelta v
+deleteDelta value = SetDelta (Map.singleton value Delete)
+
+
+applyObservableSetOperation :: Ord v => (v, SetOperation) -> Set v -> Set v
+applyObservableSetOperation (x, Insert) = Set.insert x
+applyObservableSetOperation (x, Delete) = Set.delete x
+
+applyObservableSetOperations :: Ord v => [(v, SetOperation)] -> Set v -> Set v
+applyObservableSetOperations ops old = foldr applyObservableSetOperation old ops
 
 instance Ord v => ObservableContainer Set v where
   type ContainerConstraint _canLoad _exceptions Set v _a = ()
-  type Delta Set = ObservableSetDelta
-  applyDelta (ObservableSetDelta ops) old = Just (applyObservableSetOperations ops old)
-  mergeDelta (ObservableSetDelta old) (ObservableSetDelta new) = ObservableSetDelta (Set.union new old)
+  type Delta Set = SetDelta
+  applyDelta (SetDelta ops) old = Just (applyObservableSetOperations (Map.toList ops) old)
+  mergeDelta (SetDelta old) (SetDelta new) = SetDelta (Map.unionWith (\x _ -> x) new old)
 
 instance ContainerCount Set where
   containerCount# x = fromIntegral (Set.size x)
@@ -72,3 +126,188 @@ class IsObservableCore canLoad exceptions Set v a => IsObservableSet canLoad exc
 
 
 instance IsObservableSet canLoad exceptions v (ObservableState canLoad (ObservableResult exceptions Set) v) where
+
+
+
+share ::
+  (MonadSTMc NoRetry '[] m, Ord v) =>
+  ObservableSet l e v ->
+  m (ObservableSet l e v)
+share (ObservableSet f) = ObservableSet <$> shareObservableT f
+
+bindObservable ::
+  forall l e v va. Ord v =>
+  Observable l e va ->
+  (va -> ObservableSet l e v) ->
+  ObservableSet l e v
+bindObservable fx fn = ObservableSet (bindObservableT fx ((\(ObservableSet x) -> x) . fn))
+
+constObservableSet :: ObservableState canLoad (ObservableResult exceptions Set) v -> ObservableSet canLoad exceptions v
+constObservableSet = ObservableSet . ObservableT
+
+fromSet :: Set v -> ObservableSet canLoad exceptions v
+fromSet = constObservableSet . ObservableStateLive . ObservableResultOk
+
+fromList :: Ord v => [v] -> ObservableSet canLoad exceptions v
+fromList = fromSet . Set.fromList
+
+singleton :: v -> ObservableSet canLoad exceptions v
+singleton = fromSet . Set.singleton
+
+empty :: Ord v => ObservableSet canLoad exceptions v
+empty = fromSet mempty
+
+count :: Ord v => ObservableSet l e v -> Observable l e Int64
+count = count#
+
+isEmpty :: Ord v => ObservableSet l e v -> Observable l e Bool
+isEmpty = isEmpty#
+
+attachForEach ::
+  Ord va =>
+  (va -> STMc NoRetry '[] v) ->
+  (v -> STMc NoRetry '[] ()) ->
+  ObservableSet l e va ->
+  STMc NoRetry '[] TDisposer
+attachForEach addFn removeFn fx = List.attachForEach addFn removeFn (asList fx)
+
+
+
+data ObservableSetUnion canLoad exceptions v =
+  ObservableSetUnion
+    (ObservableSet canLoad exceptions v)
+    (ObservableSet canLoad exceptions v)
+
+instance Ord v => IsObservableSet canLoad exceptions v (ObservableSetUnion canLoad exceptions v) where
+
+instance Ord v => IsObservableCore canLoad exceptions Set v (ObservableSetUnion canLoad exceptions v) where
+  isEmpty# (ObservableSetUnion x y) = do
+    xEmpty <- isEmpty# x
+    yEmpty <- isEmpty# y
+    pure (xEmpty && yEmpty)
+
+  readObservable# (ObservableSetUnion fx fy) = do
+    readObservable# fx >>= \case
+      ObservableStateLoading -> pure ObservableStateLoading
+      (ObservableStateLive (ObservableResultEx ex)) -> pure (ObservableStateLive (ObservableResultEx ex))
+      (ObservableStateLive (ObservableResultOk x)) -> do
+        y <- readObservable# fy
+        pure (mapObservableStateResult (Set.union x) y)
+
+  attachObserver# (ObservableSetUnion fx fy) =
+    attachMonoidMergeObserver Set.union deltaFn deltaFn fx fy
+    where
+      deltaFn :: ObservableUpdate Set  v -> Set v -> Set v -> Maybe (ObservableUpdate Set v)
+      deltaFn (ObservableUpdateDelta (SetDelta ops)) _prev other =
+        Just (ObservableUpdateDelta (SetDelta (Map.mapMaybeWithKey helper ops)))
+        where
+          helper :: v -> SetOperation -> Maybe SetOperation
+          helper x Insert =
+            if Set.member x other
+              then Nothing
+              else Just Insert
+          helper x Delete =
+            if Set.member x other
+              then Nothing
+              else Just Delete
+      deltaFn (ObservableUpdateReplace new) prev other =
+        deltaFn (ObservableUpdateDelta (SetDelta (Map.union (Map.fromSet (const Insert) new) (Map.fromSet (const Delete) prev)))) prev other
+
+
+
+union :: Ord v => ObservableSet l e v -> ObservableSet l e v -> ObservableSet l e v
+union x y = ObservableSet (ObservableT (ObservableSetUnion x y))
+
+-- Functor is not possible due to the required `Ord` constraints on `va` and
+-- `v`, but a simple `map` should be. As `Set` does not implement `Functor`
+-- though, the naive implementation below does not work.
+--map :: Ord v => (va -> v) -> ObservableSet l e va -> ObservableSet l e v
+--map fn (ObservableSet x) = ObservableSet (ObservableT (mapObservable# fn x))
+
+instance Ord v => Semigroup (ObservableSet l e v) where
+  (<>) = union
+
+instance Ord v => Monoid (ObservableSet l e v) where
+  mempty = empty
+
+
+
+newtype ObservableSetList canLoad exceptions v = ObservableSetList (ObservableSet canLoad exceptions v)
+
+instance Ord v => IsObservableList canLoad exceptions v (ObservableSetList canLoad exceptions v) where
+
+instance Ord v => IsObservableCore canLoad exceptions Seq v (ObservableSetList canLoad exceptions v) where
+  isEmpty# (ObservableSetList x) = isEmpty# x
+
+  count# (ObservableSetList x) = count# x
+
+  readObservable# (ObservableSetList x) =
+    mapObservableStateResult (Seq.fromList . Set.elems) <$> readObservable# x
+
+  attachObserver# (ObservableSetList (ObservableSet x)) =
+    attachDeltaRemappingObserver x (Seq.fromList . Set.elems) convertDelta
+    where
+      convertDelta :: Set v -> SetDelta v -> Maybe (ObservableUpdate Seq v)
+      convertDelta s (SetDelta ops) =
+        let (_finalSet, listOps) = foldl' addOperation (s, []) (Map.toList ops)
+        in List.operationsToUpdate (fromIntegral (Set.size s)) listOps
+
+      addOperation :: (Set v, [ListOperation v]) -> (v, SetOperation) -> (Set v, [ListOperation v])
+      addOperation (s, listOps) setOp = (listOps <>) <$> convertOperation s setOp
+
+      convertOperation :: Set v -> (v, SetOperation) -> (Set v, [ListOperation v])
+      convertOperation s (value, Insert) =
+        if Set.member value s
+          then (s, [])
+          else
+            let sNew = Set.insert value s
+            -- findIndex is partial but should be safe in this context, as the value was just inserted
+            in (sNew, [List.ListInsert (fromIntegral $ Set.findIndex value sNew) value])
+      convertOperation s (value, Delete) =
+        case Set.lookupIndex value s of
+          Nothing -> (s, [])
+          Just index -> (Set.deleteAt index s, [List.ListDelete (fromIntegral index)])
+
+
+asList :: Ord v => ObservableSet canLoad exceptions v -> ObservableList canLoad exceptions v
+asList x = List.ObservableList (ObservableT (ObservableSetList x))
+
+
+
+
+-- * ObservableSetVar
+
+newtype ObservableSetVar v = ObservableSetVar (Subject NoLoad '[] Set v)
+
+deriving newtype instance Ord v => IsObservableCore NoLoad '[] Set v (ObservableSetVar v)
+deriving newtype instance Ord v => IsObservableSet NoLoad '[] v (ObservableSetVar v)
+deriving newtype instance Ord v => ToObservableT NoLoad '[] Set v (ObservableSetVar v)
+
+instance Ord v => IsObservableSet l e v (Subject l e Set v)
+  -- TODO
+
+newVar :: MonadSTMc NoRetry '[] m => Set v -> m (ObservableSetVar v)
+newVar x = liftSTMc @NoRetry @'[] $ ObservableSetVar <$> newSubject x
+
+newVarIO :: MonadIO m => Set v -> m (ObservableSetVar v)
+newVarIO x = liftIO $ ObservableSetVar <$> newSubjectIO x
+
+readVar :: MonadSTMc NoRetry '[] m => ObservableSetVar v -> m (Set v)
+readVar (ObservableSetVar subject) = readSubject subject
+
+readVarIO :: MonadIO m => ObservableSetVar v -> m (Set v)
+readVarIO (ObservableSetVar subject) = readSubjectIO subject
+
+insertVar :: (Ord v, MonadSTMc NoRetry '[] m) => ObservableSetVar v -> v -> m ()
+insertVar (ObservableSetVar var) value =
+  changeSubject var (ObservableChangeLiveDelta (insertDelta value))
+
+deleteVar :: (Ord v, MonadSTMc NoRetry '[] m) => ObservableSetVar v -> v -> m ()
+deleteVar (ObservableSetVar var) value =
+  changeSubject var (ObservableChangeLiveDelta (deleteDelta value))
+
+replaceVar :: MonadSTMc NoRetry '[] m => ObservableSetVar v -> Set v -> m ()
+replaceVar (ObservableSetVar var) new = replaceSubject var new
+
+clearVar :: (Ord v, MonadSTMc NoRetry '[] m) => ObservableSetVar v -> m ()
+clearVar var = replaceVar var mempty
