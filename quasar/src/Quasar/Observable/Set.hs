@@ -31,6 +31,11 @@ module Quasar.Observable.Set (
   asObservableList,
   fromObservableList,
 
+  -- ** Map & Filter
+  map,
+  mapMaybe,
+  filter,
+
   -- * Traversal
   attachForEach,
 
@@ -47,6 +52,7 @@ module Quasar.Observable.Set (
 ) where
 
 import Data.Foldable (foldl')
+import Data.Maybe qualified as Maybe
 import Data.Map (Map)
 import Data.Map qualified as Map
 import Data.Sequence (Seq)
@@ -59,7 +65,7 @@ import Quasar.Observable.List (ObservableList, ListOperation, IsObservableList(.
 import Quasar.Observable.List qualified as ObservableList
 import Quasar.Observable.Share
 import Quasar.Observable.Subject
-import Quasar.Prelude
+import Quasar.Prelude hiding (filter, map)
 
 
 newtype SetDelta v
@@ -230,6 +236,71 @@ instance Ord v => Semigroup (ObservableSet l e v) where
 
 instance Ord v => Monoid (ObservableSet l e v) where
   mempty = empty
+
+
+
+setMapMaybe :: Ord v => (va -> Maybe v) -> Set va -> Set v
+setMapMaybe fn = Set.fromList . Maybe.mapMaybe fn . Set.toList
+
+data MapMaybeObservableSet l e va v = MapMaybeObservableSet (va -> Maybe v) (ObservableSet l e va)
+
+instance (Ord va, Ord v) => IsObservableSet l e v (MapMaybeObservableSet l e va v) where
+
+instance (Ord va, Ord v) => IsObservableCore l e Set v (MapMaybeObservableSet l e va v) where
+  readObservable# (MapMaybeObservableSet fn x) =
+    mapObservableStateResult (setMapMaybe fn) <$> readObservable# x
+
+  attachObserver# (MapMaybeObservableSet fn (ObservableSet x)) =
+    attachDeltaRemappingObserver x (setMapMaybe fn) convertDelta
+    where
+    convertDelta :: Set va -> SetDelta va -> Maybe (ObservableUpdate Set v)
+    convertDelta _ (SetDelta setOps) =
+      let filteredOps = mapSetOps setOps
+      in if Map.null filteredOps
+        then Nothing
+        else Just (ObservableUpdateDelta (SetDelta filteredOps))
+
+    mapSetOps :: Map va SetOperation -> Map v SetOperation
+    mapSetOps = Map.fromList . Maybe.mapMaybe mapSetOp . Map.toList
+
+    mapSetOp :: (va, SetOperation) -> Maybe (v, SetOperation)
+    mapSetOp (a, b) = (, b) <$> fn a
+
+--
+-- | \(O(n \log n)\).
+mapMaybe :: (Ord va, Ord v) => (va -> Maybe v) -> ObservableSet l e va -> ObservableSet l e v
+mapMaybe fn x = ObservableSet (ObservableT (MapMaybeObservableSet fn x))
+
+-- | \(O(n \log n)\).
+map :: (Ord va, Ord v) => (va -> v) -> ObservableSet l e va -> ObservableSet l e v
+map fn = mapMaybe (Just . fn)
+-- Functor is not possible due to the required `Ord` constraints on `va` and
+-- `v`, but a simple `map` is. Luckily the `mapMaybe` can be reused.
+
+
+
+data FilteredObservableSet l e v = FilteredObservableSet (v -> Bool) (ObservableSet l e v)
+
+instance Ord v => IsObservableSet l e v (FilteredObservableSet l e v) where
+
+instance Ord v => IsObservableCore l e Set v (FilteredObservableSet l e v) where
+  readObservable# (FilteredObservableSet fn x) =
+    mapObservableStateResult (Set.filter fn) <$> readObservable# x
+
+  attachObserver# (FilteredObservableSet fn (ObservableSet x)) =
+    attachDeltaRemappingObserver x (Set.filter fn) convertDelta
+    where
+    convertDelta :: Set v -> SetDelta v -> Maybe (ObservableUpdate Set v)
+    convertDelta _ (SetDelta setOps) =
+      let filteredOps = Map.filterWithKey (const . fn) setOps
+      in if Map.null filteredOps
+        then Nothing
+        else Just (ObservableUpdateDelta (SetDelta filteredOps))
+
+
+-- | \(O(n)\).
+filter :: Ord v => (v -> Bool) -> ObservableSet l e v -> ObservableSet l e v
+filter fn x = ObservableSet (ObservableT (FilteredObservableSet fn x))
 
 
 
