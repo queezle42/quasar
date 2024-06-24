@@ -38,6 +38,7 @@ module Quasar.Observable.List (
   updateToOperations,
   deltaToOperations,
   operationsToUpdate,
+  applyListOperatonsToSeq,
 
   -- * ObservableListVar (mutable observable var)
   ObservableListVar,
@@ -56,7 +57,7 @@ module Quasar.Observable.List (
 import Data.Binary (Binary)
 import Data.FingerTree (FingerTree, Measured(measure), (<|), ViewL(EmptyL, (:<)), ViewR(EmptyR, (:>)))
 import Data.FingerTree qualified as FT
-import Data.Sequence (Seq(Empty))
+import Data.Sequence (Seq(..))
 import Data.Sequence qualified as Seq
 import Data.Traversable qualified as Traversable
 import Quasar.Disposer (TDisposer)
@@ -478,6 +479,16 @@ operationsToUpdate _initialLength [] = Nothing
 operationsToUpdate initialLength (op:ops) =
   let initial = operationToValidatedUpdate initialLength op
   in unvalidatedUpdate (foldl applyListOperationToUpdate initial ops)
+
+
+applyListOperatonsToSeq :: Seq v -> [ListOperation v] -> Seq v
+applyListOperatonsToSeq l [] = l
+applyListOperatonsToSeq l (ListInsert index value : ops) =
+  applyListOperatonsToSeq (Seq.insertAt (fromIntegral index) value l) ops
+applyListOperatonsToSeq l (ListAppend value : ops) =
+  applyListOperatonsToSeq (l :|> value) ops
+applyListOperatonsToSeq l (ListDelete index : ops) =
+  applyListOperatonsToSeq (Seq.deleteAt (fromIntegral index) l) ops
 
 
 applyListOperationToUpdate ::
