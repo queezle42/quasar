@@ -225,9 +225,6 @@ spec = parallel do
     it "can replace" do
       operationsToUpdate @Text 4 [ListDelete 2, ListInsert 2 "a"] `shouldBe` Just (ObservableUpdateDelta (ListDelta [ListKeep 2, ListSplice ["a"], ListDrop 1, ListKeep 1]))
 
-    it "can replace all" do
-      operationsToUpdate @Text 4 [ListReplaceAll ["a"]] `shouldBe` Just (ObservableUpdateReplace ["a"])
-
 testUpdateDeltaContext :: HasCallStack => Seq Int -> ListDelta Int -> Maybe (ValidatedListDelta Int) -> IO ()
 testUpdateDeltaContext list delta expectedDelta = withFrozenCallStack do
   let

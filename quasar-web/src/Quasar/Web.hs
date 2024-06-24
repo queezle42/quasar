@@ -33,7 +33,7 @@ import Data.Text (Text)
 import Quasar.Disposer (TDisposer, isTrivialTDisposer, disposeTDisposer)
 import Quasar.Observable.AccumulatingObserver
 import Quasar.Observable.Core
-import Quasar.Observable.List (ListOperation(..), ObservableList, updateToOperations)
+import Quasar.Observable.List (ListOperation(..), ObservableList, deltaToOperations)
 import Quasar.Observable.List qualified as ObservableList
 import Quasar.Observable.Map (ObservableMap)
 import Quasar.Observable.Map qualified as ObservableMap
@@ -259,7 +259,7 @@ listChangeCommands ::
 listChangeCommands _ctx (ObservableChangeLiveReplace (ObservableResultTrivial xs)) =
   [ReplaceAllChildren (toList xs)]
 listChangeCommands ctx (ObservableChangeLiveDelta delta) =
-  toCommand <$> updateToOperations initialListLength (ObservableUpdateDelta delta)
+  toCommand <$> deltaToOperations initialListLength delta
   where
     initialListLength = case ctx of
       (ObserverContextLive (Just len)) -> len
@@ -268,7 +268,6 @@ listChangeCommands ctx (ObservableChangeLiveDelta delta) =
     toCommand (ListInsert pos value) = InsertChild (fromIntegral pos) value
     toCommand (ListAppend value) = AppendChild value
     toCommand (ListDelete pos) = RemoveChild (fromIntegral pos)
-    toCommand (ListReplaceAll new) = ReplaceAllChildren (toList new)
 
 
 -- | Create a DOM element that contains text.

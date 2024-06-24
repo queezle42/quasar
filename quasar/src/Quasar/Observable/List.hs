@@ -36,6 +36,7 @@ module Quasar.Observable.List (
   -- * List operations with absolute addressing
   ListOperation(..),
   updateToOperations,
+  deltaToOperations,
   operationsToUpdate,
 
   -- * ObservableListVar (mutable observable var)
@@ -446,12 +447,10 @@ data ListOperation v
   = ListInsert Length v -- ^ Insert before element n.
   | ListAppend v -- ^ Append at the end of the list.
   | ListDelete Length -- ^ Delete element with index n.
-  | ListReplaceAll (Seq v)
   deriving (Show, Eq, Ord)
 
-updateToOperations :: Length -> ObservableUpdate Seq v -> [ListOperation v]
-updateToOperations _initialLength (ObservableUpdateReplace new) = [ListReplaceAll new]
-updateToOperations initialLength (ObservableUpdateDelta (ListDelta initialOps)) =
+deltaToOperations :: Length -> ListDelta v -> [ListOperation v]
+deltaToOperations initialLength (ListDelta initialOps) =
   go 0 initialLength initialOps
   where
     go :: Length -> Length -> [ListDeltaOperation v] -> [ListOperation v]
@@ -468,6 +467,10 @@ updateToOperations initialLength (ObservableUpdateDelta (ListDelta initialOps)) 
     go offset remaining (ListDrop count : ops)
       | count < remaining = replicate (fromIntegral count) (ListDelete offset) <> go offset (remaining - count) ops
       | otherwise = replicate (fromIntegral remaining) (ListDelete offset) <> go offset 0 ops
+
+updateToOperations :: Length -> ObservableUpdate Seq v -> Either (Seq v) [ListOperation v]
+updateToOperations _initialLength (ObservableUpdateReplace new) = Left new
+updateToOperations initialLength (ObservableUpdateDelta initialDelta) = Right (deltaToOperations initialLength initialDelta)
 
 
 operationsToUpdate :: Length -> [ListOperation v] -> Maybe (ObservableUpdate Seq v)
@@ -508,8 +511,6 @@ operationToValidatedUpdate len (ListDelete pos) =
             then FT.singleton (ListKeep pos)
             else FT.fromList [ListKeep pos, ListDrop 1, ListKeep (len - pos - 1)]
     else Left len
-operationToValidatedUpdate 0 (ListReplaceAll []) = Left 0
-operationToValidatedUpdate _len (ListReplaceAll new) = Right (ValidatedUpdateReplace new)
 
 
 data ConcatList canLoad exceptions v = Concat (ObservableList canLoad exceptions v) (ObservableList canLoad exceptions v)
@@ -582,7 +583,8 @@ lookupDeleteVar var@(ObservableListVar subject) pos = do
   pure r
 
 replaceVar :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> Seq v -> m ()
-replaceVar var new = applyOperationsVar var [ListReplaceAll new]
+replaceVar (ObservableListVar subject) new =
+  modifySubject subject \_ -> Just (ObservableUpdateReplace new)
 
 clearVar :: (MonadSTMc NoRetry '[] m) => ObservableListVar v -> m ()
 clearVar var = replaceVar var mempty
