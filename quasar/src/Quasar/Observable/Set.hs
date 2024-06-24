@@ -28,7 +28,8 @@ module Quasar.Observable.Set (
   union,
 
   -- ** Conversions
-  asList,
+  asObservableList,
+  fromObservableList,
 
   -- * Traversal
   attachForEach,
@@ -55,7 +56,7 @@ import Data.Set qualified as Set
 import Quasar.Disposer (TDisposer)
 import Quasar.Observable.Core
 import Quasar.Observable.List (ObservableList, ListOperation, IsObservableList(..))
-import Quasar.Observable.List qualified as List
+import Quasar.Observable.List qualified as ObservableList
 import Quasar.Observable.Share
 import Quasar.Observable.Subject
 import Quasar.Prelude
@@ -169,7 +170,7 @@ attachForEach ::
   (v -> STMc NoRetry '[] ()) ->
   ObservableSet l e va ->
   STMc NoRetry '[] TDisposer
-attachForEach addFn removeFn fx = List.attachForEach addFn removeFn (asList fx)
+attachForEach addFn removeFn fx = ObservableList.attachForEach addFn removeFn (asObservableList fx)
 
 
 
@@ -232,25 +233,25 @@ instance Ord v => Monoid (ObservableSet l e v) where
 
 
 
-newtype ObservableSetList canLoad exceptions v = ObservableSetList (ObservableSet canLoad exceptions v)
+newtype ObservableSetToList canLoad exceptions v = ObservableSetToList (ObservableSet canLoad exceptions v)
 
-instance Ord v => IsObservableList canLoad exceptions v (ObservableSetList canLoad exceptions v) where
+instance Ord v => IsObservableList canLoad exceptions v (ObservableSetToList canLoad exceptions v) where
 
-instance Ord v => IsObservableCore canLoad exceptions Seq v (ObservableSetList canLoad exceptions v) where
-  isEmpty# (ObservableSetList x) = isEmpty# x
+instance Ord v => IsObservableCore canLoad exceptions Seq v (ObservableSetToList canLoad exceptions v) where
+  isEmpty# (ObservableSetToList x) = isEmpty# x
 
-  count# (ObservableSetList x) = count# x
+  count# (ObservableSetToList x) = count# x
 
-  readObservable# (ObservableSetList x) =
+  readObservable# (ObservableSetToList x) =
     mapObservableStateResult (Seq.fromList . Set.elems) <$> readObservable# x
 
-  attachObserver# (ObservableSetList (ObservableSet x)) =
+  attachObserver# (ObservableSetToList (ObservableSet x)) =
     attachDeltaRemappingObserver x (Seq.fromList . Set.elems) convertDelta
     where
       convertDelta :: Set v -> SetDelta v -> Maybe (ObservableUpdate Seq v)
       convertDelta s (SetDelta ops) =
         let (_finalSet, listOps) = foldl' addOperation (s, []) (Map.toList ops)
-        in List.operationsToUpdate (fromIntegral (Set.size s)) listOps
+        in ObservableList.operationsToUpdate (fromIntegral (Set.size s)) listOps
 
       addOperation :: (Set v, [ListOperation v]) -> (v, SetOperation) -> (Set v, [ListOperation v])
       addOperation (s, listOps) setOp = (listOps <>) <$> convertOperation s setOp
@@ -262,17 +263,53 @@ instance Ord v => IsObservableCore canLoad exceptions Seq v (ObservableSetList c
           else
             let sNew = Set.insert value s
             -- findIndex is partial but should be safe in this context, as the value was just inserted
-            in (sNew, [List.ListInsert (fromIntegral $ Set.findIndex value sNew) value])
+            in (sNew, [ObservableList.ListInsert (fromIntegral $ Set.findIndex value sNew) value])
       convertOperation s (value, Delete) =
         case Set.lookupIndex value s of
           Nothing -> (s, [])
-          Just index -> (Set.deleteAt index s, [List.ListDelete (fromIntegral index)])
+          Just index -> (Set.deleteAt index s, [ObservableList.ListDelete (fromIntegral index)])
 
 
-asList :: Ord v => ObservableSet canLoad exceptions v -> ObservableList canLoad exceptions v
-asList x = List.ObservableList (ObservableT (ObservableSetList x))
+asObservableList :: (ToObservableSet l e v s, Ord v) => s -> ObservableList l e v
+asObservableList x = ObservableList.ObservableList (ObservableT (ObservableSetToList (toObservableSet x)))
 
 
+newtype ObservableListToSet canLoad exceptions v = ObservableListToSet (ObservableList canLoad exceptions v)
+
+instance Ord v => IsObservableSet canLoad exceptions v (ObservableListToSet canLoad exceptions v) where
+
+instance Ord v => IsObservableCore canLoad exceptions Set v (ObservableListToSet canLoad exceptions v) where
+  isEmpty# (ObservableListToSet x) = isEmpty# x
+
+  readObservable# (ObservableListToSet x) =
+    mapObservableStateResult (Set.fromList . toList) <$> readObservable# x
+
+  attachObserver# (ObservableListToSet (ObservableList.ObservableList x)) =
+    attachDeltaRemappingObserver x (Set.fromList . toList) convertDelta
+    where
+      convertDelta :: Seq v -> Delta Seq v -> Maybe (ObservableUpdate Set v)
+      convertDelta l delta =
+        let
+          (_finalList, setOps) =
+            foldl' addOperation (mempty, mempty) $ ObservableList.deltaToOperations (fromIntegral $ Seq.length l) delta
+        in if Map.null setOps
+          then Nothing
+          else Just (ObservableUpdateDelta (SetDelta setOps))
+
+      addOperation :: (Seq v, Map v SetOperation) -> ListOperation v -> (Seq v, Map v SetOperation)
+      addOperation (oldList, setOps) listOp =
+        (ObservableList.applyListOperatonsToSeq oldList [listOp], convertOperation oldList listOp setOps)
+
+      convertOperation :: Seq v -> ListOperation v -> Map v SetOperation -> Map v SetOperation
+      convertOperation _l (ObservableList.ListInsert _ value) = Map.insert value Insert
+      convertOperation _l (ObservableList.ListAppend value) = Map.insert value Insert
+      convertOperation l (ObservableList.ListDelete index) = case Seq.lookup (fromIntegral index) l of
+        Nothing -> id -- illegal delta
+        Just value -> Map.insert value Delete
+
+
+fromObservableList :: (ObservableList.ToObservableList l e v s, Ord v) => s -> ObservableSet l e v
+fromObservableList x = ObservableSet (ObservableT (ObservableListToSet (ObservableList.toObservableList x)))
 
 
 -- * ObservableSetVar
