@@ -13,6 +13,8 @@ module Quasar.Observable.List (
   ListDeltaOperation(..),
   Length(..),
   share,
+  stripLoading,
+  isLoading,
 
   -- * Reexports
   FingerTree,
@@ -62,6 +64,7 @@ import Data.Sequence qualified as Seq
 import Data.Traversable qualified as Traversable
 import Quasar.Disposer (TDisposer)
 import Quasar.Observable.Core
+import Quasar.Observable.Loading (StripLoading, observableTStripLoading, observableTIsLoading)
 import Quasar.Observable.Share
 import Quasar.Observable.Subject
 import Quasar.Observable.Traversable
@@ -401,6 +404,15 @@ share ::
   ObservableList canLoad exceptions v ->
   m (ObservableList canLoad exceptions v)
 share (ObservableList f) = ObservableList <$> shareObservableT f
+
+
+instance IsObservableList NoLoad exceptions v (StripLoading exceptions Seq v) where
+
+stripLoading :: Seq v -> ObservableList Load exceptions v -> ObservableList NoLoad exceptions v
+stripLoading initialFallback = ObservableList . observableTStripLoading initialFallback . toObservableT
+
+isLoading :: ObservableList canLoad exceptions v -> Observable NoLoad '[] (Loading canLoad)
+isLoading = observableTIsLoading . toObservableT
 
 
 constObservableList :: ObservableState canLoad (ObservableResult exceptions Seq) v -> ObservableList canLoad exceptions v
