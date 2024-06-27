@@ -407,7 +407,10 @@ instance Ord v => IsObservableCore canLoad exceptions Set v (ObservableListToSet
       convertOperation _l (ObservableList.ListAppend value) = Map.insert value Insert
       convertOperation l (ObservableList.ListDelete index) = case Seq.lookup (fromIntegral index) l of
         Nothing -> id -- illegal delta
-        Just value -> Map.insert value Delete
+        Just value ->
+          if value `elem` Seq.deleteAt (fromIntegral index) l
+            then id -- still elements with same value in the list
+            else Map.insert value Delete
 
 
 fromObservableList :: (ObservableList.ToObservableList l e v s, Ord v) => s -> ObservableSet l e v
