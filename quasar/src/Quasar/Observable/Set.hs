@@ -9,6 +9,7 @@ module Quasar.Observable.Set (
   SetDelta(..),
   SetOperation(..),
   share,
+  skipUpdateIfEqual,
 
   -- * Observable interaction
   bindObservable,
@@ -60,7 +61,7 @@ import Data.Sequence qualified as Seq
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Quasar.Disposer (TDisposer)
-import Quasar.Observable.Core
+import Quasar.Observable.Core hiding (skipUpdateIfEqual)
 import Quasar.Observable.List (ObservableList, ListOperation, IsObservableList(..))
 import Quasar.Observable.List qualified as ObservableList
 import Quasar.Observable.Share
@@ -301,6 +302,36 @@ instance Ord v => IsObservableCore l e Set v (FilteredObservableSet l e v) where
 -- | \(O(n)\).
 filter :: Ord v => (v -> Bool) -> ObservableSet l e v -> ObservableSet l e v
 filter fn x = ObservableSet (ObservableT (FilteredObservableSet fn x))
+
+
+
+newtype SkipUpdateIfEqual l e v = SkipUpdateIfEqual (ObservableSet l e v)
+
+instance Ord v => IsObservableSet l e v (SkipUpdateIfEqual l e v) where
+
+instance Ord v => IsObservableCore l e Set v (SkipUpdateIfEqual l e v) where
+  readObservable# (SkipUpdateIfEqual x) = readObservable# x
+
+  attachObserver# (SkipUpdateIfEqual (ObservableSet x)) =
+    attachDeltaRemappingObserver x id convertDelta
+    where
+    convertDelta :: Set v -> SetDelta v -> Maybe (ObservableUpdate Set v)
+    convertDelta initialSet (SetDelta ops) =
+      let (_finalSet, filteredOps) = Map.fromList <$> foldl' convertOperation (initialSet, []) (Map.toList ops)
+      in if Map.null filteredOps then Nothing else Just (ObservableUpdateDelta (SetDelta filteredOps))
+    convertOperation :: (Set v, [(v, SetOperation)]) -> (v, SetOperation) -> (Set v, [(v, SetOperation)])
+    convertOperation (set, operations) (value, Insert) =
+      if Set.member value set
+        then (set, operations)
+        else (Set.insert value set, (value, Insert):operations)
+    convertOperation (set, operations) (value, Delete) =
+      if Set.member value set
+        then (Set.delete value set, (value, Delete):operations)
+        else (set, operations)
+
+
+skipUpdateIfEqual :: Ord v => ObservableSet l e v -> ObservableSet l e v
+skipUpdateIfEqual x = ObservableSet (ObservableT (SkipUpdateIfEqual x))
 
 
 
