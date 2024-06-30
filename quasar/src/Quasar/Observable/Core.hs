@@ -1434,7 +1434,7 @@ bindObservableT fx fn = ObservableT (BindObservable @canLoad @exceptions fx rhsH
 
 
 
-instance IsObservableCore Load exceptions Identity v (FutureEx exceptions v) where
+instance IsObservableCore Load exceptions Identity v (Future exceptions v) where
   readObservable# future = do
     peekFuture future <&> \case
       Nothing -> ObservableStateLoading
@@ -1451,8 +1451,11 @@ instance IsObservableCore Load exceptions Identity v (FutureEx exceptions v) whe
       Right (Right value) -> (mempty, ObservableStateLive (ObservableResultOk (Identity value)))
       Right (Left ex) -> (mempty, ObservableStateLive (ObservableResultEx ex))
 
-instance ToObservableT Load exceptions Identity v (FutureEx exceptions v) where
+instance ToObservableT Load exceptions Identity v (Future exceptions v) where
   toObservableT = ObservableT
+
+instance ToObservableT Load '[] Identity v (Promise v) where
+  toObservableT promise = toObservableT (toFuture promise)
 
 
 
