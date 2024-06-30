@@ -226,12 +226,6 @@ instance Ord v => IsObservableCore canLoad exceptions Set v (ObservableSetUnion 
 union :: Ord v => ObservableSet l e v -> ObservableSet l e v -> ObservableSet l e v
 union x y = ObservableSet (ObservableT (ObservableSetUnion x y))
 
--- Functor is not possible due to the required `Ord` constraints on `va` and
--- `v`, but a simple `map` should be. As `Set` does not implement `Functor`
--- though, the naive implementation below does not work.
---map :: Ord v => (va -> v) -> ObservableSet l e va -> ObservableSet l e v
---map fn (ObservableSet x) = ObservableSet (ObservableT (mapObservable# fn x))
-
 instance Ord v => Semigroup (ObservableSet l e v) where
   (<>) = union
 
@@ -267,7 +261,7 @@ instance (Ord va, Ord v) => IsObservableCore l e Set v (MapMaybeObservableSet l 
     mapSetOp :: (va, SetOperation) -> Maybe (v, SetOperation)
     mapSetOp (a, b) = (, b) <$> fn a
 
---
+
 -- | \(O(n \log n)\).
 mapMaybe :: (Ord va, Ord v) => (va -> Maybe v) -> ObservableSet l e va -> ObservableSet l e v
 mapMaybe fn x = ObservableSet (ObservableT (MapMaybeObservableSet fn x))
