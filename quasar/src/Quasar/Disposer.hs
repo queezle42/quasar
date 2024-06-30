@@ -66,16 +66,20 @@ module Quasar.Disposer (
   mkDisposer,
   IsTDisposerElement(..),
   mkTDisposer,
+
+  -- * Module reexports
+  module Quasar.Disposer.NewDisposable,
 ) where
 
 
 import Control.Monad.Catch
 import Quasar.Disposer.Core
+import Quasar.Disposer.FutureDisposer
+import Quasar.Disposer.NewDisposable
 import Quasar.Exceptions
 import Quasar.Future
 import Quasar.MonadQuasar
 import Quasar.Prelude
-import Quasar.Disposer.FutureDisposer
 
 
 registerDisposeAction :: HasCallStack => (MonadQuasar m, MonadSTMc NoRetry '[FailedToAttachResource] m) => IO () -> m Disposer
@@ -134,12 +138,12 @@ registerSimpleDisposeTransactionIO fn = quasarAtomically $ registerSimpleDispose
 registerSimpleDisposeTransactionIO_ :: HasCallStack => (MonadQuasar m, MonadIO m) => STMc NoRetry '[] () -> m ()
 registerSimpleDisposeTransactionIO_ fn = quasarAtomically $ void $ registerSimpleDisposeTransaction fn
 
-registerNewResource :: forall a m. (Disposable a, MonadQuasar m, MonadIO m, MonadMask m) => m a -> m a
+registerNewResource :: forall a m. (HasCallStack, Disposable a, MonadQuasar m, MonadIO m, MonadMask m) => m a -> m a
 registerNewResource fn = do
   rm <- askResourceManager
   disposing <- isJust <$> peekFutureIO (isDisposing rm)
   -- Bail out before creating the resource _if possible_
-  when disposing $ throwM AlreadyDisposing
+  when disposing $ throwM mkAlreadyDisposing
 
   mask_ do
     resource <- fn
@@ -147,12 +151,12 @@ registerNewResource fn = do
       -- When the resource cannot be registered (because resource manager is now disposing), destroy it to prevent leaks
       atomically $ disposeEventually_ resource
       case ex of
-        (fromException -> Just FailedToAttachResource) -> throwM AlreadyDisposing
+        (fromException -> Just FailedToAttachResource) -> throwM mkAlreadyDisposing
         _ -> throwM ex
     pure resource
 {-# SPECIALIZE registerNewResource :: Disposable a => QuasarIO a -> QuasarIO a #-}
 
-registerNewResource_ :: forall a m. (Disposable a, MonadQuasar m, MonadIO m, MonadMask m) => m a -> m ()
+registerNewResource_ :: forall a m. (HasCallStack, Disposable a, MonadQuasar m, MonadIO m, MonadMask m) => m a -> m ()
 registerNewResource_ = void . registerNewResource
 
 

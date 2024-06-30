@@ -24,6 +24,7 @@ module Quasar.Exceptions (
   isFailedToAttachResource,
   AlreadyDisposing(..),
   isAlreadyDisposing,
+  mkAlreadyDisposing,
   PromiseAlreadyCompleted(..),
 ) where
 
@@ -144,16 +145,20 @@ isFailedToAttachResource (fromException @FailedToAttachResource -> Just _) = Tru
 isFailedToAttachResource _ = False
 
 
-data AlreadyDisposing = AlreadyDisposing
-  deriving stock (Eq, Show)
+data AlreadyDisposing = AlreadyDisposing CallStack
 
+instance Show AlreadyDisposing where
+  showsPrec d (AlreadyDisposing cs) = showParen (d > 10) $ showString "AlreadyDisposing " . showsPrec 11 cs
 instance Exception AlreadyDisposing where
-  displayException AlreadyDisposing =
-    "AlreadyDisposing: Failed to create a resource because the resource manager it should be attached to is already disposing."
+  displayException (AlreadyDisposing cs) =
+    "AlreadyDisposing: Failed to create a resource because the resource manager it should be attached to is already disposing:\n" <> prettyCallStack cs
 
 isAlreadyDisposing :: SomeException -> Bool
 isAlreadyDisposing (fromException @AlreadyDisposing -> Just _) = True
 isAlreadyDisposing _ = False
+
+mkAlreadyDisposing :: HasCallStack => AlreadyDisposing
+mkAlreadyDisposing = AlreadyDisposing (popCallStack callStack)
 
 
 
