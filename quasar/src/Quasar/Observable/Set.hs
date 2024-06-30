@@ -91,7 +91,7 @@ applyObservableSetOperations :: Ord v => [(v, SetOperation)] -> Set v -> Set v
 applyObservableSetOperations ops old = foldr applyObservableSetOperation old ops
 
 instance Ord v => ObservableContainer Set v where
-  type ContainerConstraint _canLoad _exceptions Set v _a = ()
+  type ContainerConstraint canLoad exceptions Set v a = IsObservableSet canLoad exceptions v a
   type Delta Set = SetDelta
   applyDelta (SetDelta ops) old = Just (applyObservableSetOperations (Map.toList ops) old)
   mergeDelta (SetDelta old) (SetDelta new) = SetDelta (Map.unionWith (\x _ -> x) new old)
@@ -137,11 +137,15 @@ instance IsObservableSet canLoad exceptions v (ObservableState canLoad (Observab
 
 
 
+instance Ord v => IsObservableSet canLoad exceptions v (SharedObservable canLoad exceptions Set v) where
+
 share ::
   (MonadSTMc NoRetry '[] m, Ord v) =>
   ObservableSet l e v ->
   m (ObservableSet l e v)
 share (ObservableSet f) = ObservableSet <$> shareObservableT f
+
+instance (Ord v, IsObservableCore l e Set v b) => IsObservableSet l e v (BindObservable l e ea va b) where
 
 bindObservable ::
   forall l e v va. Ord v =>
