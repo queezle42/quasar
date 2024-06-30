@@ -29,7 +29,7 @@ module Quasar.Observable.Set (
   union,
 
   -- ** Conversions
-  asObservableList,
+  toObservableList,
   fromObservableList,
 
   -- ** Map & Filter
@@ -177,7 +177,7 @@ attachForEach ::
   (v -> STMc NoRetry '[] ()) ->
   ObservableSet l e va ->
   STMc NoRetry '[] TDisposer
-attachForEach addFn removeFn fx = ObservableList.attachForEach addFn removeFn (asObservableList fx)
+attachForEach addFn removeFn fx = ObservableList.attachForEach addFn removeFn (toObservableList fx)
 
 
 
@@ -372,8 +372,8 @@ instance Ord v => IsObservableCore canLoad exceptions Seq v (ObservableSetToList
           Just index -> (Set.deleteAt index s, [ObservableList.ListDelete (fromIntegral index)])
 
 
-asObservableList :: (ToObservableSet l e v s, Ord v) => s -> ObservableList l e v
-asObservableList x = ObservableList.ObservableList (ObservableT (ObservableSetToList (toObservableSet x)))
+toObservableList :: (ToObservableSet l e v s, Ord v) => s -> ObservableList l e v
+toObservableList x = ObservableList.ObservableList (ObservableT (ObservableSetToList (toObservableSet x)))
 
 
 newtype ObservableListToSet canLoad exceptions v = ObservableListToSet (ObservableList canLoad exceptions v)
