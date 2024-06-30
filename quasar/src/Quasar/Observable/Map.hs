@@ -62,6 +62,8 @@ module Quasar.Observable.Map (
   newVarIO,
   readVar,
   readVarIO,
+  lookupVar,
+  lookupVarIO,
   insertVar,
   deleteVar,
   lookupDeleteVar,
@@ -556,6 +558,12 @@ insertVar (ObservableMapVar var) key value =
 deleteVar :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> k -> m ()
 deleteVar (ObservableMapVar var) key =
   changeSubject var (ObservableChangeLiveDelta (deleteDelta key))
+
+lookupVar :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> k -> m (Maybe v)
+lookupVar (ObservableMapVar var) key = Map.lookup key <$> readSubject var
+
+lookupVarIO :: (Ord k, MonadIO m) => ObservableMapVar k v -> k -> m (Maybe v)
+lookupVarIO (ObservableMapVar var) key = Map.lookup key <$> readSubjectIO var
 
 lookupDeleteVar :: (Ord k, MonadSTMc NoRetry '[] m) => ObservableMapVar k v -> k -> m (Maybe v)
 lookupDeleteVar (ObservableMapVar var) key = do
