@@ -9,6 +9,7 @@ module Quasar.Observable.Set (
   SetDelta(..),
   SetOperation(..),
   share,
+  lift,
   skipUpdateIfEqual,
 
   -- * Observable interaction
@@ -62,6 +63,7 @@ import Data.Set (Set)
 import Data.Set qualified as Set
 import Quasar.Disposer (TDisposer)
 import Quasar.Observable.Core hiding (skipUpdateIfEqual)
+import Quasar.Observable.Lift (RelaxLoad, LiftedObservable(..))
 import Quasar.Observable.List (ObservableList, ListOperation, IsObservableList(..))
 import Quasar.Observable.List qualified as ObservableList
 import Quasar.Observable.Share
@@ -145,6 +147,7 @@ share ::
   m (ObservableSet l e v)
 share (ObservableSet f) = ObservableSet <$> shareObservableT f
 
+
 instance (Ord v, IsObservableCore l e Set v b) => IsObservableSet l e v (BindObservable l e ea va b) where
 
 bindObservable ::
@@ -153,6 +156,16 @@ bindObservable ::
   (va -> ObservableSet l e v) ->
   ObservableSet l e v
 bindObservable fx fn = ObservableSet (bindObservableT fx ((\(ObservableSet x) -> x) . fn))
+
+
+instance (ea :<< e, RelaxLoad la l, Ord v) => IsObservableSet l e v (LiftedObservable l e la ea Set v) where
+
+lift ::
+  forall la ea l e v.
+  (ea :<< e, RelaxLoad la l, Ord v) =>
+  ObservableSet la ea v -> ObservableSet l e v
+lift fx = ObservableSet (ObservableT (LiftedObservable @l @e (toObservableT fx)))
+
 
 constObservableSet :: ObservableState canLoad (ObservableResult exceptions Set) v -> ObservableSet canLoad exceptions v
 constObservableSet = ObservableSet . ObservableT
