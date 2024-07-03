@@ -412,7 +412,7 @@ stripLoading :: Seq v -> ObservableList Load exceptions v -> ObservableList NoLo
 stripLoading initialFallback = ObservableList . observableTStripLoading initialFallback . toObservableT
 
 isLoading :: ObservableList canLoad exceptions v -> Observable NoLoad '[] (Loading canLoad)
-isLoading = observableTIsLoading . toObservableT
+isLoading (ObservableList f) = observableTIsLoading f
 
 
 constObservableList :: ObservableState canLoad (ObservableResult exceptions Seq) v -> ObservableList canLoad exceptions v
