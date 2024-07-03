@@ -295,16 +295,19 @@ class ObservableContainer c v where
   --
   -- TODO swap delta and state arguments
   --
-  -- Law: When the result is `Nothing`, validateDelta the delta must return
-  -- Nothing as well for the same inputs.
+  -- Law: When the result is `Nothing`, `validateDelta` the delta must return
+  -- Nothing as well for equivalent inputs.
   applyDelta :: Delta c v -> c v -> Maybe (c v)
 
   -- | Validate a delta. A validated delta may contain some information about
   -- the current container state.
   --
-  -- Returns 'Nothing' if the delta has no effect on the container described in
-  -- the `DelteContext`. Please note that even a no-op or invalid delta will
-  -- change a 'Loading' observable to 'Live'.
+  -- Should return 'Nothing' if the delta has no effect on the container
+  -- described in the `DelteContext`. Please note that even a no-op or invalid
+  -- delta will change a 'Loading' observable to 'Live'.
+  --
+  -- Law: When the result is `Nothing`, `applyDelta` the delta must return
+  -- Nothing as well for equivalent inputs.
   validateDelta :: DeltaContext c -> Delta c v -> Maybe (ValidatedDelta c v)
   default validateDelta ::
     (ValidatedDelta c v ~ Delta c v) =>
