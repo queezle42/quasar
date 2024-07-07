@@ -63,6 +63,9 @@ import Quasar.Exceptions.ExceptionSink (loggingExceptionSink)
 class Disposable a where
   getDisposer :: a -> Disposer
 
+instance Disposable (Disposer, a) where
+  getDisposer (disposer, _) = disposer
+
 
 isDisposed :: Disposable a => a -> Future '[] ()
 isDisposed r = toFuture (getDisposer r)
@@ -118,6 +121,9 @@ type DisposeFnIO = IO ()
 class Disposable a => TDisposable a where
   getTDisposer :: a -> TDisposer
 
+instance TDisposable (TDisposer, a) where
+  getTDisposer (disposer, _) = disposer
+
 mkTDisposer :: IsTDisposerElement a => [a] -> TDisposer
 mkTDisposer x = TDisposer (TDisposerElement <$> x)
 
@@ -126,6 +132,9 @@ newtype TDisposer = TDisposer [TDisposerElement]
 
 instance Disposable TDisposer where
   getDisposer (TDisposer tds) = mkDisposer tds
+
+instance Disposable (TDisposer, a) where
+  getDisposer (disposer, _) = getDisposer disposer
 
 class IsDisposerElement a => IsTDisposerElement a where
   -- | In case of reentry this might return before disposing is completed.
