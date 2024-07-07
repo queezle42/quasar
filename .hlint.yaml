@@ -80,6 +80,7 @@
 - ignore: {name: Avoid lambda}
 - ignore: {name: Use const}
 - ignore: {name: Use fmap}
+- ignore: {name: Use >=>}
 
 
 # Define some custom infix operators
