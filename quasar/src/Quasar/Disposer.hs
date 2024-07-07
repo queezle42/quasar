@@ -68,14 +68,14 @@ module Quasar.Disposer (
   mkTDisposer,
 
   -- * Module reexports
-  module Quasar.Disposer.NewDisposable,
+  module Quasar.Disposer.Owned,
 ) where
 
 
 import Control.Monad.Catch
 import Quasar.Disposer.Core
 import Quasar.Disposer.FutureDisposer
-import Quasar.Disposer.NewDisposable
+import Quasar.Disposer.Owned
 import Quasar.Exceptions
 import Quasar.Future
 import Quasar.MonadQuasar
