@@ -2,21 +2,27 @@ module Quasar.Disposer.Rc (
   Rc,
   newRc,
   newRcIO,
-  tryReadRc,
-  tryReadRcIO,
   readRc,
+  tryReadRc,
   readRcIO,
-  tryDuplicateRc,
-  duplicateRc,
+  tryReadRcIO,
+  cloneRc,
+  tryCloneRc,
+  unwrapRc,
+  tryUnwrapRc,
+  extractRc,
   tryExtractRc,
   consumeRc,
+  bracketRc,
+  mapRc,
+  tryMapRc,
 ) where
 
-import Quasar.Prelude
 import Quasar.Disposer
 import Quasar.Disposer.DisposableVar
 import Quasar.Exceptions (mkDisposedException, DisposedException(..))
-import Control.Exception (finally)
+import Quasar.Prelude
+import Control.Monad.Catch (MonadMask)
 
 -- | A Rc is a disposable readonly data structure that can be cloned. Every copy
 -- has an independent lifetime. The content is disposed when all copies of the
@@ -24,15 +30,16 @@ import Control.Exception (finally)
 newtype Rc a = Rc (DisposableVar (RcHandle a))
   deriving (Eq, Hashable, Disposable)
 
-data RcHandle a = Disposable a => RcHandle {
+data RcHandle a = RcHandle {
   -- Refcount that tracks how many locks exists in this group of locks.
   lockCount :: TVar Word64,
+  disposer :: Disposer,
   content :: a
 }
 
 decrementRc :: RcHandle a -> STMc NoRetry '[] Disposer
-decrementRc rc@RcHandle{} = do
-  let lockCount = rc.lockCount
+decrementRc rcHandle = do
+  let lockCount = rcHandle.lockCount
   c <- readTVar lockCount
   case c of
     -- Special case - when called from `tryExtractRc` we should not run the
@@ -41,44 +48,28 @@ decrementRc rc@RcHandle{} = do
 
     -- Last owner disposed, run cleanup
     1 -> do
-      writeTVar rc.lockCount 0
-      pure (getDisposer rc.content)
+      writeTVar rcHandle.lockCount 0
+      pure rcHandle.disposer
 
     -- Decrement rc count
-    _ -> mempty <$ writeTVar rc.lockCount (pred c)
+    _ -> mempty <$ writeTVar rcHandle.lockCount (pred c)
 
--- | Extract the content of an Rc without disposing the content. This only has
--- an effect if there are no other vars in the same group.
-tryExtractRc :: Rc a -> STMc NoRetry '[] (Maybe a)
-tryExtractRc (Rc var) = do
-  tryReadDisposableVar var >>= \case
-    Nothing -> pure Nothing
-    Just rc -> do
-      c <- readTVar rc.lockCount
-      if c == 1
-        then do
-          -- Set count to 0, which prevents the cleanup function from running
-          writeTVar rc.lockCount 0
-          -- Dispose DisposableVar to make content unavailable through the Rc
-          disposeEventually# var
-          pure (Just rc.content)
-
-        else pure Nothing
-
-newRc :: (Disposable a, MonadSTMc NoRetry '[] m) => a -> m (Rc a)
-newRc content = liftSTMc @NoRetry @'[] do
+newRc :: MonadSTMc NoRetry '[] m => Owned a -> m (Rc a)
+newRc (Owned disposer content) = liftSTMc @NoRetry @'[] do
   lockCount <- newTVar 1
   let rc = RcHandle {
     lockCount,
+    disposer,
     content
   }
   Rc <$> newSpecialDisposableVar decrementRc rc
 
-newRcIO :: (Disposable a, MonadIO m) => a -> m (Rc a)
-newRcIO content = liftIO do
+newRcIO :: MonadIO m => Owned a -> m (Rc a)
+newRcIO (Owned disposer content) = liftIO do
   lockCount <- newTVarIO 1
   let rc = RcHandle {
     lockCount,
+    disposer,
     content
   }
   Rc <$> newSpecialDisposableVarIO decrementRc rc
@@ -107,21 +98,77 @@ readRcIO rc = liftIO do
 -- independent lifetime. The caller has to ensure the new lock is disposed.
 --
 -- Usually this would be used to pass a copy of the lock to another component.
-tryDuplicateRc :: MonadSTMc NoRetry '[] m => Rc a -> m (Maybe (Rc a))
-tryDuplicateRc (Rc var) = liftSTMc @NoRetry @'[] do
+tryCloneRc :: MonadSTMc NoRetry '[] m => Rc a -> m (Maybe (Rc a))
+tryCloneRc (Rc var) = liftSTMc @NoRetry @'[] do
   tryReadDisposableVar var >>= mapM \rc -> do
     modifyTVar rc.lockCount succ
     Rc <$> newSpecialDisposableVar decrementRc rc
 
-duplicateRc ::
+cloneRc ::
   (MonadSTMc NoRetry '[DisposedException] m, HasCallStack) =>
   Rc a -> m (Rc a)
-duplicateRc rc = liftSTMc @NoRetry @'[DisposedException] do
-  maybe (throwC mkDisposedException) pure =<< tryDuplicateRc rc
+cloneRc rc = liftSTMc @NoRetry @'[DisposedException] do
+  maybe (throwC mkDisposedException) pure =<< tryCloneRc rc
 
-consumeRc :: HasCallStack => Rc a -> (a -> IO b) -> IO b
-consumeRc rc fn = do
-  flip finally (dispose rc) do
-    tryReadRcIO rc >>= \case
-      Nothing -> liftIO $ throwC mkDisposedException
-      Just content -> fn content
+
+-- | Returns the inner value if the `Rc` has exactly one strong reference.
+tryUnwrapRc ::
+  MonadSTMc NoRetry '[] m =>
+  Rc a -> m (Maybe (Owned a))
+tryUnwrapRc (Rc var) = liftSTMc do
+  tryReadDisposableVar var >>= \case
+    Nothing -> pure Nothing
+    Just rc -> do
+      c <- readTVar rc.lockCount
+      if c == 1
+        then do
+          -- Set count to 0, which prevents the cleanup function from running
+          writeTVar rc.lockCount 0
+          -- Dispose DisposableVar to make content unavailable through the Rc
+          disposeEventually# var
+          pure (Just (Owned rc.disposer rc.content))
+
+        else pure Nothing
+
+-- | Returns the inner value if the `Rc` has exactly one strong reference.
+unwrapRc ::
+  MonadSTMc NoRetry '[DisposedException] m =>
+  Rc a -> m (Owned a)
+unwrapRc rc = maybe (throwC mkDisposedException) pure =<< tryUnwrapRc rc
+
+tryExtractRc ::
+  MonadSTMc NoRetry '[] m =>
+  Rc a -> m (Maybe (Owned a))
+tryExtractRc rc@(Rc var) = liftSTMc @NoRetry @'[] do
+  tryReadDisposableVar var >>= mapM \rcHandle -> do
+    modifyTVar rcHandle.lockCount succ
+    disposer <- getDisposer <$> newSpecialDisposableVar decrementRc rcHandle
+    disposeEventually_ rc
+    pure (Owned disposer rcHandle.content)
+
+extractRc ::
+  (MonadSTMc NoRetry '[DisposedException] m, HasCallStack) =>
+  Rc a -> m (Owned a)
+extractRc rc = liftSTMc @NoRetry @'[DisposedException] do
+  maybe (throwC mkDisposedException) pure =<< tryExtractRc rc
+
+
+consumeRc :: (MonadIO m, MonadMask m, HasCallStack) => Rc a -> (a -> m b) -> m b
+consumeRc rc fn = bracketOwned (atomically (extractRc rc)) fn
+
+bracketRc :: (MonadIO m, MonadMask m, HasCallStack) => m (Rc a) -> (a -> m b) -> m b
+bracketRc aquire fn = bracketOwned (atomically . extractRc =<< aquire) fn
+
+
+
+tryMapRc :: MonadSTMc NoRetry '[] m => (a -> b) -> Rc a -> m (Maybe (Rc b))
+tryMapRc fn rc@(Rc var) = liftSTMc @NoRetry @'[] do
+  tryReadDisposableVar var >>= mapM \rcHandle -> do
+    modifyTVar rcHandle.lockCount succ
+    disposeEventually_ rc
+    Rc <$> newSpecialDisposableVar decrementRc rcHandle {
+      content = fn rcHandle.content
+    }
+
+mapRc :: MonadSTMc NoRetry '[DisposedException] m => (a -> b) -> Rc a -> m (Rc b)
+mapRc fn rc = maybe (throwC mkDisposedException) pure =<< tryMapRc fn rc
