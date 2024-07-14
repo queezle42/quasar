@@ -1,39 +1,31 @@
 module Quasar.Disposer.Owned (
   -- * Owned Disposer
-  -- ** NewOwned
-  NewOwned(..),
-  createNewOwned,
-
-  unmanagedOwned,
-
-  swallowDisposer,
-  swallowDisposerIO,
-  swallowDisposerBy,
-  swallowDisposerByIO,
-
   -- ** Owned
   Owned(..),
   ownedDisposable,
   fromOwned,
   consumeOwned,
+  bracketOwned,
+
+  -- ** Swallow
+  swallowDisposer,
+  swallowDisposerIO,
+  swallowDisposerBy,
+  swallowDisposerByIO,
+
 
   -- * Owned TDisposer
-  -- ** NewTOwned
-  NewTOwned(..),
-  createNewTOwned,
-
-  unmanagedTOwned,
-
-  swallowTDisposer,
-  swallowTDisposerIO,
-  swallowTDisposerBy,
-  swallowTDisposerByIO,
-
   -- ** TOwned
   TOwned(..),
   ownedTDisposable,
   fromTOwned,
   consumeTOwned,
+
+  -- ** Swallow
+  swallowTDisposer,
+  swallowTDisposerIO,
+  swallowTDisposerBy,
+  swallowTDisposerByIO,
 ) where
 
 import Quasar.Disposer.Core
@@ -41,8 +33,8 @@ import Quasar.MonadQuasar
 import Quasar.Exceptions
 import Quasar.Future
 import Quasar.Prelude
-import Control.Exception (fromException, finally)
-import Control.Monad.Catch (MonadMask, mask_, catchAll, throwM)
+import Control.Exception (fromException)
+import Control.Monad.Catch (MonadMask, mask_, catchAll, throwM, bracket, finally)
 
 data Owned a = Owned Disposer a
 
@@ -70,11 +62,18 @@ fromOwned (Owned _ value) = value
 instance Disposable (Owned a) where
   getDisposer (Owned disposer _) = disposer
 
-consumeOwned :: Owned a -> (a -> IO b) -> IO b
+consumeOwned :: (MonadIO m, MonadMask m) => Owned a -> (a -> m b) -> m b
 consumeOwned owned fn =
   finally
     (fn (fromOwned owned))
     (dispose owned)
+
+bracketOwned :: (MonadIO m, MonadMask m) => m (Owned a) -> (a -> m b) -> m b
+bracketOwned aquire fn =
+  bracket
+    aquire
+    dispose
+    (fn . fromOwned)
 
 
 
@@ -116,40 +115,28 @@ consumeTOwned owned fn =
 
 
 
-newtype NewOwned m a = NewOwned (m (Owned a))
-
-instance Functor m => Functor (NewOwned m) where
-  fmap fn (NewOwned f) = NewOwned (fn <<$>> f)
-
-
-createNewOwned :: Functor m => Disposable a => m a -> NewOwned m a
-createNewOwned f = NewOwned do
-  r <- f
-  pure (Owned (getDisposer r) r)
-
-
 swallowDisposer ::
   (HasCallStack, MonadQuasar m, MonadSTMc NoRetry '[AlreadyDisposing] m) =>
-  NewOwned m a -> m a
+  m (Owned a) -> m a
 swallowDisposer f = do
   rm <- askResourceManager
   swallowDisposerBy rm f
 
 swallowDisposerIO ::
   (HasCallStack, MonadQuasar m, MonadIO m, MonadMask m) =>
-  NewOwned m a -> m a
+  m (Owned a) -> m a
 swallowDisposerIO f = do
   rm <- askResourceManager
   swallowDisposerByIO rm f
 
 swallowDisposerBy ::
   (HasCallStack, MonadSTMc NoRetry '[AlreadyDisposing] m) =>
-  ResourceManager -> NewOwned m a -> m a
+  ResourceManager -> m (Owned a) -> m a
 swallowDisposerBy rm f = do
   disposing <- isJust <$> peekFuture (isDisposing rm)
   when disposing $ throwC mkAlreadyDisposing
 
-  Owned disposer r <- unmanagedOwned f
+  Owned disposer r <- f
   catchAllSTMc @NoRetry @'[FailedToAttachResource]
     (attachResource rm disposer)
     \_ex -> throwC mkAlreadyDisposing -- rolls back f
@@ -157,13 +144,13 @@ swallowDisposerBy rm f = do
 
 swallowDisposerByIO ::
   (HasCallStack, MonadIO m, MonadMask m) =>
-  ResourceManager -> NewOwned m a -> m a
+  ResourceManager -> m (Owned a) -> m a
 swallowDisposerByIO rm f = do
   disposing <- isJust <$> peekFutureIO (isDisposing rm)
   when disposing $ throwC mkAlreadyDisposing
 
   mask_ do
-    Owned disposer r <- unmanagedOwned f
+    Owned disposer r <- f
     atomically (attachResource rm disposer) `catchAll` \ex -> do
       -- When the resource cannot be registered (because resource manager is now disposing), destroy it to prevent leaks
       atomically $ disposeEventually_ disposer
@@ -172,46 +159,30 @@ swallowDisposerByIO rm f = do
         _ -> throwM ex
     pure r
 
-unmanagedOwned :: NewOwned m a -> m (Owned a)
-unmanagedOwned (NewOwned f) = f
-
-
--- * NewTOwned
-
-newtype NewTOwned m a = NewTOwned (m (TOwned a))
-
-instance Functor m => Functor (NewTOwned m) where
-  fmap fn (NewTOwned f) = NewTOwned (fn <<$>> f)
-
-
-createNewTOwned :: Functor m => TDisposable a => m a -> NewTOwned m a
-createNewTOwned f = NewTOwned do
-  r <- f
-  pure (TOwned (getTDisposer r) r)
 
 
 swallowTDisposer ::
   (HasCallStack, MonadQuasar m, MonadSTMc NoRetry '[AlreadyDisposing] m) =>
-  NewTOwned m a -> m a
+  m (TOwned a) -> m a
 swallowTDisposer f = do
   rm <- askResourceManager
   swallowTDisposerBy rm f
 
 swallowTDisposerIO ::
   (HasCallStack, MonadQuasar m, MonadIO m, MonadMask m) =>
-  NewTOwned m a -> m a
+  m (TOwned a) -> m a
 swallowTDisposerIO f = do
   rm <- askResourceManager
   swallowTDisposerByIO rm f
 
 swallowTDisposerBy ::
   (HasCallStack, MonadSTMc NoRetry '[AlreadyDisposing] m) =>
-  ResourceManager -> NewTOwned m a -> m a
+  ResourceManager -> m (TOwned a) -> m a
 swallowTDisposerBy rm f = do
   disposing <- isJust <$> peekFuture (isDisposing rm)
   when disposing $ throwC mkAlreadyDisposing
 
-  TOwned disposer r <- unmanagedTOwned f
+  TOwned disposer r <- f
   catchAllSTMc @NoRetry @'[FailedToAttachResource]
     (attachResource rm disposer)
     \_ex -> throwC mkAlreadyDisposing -- rolls back f
@@ -219,13 +190,13 @@ swallowTDisposerBy rm f = do
 
 swallowTDisposerByIO ::
   (HasCallStack, MonadIO m, MonadMask m) =>
-  ResourceManager -> NewTOwned m a -> m a
+  ResourceManager -> m (TOwned a) -> m a
 swallowTDisposerByIO rm f = do
   disposing <- isJust <$> peekFutureIO (isDisposing rm)
   when disposing $ throwC mkAlreadyDisposing
 
   mask_ do
-    TOwned disposer r <- unmanagedTOwned f
+    TOwned disposer r <- f
     atomically (attachResource rm disposer) `catchAll` \ex -> do
       -- When the resource cannot be registered (because resource manager is now disposing), destroy it to prevent leaks
       atomically $ disposeEventually_ disposer
@@ -233,6 +204,3 @@ swallowTDisposerByIO rm f = do
         (fromException -> Just FailedToAttachResource) -> throwC mkAlreadyDisposing
         _ -> throwM ex
     pure r
-
-unmanagedTOwned :: NewTOwned m a -> m (TOwned a)
-unmanagedTOwned (NewTOwned f) = f
