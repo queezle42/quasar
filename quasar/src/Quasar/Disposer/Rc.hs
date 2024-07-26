@@ -12,6 +12,8 @@ module Quasar.Disposer.Rc (
   tryUnwrapRc,
   extractRc,
   tryExtractRc,
+  cloneAndExtractRc,
+  tryCloneAndExtractRc,
   consumeRc,
   bracketRc,
   mapRc,
@@ -109,6 +111,27 @@ cloneRc ::
   Rc a -> m (Rc a)
 cloneRc rc = liftSTMc @NoRetry @'[DisposedException] do
   maybe (throwC mkDisposedException) pure =<< tryCloneRc rc
+
+-- | Combination of `tryCloneRc` and `tryExtractRc` with an optimized
+-- implementation.
+tryCloneAndExtractRc :: MonadSTMc NoRetry '[] m => Rc a -> m (Maybe (Owned a))
+tryCloneAndExtractRc (Rc var) = liftSTMc @NoRetry @'[] do
+  tryReadDisposableVar var >>= mapM \rcHandle -> do
+    modifyTVar rcHandle.lockCount succ
+    newVar <- newSpecialDisposableVar decrementRc rcHandle
+    pure (Owned (getDisposer newVar) rcHandle.content)
+
+-- | Combination of `cloneRc` and `extractRc` with an optimized implementation.
+--
+-- Produces a _new_ lock that points to the same content, but has an
+-- independent lifetime. The caller has to ensure the new lock is disposed.
+--
+-- Usually this would be used to pass a copy of the lock to another component.
+cloneAndExtractRc ::
+  (MonadSTMc NoRetry '[DisposedException] m, HasCallStack) =>
+  Rc a -> m (Owned a)
+cloneAndExtractRc rc = liftSTMc @NoRetry @'[DisposedException] do
+  maybe (throwC mkDisposedException) pure =<< tryCloneAndExtractRc rc
 
 
 -- | Returns the inner value if the `Rc` has exactly one strong reference.
