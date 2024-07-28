@@ -10,6 +10,7 @@ module Quasar.Observable.Traversable (
 
   -- * Traverse active observable items in STM
   traverseObservableT,
+  traverseGenericObservableT,
   attachForEachObservableT,
 
   -- ** Support for `runForEach` and `mapSTM`
@@ -58,19 +59,20 @@ traverseChangeWithContext fn change ctx = do
 -- * Traverse active observable items in STM
 
 data TraversingObservable l e c v =
-  forall va. TraversingObservable
-    (va -> STMc NoRetry '[] v)
-    (v -> STMc NoRetry '[] ())
+  forall va vi. TraversingObservable
+    (va -> STMc NoRetry '[] vi)
+    (vi -> STMc NoRetry '[] ())
+    (vi -> v)
     (ObservableT l e c va)
 
 instance TraversableObservableContainer c => IsObservableCore l e c v (TraversingObservable l e c v) where
-  readObservable# (TraversingObservable addFn removeFn fx) = do
+  readObservable# (TraversingObservable addFn removeFn selectFn fx) = do
     x <- readObservable# fx
     items <- liftSTMc @NoRetry @'[] $ traverse addFn x
     mapM_ removeFn items
-    pure items
+    pure (selectFn <$> items)
 
-  attachObserver# (TraversingObservable addFn removeFn fx) callback = do
+  attachObserver# (TraversingObservable addFn removeFn selectFn fx) callback = do
     mfixTVar \var -> do
 
       (fxDisposer, initial) <- attachObserver# fx \change -> do
@@ -79,26 +81,37 @@ instance TraversableObservableContainer c => IsObservableCore l e c v (Traversin
           traverseChange addFn change old >>= mapM_ \traversedChange -> do
             mapM_ removeFn (selectRemovedByChange change old)
             mapM_ (writeTVar var . Just . snd) (applyObservableChange traversedChange old)
-            callback traversedChange
+            callback (selectFn <$> traversedChange)
 
-      bar <- traverse addFn initial
-      let iVar = createObserverState bar
-      let iState = bar
+      iState <- traverse addFn initial
+      let iVar = createObserverState iState
 
       finalDisposer <- newTDisposer do
         mapM_ (mapM_ removeFn) =<< swapTVar var Nothing
 
-      pure ((fxDisposer <> finalDisposer, iState), Just iVar)
+      pure ((fxDisposer <> finalDisposer, selectFn <$> iState), Just iVar)
 
 
 traverseObservableT ::
   forall c l e va v.
   (TraversableObservableContainer c, ContainerConstraint l e c v (TraversingObservable l e c v)) =>
-  (va -> STMc NoRetry '[] v) ->
-  (v -> STMc NoRetry '[] ()) ->
+  (va -> STMc NoRetry '[] (TOwned v)) ->
   ObservableT l e c va ->
   ObservableT l e c v
-traverseObservableT addFn removeFn fx = ObservableT (TraversingObservable addFn removeFn fx)
+traverseObservableT addFn fx =
+  traverseGenericObservableT addFn disposeSTM fromTOwned fx
+
+traverseGenericObservableT ::
+  forall c l e va vi v.
+  (TraversableObservableContainer c, ContainerConstraint l e c v (TraversingObservable l e c v)) =>
+  (va -> STMc NoRetry '[] vi) ->
+  (vi -> STMc NoRetry '[] ()) ->
+  (vi -> v) ->
+  ObservableT l e c va ->
+  ObservableT l e c v
+traverseGenericObservableT addFn removeFn selectFn fx =
+  ObservableT (TraversingObservable addFn removeFn selectFn fx)
+
 
 attachForEachObservableT ::
   forall c l e va v.
@@ -108,5 +121,5 @@ attachForEachObservableT ::
   ObservableT l e c va ->
   STMc NoRetry '[] TDisposer
 attachForEachObservableT addFn removeFn fx = do
-  (disposer, _) <- attachObserver# (traverseObservableT addFn removeFn fx) \_ -> pure ()
+  (disposer, _) <- attachObserver# (traverseGenericObservableT addFn removeFn id fx) \_ -> pure ()
   pure disposer

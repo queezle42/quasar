@@ -42,6 +42,8 @@ module Quasar.Observable.Map (
   mapWithKey,
   traverse,
   traverseWithKey,
+  traverseGeneric,
+  traverseWithKeyGeneric,
   attachForEach,
 
   -- ** Conversions
@@ -590,21 +592,43 @@ instance Ord k => IsObservableMap l e k v (TraversingObservable l e (Map k) v)
 
 traverse ::
   Ord k =>
-  (va -> STMc NoRetry '[] v) ->
-  (v -> STMc NoRetry '[] ()) ->
+  (va -> STMc NoRetry '[] (TOwned v)) ->
   ObservableMap l e k va ->
   ObservableMap l e k v
-traverse addFn removeFn (ObservableMap fx) =
-  ObservableMap (traverseObservableT addFn removeFn fx)
+traverse addFn (ObservableMap fx) =
+  ObservableMap (traverseObservableT addFn fx)
 
 traverseWithKey ::
   Ord k =>
-  (k -> va -> STMc NoRetry '[] v) ->
-  (k -> v -> STMc NoRetry '[] ()) ->
+  (k -> va -> STMc NoRetry '[] (TOwned v)) ->
   ObservableMap l e k va ->
   ObservableMap l e k v
-traverseWithKey addFn removeFn fx =
-  snd <$> traverse (\(k, v) -> (k,) <$> addFn k v) (uncurry removeFn) (mapWithKey (,) fx)
+traverseWithKey addFn fx =
+  traverseGeneric
+    (\(k, v) -> fmap (k,) <$> addFn k v)
+    disposeSTM
+    (snd . fromTOwned)
+    (mapWithKey (,) fx)
+
+traverseGeneric ::
+  Ord k =>
+  (va -> STMc NoRetry '[] vi) ->
+  (vi -> STMc NoRetry '[] ()) ->
+  (vi -> v) ->
+  ObservableMap l e k va ->
+  ObservableMap l e k v
+traverseGeneric addFn removeFn selectFn (ObservableMap fx) =
+  ObservableMap (traverseGenericObservableT addFn removeFn selectFn fx)
+
+traverseWithKeyGeneric ::
+  Ord k =>
+  (k -> va -> STMc NoRetry '[] vi) ->
+  (k -> vi -> STMc NoRetry '[] ()) ->
+  (k -> vi -> v) ->
+  ObservableMap l e k va ->
+  ObservableMap l e k v
+traverseWithKeyGeneric addFn removeFn selectFn fx =
+  traverseGeneric (\(k, v) -> (k,) <$> addFn k v) (uncurry removeFn) (uncurry selectFn) (mapWithKey (,) fx)
 
 attachForEach ::
   Ord k =>

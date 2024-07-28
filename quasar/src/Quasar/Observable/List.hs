@@ -33,6 +33,7 @@ module Quasar.Observable.List (
 
   -- * Traversal
   traverse,
+  traverseGeneric,
   attachForEach,
 
   -- * List operations with absolute addressing
@@ -62,7 +63,7 @@ import Data.FingerTree qualified as FT
 import Data.Sequence (Seq(..))
 import Data.Sequence qualified as Seq
 import Data.Traversable qualified as Traversable
-import Quasar.Disposer (TDisposer)
+import Quasar.Disposer
 import Quasar.Observable.Core
 import Quasar.Observable.Loading (StripLoading, observableTStripLoading, observableTIsLoading)
 import Quasar.Observable.Share
@@ -436,13 +437,22 @@ empty = mempty
 
 instance IsObservableList l e v (TraversingObservable l e Seq v)
 
+
 traverse ::
-  (va -> STMc NoRetry '[] v) ->
-  (v -> STMc NoRetry '[] ()) ->
+  (va -> STMc NoRetry '[] (TOwned v)) ->
   ObservableList l e va ->
   ObservableList l e v
-traverse addFn removeFn (ObservableList fx) =
-  ObservableList (traverseObservableT addFn removeFn fx)
+traverse addFn (ObservableList fx) =
+  ObservableList (traverseObservableT addFn fx)
+
+traverseGeneric ::
+  (va -> STMc NoRetry '[] vi) ->
+  (vi -> STMc NoRetry '[] ()) ->
+  (vi -> v) ->
+  ObservableList l e va ->
+  ObservableList l e v
+traverseGeneric addFn removeFn selectFn (ObservableList fx) =
+  ObservableList (traverseGenericObservableT addFn removeFn selectFn fx)
 
 attachForEach ::
   (va -> STMc NoRetry '[] v) ->
