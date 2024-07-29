@@ -20,17 +20,21 @@ module Quasar.Disposer.Rc (
   tryMapRc,
 ) where
 
+import Control.Monad.Catch (MonadMask)
 import Quasar.Disposer
 import Quasar.Disposer.DisposableVar
 import Quasar.Exceptions (mkDisposedException, DisposedException(..))
+import Quasar.Future
 import Quasar.Prelude
-import Control.Monad.Catch (MonadMask)
 
 -- | A Rc is a disposable readonly data structure that can be cloned. Every copy
 -- has an independent lifetime. The content is disposed when all copies of the
 -- Rc are disposed.
 newtype Rc a = Rc (DisposableVar (RcHandle a))
   deriving (Eq, Hashable)
+
+instance ToFuture '[] () (Rc a) where
+  toFuture (Rc var) = toFuture var
 
 data RcHandle a = RcHandle {
   -- Refcount that tracks how many locks exists in this group of locks.
