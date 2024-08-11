@@ -66,6 +66,10 @@ class Disposable a where
 instance Disposable (Disposer, a) where
   getDisposer (disposer, _) = disposer
 
+instance Disposable a => Disposable (Maybe a) where
+  getDisposer Nothing = mempty
+  getDisposer (Just x) = getDisposer x
+
 
 isDisposed :: Disposable a => a -> Future '[] ()
 isDisposed r = toFuture (getDisposer r)
